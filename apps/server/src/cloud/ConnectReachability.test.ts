@@ -115,8 +115,10 @@ const cloudflareErrorPage = (request: HttpClientRequest.HttpClientRequest, code:
     ? JSON.stringify({ status: 530, error_code: code, error_name: "tunnel_error" })
     : `<!doctype html><h1><span>Error</span> <span>${code}</span></h1>`;
 
+type Served = Effect.Effect<ServedResponse, HttpClientError.HttpClientError>;
+
 const reachabilityLayer = (
-  respond: Effect.Effect<ServedResponse, HttpClientError.HttpClientError>,
+  respond: Served | ((request: HttpClientRequest.HttpClientRequest) => Served),
   restartConnector: (pid: number, stillDead: Effect.Effect<boolean>) => Effect.Effect<boolean>,
 ) =>
   ConnectReachability.layer.pipe(
@@ -133,7 +135,7 @@ const reachabilityLayer = (
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) =>
-            respond.pipe(
+            (Effect.isEffect(respond) ? respond : respond(request)).pipe(
               Effect.map(({ status, body }) =>
                 HttpClientResponse.fromWeb(
                   request,
@@ -381,30 +383,57 @@ describe("ConnectReachability stale connector recovery", () => {
 describe("ConnectReachability DNS failures", () => {
   // undici wraps getaddrinfo's error in `TypeError: fetch failed`. glibc behind
   // systemd-resolved can report an NXDOMAIN as EBUSY rather than ENOTFOUND.
+  const lookupFailed = (code: string) =>
+    Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({
+          request: HttpClientRequest.get("https://env.example.test"),
+          cause: new TypeError("fetch failed", {
+            cause: Object.assign(new Error(`getaddrinfo ${code} env.example.test`), {
+              code,
+              syscall: "getaddrinfo",
+              hostname: "env.example.test",
+            }),
+          }),
+        }),
+      }),
+    );
+
   it.effect("reports a getaddrinfo EBUSY as a DNS failure", () =>
     Effect.gen(function* () {
       using _connect = mockEdgeConnect();
-      const layer = reachabilityLayer(
-        Effect.fail(
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({
-              request: HttpClientRequest.get("https://env.example.test"),
-              cause: new TypeError("fetch failed", {
-                cause: Object.assign(new Error("getaddrinfo EBUSY env.example.test"), {
-                  code: "EBUSY",
-                  syscall: "getaddrinfo",
-                  hostname: "env.example.test",
-                }),
-              }),
-            }),
-          }),
-        ),
-        () => Effect.succeed(false),
-      );
+      const layer = reachabilityLayer(lookupFailed("EBUSY"), () => Effect.succeed(false));
       const result = yield* ConnectReachability.ConnectReachability.use(
         (reachability) => reachability.check,
       ).pipe(Effect.provide(layer));
       expect(result).toMatchObject({ status: "unreachable", cause: "dns_failed" });
+    }),
+  );
+
+  // A local "not found" cached before the relay published the record looks like a missing
+  // record. Public DNS tells them apart.
+  it.effect("says whether the name exists in public DNS", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      for (const [dnsStatus, reason] of [
+        [0, "old cached answer"],
+        [3, "missing from public DNS"],
+      ] as const) {
+        const layer = reachabilityLayer(
+          (request) =>
+            request.url.startsWith("https://1.1.1.1/dns-query")
+              ? Effect.succeed({ status: 200, body: JSON.stringify({ Status: dnsStatus }) })
+              : lookupFailed("ENOTFOUND"),
+          () => Effect.succeed(false),
+        );
+        const result = yield* ConnectReachability.ConnectReachability.use(
+          (reachability) => reachability.check,
+        ).pipe(Effect.provide(layer));
+        expect(result).toMatchObject({
+          cause: "dns_failed",
+          reason: expect.stringContaining(reason),
+        });
+      }
     }),
   );
 });

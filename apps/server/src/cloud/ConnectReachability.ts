@@ -17,7 +17,8 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpClient } from "effect/http";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -31,6 +32,10 @@ const TUNNEL_EDGE_PORT = 7844;
 const EDGE_CONNECT_TIMEOUT = Duration.seconds(5);
 const ENDPOINT_REQUEST_TIMEOUT = Duration.seconds(10);
 const ERROR_BODY_READ_TIMEOUT = Duration.seconds(2);
+// An IP literal, so the answer does not come from this machine's DNS, over HTTPS because
+// some networks intercept port 53.
+const PUBLIC_DNS_OVER_HTTPS = "https://1.1.1.1/dns-query";
+const PUBLIC_DNS_TIMEOUT = Duration.seconds(5);
 // cloudflared registers several connections within a few seconds; they are one change.
 const READINESS_CHANGE_DEBOUNCE = Duration.seconds(3);
 // Readiness changes miss failures and recoveries past cloudflared (DNS, origin, edge errors).
@@ -43,7 +48,12 @@ const DEAD_CONNECTOR_RESTART_AFTER_MAX = Duration.hours(1);
 
 export type EndpointProbe =
   | { readonly kind: "status"; readonly status: number; readonly cloudflareError?: string }
-  | { readonly kind: "dns_failed" | "timeout" | "network_error" };
+  | {
+      readonly kind: "dns_failed";
+      /** Whether public DNS has the name; absent when it could not be asked. */
+      readonly existsPublicly?: boolean;
+    }
+  | { readonly kind: "timeout" | "network_error" };
 
 /** Everything one check learned. `null` means that step did not run. */
 export interface ReachabilityFacts {
@@ -149,19 +159,37 @@ export function classifyReachability(
       restart,
     );
   }
-  return endpoint.kind === "dns_failed"
-    ? fail(
+  if (endpoint.kind === "dns_failed") {
+    // A lookup made before the relay published the record leaves a cached "not found"
+    // for the zone's negative TTL (30 minutes).
+    if (endpoint.existsPublicly === true) {
+      return fail(
         "dns_failed",
-        "The T3 Connect address does not resolve from this machine.",
-        "Check the DNS settings on this machine or its VPN.",
-        exitNodeHint(exitNode),
-      )
-    : fail(
-        "timeout",
-        "The T3 Connect address did not answer from this machine.",
-        "Check the network, VPN, or proxy on this machine.",
+        "The T3 Connect address resolves in public DNS, but this network's DNS still has an old cached answer that it does not exist.",
+        "Wait. The cached answer usually clears within about 30 minutes.",
         exitNodeHint(exitNode),
       );
+    }
+    if (endpoint.existsPublicly === false) {
+      return fail(
+        "dns_failed",
+        "The T3 Connect address is missing from public DNS. The relay did not publish it.",
+        restart,
+      );
+    }
+    return fail(
+      "dns_failed",
+      "The T3 Connect address does not resolve from this machine.",
+      "Check the DNS settings on this machine or its VPN.",
+      exitNodeHint(exitNode),
+    );
+  }
+  return fail(
+    "timeout",
+    "The T3 Connect address did not answer from this machine.",
+    "Check the network, VPN, or proxy on this machine.",
+    exitNodeHint(exitNode),
+  );
 }
 
 /** The loud diagnosis the CLI prints and the server logs. */
@@ -175,10 +203,14 @@ export function formatReachabilityFailure(result: Unreachable): string {
   ].join("\n");
 }
 
-function hasErrorCode(error: unknown, codes: ReadonlySet<string>): boolean {
+/** Any failed name lookup. getaddrinfo reports more than the DNS codes, such as EBUSY. */
+function isDnsLookupError(error: unknown): boolean {
   let current = error;
   for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
-    if ("code" in current && typeof current.code === "string" && codes.has(current.code)) {
+    if (
+      ("syscall" in current && current.syscall === "getaddrinfo") ||
+      ("code" in current && typeof current.code === "string" && DNS_ERROR_CODES.has(current.code))
+    ) {
       return true;
     }
     current = "cause" in current ? current.cause : undefined;
@@ -187,6 +219,8 @@ function hasErrorCode(error: unknown, codes: ReadonlySet<string>): boolean {
 }
 
 const DNS_ERROR_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "EAI_NONAME"]);
+
+const DnsJsonAnswer = Schema.Struct({ Status: Schema.Number });
 
 const canOpenTcp = (host: string, port: number) =>
   Effect.callback<boolean>((resume) => {
@@ -242,6 +276,22 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
+  // DNS JSON status 0 is NOERROR (the name exists, even with no A record) and 3 is NXDOMAIN.
+  const existsInPublicDns = Effect.fn("ConnectReachability.existsInPublicDns")(
+    function* (hostname: string) {
+      const response = yield* httpClient.get(PUBLIC_DNS_OVER_HTTPS, {
+        urlParams: { name: hostname, type: "A" },
+        headers: { accept: "application/dns-json" },
+      });
+      const { Status } = yield* HttpClientResponse.schemaBodyJson(DnsJsonAnswer)(response);
+      return Status === 0 ? true : Status === 3 ? false : null;
+    },
+    Effect.scoped,
+    Effect.timeoutOption(PUBLIC_DNS_TIMEOUT),
+    Effect.map(Option.getOrNull),
+    Effect.orElseSucceed(() => null),
+  );
+
   const probeEndpoint = Effect.fn("ConnectReachability.probeEndpoint")(
     function* (hostname: string) {
       const response = yield* httpClient
@@ -264,11 +314,20 @@ const make = Effect.gen(function* () {
       ) satisfies EndpointProbe;
     },
     Effect.scoped,
-    Effect.catch((error) =>
-      Effect.succeed<EndpointProbe>({
-        kind: hasErrorCode(error, DNS_ERROR_CODES) ? "dns_failed" : "network_error",
-      }),
-    ),
+    (effect, hostname) =>
+      effect.pipe(
+        Effect.catch((error) =>
+          isDnsLookupError(error)
+            ? existsInPublicDns(hostname).pipe(
+                Effect.map((existsPublicly): EndpointProbe =>
+                  existsPublicly === null
+                    ? { kind: "dns_failed" }
+                    : { kind: "dns_failed", existsPublicly },
+                ),
+              )
+            : Effect.succeed<EndpointProbe>({ kind: "network_error" }),
+        ),
+      ),
   );
 
   const gatherFacts = Effect.gen(function* () {
