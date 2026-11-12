@@ -145,7 +145,7 @@ describe("queuedEditContext", () => {
     const context = { version: 1, records: [], composerRecall: "  original draft\n" } as const;
     expect(
       queuedEditContext({
-        editing: { originalText: "original draft", existingAttachments: [], context },
+        editing: { queuedText: "original draft", existingAttachments: [], context },
         sentText: "original draft",
         composerText: "original draft",
         newRecords: [],

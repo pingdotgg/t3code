@@ -5,6 +5,7 @@ import {
   MessageId,
   RunId,
   ThreadId,
+  TurnItemId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useImperativeHandle, type RefObject } from "react";
@@ -21,6 +22,8 @@ import { formatInlineContextReference } from "../../lib/composerContextReference
 import {
   environmentContextRecord,
   environmentContextReference,
+  responseContextRecord,
+  responseContextReference,
   threadContextReference,
 } from "../../lib/composerContextRecords";
 import { deriveComposerSendState } from "../ChatView.logic";
@@ -369,6 +372,36 @@ describe("useQueuedRunEdit", () => {
     await act(() => setRuns(THREAD_A, "running"));
 
     expect(promptOf(THREAD_A)).toBe("changed");
+  });
+
+  it("leaves an untouched reply edit behind silently when its run starts", async () => {
+    const { hook } = setup();
+    using toast = vi.spyOn(toastManager, "add");
+    const reply = responseContextRecord({
+      citation: {
+        version: 1,
+        environmentId: ENV,
+        threadId: THREAD_A.threadId,
+        messageId: MessageId.make("assistant-1"),
+        text: "Done.",
+        start: 0,
+        end: 5,
+        prefix: "",
+        suffix: "",
+      },
+      itemId: TurnItemId.make("item-1"),
+      subagents: [],
+    });
+    const messageId = MessageId.make("message-1");
+    const text = `${formatInlineContextReference(responseContextReference(reply))} fix the bug`;
+    const messages = [{ id: messageId, text, context: { version: 1, records: [reply] } }];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+
+    await act(() => setRuns(THREAD_A, "running"));
+
+    expect(promptOf(THREAD_A)).toBe("");
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it("does not copy a saved edit into the thread draft when the run starts mid-save", async () => {

@@ -472,6 +472,19 @@ export function remapComposerContextAttachments(
     ),
   };
 }
+function withoutBackedReferences(text: string, ids: ReadonlySet<string>): string {
+  const references = collectComposerContextReferences(text);
+  for (let index = references.length - 1; index >= 0; index--) {
+    const reference = references[index]!;
+    if (!ids.has(reference.contextId)) continue;
+    const { start } = reference;
+    let { end } = reference;
+    if (text[end] === " ") end += 1;
+    text = text.slice(0, start) + text.slice(end);
+  }
+  return text;
+}
+
 /** Capture text-only recall while the composer still knows what it, rather than the app, supplied. */
 export function composerRecallContext(
   sentText: string,
@@ -487,19 +500,34 @@ export function composerRecallContext(
     composerText === stripAttachmentOnlyBootstrapPrompt(previousSentText);
   if (unchangedDraft && sentText === previousSentText) return context;
   const ids = new Set(context?.records.map((record) => record.contextId));
-  let text = unchangedDraft ? recallComposerText(previousSentText, context) : composerText;
-  const references = collectComposerContextReferences(text);
-  for (let index = references.length - 1; index >= 0; index--) {
-    const reference = references[index]!;
-    if (!ids.has(reference.contextId)) continue;
-    const { start } = reference;
-    let { end } = reference;
-    if (text[end] === " ") end += 1;
-    text = text.slice(0, start) + text.slice(end);
+  let text = withoutBackedReferences(
+    unchangedDraft ? recallComposerText(previousSentText, context) : composerText,
+    ids,
+  );
+  if (!unchangedDraft && previousSentText !== undefined && context?.composerRecall !== undefined) {
+    // The queued editor shows the sent text, so the decoration around the
+    // previously authored text (an effort prefix) stays generated after an edit.
+    const authored = recallComposerText(previousSentText, context).trim();
+    const previous = withoutBackedReferences(previousSentText, ids);
+    const at = authored.length > 0 ? previous.indexOf(authored) : -1;
+    if (at >= 0) {
+      const prefix = previous.slice(0, at);
+      const suffix = previous.slice(at + authored.length);
+      if (
+        text.length >= prefix.length + suffix.length &&
+        text.startsWith(prefix) &&
+        text.endsWith(suffix)
+      ) {
+        text = text.slice(prefix.length, text.length - suffix.length);
+      }
+    }
   }
   // Recompute rather than carrying provenance from a message being edited.
   const { composerRecall: _previousRecall, ...base } = context ?? { version: 1, records: [] };
-  if (text === sentText) return base.records.length > 0 || base.guest ? base : undefined;
+  // Absent provenance falls back to the legacy heuristic, so record it whenever that would differ.
+  if (text === sentText && stripLegacyPromptDecoration(sentText) === sentText.trim()) {
+    return base.records.length > 0 || base.guest ? base : undefined;
+  }
   const start = text.length > 0 ? sentText.indexOf(text) : -1;
   return {
     ...base,
@@ -520,4 +548,90 @@ export function recallComposerText(text: string, context?: OrchestrationMessageC
     end <= text.length
     ? text.slice(start, end)
     : text;
+}
+
+const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
+const LEGACY_PLAN_IMPLEMENTATION_PROMPT_PREFIX = "PLEASE IMPLEMENT THIS PLAN:\n";
+const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_comment>/g;
+const TRAILING_LEGACY_CONTEXT =
+  /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
+
+function stripTrailingReviewComments(prompt: string): string {
+  let cut = prompt.length;
+  for (const match of [...prompt.matchAll(REVIEW_COMMENT_BLOCK_PATTERN)].reverse()) {
+    const blockEnd = match.index + match[0].length;
+    if (prompt.slice(blockEnd, cut).trim().length > 0) break;
+    cut = match.index;
+  }
+  return cut === prompt.length ? prompt : prompt.slice(0, cut).trimEnd();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string>): string {
+  let result = prompt;
+  for (const header of headers) {
+    const match = /^(.+?) lines? (\d+(?:-\d+)?)$/.exec(header);
+    if (!match) continue;
+    const label = `@${match[1]!.trim().toLowerCase().replace(/\s+/g, "-")}:${match[2]}`;
+    const labelPattern = new RegExp(`(?<![\\w@.-])${escapeRegExp(label)}(?![\\d-])`);
+    const index = result.search(labelPattern);
+    if (index < 0) continue;
+    let end = index + label.length;
+    let start = index;
+    if (result[end] === " ") end += 1;
+    else if (result[start - 1] === " ") start -= 1;
+    result = result.slice(0, start) + result.slice(end);
+  }
+  return result;
+}
+
+/** Main's spelling-based recall, kept for messages sent without `composerRecall`. */
+export function stripLegacyPromptDecoration(messageText: string): string {
+  let prompt = messageText.trim();
+  if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
+    prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
+  }
+
+  while (prompt.length > 0) {
+    const withoutReviewComments = stripTrailingReviewComments(prompt);
+    if (withoutReviewComments !== prompt) {
+      prompt = withoutReviewComments;
+      continue;
+    }
+    const legacy = TRAILING_LEGACY_CONTEXT.exec(prompt);
+    if (legacy) {
+      if (
+        legacy[1] === "preview_annotation" &&
+        /^<preview_annotation>\s*$/m.test(legacy[2]!) &&
+        !/^(?:Id|Page|Comment|Targets): /m.test(legacy[2]!)
+      )
+        break;
+      const headers = Array.from(legacy[2]!.matchAll(/^- (.+):$/gm), (match) => match[1]!);
+      if (legacy[1] !== "preview_annotation" && headers.length === 0) break;
+      prompt = prompt.slice(0, legacy.index).trimEnd();
+      if (legacy[1] === "terminal_context") prompt = stripInlineTerminalLabels(prompt, headers);
+      continue;
+    }
+    break;
+  }
+
+  // Recall strips chips because their backing records are absent.
+  for (const reference of [...collectComposerContextReferences(prompt)].reverse()) {
+    let { start, end } = reference;
+    if (prompt[end] === " ") end += 1;
+    else if (prompt[start - 1] === " ") start -= 1;
+    prompt = prompt.slice(0, start) + prompt.slice(end);
+  }
+
+  const trimmed = prompt.trim();
+  if (
+    trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
+    trimmed.startsWith(LEGACY_PLAN_IMPLEMENTATION_PROMPT_PREFIX)
+  ) {
+    return "";
+  }
+  return trimmed;
 }

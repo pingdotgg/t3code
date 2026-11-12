@@ -67,7 +67,7 @@ export async function prepareQueuedEditAttachments(input: {
 
 export function queuedEditContext(input: {
   readonly editing: {
-    readonly originalText: string;
+    readonly queuedText: string;
     readonly existingAttachments: ReadonlyArray<ChatAttachment>;
     readonly context?: OrchestrationMessageContext | undefined;
   };
@@ -99,7 +99,7 @@ export function queuedEditContext(input: {
           ).values(),
         ],
       },
-      editing.originalText,
+      editing.queuedText,
     ) ?? { version: 1, records: [] }
   );
 }

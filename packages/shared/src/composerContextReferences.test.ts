@@ -618,6 +618,14 @@ describe("composer recall provenance", () => {
     expect(recallComposerText(edited, composerRecallContext(edited, edited, previous))).toBe(
       edited,
     );
+    // The queued editor shows the sent text: the effort prefix stays generated after an edit.
+    const revised = "Ultrathink:\nold revised";
+    expect(
+      recallComposerText(
+        revised,
+        composerRecallContext(revised, revised, previous, "Ultrathink:\nold"),
+      ),
+    ).toBe("old revised");
   });
 
   it("retains original whitespace when an unchanged queued draft is saved again", () => {

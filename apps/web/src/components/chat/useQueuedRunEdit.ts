@@ -71,6 +71,8 @@ interface EditingQueuedRun {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  /** The queued message's text as sent, which recall provenance is relative to. */
+  readonly queuedText: string;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
@@ -264,7 +266,8 @@ export function useQueuedRunEdit(input: {
         threadId: activeThreadId,
         runId: request.runId,
         messageId: request.messageId,
-        originalText: request.text,
+        originalText: text,
+        queuedText: request.text,
         existingAttachments: request.attachments,
         context,
       },

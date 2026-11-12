@@ -1,8 +1,19 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { OrchestrationMessageContext } from "@t3tools/contracts";
-import { recallComposerText as recallableComposerPrompt } from "@t3tools/shared/composerContextReferences";
+import {
+  recallComposerText,
+  stripLegacyPromptDecoration,
+} from "@t3tools/shared/composerContextReferences";
 
-export { recallableComposerPrompt };
+/** Sends record provenance; messages sent without it keep the legacy heuristic. */
+export function recallableComposerPrompt(
+  messageText: string,
+  context?: OrchestrationMessageContext,
+): string {
+  return context?.composerRecall === undefined
+    ? stripLegacyPromptDecoration(messageText)
+    : recallComposerText(messageText, context);
+}
 
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
