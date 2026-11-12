@@ -1220,6 +1220,22 @@ const make = Effect.gen(function* () {
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
         const updated = withEchoedSecretReferences(current, yield* update(current));
+        // Creating a host drops its retired key, so the token that has not moved yet could never move.
+        const pendingHost = Object.entries(retiredSourceControl).find(
+          ([kind, retired]) =>
+            retired !== undefined &&
+            current.sourceControlHosts[kind] === undefined &&
+            updated.sourceControlHosts[kind] !== undefined,
+        );
+        if (pendingHost !== undefined) {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "write-secret",
+            cause: new Error(
+              `The saved ${pendingHost[0]} token has not moved to its new name yet.`,
+            ),
+          });
+        }
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
