@@ -154,6 +154,11 @@ export interface VibeAdapterV2Options {
 
 type VibeClient = VibeAppServer.VibeAppServerClient["Service"];
 
+interface VibePage<A> {
+  readonly items: ReadonlyArray<A>;
+  readonly nextCursor?: string | null | undefined;
+}
+
 const nativeRef = (nativeId: string) => ({
   driver: VIBE_PROVIDER,
   nativeId,
@@ -170,6 +175,11 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
 
 const str = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
+
+const entryTime = (entry: Record<string, unknown>, key: "createdAt" | "updatedAt") => {
+  const millis = entry[key];
+  return typeof millis === "number" ? utcFromMillis(millis) : null;
+};
 
 function entryText(entry: unknown): string {
   const record = asRecord(entry);
@@ -210,7 +220,11 @@ interface AdapterState {
   session: OrchestrationV2ProviderSession;
   thread: OrchestrationV2ProviderThread | undefined;
   activeTurn:
-    | { readonly providerTurnId: ProviderTurnId; readonly nativeTurnId: string }
+    | {
+        readonly providerTurnId: ProviderTurnId;
+        readonly nativeTurnId: string;
+        readonly startedAt: DateTime.Utc;
+      }
     | undefined;
   turnOrdinals: Map<string, number>;
   lastRunOrdinal: number;
@@ -224,6 +238,8 @@ interface AdapterState {
     | undefined;
   /** History entries by native id, so `history/entryUpdated` patches can be applied. */
   entries: Map<string, Record<string, unknown>>;
+  /** Assistant/reasoning entries last projected as streaming; finalized at turn end if Vibe never does. */
+  streamingEntries: Set<string>;
   /** T3 instructions ride on the prompt, so send each block once per app-server session. */
   instructionsDelivered: { orchestration: boolean; device: boolean };
   /** Maps a T3 runtime-request id to the native callback id answered via `callback/result`. */
@@ -307,6 +323,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       threadId: ThreadId,
     ) {
       if (!state.thread) return;
+      const streaming = entry["generationStatus"] === "in_progress";
+      if (entry["type"] === "message" || entry["type"] === "reasoning") {
+        if (streaming) state.streamingEntries.add(nativeItemId);
+        else state.streamingEntries.delete(nativeItemId);
+      }
       if (entry["type"] !== "message") {
         const timestamp = yield* DateTime.now;
         const turnItem = vibeHistoryTurnItem(
@@ -325,7 +346,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             ordinal: 0,
             startedAt: null,
             completedAt:
-              entry["type"] === "reasoning" || vibeEffectSettled(entry) ? timestamp : null,
+              (entry["type"] === "reasoning" && !streaming) || vibeEffectSettled(entry)
+                ? timestamp
+                : null,
             updatedAt: timestamp,
           },
           entry,
@@ -358,8 +381,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         role: "assistant",
         text,
         attachments: [],
-        streaming: false,
-        createdAt: timestamp,
+        streaming,
+        createdAt: entryTime(entry, "createdAt") ?? timestamp,
         updatedAt: timestamp,
       };
       const item = {
@@ -372,16 +395,16 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         nativeItemRef: nativeRef(nativeItemId),
         parentItemId: null,
         ordinal: 0,
-        status: "completed" as const,
+        status: streaming ? ("running" as const) : ("completed" as const),
         title: null,
         startedAt: null,
-        completedAt: timestamp,
+        completedAt: streaming ? null : timestamp,
         updatedAt: timestamp,
         type: "assistant_message" as const,
         messageId,
         text,
         textOmitted: true as const,
-        streaming: false as const,
+        streaming,
       };
       yield* emit({ type: "message.updated", driver: VIBE_PROVIDER, message });
       yield* emit({
@@ -412,6 +435,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       lastRunOrdinal: 0,
       currentRun: undefined,
       entries: new Map(),
+      streamingEntries: new Set(),
       callbackByRequest: new Map(),
       instructionsDelivered: { orchestration: false, device: false },
     };
@@ -453,8 +477,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             driver: VIBE_PROVIDER,
             nativeTurnId,
           });
-          state.activeTurn = { providerTurnId, nativeTurnId };
           const startedAt = yield* DateTime.now;
+          state.activeTurn = { providerTurnId, nativeTurnId, startedAt };
           const providerTurn: OrchestrationV2ProviderTurn = {
             id: providerTurnId,
             providerThreadId: state.thread.id,
@@ -482,7 +506,18 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           const nativeTurnId = str(turn?.["id"]);
           if (!nativeTurnId || !state.activeTurn || !state.thread) return;
           if (state.activeTurn.nativeTurnId !== nativeTurnId) return;
-          const { providerTurnId } = state.activeTurn;
+          const { providerTurnId, startedAt } = state.activeTurn;
+          // Turn mode hides streaming text until a final snapshot, so never end a turn without one.
+          for (const entryId of state.streamingEntries) {
+            const entry = state.entries.get(entryId);
+            if (entry)
+              yield* projectHistoryEntry(
+                { ...entry, generationStatus: "completed" },
+                entryId,
+                input.threadId,
+              );
+          }
+          state.streamingEntries.clear();
           const completedAt = yield* DateTime.now;
           const status = str(turn?.["status"]) ?? method.replace("turn/", "");
           // A user-cancelled turn is its own terminal status, not a failure.
@@ -505,7 +540,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               nativeTurnRef: nativeRef(nativeTurnId),
               ordinal: state.turnOrdinals.get(nativeTurnId) ?? 1,
               status: terminalStatus === "failed" ? "failed" : terminalStatus,
-              startedAt: null,
+              startedAt,
               completedAt,
             },
           });
@@ -1003,28 +1038,32 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         });
       });
 
-    // Reads every history page (following nextCursor), so long threads are not truncated.
+    // Vibe pages newest-first and `nextCursor` points at older items, so reverse the pages.
+    const readAllPages = Effect.fn("VibeAdapterV2.readAllPages")(function* <A>(
+      readPage: (
+        cursor: string | null,
+      ) => Effect.Effect<VibePage<A>, VibeAppServerError.VibeAppServerError>,
+    ) {
+      const pages: Array<ReadonlyArray<A>> = [];
+      let cursor: string | null = null;
+      do {
+        const page: VibePage<A> = yield* Effect.mapError(readPage(cursor), protocolError);
+        pages.push(page.items);
+        cursor = page.nextCursor ?? null;
+      } while (cursor !== null);
+      return pages.reverse().flat();
+    });
+
     const readAllHistoryEntries = Effect.fn("VibeAdapterV2.readAllHistoryEntries")(function* (
       nativeSessionId: string,
     ) {
-      const entries: Array<Record<string, unknown>> = [];
-      let cursor: string | null | undefined = null;
-      while (true) {
-        const page: {
-          readonly items: ReadonlyArray<unknown>;
-          readonly nextCursor?: string | null | undefined;
-        } = yield* Effect.mapError(
-          client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500, cursor }),
-          protocolError,
-        );
-        for (const item of page.items) {
-          const entry = asRecord(item);
-          if (entry) entries.push(entry);
-        }
-        cursor = page.nextCursor ?? null;
-        if (cursor === null) break;
-      }
-      return entries;
+      const items = yield* readAllPages((cursor) =>
+        client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500, cursor }),
+      );
+      return items.flatMap((item) => {
+        const entry = asRecord(item);
+        return entry ? [entry] : [];
+      });
     });
 
     const readThreadSnapshot: ProviderAdapter.ProviderAdapterV2SessionRuntime["readThreadSnapshot"] =
@@ -1037,9 +1076,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           });
         }
         const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
-        const turns = yield* Effect.mapError(
-          client.sessionTurnsList({ sessionId: nativeSessionId, limit: 500 }),
-          protocolError,
+        const turns = yield* readAllPages((cursor) =>
+          client.sessionTurnsList({ sessionId: nativeSessionId, limit: 500, cursor }),
         );
         const now = yield* DateTime.now;
         const messages: OrchestrationV2ConversationMessage[] = [];
@@ -1049,8 +1087,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             role === "user" ? stripT3PromptInstructions(entryText(entry)) : entryText(entry);
           if (!text) continue;
           const nativeItemId = str(entry["id"]) ?? `entry-${messages.length}`;
+          const createdAt = entryTime(entry, "createdAt") ?? now;
           messages.push({
-            createdBy: "agent",
+            createdBy: role === "user" ? "user" : "agent",
             creationSource: "provider",
             id: idAllocator.derive.messageFromProviderItem({
               driver: VIBE_PROVIDER,
@@ -1063,8 +1102,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             text,
             attachments: [],
             streaming: false,
-            createdAt: now,
-            updatedAt: now,
+            createdAt,
+            updatedAt: entryTime(entry, "updatedAt") ?? createdAt,
           });
         }
         const providerTurns: OrchestrationV2ProviderTurn[] = turns.map((turn, index) => ({

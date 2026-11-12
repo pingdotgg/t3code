@@ -287,7 +287,10 @@ export class VibeAppServerClient extends Context.Service<
       sessionId: string;
       cursor?: string | null | undefined;
       limit?: number;
-    }) => Effect.Effect<ReadonlyArray<PublicTurn>, VibeError.VibeAppServerError>;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PublicTurn>; readonly nextCursor: string | null },
+      VibeError.VibeAppServerError
+    >;
     readonly eventsRead: (input: {
       afterEventId?: number | null | undefined;
       sessionIds?: ReadonlyArray<string>;
@@ -510,7 +513,7 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
         sessionId: input.sessionId,
         page,
       });
-      return yield* Effect.forEach(pageResult.items, (item) =>
+      const items = yield* Effect.forEach(pageResult.items, (item) =>
         decodeTurnItem(item).pipe(
           Effect.mapError(
             (error) =>
@@ -521,6 +524,7 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
           ),
         ),
       );
+      return { items, nextCursor: pageResult.nextCursor ?? null };
     }),
     eventsRead: Effect.fn("VibeAppServerClient.eventsRead")(function* (input) {
       const filters: Record<string, unknown> = {};
