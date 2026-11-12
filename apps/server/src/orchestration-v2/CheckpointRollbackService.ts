@@ -217,41 +217,50 @@ export const layer: Layer.Layer<
               };
             });
 
-      const { worktreePath, branch } = context.thread;
-      // Recreated only where the server would have made it, as turn start does.
-      if (
-        worktreePath != null &&
-        branch != null &&
-        !(yield* fileSystem.exists(worktreePath)) &&
-        (yield* isManagedWorktreePath(worktreePath))
-      ) {
-        const project = yield* projects.get(context.thread.projectId);
-        if (Option.isSome(project)) {
-          yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
-          yield* gitWorkflow.createWorktree({
-            cwd: project.value.workspaceRoot,
-            refName: branch,
-            path: worktreePath,
-          });
-        }
-      }
-
-      if (
-        input.restoreFiles !== false &&
-        !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
-          fileSystem,
-          projections,
-          projects,
-          path,
-        }))
-      ) {
-        return yield* new CheckpointRollbackExecutionError({
+      const restoreFiles = input.restoreFiles !== false;
+      const isolated = isCheckpointRestoreIsolated(context.thread, scope, {
+        fileSystem,
+        projections,
+        projects,
+        path,
+      });
+      const sharedWorkspace = () =>
+        new CheckpointRollbackExecutionError({
           reason: "shared-workspace",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
           checkpointId: input.checkpointId,
         });
+
+      const { worktreePath, branch } = context.thread;
+      // Recreated only where the server would have made it, as turn start does.
+      if (worktreePath != null && branch != null) {
+        // A failed removal can leave the folder without its checkout; only a file restore replaces it.
+        const leftover =
+          restoreFiles &&
+          (yield* fileSystem.exists(worktreePath)) &&
+          !(yield* fileSystem.exists(path.join(worktreePath, ".git")));
+        if (
+          (leftover || !(yield* fileSystem.exists(worktreePath))) &&
+          (yield* isManagedWorktreePath(worktreePath))
+        ) {
+          const project = yield* projects.get(context.thread.projectId);
+          if (Option.isSome(project)) {
+            if (leftover) {
+              if (!(yield* isolated)) return yield* sharedWorkspace();
+              yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
+            }
+            yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
+            yield* gitWorkflow.createWorktree({
+              cwd: project.value.workspaceRoot,
+              refName: branch,
+              path: worktreePath,
+            });
+          }
+        }
       }
+
+      if (restoreFiles && !(yield* isolated)) return yield* sharedWorkspace();
 
       const modelSelection = context.thread.modelSelection;
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
