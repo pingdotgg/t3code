@@ -126,7 +126,7 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   httpClient: HttpClient.HttpClient,
   url: string,
   step: string,
-  onProgress: ((progress: PinnedRuntimeProgress) => void) | undefined,
+  onProgress?: (progress: PinnedRuntimeProgress) => void,
 ) {
   let received = 0;
   // Bound stalls while holding the install lock, but allow transfers that keep
@@ -292,7 +292,6 @@ const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(fun
       input.httpClient,
       checksumsUrl,
       "downloading the t3 release checksums",
-      undefined,
     );
     const checksums = parseChecksums(new TextDecoder().decode(result.bytes));
     yield* Effect.promise(() =>
@@ -303,6 +302,7 @@ const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(fun
           status: result.status,
           bytes: result.bytes.byteLength,
           contentType: result.contentType,
+          body: result.bytes,
         },
       ),
     );

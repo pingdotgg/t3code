@@ -561,10 +561,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       const pairDirectory = path.join(staging, "runtime");
       yield* fs.makeDirectory(pairDirectory);
       const hash = NodeCrypto.createHash("sha256");
+      let downloadedBytes = 0;
+      let lastProgressAt = yield* Clock.currentTimeMillis;
       yield* Effect.gen(function* () {
         const response = yield* http
           .execute(HttpClientRequest.get(asset.url))
           .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+        // dl.google.com may gzip the zip: content-length is encoded, while byte/hash checks use decoded data.
         const contentLength = response.headers["content-length"];
         const contentEncoding = response.headers["content-encoding"]?.trim().toLowerCase();
         const identityBody = contentEncoding === undefined || contentEncoding === "identity";
@@ -572,22 +575,22 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           identityBody &&
           contentLength !== undefined &&
           Number(contentLength) !== asset.archiveBytes
-        )
+        ) {
           return yield* installationError(
             "download",
             "The Antigravity download size did not match the pinned release.",
           );
-        let downloadedBytes = 0;
-        let lastProgressAt = yield* Clock.currentTimeMillis;
+        }
         yield* response.stream.pipe(
           Stream.tap((chunk) =>
             Effect.gen(function* () {
               downloadedBytes += chunk.byteLength;
-              if (downloadedBytes > asset.archiveBytes)
+              if (downloadedBytes > asset.archiveBytes) {
                 return yield* installationError(
                   "download",
                   "The Antigravity download exceeded the pinned release size.",
                 );
+              }
               hash.update(chunk);
               const now = yield* Clock.currentTimeMillis;
               if (now - lastProgressAt >= 250 || downloadedBytes === asset.archiveBytes) {
@@ -626,7 +629,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           Effect.promise(() =>
             auditDownload(
               { stateDir: options.stateDir },
-              { url: asset.url, error: Cause.pretty(cause) },
+              { url: asset.url, bytes: downloadedBytes, error: Cause.pretty(cause) },
             ),
           ),
         ),

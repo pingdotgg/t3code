@@ -129,9 +129,18 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
     const auditLines = (yield* h.fs.readFileString(`${h.directory}/../../audit/${auditFiles[0]!}`))
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { url: string; sha256?: string });
+      .map(
+        (line) =>
+          JSON.parse(line) as { url: string; bytes?: number; error?: string; sha256?: string },
+      );
+    const failedAudit = auditLines.find((line) => line.error !== undefined);
+    expect(failedAudit).toMatchObject({ url: pinnedUrl, bytes: SPLIT, error: expect.any(String) });
     const audit = auditLines.find((line) => typeof line.sha256 === "string");
-    expect(audit).toMatchObject({ url: pinnedUrl, sha256: h.model.sha256 });
+    expect(audit).toMatchObject({
+      url: pinnedUrl,
+      bytes: bytes.length - SPLIT,
+      sha256: h.model.sha256,
+    });
     expect(progress.at(0)).toBe(0);
     expect(progress.at(-1)).toBe(bytes.length);
     expect([...(yield* h.fs.readFile(installed))]).toEqual([...bytes]);

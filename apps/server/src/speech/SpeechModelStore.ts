@@ -177,7 +177,7 @@ const make = Effect.gen(function* () {
     url: string,
     partialPath: string,
     offset: number,
-    onProgress?: (downloaded: number) => void,
+    onProgress?: (downloaded: number, bytes: number) => void,
   ) {
     const request = HttpClientRequest.get(url).pipe(
       offset > 0 ? HttpClientRequest.setHeader("Range", `bytes=${offset}-`) : (r) => r,
@@ -209,20 +209,20 @@ const make = Effect.gen(function* () {
     )
       return yield* new SpeechModelDownloadError({ modelId: model.id, reason: "size" });
     let downloaded = start;
-    onProgress?.(downloaded);
+    onProgress?.(downloaded, 0);
     yield* response.stream.pipe(
       Stream.tap((chunk) => {
         downloaded += chunk.byteLength;
         if (downloaded > model.size)
           return Effect.fail(new SpeechModelDownloadError({ modelId: model.id, reason: "size" }));
-        onProgress?.(downloaded);
+        onProgress?.(downloaded, downloaded - start);
         return Effect.void;
       }),
       Stream.run(fs.sink(partialPath, { flag: resumed ? "a" : "w", mode: 0o600 })),
     );
     return {
       downloaded,
-      received: downloaded - start,
+      bytes: downloaded - start,
       status: response.status,
       contentType: response.headers["content-type"] ?? null,
     };
@@ -317,8 +317,8 @@ const make = Effect.gen(function* () {
           if (offset === model.size) break;
           // Transport and disk failures resume from the partial file; a bad response does not.
           attemptBytes = 0;
-          const result = yield* fetchInto(model, url, partialPath, offset, (downloaded) => {
-            attemptBytes = Math.max(0, downloaded - offset);
+          const result = yield* fetchInto(model, url, partialPath, offset, (downloaded, bytes) => {
+            attemptBytes = bytes;
             progress.onProgress?.(downloaded);
           }).pipe(
             Effect.tapCause((cause) =>
@@ -334,13 +334,13 @@ const make = Effect.gen(function* () {
               () =>
                 Effect.succeed({
                   downloaded: -1,
-                  received: attemptBytes,
+                  bytes: attemptBytes,
                   status: 0,
                   contentType: null,
                 }),
             ),
           );
-          attemptBytes = result.received;
+          attemptBytes = result.bytes;
           if (result.downloaded >= 0) attempts.push(result);
           if (result.downloaded === model.size) {
             break;

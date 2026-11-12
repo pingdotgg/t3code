@@ -485,6 +485,11 @@ it.effect("reports a download timeout and cleans the staging directory", () =>
     });
     expect(h.downloads()).toBe(1);
     expect(yield* h.fs.readDirectory(h.installation.managedDirectory)).toEqual([]);
+    const auditFiles = yield* h.fs.readDirectory(`${h.baseDir}/userdata/audit`);
+    const audit = JSON.parse(
+      yield* h.fs.readFileString(`${h.baseDir}/userdata/audit/${auditFiles[0]!}`),
+    ) as { url: string; error?: string };
+    expect(audit).toMatchObject({ url: asset.url, error: expect.any(String) });
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

@@ -238,6 +238,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       yield* fs.writeFileString(paths.sentinelPath, `${cliVersion}\n`);
       return yield* BootService.make({
         baseDir: serviceBaseDir,
+        stateDir: path.join(serviceBaseDir, "userdata"),
         logsDir: path.join(serviceBaseDir, "userdata", "logs"),
         cliVersion,
         host: { execPath: hostExecPath },

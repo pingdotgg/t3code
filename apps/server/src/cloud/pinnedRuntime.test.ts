@@ -113,6 +113,18 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         .map((line) => JSON.parse(line) as { url: string; sha256?: string })[0]!;
       assert.equal(audit.url, `https://releases.example/download/v${version}/${archiveName}`);
       assert.equal(audit.sha256, yield* archiveHex(archiveBytes));
+      const checksumUrl = `https://releases.example/download/v${version}/SHA256SUMS`;
+      const checksumAudit = (yield* fs.readFileString(
+        path.join(baseDir, "userdata", "audit", auditFiles[0]!),
+      ))
+        .split("\n")
+        .filter((line) => line.includes("SHA256SUMS"))
+        .map((line) => JSON.parse(line) as { url: string; sha256?: string })[0]!;
+      assert.equal(checksumAudit.url, checksumUrl);
+      assert.equal(
+        checksumAudit.sha256,
+        yield* archiveHex(new TextEncoder().encode(yield* validChecksums)),
+      );
     }),
   );
 
@@ -202,6 +214,35 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         }).pipe(Effect.flip);
       assert.isTrue(isUnpublishedRelease(yield* failsWith(404)));
       assert.isFalse(isUnpublishedRelease(yield* failsWith(500)));
+      const checksumFailureBaseDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-pinned-checksums-failed-",
+      });
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir: checksumFailureBaseDir,
+        stateDir: path.join(checksumFailureBaseDir, "userdata"),
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 500 }))),
+        ),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.die("must not validate a failed checksum download"),
+      }).pipe(Effect.flip);
+      const auditFiles = yield* fs.readDirectory(
+        path.join(checksumFailureBaseDir, "userdata", "audit"),
+      );
+      const checksumAudit = (yield* fs.readFileString(
+        path.join(checksumFailureBaseDir, "userdata", "audit", auditFiles[0]!),
+      ))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { url: string; error?: string })
+        .find((line) => line.url.includes("SHA256SUMS"));
+      assert.isDefined(checksumAudit);
+      assert.isString(checksumAudit.error);
     }),
   );
 
