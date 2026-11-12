@@ -3,6 +3,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
 import { useState } from "react";
+import { cloudSpeechLanguages } from "@t3tools/shared/speech";
 import { Linking, Platform, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +21,7 @@ import {
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { Sheet } from "../../components/ui/Sheet";
 import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import {
@@ -214,6 +216,7 @@ export function SettingsVoiceRouteScreen() {
     : undefined;
   // An environment whose cloud sheet is open; it may not hold the grant yet.
   const [cloudSheet, setCloudSheet] = useState<EnvironmentId | null>(null);
+  const [languageSheet, setLanguageSheet] = useState(false);
   // A sheet whose environment lost cloud transcription is gone, so its pending choice is too.
   const sheetEnvironment = environments.find(
     (environment) =>
@@ -225,6 +228,12 @@ export function SettingsVoiceRouteScreen() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const speechLanguage = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.speechLanguage ?? "auto")
+    : "auto";
+  const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
+  const languageLabel = (code: string) =>
+    code === "auto" ? "Auto-detect" : (languageNames.of(code) ?? code);
   const entries = deviceMicrophoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
   );
@@ -319,6 +328,40 @@ export function SettingsVoiceRouteScreen() {
               setCloudSheet(open ? methodEnvironment.environmentId : null)
             }
           />
+        ) : null}
+        {hasEnvironmentVoiceCapture && grant ? (
+          <SettingsSection title="Transcription language">
+            <SettingsActionRow
+              label={languageLabel(speechLanguage)}
+              disabled={!ready}
+              onPress={() => setLanguageSheet(true)}
+            />
+          </SettingsSection>
+        ) : null}
+        {languageSheet ? (
+          <Sheet title="Transcription language" onClose={() => setLanguageSheet(false)}>
+            <ScrollView
+              contentInsetAdjustmentBehavior="automatic"
+              contentContainerClassName="px-5 pt-2 pb-8"
+            >
+              {[
+                "auto",
+                ...[...cloudSpeechLanguages.languages].sort((a, b) =>
+                  languageLabel(a).localeCompare(languageLabel(b)),
+                ),
+              ].map((code) => (
+                <ListChoiceRow
+                  key={code}
+                  label={languageLabel(code)}
+                  selected={speechLanguage === code}
+                  onPress={() => {
+                    savePreferences({ speechLanguage: code });
+                    setLanguageSheet(false);
+                  }}
+                />
+              ))}
+            </ScrollView>
+          </Sheet>
         ) : null}
         {!grant && transcriber === null ? (
           <Text className="px-2 text-sm text-foreground-muted">{UNAVAILABLE_EXPLANATION}</Text>
