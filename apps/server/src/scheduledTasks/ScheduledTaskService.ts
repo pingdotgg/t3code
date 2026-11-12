@@ -1146,6 +1146,7 @@ export const layer = Layer.effect(
       task: ScheduledTask,
       now: DateTime.DateTime,
       reason = "missed",
+      runError?: string,
     ) {
       const next = nextRunAt(task, now);
       yield* Effect.logInfo("Skipping schedule task run", {
@@ -1158,6 +1159,7 @@ export const layer = Layer.effect(
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
+            ${runError === undefined ? sql`` : sql`, last_run_status = 'failed', last_run_error = ${runError}`}
         WHERE task_id = ${task.id}
       `.pipe(
         Effect.mapError((cause) =>
@@ -1202,7 +1204,12 @@ export const layer = Layer.effect(
         ({ task, dueAt }) =>
           Effect.suspend(() =>
             isMissedFixedTimeRun(task.schedule, dueAt, now)
-              ? rescheduleMissedRun(task, now)
+              ? rescheduleMissedRun(
+                  task,
+                  now,
+                  "missed",
+                  "Missed a scheduled run because the server was not running at that time.",
+                )
               : runTask(task, "scheduled"),
           ).pipe(
             Effect.catch((cause) =>
