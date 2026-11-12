@@ -48,6 +48,8 @@ type PasteGesture = {
   readonly at: number;
   read: "pending" | "sent" | "settled";
   cancelled: boolean;
+  /** Set when it leaves the queue unpaired: any later paste then supersedes its read, as on main. */
+  droppedAtToken?: number;
 };
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
@@ -1007,7 +1009,13 @@ export class GhosttyTerminalSurface {
     const firstOpen = this.pasteGestures.findIndex(
       (gesture) => now - gesture.at <= PASTE_GESTURE_WINDOW_MS,
     );
-    this.pasteGestures.splice(0, firstOpen === -1 ? this.pasteGestures.length : firstOpen);
+    this.dropPasteGestures(firstOpen === -1 ? this.pasteGestures.length : firstOpen);
+  }
+
+  private dropPasteGestures(count: number): void {
+    for (const gesture of this.pasteGestures.splice(0, count)) {
+      gesture.droppedAtToken = this.pasteShortcutToken;
+    }
   }
 
   // The terminal selection is the only browser-readable PRIMARY-like buffer.
@@ -1230,6 +1238,12 @@ export class GhosttyTerminalSurface {
         void clipboard.readText().then(
           (text) => {
             if (this.disposed || gesture.cancelled) return;
+            if (
+              gesture.droppedAtToken !== undefined &&
+              gesture.droppedAtToken !== this.pasteShortcutToken
+            ) {
+              return;
+            }
             gesture.read = text.length === 0 ? "settled" : "sent";
             if (text.length > 0) this.options.onData(this.core.encodePaste(text));
           },
@@ -1281,7 +1295,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
-    this.pasteGestures.length = 0;
+    this.dropPasteGestures(this.pasteGestures.length);
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();

@@ -471,6 +471,28 @@ describe("GhosttyTerminalSurface visibility", () => {
   });
 
   // A dictation tool posts Cmd+V and lets go of V at once; Chromium's native paste comes last.
+  it.each(["blur", "the gesture window"])(
+    "a native paste still drops a pending shortcut read after %s",
+    async (end) => {
+      const harness = createHarness();
+      let resolveRead: (text: string) => void = () => {};
+      const read = new Promise<string>((resolve) => {
+        resolveRead = resolve;
+      });
+      vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
+      const surface = await harness.create({ beforeKey: () => true });
+
+      key(surface, "v", "KeyV", { metaKey: true });
+      if (end === "blur") surface.input.dispatchEvent(new Event("blur"));
+      else vi.advanceTimersByTime(2_001);
+      paste(surface, "menu");
+      resolveRead("shortcut");
+      await read;
+
+      expect(harness.onData.mock.calls).toEqual([["menu"]]);
+    },
+  );
+
   it("pastes once when V comes up before the late native paste", async () => {
     const harness = createHarness();
     const read = Promise.resolve("echo hi");
