@@ -55,9 +55,16 @@ import {
   __resetClientSettingsPersistenceForTests,
   ensureClientSettingsHydrated,
 } from "~/hooks/useSettings";
-import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
+import {
+  applyPreviewDesktopState,
+  reconcilePreviewServerSessions,
+  resetPreviewStateForTests,
+  type DesktopPreviewOverlay,
+} from "~/previewStateStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { acquireBrowserSurface, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 const threadRef = scopeThreadRef(
   EnvironmentId.make("host-webview-order"),
@@ -159,5 +166,68 @@ describe("ElectronBrowserHost", () => {
     const after = webviews();
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
+  });
+
+  it("gives a hidden fill tab the host's size back once a streamed viewer stops sizing it", async () => {
+    using _state = setup();
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [snapshot("tab_9", "2026-01-01T00:00:01.000Z")],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+    const runtimeTabId = previewRuntimeTabId(threadRef, "server-a", "tab_9");
+    const webview = screen.container.querySelector('webview[data-preview-server-tab="tab_9"]')!;
+    const pageSize = () =>
+      `${webview.getAttribute("data-preview-css-width")}x${webview.getAttribute("data-preview-css-height")}`;
+    const contentWidth = () =>
+      useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.content?.width;
+    // A scroll publishes the current layout at once, as the frame after each render does.
+    const publishLayout = () =>
+      webview.closest("[data-preview-viewport]")!.dispatchEvent(new Event("scroll"));
+    const overlay: DesktopPreviewOverlay = {
+      hasWebContents: true,
+      canGoBack: false,
+      canGoForward: false,
+      loading: false,
+      zoomFactor: 1,
+      pictureInPicture: false,
+      colorScheme: "system",
+      audioMuted: false,
+      audible: false,
+      controller: "none",
+      viewerSize: null,
+      favicon: null,
+    };
+
+    const panel = acquireBrowserSurface(runtimeTabId);
+    const panelRect = { x: 0, y: 0, width: 1402, height: 876 };
+    await act(() => panel.present(panelRect, true));
+    await act(() => publishLayout());
+    expect(contentWidth()).toBe(1402);
+    await act(() => panel.present(panelRect, false));
+    expect(pageSize()).toBe("1402x876");
+
+    await act(() =>
+      applyPreviewDesktopState(threadRef, "tab_9", {
+        ...overlay,
+        viewerSize: { width: 1200, height: 900 },
+      }),
+    );
+    expect(pageSize()).toBe("1200x900");
+    await act(() => publishLayout());
+
+    await act(() =>
+      applyPreviewDesktopState(threadRef, "tab_9", {
+        ...overlay,
+        pictureInPicture: true,
+        viewerSize: { width: 1200, height: 900 },
+      }),
+    );
+    expect(pageSize()).toBe("1402x876");
+
+    await act(() => applyPreviewDesktopState(threadRef, "tab_9", overlay));
+    expect(pageSize()).toBe("1402x876");
+    panel.release();
   });
 });

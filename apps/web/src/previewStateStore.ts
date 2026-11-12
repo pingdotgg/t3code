@@ -24,6 +24,7 @@ export interface DesktopPreviewOverlay {
   audioMuted: boolean;
   audible: boolean;
   controller: "human" | "agent" | "none";
+  viewerSize: { readonly width: number; readonly height: number } | null;
   favicon: DesktopPreviewFavicon | null;
 }
 
@@ -393,6 +394,8 @@ function isPreviewStateEqual(
       previous.audioMuted === next.audioMuted &&
       previous.audible === next.audible &&
       previous.controller === next.controller &&
+      previous.viewerSize?.width === next.viewerSize?.width &&
+      previous.viewerSize?.height === next.viewerSize?.height &&
       previous.favicon?.dataUrl === next.favicon?.dataUrl &&
       previous.favicon?.pageUrl === next.favicon?.pageUrl &&
       previous.favicon?.capturedAt === next.favicon?.capturedAt)

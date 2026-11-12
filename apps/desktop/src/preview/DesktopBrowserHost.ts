@@ -62,6 +62,8 @@ interface AttachedTab {
   agentInputAt: number;
   focusEmulated: boolean;
   focusChange: Promise<void> | null;
+  /** The server's streamed viewer size, which the renderer gives the webview while it hides it. */
+  viewerSize: { readonly width: number; readonly height: number } | null;
   focusUses: number;
   /** Each pending command, by the extra session waiting on it; the main connection's have none. */
   readonly focusPending: Map<object, string | undefined>;
@@ -110,6 +112,10 @@ export class DesktopBrowserHost extends Context.Service<
       readonly key: DesktopBrowserTabKey;
       readonly active: boolean;
     }>;
+    readonly viewerSizes: Stream.Stream<{
+      readonly key: DesktopBrowserTabKey;
+      readonly size: { readonly width: number; readonly height: number } | null;
+    }>;
   }
 >()("@t3tools/desktop/preview/DesktopBrowserHost") {}
 
@@ -124,6 +130,10 @@ export const make = Effect.gen(function* () {
   const painting = yield* PubSub.unbounded<{
     readonly key: DesktopBrowserTabKey;
     readonly active: boolean;
+  }>();
+  const viewerSizes = yield* PubSub.unbounded<{
+    readonly key: DesktopBrowserTabKey;
+    readonly size: { readonly width: number; readonly height: number } | null;
   }>();
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const tabs = new Map<string, AttachedTab>();
@@ -202,6 +212,17 @@ export const make = Effect.gen(function* () {
         if (tab.focusChange === change) tab.focusChange = null;
       });
     tab.focusChange = change;
+  };
+
+  // Emulating the size through the debugger lays the page out but leaves the guest's surface, and
+  // so every screencast frame, at the webview's own box. The renderer has to resize that box.
+  const setViewerSize = (
+    tab: AttachedTab,
+    size: { readonly width: number; readonly height: number } | null,
+  ) => {
+    if (size?.width === tab.viewerSize?.width && size?.height === tab.viewerSize?.height) return;
+    tab.viewerSize = size;
+    runFork(PubSub.publish(viewerSizes, { key: tab.key, size }));
   };
 
   const waitingHolds = (tab: AttachedTab) =>
@@ -286,6 +307,7 @@ export const make = Effect.gen(function* () {
     tab.relay = null;
     tab.screencasts.clear();
     tab.agentUsed = false;
+    setViewerSize(tab, null);
     dropFocusHolds(tab);
   };
 
@@ -439,6 +461,7 @@ export const make = Effect.gen(function* () {
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
+    setViewerSize(tab, null);
     if (announced) emit({ type: "detached", ...key });
   };
 
@@ -457,6 +480,7 @@ export const make = Effect.gen(function* () {
       agentInputAt: Number.NEGATIVE_INFINITY,
       focusEmulated: false,
       focusChange: null,
+      viewerSize: null,
       focusUses: 0,
       focusPending: new Map(),
       capturing: new Set(),
@@ -563,6 +587,10 @@ export const make = Effect.gen(function* () {
         dropRelay(tab);
         return;
       }
+      if (command.value.type === "viewerSize") {
+        setViewerSize(tab, command.value.size);
+        return;
+      }
       if (AGENT_INPUT_COMMAND.test(command.value.message)) tab.agentInputAt = performance.now();
       relayFor(tab).receive(command.value.message);
     });
@@ -597,6 +625,7 @@ export const make = Effect.gen(function* () {
   return DesktopBrowserHost.of({
     pointers: Stream.fromPubSub(pointers),
     painting: Stream.fromPubSub(painting),
+    viewerSizes: Stream.fromPubSub(viewerSizes),
     // Subscribes before announcing, so no attach falls between the two.
     events: Stream.unwrap(
       Effect.gen(function* () {
@@ -604,7 +633,15 @@ export const make = Effect.gen(function* () {
         yield* announceAll;
         return Stream.fromSubscription(subscription);
       }),
-    ).pipe(Stream.map((event) => lineEncoder.encode(`${encodeEvent(event)}\n`))),
+    ).pipe(
+      Stream.map((event) => lineEncoder.encode(`${encodeEvent(event)}\n`)),
+      // The backend that asked for these sizes has gone.
+      Stream.ensuring(
+        Effect.sync(() => {
+          for (const tab of tabs.values()) setViewerSize(tab, null);
+        }),
+      ),
+    ),
     handleCommandLine,
     attach,
     detach,

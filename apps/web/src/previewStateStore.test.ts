@@ -181,6 +181,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none" as const,
+      viewerSize: null,
       favicon: {
         dataUrl: "data:image/png;base64,AA==",
         pageUrl: "https://example.com",
@@ -194,9 +195,17 @@ describe("previewStateStore (single-tab)", () => {
 
     applyPreviewDesktopState(ref, snapshot.tabId, overlay);
     applyPreviewDesktopState(ref, snapshot.tabId, { ...overlay, favicon: { ...overlay.favicon } });
+    applyPreviewDesktopState(ref, snapshot.tabId, {
+      ...overlay,
+      viewerSize: { width: 1200, height: 900 },
+    });
+    applyPreviewDesktopState(ref, snapshot.tabId, {
+      ...overlay,
+      viewerSize: { width: 1200, height: 900 },
+    });
     unsubscribe();
 
-    expect(updateCount).toBe(1);
+    expect(updateCount).toBe(2);
   });
 
   it("retains multiple tabs and switches active desktop state", () => {
@@ -215,6 +224,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none",
+      viewerSize: null,
       favicon: null,
     });
     setActivePreviewTab(ref, first.tabId);
@@ -244,6 +254,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none",
+      viewerSize: null,
       favicon: null,
     });
 
@@ -375,6 +386,7 @@ describe("previewStateStore (single-tab)", () => {
       audioMuted: false,
       audible: false,
       controller: "none",
+      viewerSize: null,
       favicon: null,
     });
     const restarted = makeSnapshot({
