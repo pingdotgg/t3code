@@ -28,16 +28,21 @@ export default Effect.gen(function* () {
     SET default_model_selection_json = ${reparse("default_model_selection_json", "$.options")}
     WHERE ${holdsArray("default_model_selection_json", "$.options")}
   `;
+  // One pass: event_type has no index, so each UPDATE scans the whole event log
+  // (two scans took 35 s on a cold multi-GB database).
   yield* sql`
     UPDATE orchestration_events
-    SET payload_json = ${reparse("payload_json", "$.modelSelection.options")}
-    WHERE event_type IN ('thread.created', 'thread.meta-updated', 'thread.turn-start-requested')
+    SET payload_json = CASE
+      WHEN event_type IN ('project.created', 'project.meta-updated')
+        THEN ${reparse("payload_json", "$.defaultModelSelection.options")}
+      ELSE ${reparse("payload_json", "$.modelSelection.options")}
+    END
+    WHERE (
+      event_type IN ('thread.created', 'thread.meta-updated', 'thread.turn-start-requested')
       AND ${holdsArray("payload_json", "$.modelSelection.options")}
-  `;
-  yield* sql`
-    UPDATE orchestration_events
-    SET payload_json = ${reparse("payload_json", "$.defaultModelSelection.options")}
-    WHERE event_type IN ('project.created', 'project.meta-updated')
+    ) OR (
+      event_type IN ('project.created', 'project.meta-updated')
       AND ${holdsArray("payload_json", "$.defaultModelSelection.options")}
+    )
   `;
 });
