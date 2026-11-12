@@ -173,19 +173,28 @@ describe("withdrawDisplacedCustomAnswerFromPrompt", () => {
     expect(withdrawDisplacedCustomAnswerFromPrompt(afterDraft, "first answer")).toBe("draft");
 
     const beforeSecond = carryDisplacedCustomAnswerIntoPrompt(setAside, "second answer");
-    expect(withdrawDisplacedCustomAnswerFromPrompt(beforeSecond, "first answer")).toBe(
-      "second answer",
-    );
+    expect(
+      withdrawDisplacedCustomAnswerFromPrompt(beforeSecond, "first answer", ["second answer"]),
+    ).toBe("second answer");
 
     const between = carryDisplacedCustomAnswerIntoPrompt(afterDraft, "second answer");
-    expect(withdrawDisplacedCustomAnswerFromPrompt(between, "first answer")).toBe(
-      "draft\n\nsecond answer",
-    );
+    expect(
+      withdrawDisplacedCustomAnswerFromPrompt(between, "first answer", ["second answer"]),
+    ).toBe("draft\n\nsecond answer");
   });
 
-  it("leaves a thread draft that no longer holds the set-aside text", () => {
+  it("removes its own copy, not equal text inside a later set-aside answer", () => {
+    const first = carryDisplacedCustomAnswerIntoPrompt("", "foo");
+    const both = carryDisplacedCustomAnswerIntoPrompt(first, "bar\n\nfoo");
+    expect(withdrawDisplacedCustomAnswerFromPrompt(both, "foo", ["bar\n\nfoo"])).toBe("bar\n\nfoo");
+  });
+
+  it("leaves a thread draft that no longer holds the set-aside text where it was put", () => {
     expect(withdrawDisplacedCustomAnswerFromPrompt("first answer, edited", "first answer")).toBe(
       "first answer, edited",
+    );
+    expect(withdrawDisplacedCustomAnswerFromPrompt("my first answer", "first answer")).toBe(
+      "my first answer",
     );
     expect(withdrawDisplacedCustomAnswerFromPrompt("draft", "  ")).toBe("draft");
   });

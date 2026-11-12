@@ -127,7 +127,8 @@ export function usePendingThreadRequests(input: {
     reportFailure: false,
   });
   const userInputResponsesInFlight = useRef(new Set<string>());
-  const displacedAnswers = useRef(new Map<string, string>());
+  // In the order the text went into the thread draft, which is how a copy is found again.
+  const displacedAnswers = useRef<Array<{ readonly key: string; readonly text: string }>>([]);
   const [respondingRequestIds, setRespondingRequestIds] = useState<RuntimeRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     RuntimeRequestId[]
@@ -393,10 +394,10 @@ export function usePendingThreadRequests(input: {
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
     if (nextPrompt !== currentPrompt) {
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-      displacedAnswers.current.set(
-        `${activePendingRequestKey}:${questionId}`,
-        displacedAnswer ?? "",
-      );
+      displacedAnswers.current.push({
+        key: `${activePendingRequestKey}:${questionId}`,
+        text: displacedAnswer ?? "",
+      });
       toastManager.add({
         type: "info",
         title: "Your typed text was set aside",
@@ -455,12 +456,21 @@ export function usePendingThreadRequests(input: {
   // Undo can put set-aside text back into the answer; left in the draft too, it is sent twice.
   const withdrawRestoredAnswer = useStableCallback((questionId: string, value: string) => {
     const key = `${activePendingRequestKey}:${questionId}`;
-    const displaced = displacedAnswers.current.get(key);
-    if (displaced === undefined || displaced.trim() !== value.trim()) return;
-    displacedAnswers.current.delete(key);
+    const entries = displacedAnswers.current;
+    const index = entries.findLastIndex(
+      (entry) => entry.key === key && entry.text.trim() === value.trim(),
+    );
+    const displaced = entries[index];
+    if (displaced === undefined) return;
+    const later = entries.slice(index + 1).map((entry) => entry.text);
+    displacedAnswers.current = entries.filter((entry) => entry !== displaced);
     const currentPrompt =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
-    const nextPrompt = withdrawDisplacedCustomAnswerFromPrompt(currentPrompt, displaced);
+    const nextPrompt = withdrawDisplacedCustomAnswerFromPrompt(
+      currentPrompt,
+      displaced.text,
+      later,
+    );
     if (nextPrompt !== currentPrompt) setComposerDraftPrompt(composerDraftTarget, nextPrompt);
   });
   const onChangeActivePendingUserInputCustomAnswer = makePendingCustomAnswerSetter({
