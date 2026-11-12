@@ -448,6 +448,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
+    searchInputRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
