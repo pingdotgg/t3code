@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
+  checkClaudeProviderStatus,
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
 } from "./ClaudeProvider.ts";
@@ -86,5 +87,49 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     assert.equal(abortSignal?.aborted, false);
     yield* TestClock.adjust("3 seconds");
     assert.equal(abortSignal?.aborted, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("warns when Claude Code skips a settings.json it cannot parse", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped();
+    const settingsPath = `${configDir}/settings.json`;
+    yield* fileSystem.writeFileString(settingsPath, '{ "includeCoAuthoredBy": false, }');
+    const binaryPath = `${configDir}/claude`;
+    yield* fileSystem.writeFileString(binaryPath, "#!/bin/sh\necho '2.1.322 (Claude Code)'\n");
+    yield* fileSystem.chmod(binaryPath, 0o755);
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => ({
+            account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+            commands: [],
+          }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+            rate_limits_available: false,
+          }),
+          // What Claude Code 2.1.322 reports for a trailing comma.
+          getSettings: async () => ({
+            effective: {},
+            sources: [],
+            errors: [{ file: settingsPath, path: "", message: "Invalid or malformed JSON" }],
+          }),
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const environment = {
+      PATH: (yield* HostProcess.Environment).PATH,
+      CLAUDE_CONFIG_DIR: configDir,
+    };
+
+    const status = yield* checkClaudeProviderStatus(
+      yield* decodeClaudeSettings({ binaryPath }),
+      (settings) => probeClaudeCapabilities(settings, environment),
+      environment,
+    );
+
+    assert.equal(status.status, "warning");
+    assert.include(status.message ?? "", settingsPath);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
