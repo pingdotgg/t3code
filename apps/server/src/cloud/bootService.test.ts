@@ -29,6 +29,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
+  serviceUnitLogPathOf,
 } from "./serviceProtocol.ts";
 
 const leaseObserver = vi.hoisted(() => ({ contended: (_destination: string) => {} }));
@@ -55,7 +56,7 @@ const windowsTaskOptions = {
   conhostPath: "C:\\Windows\\System32\\conhost.exe",
 };
 
-it("reads the served T3 home back out of a rendered unit, plist, or task", () => {
+it("reads the served T3 home and log back out of a rendered unit, plist, or task", () => {
   const plan = (baseDir: string) => ({
     program: [`${baseDir}/runtime/versions/1.2.3/t3`, "__service-launcher"],
     baseDir,
@@ -71,6 +72,17 @@ it("reads the served T3 home back out of a rendered unit, plist, or task", () =>
       BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
     ),
   ).toBe("/home/theo/T3 Data/100%");
+  expect(
+    serviceUnitLogPathOf(BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%"))),
+  ).toBe("/home/theo/T3 Data/100%/userdata/logs/boot-service.log");
+  expect(
+    serviceUnitLogPathOf(
+      BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
+        homeDir: "/Users/theo",
+        environmentPath: "/usr/bin",
+      }),
+    ),
+  ).toBe("/Users/theo/a&b/userdata/logs/boot-service.log");
   expect(
     BootService.bootServiceBaseDirOf(
       BootService.renderBootServicePlist(plan("/Users/theo/a&b"), {
@@ -137,6 +149,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   installerPath = macInstallerPath,
   xdgConfigHome?: string,
   managerXdgConfigHome = xdgConfigHome,
+  installBinDir?: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -282,6 +295,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     insideService = false,
     hostExecPath = "/usr/bin/t3",
     underSudo = false,
+    serviceInstallBinDir: string | null | undefined = installBinDir,
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
@@ -309,6 +323,9 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
             ConfigProvider.fromEnv({
               env: {
                 HOME: home,
+                ...(serviceInstallBinDir === undefined || serviceInstallBinDir === null
+                  ? {}
+                  : { T3CODE_INSTALL_BIN_DIR: serviceInstallBinDir }),
                 ...(xdgConfigHome === undefined ? {} : { XDG_CONFIG_HOME: xdgConfigHome }),
                 USERPROFILE: home,
                 LOCALAPPDATA: path.join(home, "AppData", "Local"),
@@ -572,6 +589,69 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect.each(["linux", "darwin"] as const)(
+    "preserves the custom install bin directory in the installed service on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const installBinDir = '/custom/T3 & <100%>/"quoted"\\bin';
+        const { service, makeService, fs } = yield* makeHarness(
+          platform,
+          "",
+          undefined,
+          undefined,
+          installBinDir,
+        );
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        expect(unit).toContain(
+          platform === "linux"
+            ? 'Environment=T3CODE_INSTALL_BIN_DIR="/custom/T3 & <100%%>/\\"quoted\\"\\\\bin"'
+            : '<key>T3CODE_INSTALL_BIN_DIR</key>\n    <string>/custom/T3 &amp; &lt;100%&gt;/"quoted"\\bin</string>',
+        );
+        expect((yield* service.status).current).toBe(true);
+
+        const ordinaryCli = yield* makeService(
+          "",
+          "1.2.3",
+          undefined,
+          false,
+          undefined,
+          false,
+          null,
+        );
+        expect((yield* ordinaryCli.status).current).toBe(true);
+        expect((yield* ordinaryCli.install()).installBinDir).toBe(installBinDir);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+
+        const updatedCli = yield* makeService(
+          "",
+          "1.2.4",
+          undefined,
+          false,
+          undefined,
+          false,
+          null,
+        );
+        expect((yield* updatedCli.install({ start: false })).installBinDir).toBe(installBinDir);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit.replaceAll("1.2.3", "1.2.4"));
+
+        const replacementCli = yield* makeService(
+          "",
+          "1.2.4",
+          undefined,
+          false,
+          undefined,
+          false,
+          "/replacement/bin",
+        );
+        expect((yield* replacementCli.status).current).toBe(false);
+        expect((yield* replacementCli.install()).installBinDir).toBe("/replacement/bin");
+        const laterCli = yield* makeService("", "1.2.4", undefined, false, undefined, false, "");
+        expect((yield* laterCli.status).current).toBe(true);
+        expect((yield* laterCli.install()).installBinDir).toBe("/replacement/bin");
+      }),
+  );
+
   it.effect.each([
     "unset",
     "empty",
@@ -624,6 +704,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(plan.program).toEqual([runtime.entryPath, "__service-launcher"]);
+      expect(yield* fs.readFileString(plan.unitPath)).not.toContain("T3CODE_INSTALL_BIN_DIR");
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         `ExecStart=${runtime.entryPath} __service-launcher`,
       );

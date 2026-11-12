@@ -158,6 +158,7 @@ describe("observability", () => {
                 if (record.type === "effect-span") records.push(record);
               },
               flush: Effect.void,
+              flushSync: () => {},
               close: () => Effect.void,
             },
             delegate: Tracer.make({
@@ -304,6 +305,33 @@ describe("observability", () => {
             assert.isTrue(yield* Ref.get(closed));
           }),
         ),
+    );
+
+    it.effect("writes buffered records synchronously for process exit", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "exit.trace.ndjson");
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1_000_000,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+          });
+
+          sink.push(makeRecord("before-exit"));
+          sink.flushSync();
+          sink.flushSync();
+
+          const records = yield* readTraceRecords(tracePath);
+          assert.deepStrictEqual(
+            records.map((record) => record.name),
+            ["before-exit"],
+          );
+        }),
+      ),
     );
 
     it.effect("keeps every trace file within the configured limit for threshold flushes", () =>
