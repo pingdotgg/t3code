@@ -49,6 +49,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -2836,6 +2837,130 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
   );
 });
 
+const imageAttachment = (threadId: ThreadId, name: string) => ({
+  type: "image" as const,
+  id: createAttachmentId(threadId, "png")!,
+  name,
+  mimeType: "image/png",
+  sizeBytes: 8,
+});
+
+const writeCompletedUserRun = Effect.fn("test.writeCompletedUserRun")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly key: string;
+  readonly ordinal: number;
+  readonly attachments: ReadonlyArray<ReturnType<typeof imageAttachment>>;
+}) {
+  const eventSink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  const runId = RunId.make(`image-fork-run:${input.key}`);
+  const messageId = MessageId.make(`image-fork-message:${input.key}`);
+  yield* eventSink.write({
+    events: [
+      {
+        id: EventId.make(`image-fork-run:${input.key}`),
+        type: "run.created",
+        threadId: input.threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId: input.threadId,
+          ordinal: input.ordinal,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: messageId,
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      },
+      {
+        id: EventId.make(`image-fork-message:${input.key}`),
+        type: "message.updated",
+        threadId: input.threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: messageId,
+          threadId: input.threadId,
+          runId,
+          nodeId: null,
+          role: "user",
+          text: "What is in this screenshot?",
+          attachments: [...input.attachments],
+          streaming: false,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    ],
+  });
+  return runId;
+});
+
+// A run fork stores no message rows; it shows its source's prompt, image included, by reading through.
+const seedImagePromptRunFork = Effect.fn("test.seedImagePromptRunFork")(function* (key: string) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const sourceThreadId = ThreadId.make(`image-fork-source:${key}`);
+  const forkThreadId = ThreadId.make(`image-fork-target:${key}`);
+  const attachment = imageAttachment(sourceThreadId, "screenshot.png");
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`image-fork-create:${key}`),
+    threadId: sourceThreadId,
+    projectId: ProjectId.make(`image-fork-project:${key}`),
+    title: "Image source",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  const runId = yield* writeCompletedUserRun({
+    threadId: sourceThreadId,
+    key,
+    ordinal: 1,
+    attachments: [attachment],
+  });
+  yield* orchestrator.dispatch({
+    type: "thread.fork",
+    commandId: CommandId.make(`image-fork-fork:${key}`),
+    sourceThreadId,
+    targetThreadId: forkThreadId,
+    sourcePoint: { type: "run", runId },
+    createdBy: "user",
+    creationSource: "web",
+  });
+  return { sourceThreadId, forkThreadId, attachmentId: attachment.id };
+});
+
+const deleteThreadCleanup = Effect.fn("test.deleteThreadCleanup")(function* (threadId: ThreadId) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const commandId = CommandId.make(`image-fork-delete:${threadId}`);
+  yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId });
+  return yield* queuedAttachmentCleanup(commandId);
+});
+
+const queuedAttachmentCleanup = Effect.fn("test.queuedAttachmentCleanup")(function* (
+  commandId: CommandId,
+) {
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
+  return (yield* outbox.listByCommandId(commandId)).flatMap((effect) =>
+    effect.request.type === "attachment.cleanup" ? effect.request.attachmentIds : [],
+  );
+});
+
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
@@ -3164,6 +3289,122 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(projection.thread.modelSelection.model, "gpt-5.5");
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
+    }),
+  );
+
+  it.effect("deleting a source keeps what its live fork shows and releases later files", () =>
+    Effect.gen(function* () {
+      const { sourceThreadId, attachmentId } = yield* seedImagePromptRunFork("after-fork-run");
+      const later = imageAttachment(sourceThreadId, "later.png");
+      yield* writeCompletedUserRun({
+        threadId: sourceThreadId,
+        key: "after-fork-run-later",
+        ordinal: 2,
+        attachments: [later],
+      });
+      const cleaned = yield* deleteThreadCleanup(sourceThreadId);
+      assert.include(cleaned, later.id);
+      assert.notInclude(cleaned, attachmentId, "deleted an image its live fork still shows");
+    }),
+  );
+
+  it.effect("a fork of a fork keeps the file its grandparent shows until it is deleted", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { sourceThreadId, forkThreadId, attachmentId } =
+        yield* seedImagePromptRunFork("fork-chain");
+      const grandchildThreadId = ThreadId.make("image-fork-chain-grandchild");
+      const forkRunId = yield* writeCompletedUserRun({
+        threadId: forkThreadId,
+        key: "fork-chain-fork",
+        ordinal: 2,
+        attachments: [],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("image-fork-chain-fork-of-fork"),
+        sourceThreadId: forkThreadId,
+        targetThreadId: grandchildThreadId,
+        sourcePoint: { type: "run", runId: forkRunId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.notInclude(yield* deleteThreadCleanup(sourceThreadId), attachmentId);
+      assert.notInclude(yield* deleteThreadCleanup(forkThreadId), attachmentId);
+      assert.include(yield* deleteThreadCleanup(grandchildThreadId), attachmentId);
+    }),
+  );
+
+  it.effect("concurrently deleting a source and its last fork still cleans the shared file", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const { sourceThreadId, forkThreadId, attachmentId } =
+        yield* seedImagePromptRunFork("concurrent-delete");
+      const sourceRead = yield* Deferred.make<void>();
+      const releaseSource = yield* Deferred.make<void>();
+      const getThreadAttachmentIds = projectionStore.getThreadAttachmentIds;
+      const withDeletionLock = executor.withDeletionLock;
+      let deletionLockRequests = 0;
+      // The source's delete holds its read until the fork's delete has read too or is queued behind it.
+      const readSpy = vi
+        .spyOn(projectionStore, "getThreadAttachmentIds")
+        .mockImplementation((threadId) =>
+          getThreadAttachmentIds(threadId).pipe(
+            Effect.tap(() =>
+              threadId === sourceThreadId
+                ? Deferred.succeed(sourceRead, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseSource)),
+                  )
+                : Deferred.succeed(releaseSource, undefined),
+            ),
+          ),
+        );
+      const observeDeletionLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
+        (effect) =>
+          ++deletionLockRequests === 2
+            ? Deferred.succeed(releaseSource, undefined).pipe(
+                Effect.andThen(withDeletionLock(effect)),
+              )
+            : withDeletionLock(effect);
+      const lockSpy = vi
+        .spyOn(executor, "withDeletionLock")
+        .mockImplementation(observeDeletionLock);
+      const deleteSourceCommandId = CommandId.make("image-fork-concurrent-delete-source");
+      const deleteForkCommandId = CommandId.make("image-fork-concurrent-delete-fork");
+      yield* Effect.gen(function* () {
+        const deleteSource = yield* orchestrator
+          .dispatch({
+            type: "thread.delete",
+            commandId: deleteSourceCommandId,
+            threadId: sourceThreadId,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(sourceRead);
+        const deleteFork = yield* orchestrator
+          .dispatch({
+            type: "thread.delete",
+            commandId: deleteForkCommandId,
+            threadId: forkThreadId,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.join(deleteSource);
+        yield* Fiber.join(deleteFork);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            readSpy.mockRestore();
+            lockSpy.mockRestore();
+          }),
+        ),
+      );
+      assert.notInclude(yield* queuedAttachmentCleanup(deleteSourceCommandId), attachmentId);
+      assert.include(
+        yield* queuedAttachmentCleanup(deleteForkCommandId),
+        attachmentId,
+        "concurrent deletes of a source and its last fork leaked the shared image",
+      );
     }),
   );
 
