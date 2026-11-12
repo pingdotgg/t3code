@@ -44,4 +44,37 @@ describe("parseElicitationForm", () => {
       },
     );
   }
+
+  it("asks a choice with OpenCode's custom-answer companion as one question", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q0: {
+            type: "string",
+            title: "Button colour",
+            description: "Which colour should the button be?",
+            oneOf: [
+              { const: "Red", title: "Red", description: "Make the button red" },
+              { const: "Blue", title: "Blue", description: "Make the button blue" },
+            ],
+          },
+          q0_custom: {
+            type: "string",
+            title: "Button colour (other)",
+            description: "Type your own answer",
+          },
+        },
+        required: [],
+      },
+      "Questions",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => question.question),
+      ["Which colour should the button be?"],
+    );
+    assert.deepStrictEqual(form.content({ q0: "Red" }), { q0: "Red" });
+    assert.deepStrictEqual(form.content({ q0: "Purple" }), { q0_custom: "Purple" });
+  });
 });
