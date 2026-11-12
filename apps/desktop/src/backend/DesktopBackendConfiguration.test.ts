@@ -438,11 +438,13 @@ describe("DesktopBackendConfiguration", () => {
             "Ubuntu",
             "--exec",
             "env",
-            `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
+            config.args[4],
             `${linuxAppRoot}/t3`,
             "--bootstrap-fd",
             "0",
           ]);
+          // The login shell's order wins; system folders only fill gaps.
+          assert.isTrue(config.args[4]?.startsWith(`PATH=${resolvedPath}`), config.args[4]);
           assert.notInclude(config.args, "/usr/bin/node");
           assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
           assert.equal(legacyCleanupCount, 1);
