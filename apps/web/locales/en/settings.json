@@ -1,0 +1,8 @@
+{
+  "uiLocale": {
+    "label": "Interface language",
+    "description": "Choose the language for menus, labels, and descriptions across the app.",
+    "system": "System",
+    "change": "Change interface language"
+  }
+}

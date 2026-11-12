@@ -344,6 +344,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "ui-locale",
+    title: "Interface language",
+    to: "/settings/appearance",
+    searchTerms: ["language locale chinese english simplified system 中文 简体中文 界面语言"],
+  },
+  {
     id: "thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",
