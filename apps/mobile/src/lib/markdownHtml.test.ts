@@ -409,3 +409,9 @@ it("gives images that share a line with caption text their own paragraph", async
     },
   ]);
 });
+
+it("leaves a captioned image in place when its caption alone would open another block", () => {
+  for (const markdown of ["Title\n--- ![a](a.png)", "[id]: target.png ![a](a.png)"]) {
+    expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(markdown);
+  }
+});
