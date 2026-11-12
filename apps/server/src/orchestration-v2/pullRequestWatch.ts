@@ -61,8 +61,9 @@ export function evaluatePullRequestWatch(
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
+  const owedBefore = owedChecks;
+  const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
   if (checks.length > 0) {
-    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
     if (!approvalAnnounced && awaiting.length > 0) {
       changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
@@ -135,6 +136,18 @@ export function evaluatePullRequestWatch(
     } else if (settled && owed.length > 0) {
       changes.push({ kind: "checks-passed", count: checks.length, required: false });
       owedChecks = [];
+    }
+    // A failed gate never reports passed, so it owes one wake when the checks still running finish.
+    if (!passedNow && failed.length > 0) {
+      const unfinished = checks
+        .filter((check) => check.status === "pending" || check.status === "action-required")
+        .map((check) => check.name);
+      const holding = unfinished.length > 0 || awaitingApproval.length > 0;
+      if (!holding && owedBefore.length > 0 && newlyFailed.length === 0) {
+        changes.push({ kind: "checks-failed", failed });
+      }
+      const owing = newlyFailed.length > 0 || owedBefore.length > 0;
+      owedChecks = owing && holding ? [...unfinished, ...awaitingApproval] : [];
     }
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
