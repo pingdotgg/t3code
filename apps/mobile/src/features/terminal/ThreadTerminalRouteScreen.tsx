@@ -91,7 +91,11 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
-import { getKeyboardShowEpoch, subscribeKeyboardShowing } from "./terminalKeyboardShowing";
+import {
+  getKeyboardShowEpoch,
+  runWhenKeyboardSettles,
+  subscribeKeyboardShowing,
+} from "./terminalKeyboardShowing";
 
 function TerminalHeader(props: {
   readonly subtitle: string;
@@ -592,8 +596,7 @@ function ThreadTerminal(props: {
   const keyboardAnimation = useReanimatedKeyboardAnimation();
   const accessoryInset = isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0;
   const androidTerminalInsetStyle = useAnimatedStyle(() => ({
-    paddingBottom:
-      -keyboardAnimation.height.value + keyboardAnimation.progress.value * accessoryInset,
+    paddingBottom: -keyboardAnimation.height.value + accessoryInset,
   }));
 
   const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
@@ -676,7 +679,15 @@ function ThreadTerminal(props: {
         size,
       );
     }
-    terminalSessionDriver.reportGridSize(size);
+    // The view shrinks locally on every frame of the Android keyboard animation; the PTY
+    // only needs the size it settles at.
+    if (Platform.OS === "android") {
+      runWhenKeyboardSettles(terminalSessionDriver, () =>
+        terminalSessionDriver.reportGridSize(size),
+      );
+    } else {
+      terminalSessionDriver.reportGridSize(size);
+    }
   };
 
   const handleSelectTerminal = (nextTerminalId: string) => {
