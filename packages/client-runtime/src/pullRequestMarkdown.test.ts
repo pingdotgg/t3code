@@ -320,6 +320,17 @@ describe("media folds", () => {
     expect(splitPullRequestBody(body)[0]).toMatchObject(details);
   });
 
+  it("stops splitting deeply nested folds, keeping their media inside", () => {
+    const depth = 10_000;
+    const segments = splitPullRequestBody(
+      `${"<details>".repeat(depth)}\n${video}\n${"</details>".repeat(depth)}`,
+    );
+    expect(segments).toHaveLength(1);
+    let innermost = segments[0];
+    while (innermost?.kind === "details") innermost = innermost.segments[0];
+    expect(innermost).toMatchObject({ kind: "markdown", text: expect.stringContaining(video) });
+  });
+
   it("keeps a fold in a table cell inside the table", () => {
     const [table] = splitPullRequestBody(
       `<table>\n<tr><td>\n\n<details>\n\n${video}\n\n</details>\n\n</td></tr>\n</table>`,

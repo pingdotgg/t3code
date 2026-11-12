@@ -71,6 +71,8 @@ const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
 
 /** Bounded like `TABLE_MAX_LINES`, with room for a fold of captioned recordings. */
 const DETAILS_MAX_LINES = 256;
+/** Each level rescans its fold, so a body of thousands of nested tags would cost quadratic work. */
+const DETAILS_MAX_DEPTH = 8;
 const DETAILS_START_PATTERN = /^\s*<details\b/iu;
 const DETAILS_END_PATTERN = /<\/details\s*>\s*$/iu;
 const DETAILS_OPEN_PATTERN = /<details\b/giu;
@@ -122,7 +124,7 @@ type TableRows = ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
  * Cells of a table made only of rows and cells, or null when anything else is in it: a caption,
  * text between cells, a nested table. Cell contents are split on their own, so tables never nest.
  */
-function tableRows(html: string, htmlOffset: number): TableRows | null {
+function tableRows(html: string, htmlOffset: number, foldDepth: number): TableRows | null {
   const rows: PullRequestBodyTableCell[][] = [];
   let row: PullRequestBodyTableCell[] | null = null;
   let cell: { tag: string; contentStart: number } | null = null;
@@ -140,7 +142,7 @@ function tableRows(html: string, htmlOffset: number): TableRows | null {
         return null;
       row!.push({
         header: tag === "th",
-        segments: splitBodyAt(content, htmlOffset + cell.contentStart),
+        segments: splitBodyAt(content, htmlOffset + cell.contentStart, foldDepth),
       });
       cell = null;
     } else {
@@ -175,6 +177,7 @@ function mediaTableAt(
   lines: ReadonlyArray<string>,
   start: number,
   startOffset: number,
+  foldDepth: number,
 ): { end: number; rows: TableRows | null } {
   const lastCandidate = Math.min(start + TABLE_MAX_LINES, lines.length) - 1;
   let depth = 0;
@@ -188,7 +191,7 @@ function mediaTableAt(
   }
   if (depth !== 0 || !TABLE_END_PATTERN.test(lines[end]!)) return { end, rows: null };
   // Lifting attachment links out of a table's cells would tear the table apart.
-  const rows = tableRows(lines.slice(start, end + 1).join("\n"), startOffset);
+  const rows = tableRows(lines.slice(start, end + 1).join("\n"), startOffset, foldDepth);
   const hasMedia = rows?.some((cells) =>
     cells.some((cell) => cell.segments.some((segment) => segment.kind !== "markdown")),
   );
@@ -199,7 +202,12 @@ function mediaTableAt(
  * The fold opening at `start`, through its matching close, split on its own so lifted media
  * stays inside it. `end` is the last line looked at, as in `mediaTableAt`.
  */
-function mediaDetailsAt(lines: ReadonlyArray<string>, start: number, startOffset: number) {
+function mediaDetailsAt(
+  lines: ReadonlyArray<string>,
+  start: number,
+  startOffset: number,
+  foldDepth: number,
+) {
   const lastCandidate = Math.min(start + DETAILS_MAX_LINES, lines.length) - 1;
   let depth = 0;
   let openFence: string | null = null;
@@ -221,8 +229,15 @@ function mediaDetailsAt(lines: ReadonlyArray<string>, start: number, startOffset
   const close = DETAILS_END_PATTERN.exec(html)!;
   if (head === null || head[0].length > close.index) return { end, details: null };
   const innerStart = head[0].length;
-  const segments = splitBodyAt(html.slice(innerStart, close.index), startOffset + innerStart);
-  if (segments.every((segment) => segment.kind === "markdown")) return { end, details: null };
+  const segments = splitBodyAt(
+    html.slice(innerStart, close.index),
+    startOffset + innerStart,
+    foldDepth + 1,
+  );
+  // At the cap the content is not split, so the fold is kept whether or not it holds media.
+  if (foldDepth < DETAILS_MAX_DEPTH && segments.every((segment) => segment.kind === "markdown")) {
+    return { end, details: null };
+  }
   return {
     end,
     details: {
@@ -235,11 +250,19 @@ function mediaDetailsAt(lines: ReadonlyArray<string>, start: number, startOffset
 }
 
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
-  return splitBodyAt(body, 0);
+  return splitBodyAt(body, 0, 0);
 }
 
-/** `baseOffset` is where `body` starts in the whole body, so a table cell's edits write back. */
-function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullRequestBodySegment> {
+/**
+ * `baseOffset` is where `body` starts in the whole body, so a table cell's edits write back.
+ * Past `DETAILS_MAX_DEPTH` folds, nothing is lifted and the body stays markdown.
+ */
+function splitBodyAt(
+  body: string,
+  baseOffset: number,
+  foldDepth: number,
+): ReadonlyArray<PullRequestBodySegment> {
+  const lifts = foldDepth <= DETAILS_MAX_DEPTH;
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
   let markdownStart = 0;
@@ -271,13 +294,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     if (markdown.length === 0) markdownStart = lineStart;
     const fenced = openFence !== null;
     openFence = fenceAfter(line, openFence);
-    if (fenced || openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
+    if (!lifts || fenced || openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
       markdown.push(line);
       continue;
     }
 
     if (index > tableScannedThrough && TABLE_START_PATTERN.test(line)) {
-      const table = mediaTableAt(lines, index, lineStart);
+      const table = mediaTableAt(lines, index, lineStart, foldDepth);
       tableScannedThrough = table.end;
       if (table.rows !== null) {
         flushMarkdown();
@@ -288,7 +311,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     }
 
     if (index > detailsScannedThrough && DETAILS_START_PATTERN.test(line)) {
-      const { end, details } = mediaDetailsAt(lines, index, lineStart);
+      const { end, details } = mediaDetailsAt(lines, index, lineStart, foldDepth);
       detailsScannedThrough = end;
       if (details !== null) {
         flushMarkdown();
