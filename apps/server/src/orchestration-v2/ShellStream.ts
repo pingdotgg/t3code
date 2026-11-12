@@ -75,7 +75,7 @@ function buildActiveShellSnapshot(input: {
 type ShellTrimRow = Pick<
   OrchestrationV2ThreadShell,
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt"
->;
+> & { readonly hasRemoteTasks?: boolean };
 
 /**
  * What a subscriber's trims read across every active row. Computed from full shells or from the
@@ -84,6 +84,8 @@ type ShellTrimRow = Pick<
 interface ShellTrimFacts {
   readonly subagentParentIds: ReadonlySet<string>;
   readonly subagentThreadIds: Set<string>;
+  /** Only the store's index knows these; shells alone leave it empty. */
+  readonly remoteTaskParentIds: ReadonlySet<string>;
   /** Undefined when no thread is settled, so none is older. */
   readonly olderSettledBeforeMs: number | undefined;
   readonly olderSettledCounts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
@@ -94,8 +96,10 @@ const NEWEST_SETTLED_KEPT = 25;
 function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const subagentParentIds = new Set<string>();
   const subagentThreadIds = new Set<string>();
+  const remoteTaskParentIds = new Set<string>();
   const settledTimes: Array<number> = [];
   for (const row of rows) {
+    if (row.hasRemoteTasks === true) remoteTaskParentIds.add(row.id);
     if (row.lineage.relationshipToParent === "subagent") {
       subagentThreadIds.add(row.id);
       if (row.lineage.parentThreadId) subagentParentIds.add(row.lineage.parentThreadId);
@@ -121,6 +125,7 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   return {
     subagentParentIds,
     subagentThreadIds,
+    remoteTaskParentIds,
     olderSettledBeforeMs,
     olderSettledCounts: Array.from(counts, ([projectId, count]) => ({ projectId, count })),
   };
@@ -140,13 +145,14 @@ function hiddenChildAncestorIds(
 
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
-  facts: Pick<ShellTrimFacts, "subagentParentIds">,
+  facts: Pick<ShellTrimFacts, "subagentParentIds" | "remoteTaskParentIds">,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
       isLiveSubagentShell(thread) ||
-      facts.subagentParentIds.has(thread.id),
+      facts.subagentParentIds.has(thread.id) ||
+      facts.remoteTaskParentIds.has(thread.id),
   );
 }
 
@@ -156,7 +162,10 @@ function omitOlderSettledShellsWith(
     readonly snapshotSequence: number;
     readonly now: DateTime.Utc;
   },
-  facts: Pick<ShellTrimFacts, "olderSettledBeforeMs" | "olderSettledCounts">,
+  facts: Pick<
+    ShellTrimFacts,
+    "olderSettledBeforeMs" | "olderSettledCounts" | "remoteTaskParentIds"
+  >,
 ): {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly olderSettled: OrchestrationV2OlderSettledThreads;
@@ -170,7 +179,8 @@ function omitOlderSettledShellsWith(
       thread.pinnedAt != null ||
       (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
       isLiveSubagentShell(thread) ||
-      ancestorIds.has(thread.id),
+      ancestorIds.has(thread.id) ||
+      facts.remoteTaskParentIds.has(thread.id),
   );
   return {
     threads,
@@ -185,7 +195,8 @@ function omitOlderSettledShellsWith(
 /**
  * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
  * family instead. A child stays while it is live or the parent of another child, so the request
- * and working walks over shell rows never meet a gap in a nested chain.
+ * and working walks over shell rows never meet a gap in a nested chain. It also stays as the
+ * parent of a task in a linked environment, whose clients nest that task under it.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -214,8 +225,8 @@ export function activeShellRowsForSubscriber(
 /**
  * Opted-in snapshots keep the 25 newest settled top-level threads (and ties) and count the rest per
  * project in `olderSettled`; clients page them with `getOlderSettledThreads`. Older rows stay while
- * pinned, snoozed, live, or above a kept subagent or side chat, so walks over shell rows still find
- * them.
+ * pinned, snoozed, live, above a kept subagent or side chat, or the parent of a task in a linked
+ * environment, so walks over shell rows and other environments' tasks still find them.
  */
 export function omitOlderSettledShells(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
@@ -261,7 +272,10 @@ function shellSubscriberThreadIds(
   const subagents = index.filter(
     (entry) =>
       entry.lineage.relationshipToParent === "subagent" &&
-      (!options.omitIdleSubagents || entry.mayBeLive || facts.subagentParentIds.has(entry.id)),
+      (!options.omitIdleSubagents ||
+        entry.mayBeLive ||
+        entry.hasRemoteTasks ||
+        facts.subagentParentIds.has(entry.id)),
   );
   const ancestorIds = hiddenChildAncestorIds([
     ...subagents,
@@ -280,6 +294,7 @@ function shellSubscriberThreadIds(
           entry.pinnedAt != null ||
           entry.snoozedUntil != null ||
           entry.mayBeLive ||
+          entry.hasRemoteTasks ||
           ancestorIds.has(entry.id)
         ? [entry.id]
         : [],
