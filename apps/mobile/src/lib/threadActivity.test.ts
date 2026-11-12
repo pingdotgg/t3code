@@ -896,16 +896,20 @@ describe("buildThreadFeed", () => {
           projected(runless ? { ...item, runId: null } : item, position),
         ),
       );
-      const foldRunId = messageFoldRunId(feed, "message-middle");
-      expect(foldRunId, String(runless)).toBe(runless ? "runless:message-user" : runId);
       const ids = (expanded: ReadonlySet<RunId>) =>
         deriveThreadFeedPresentation(feed, null, expanded).map((entry) => entry.id);
+      const foldRunId = messageFoldRunId(
+        feed,
+        "message-middle",
+        deriveThreadFeedPresentation(feed, null, new Set()),
+      );
+      expect(foldRunId, String(runless)).toBe(runless ? "runless:message-user" : runId);
       expect(ids(new Set())).not.toContain("message-middle");
       expect(ids(new Set([foldRunId!]))).toContain("message-middle");
     }
-    expect(messageFoldRunId(buildThreadFeed([projected(userMessage(), 0)]), "message-user")).toBe(
-      null,
-    );
+    expect(
+      messageFoldRunId(buildThreadFeed([projected(userMessage(), 0)]), "message-user", []),
+    ).toBe(null);
   });
 
   it("folds progress messages while keeping the final assistant answer visible", () => {
@@ -1039,7 +1043,11 @@ describe("buildThreadFeed", () => {
         entry.type === "message" ? entry.id : entry.type,
       ),
     ).toEqual(["message-user", "run-fold", "message-steer", "run-fold", "message-assistant"]);
-    const foldRunId = messageFoldRunId(feed, "message-progress");
+    const foldRunId = messageFoldRunId(
+      feed,
+      "message-progress",
+      deriveThreadFeedPresentation(feed, null, new Set()),
+    );
     expect(
       deriveThreadFeedPresentation(feed, null, new Set([foldRunId!])).map((entry) =>
         entry.type === "message" ? entry.id : entry.type,
@@ -1053,6 +1061,17 @@ describe("buildThreadFeed", () => {
       "message-progress",
       "message-assistant",
     ]);
+
+    // Hiding tools leaves no output before the steer, so nothing splits there.
+    const hideAll = (expanded: ReadonlySet<RunId>) =>
+      deriveThreadFeedPresentation(feed, null, expanded, new Set(), null, false, undefined, {
+        toolCallVisibility: "hideAll",
+        revealedMessageId: null,
+      });
+    const hiddenToolsFoldRunId = messageFoldRunId(feed, "message-progress", hideAll(new Set()));
+    expect(hideAll(new Set([hiddenToolsFoldRunId!])).map((entry) => entry.id)).toContain(
+      "message-progress",
+    );
   });
 
   it("folds subagents while keeping created-thread and fork cards visible", () => {

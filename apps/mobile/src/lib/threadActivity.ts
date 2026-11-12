@@ -1058,29 +1058,34 @@ export function failedFeedRunIds(
 /**
  * The key a run fold uses for the message `entryId`: its run, or for an
  * imported message with no run, the runless key of the user message before
- * it. Null for user messages, which never fold.
+ * it, or the segment after its run's last steer when `presented` shows that
+ * fold. Null for user messages, which never fold.
  */
 export function messageFoldRunId(
   feed: ReadonlyArray<ThreadFeedEntry>,
   entryId: string,
+  presented: ReadonlyArray<{ readonly type: string; readonly runId?: RunId | null }>,
 ): RunId | null {
   let runlessKey: RunId | null = null;
-  const runsWithOutput = new Set<RunId>();
-  const steerFoldByRunId = new Map<RunId, RunId>();
+  const lastSteerIdByRunId = new Map<RunId, string>();
   for (const entry of feed) {
-    if (entry.type === "message" && entry.message.role === "user") {
+    if (entry.type !== "message") continue;
+    if (entry.message.role === "user") {
       if (entry.id === entryId) return null;
-      const steerRunId = isSteerMessage(entry.message) ? entry.message.runId : null;
-      if (steerRunId != null && runsWithOutput.has(steerRunId)) {
-        steerFoldByRunId.set(steerRunId, steerFoldRunId(steerRunId, entry.id));
+      if (isSteerMessage(entry.message) && entry.message.runId != null) {
+        lastSteerIdByRunId.set(entry.message.runId, entry.id);
       }
       runlessKey = entry.message.runId == null ? RunId.make(`runless:${entry.id}`) : null;
-      continue;
+    } else if (entry.id === entryId) {
+      const runId = entry.message.runId ?? runlessKey;
+      const steerId = runId === null ? undefined : lastSteerIdByRunId.get(runId);
+      if (runId === null || steerId === undefined) return runId;
+      // Tool visibility can drop all output before the steer, leaving no split.
+      const steerKey = steerFoldRunId(runId, steerId);
+      return presented.some((row) => row.type === "run-fold" && row.runId === steerKey)
+        ? steerKey
+        : runId;
     }
-    const ownRunId = feedEntryFoldRunId(entry, runlessKey);
-    if (ownRunId === null) continue;
-    if (entry.id === entryId) return steerFoldByRunId.get(ownRunId) ?? ownRunId;
-    runsWithOutput.add(ownRunId);
   }
   return null;
 }
