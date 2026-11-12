@@ -744,6 +744,26 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a server started without the desktop browser channel marks its tabs headless", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
+    }),
+  ).pipe(
+    // A WSL-only desktop starts its backend without the browser fds.
+    Effect.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provide(DesktopChannel.layer),
+        Layer.provideMerge(dependencies),
+      ),
+    ),
+  ),
+);
+
 it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -797,6 +817,17 @@ it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop"
 
       expect(sessions.find((session) => session.tabId === tabId)?.headless).toBeUndefined();
       expect(desktopConnections).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+// Playwright emulates a light color scheme on every page it attaches to.
+it.effect("a desktop tab left on the system appearance clears Playwright's light emulation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { context } = yield* openDesktopViewer;
+
+      expect(context.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: null });
     }),
   ).pipe(Effect.provide(layer)),
 );
