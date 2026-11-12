@@ -278,6 +278,7 @@ describe("PreviewView", () => {
     await expect.element(input).toHaveFocus();
     await expect.element(input).toHaveValue("https://example.com/pinyin");
     expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(true);
   });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
