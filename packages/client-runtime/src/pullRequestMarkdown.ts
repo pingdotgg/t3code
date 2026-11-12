@@ -19,6 +19,14 @@ export type PullRequestBodySegment =
       readonly id: string;
       readonly kind: "table";
       readonly rows: ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "details";
+      readonly open: boolean;
+      /** Plain text, with its HTML entities still encoded. */
+      readonly summary: string;
+      readonly segments: ReadonlyArray<PullRequestBodySegment>;
     };
 
 type PullRequestBodyTableCell = {
@@ -60,6 +68,31 @@ const TABLE_STRUCTURE_TAG_PATTERN =
   /<(\/?)(table|thead|tbody|tfoot|tr|td|th)\b((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
 /** Rows are laid out independently, so a spanning cell would shift the cells after it. */
 const CELL_SPAN_PATTERN = /\b(?:col|row)span\b/iu;
+
+/** Bounded like `TABLE_MAX_LINES`, with room for a fold of captioned recordings. */
+const DETAILS_MAX_LINES = 256;
+const DETAILS_START_PATTERN = /^\s*<details\b/iu;
+const DETAILS_END_PATTERN = /<\/details\s*>\s*$/iu;
+const DETAILS_OPEN_PATTERN = /<details\b/giu;
+const DETAILS_CLOSE_PATTERN = /<\/details\s*>/giu;
+/** The opening tag, then the summary when it comes first. Quoted values may hold `>`. */
+const DETAILS_HEAD_PATTERN =
+  /^\s*<details\b((?:[^<>"']|"[^"]*"|'[^']*')*)>(?:\s*<summary\b(?:[^<>"']|"[^"]*"|'[^']*')*>([\s\S]*?)<\/summary\s*>)?/iu;
+
+/**
+ * The fence open after `line`. A fence closes only on the same marker, at least as long as the
+ * one that opened it, and with nothing after it: `~~~` cannot end a ``` block, and
+ * ```` ```ts ```` is an info string opening a nested fence, not a close.
+ */
+function fenceAfter(line: string, openFence: string | null): string | null {
+  const match = FENCE_PATTERN.exec(line);
+  if (match === null) return openFence;
+  const fence = match[1]!;
+  if (openFence === null) return fence;
+  const closes =
+    fence[0] === openFence[0] && fence.length >= openFence.length && match[2]!.trim().length === 0;
+  return closes ? null : openFence;
+}
 
 function isWebUrl(url: string): boolean {
   try {
@@ -157,9 +190,48 @@ function mediaTableAt(
   // Lifting attachment links out of a table's cells would tear the table apart.
   const rows = tableRows(lines.slice(start, end + 1).join("\n"), startOffset);
   const hasMedia = rows?.some((cells) =>
-    cells.some((cell) => cell.segments.some((segment) => segment.kind === "attachment")),
+    cells.some((cell) => cell.segments.some((segment) => segment.kind !== "markdown")),
   );
   return { end, rows: hasMedia ? rows : null };
+}
+
+/**
+ * The fold opening at `start`, through its matching close, split on its own so lifted media
+ * stays inside it. `end` is the last line looked at, as in `mediaTableAt`.
+ */
+function mediaDetailsAt(lines: ReadonlyArray<string>, start: number, startOffset: number) {
+  const lastCandidate = Math.min(start + DETAILS_MAX_LINES, lines.length) - 1;
+  let depth = 0;
+  let openFence: string | null = null;
+  let end = start;
+  for (; ; end += 1) {
+    const line = lines[end]!;
+    const fenced = openFence !== null;
+    openFence = fenceAfter(line, openFence);
+    if (!fenced && openFence === null) {
+      depth +=
+        (line.match(DETAILS_OPEN_PATTERN)?.length ?? 0) -
+        (line.match(DETAILS_CLOSE_PATTERN)?.length ?? 0);
+    }
+    if (depth <= 0 || end === lastCandidate) break;
+  }
+  if (depth !== 0 || !DETAILS_END_PATTERN.test(lines[end]!)) return { end, details: null };
+  const html = lines.slice(start, end + 1).join("\n");
+  const head = DETAILS_HEAD_PATTERN.exec(html);
+  const close = DETAILS_END_PATTERN.exec(html)!;
+  if (head === null || head[0].length > close.index) return { end, details: null };
+  const innerStart = head[0].length;
+  const segments = splitBodyAt(html.slice(innerStart, close.index), startOffset + innerStart);
+  if (segments.every((segment) => segment.kind === "markdown")) return { end, details: null };
+  return {
+    end,
+    details: {
+      // Quoted values are blanked so `title="is open"` does not count as the attribute.
+      open: /\sopen\b/iu.test(head[1]!.replace(/"[^"]*"|'[^']*'/gu, '""')),
+      summary: (head[2] ?? "").replace(/<[^>]*>/gu, "").trim(),
+      segments,
+    },
+  };
 }
 
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
@@ -192,30 +264,14 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
 
   const lines = body.split("\n");
   let tableScannedThrough = -1;
+  let detailsScannedThrough = -1;
   let lineStart = baseOffset;
   for (let index = 0; index < lines.length; lineStart += lines[index]!.length + 1, index += 1) {
     const line = lines[index]!;
     if (markdown.length === 0) markdownStart = lineStart;
-    const fenceMatch = FENCE_PATTERN.exec(line);
-    if (fenceMatch !== null) {
-      const fence = fenceMatch[1]!;
-      // A fence closes only on the same marker, at least as long as the one that opened it,
-      // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
-      // info string opening a nested fence, not a close.
-      const closes =
-        openFence !== null &&
-        fence[0] === openFence[0] &&
-        fence.length >= openFence.length &&
-        fenceMatch[2]!.trim().length === 0;
-      if (openFence === null) {
-        openFence = fence;
-      } else if (closes) {
-        openFence = null;
-      }
-      markdown.push(line);
-      continue;
-    }
-    if (openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
+    const fenced = openFence !== null;
+    openFence = fenceAfter(line, openFence);
+    if (fenced || openFence !== null || INDENTED_CODE_PATTERN.test(line)) {
       markdown.push(line);
       continue;
     }
@@ -227,6 +283,17 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
         flushMarkdown();
         segments.push({ id: `table:${segments.length}`, kind: "table", rows: table.rows });
         for (; index < table.end; index += 1) lineStart += lines[index]!.length + 1;
+        continue;
+      }
+    }
+
+    if (index > detailsScannedThrough && DETAILS_START_PATTERN.test(line)) {
+      const { end, details } = mediaDetailsAt(lines, index, lineStart);
+      detailsScannedThrough = end;
+      if (details !== null) {
+        flushMarkdown();
+        segments.push({ id: `details:${segments.length}`, kind: "details", ...details });
+        for (; index < end; index += 1) lineStart += lines[index]!.length + 1;
         continue;
       }
     }

@@ -7,6 +7,7 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { decodeHTMLStrict } from "entities";
 import { createContext, useContext } from "react";
 import type { PluggableList } from "unified";
 
@@ -15,6 +16,7 @@ import { cn } from "~/lib/utils";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
+import { MarkdownDetails } from "../chat/MarkdownDetails";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
 
@@ -111,6 +113,26 @@ function PullRequestBodySegmentView({
           </div>
         ))}
       </div>
+    );
+  }
+  if (segment.kind === "details") {
+    return (
+      <MarkdownDetails open={segment.open}>
+        <summary>{decodeHTMLStrict(segment.summary)}</summary>
+        <div className="space-y-3">
+          {segment.segments.map((detailsSegment) => (
+            <PullRequestBodySegmentView
+              key={detailsSegment.id}
+              segment={detailsSegment}
+              cwd={cwd}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              lineBreaks={lineBreaks}
+              onTaskListChange={onTaskListChange}
+            />
+          ))}
+        </div>
+      </MarkdownDetails>
     );
   }
   if (segment.kind === "markdown" || segment.media === "image") {

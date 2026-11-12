@@ -29,7 +29,7 @@ describe("pull request body segmentation", () => {
 
   it("places each prose run at its offset in the body, including inside a media table", () => {
     const body =
-      '\n\n- [ ] Before\r\n\nhttps://example.com/shot.png\n\n\n<video controls>\n  <source src="https://example.com/a.mp4">\n</video>\n    - [ ] code\n- [x] After\n\r\n<table>\r\n<tr><td>\r\n\r\n- [ ] In a cell\r\n\r\n</td><td>\r\n\r\nhttps://example.com/b.mp4\r\n\r\n</td></tr>\r\n</table>\r\n- [ ] Last\n';
+      '\n\n- [ ] Before\r\n\nhttps://example.com/shot.png\n\n\n<video controls>\n  <source src="https://example.com/a.mp4">\n</video>\n    - [ ] code\n- [x] After\n\r\n<table>\r\n<tr><td>\r\n\r\n- [ ] In a cell\r\n\r\n</td><td>\r\n\r\nhttps://example.com/b.mp4\r\n\r\n</td></tr>\r\n</table>\r\n<details>\r\n<summary>Demo</summary>\r\n\r\n- [ ] In a fold\r\n\r\nhttps://example.com/c.mp4\r\n\r\n</details>\r\n- [ ] Last\n';
     type Prose = Extract<PullRequestBodySegment, { kind: "markdown" }>;
     const prose = (segments: ReadonlyArray<PullRequestBodySegment>): Prose[] =>
       segments.flatMap((segment) =>
@@ -37,13 +37,16 @@ describe("pull request body segmentation", () => {
           ? [segment]
           : segment.kind === "table"
             ? segment.rows.flat().flatMap((cell) => prose(cell.segments))
-            : [],
+            : segment.kind === "details"
+              ? prose(segment.segments)
+              : [],
       );
     const runs = prose(splitPullRequestBody(body));
     expect(runs.map((segment) => segment.text)).toEqual([
       "- [ ] Before",
       "    - [ ] code\n- [x] After",
       "- [ ] In a cell",
+      "- [ ] In a fold",
       "- [ ] Last",
     ]);
     for (const segment of runs) {
@@ -265,6 +268,83 @@ describe("media tables", () => {
           ]
         : []),
     ]);
+  });
+});
+
+describe("media folds", () => {
+  const video = "https://example.com/a.mp4";
+  const other = "https://example.com/b.mp4";
+
+  // regression: #34766, collapsing the fold left its videos and the captions after them showing
+  it("keeps videos and their captions inside the fold they were written in", () => {
+    const body = `Intro\n\n<details open>\n<summary>Videos</summary>\n\nCaption one\n\n${video}\n\nCaption two\n\n${other}\n\n</details>\n\nOutro`;
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "Intro", sourceOffset: 0 },
+      {
+        id: "details:1",
+        kind: "details",
+        open: true,
+        summary: "Videos",
+        segments: [
+          { id: "markdown:0", kind: "markdown", text: "Caption one", sourceOffset: 49 },
+          { id: "attachment:1", kind: "attachment", url: video, media: "video" },
+          { id: "markdown:2", kind: "markdown", text: "Caption two", sourceOffset: 89 },
+          { id: "attachment:3", kind: "attachment", url: other, media: "video" },
+        ],
+      },
+      { id: "markdown:2", kind: "markdown", text: "Outro", sourceOffset: 141 },
+    ]);
+  });
+
+  it.each([
+    [
+      "its summary on the opening line, with markup",
+      `<details title="not open"><summary><b>Demo</b> &amp; notes</summary>\n\n${video}\n</details>`,
+      { open: false, summary: "Demo &amp; notes", segments: [{ kind: "attachment" }] },
+    ],
+    [
+      "a fold nested in it",
+      `<details>\n<summary>Outer</summary>\n\n<details>\n<summary>Inner</summary>\n\n${video}\n\n</details>\n\n</details>`,
+      { summary: "Outer", segments: [{ kind: "details", summary: "Inner" }] },
+    ],
+    [
+      "a closing tag in fenced code",
+      `<details>\n\n\`\`\`html\n</details>\n\`\`\`\n\n${video}\n\n</details>`,
+      {
+        summary: "",
+        segments: [{ kind: "markdown", text: "```html\n</details>\n```" }, { kind: "attachment" }],
+      },
+    ],
+  ])("lifts a fold with %s whole", (_name, body, details) => {
+    expect(splitPullRequestBody(body)).toEqual([expect.objectContaining({ kind: "details" })]);
+    expect(splitPullRequestBody(body)[0]).toMatchObject(details);
+  });
+
+  it("keeps a fold in a table cell inside the table", () => {
+    const [table] = splitPullRequestBody(
+      `<table>\n<tr><td>\n\n<details>\n\n${video}\n\n</details>\n\n</td></tr>\n</table>`,
+    );
+    expect(table).toMatchObject({
+      kind: "table",
+      rows: [[{ segments: [{ kind: "details", segments: [{ kind: "attachment" }] }] }]],
+    });
+  });
+
+  it("leaves a fold without media as markdown", () => {
+    const body = "<details>\n<summary>Logs</summary>\n\nAll green\n\n</details>";
+    expect(splitPullRequestBody(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it.each([
+    ["an unclosed fold", "<details>\n<summary>Videos</summary>", ""],
+    ["text after its closing tag", "<details>", "</details> trailing"],
+  ])("splits a fold with %s line by line, as before", (_name, open, close) => {
+    const body = `${open}\n\n${video}\n\n${close}`;
+    expect(splitPullRequestBody(body).map((segment) => segment.kind)).toEqual(
+      close ? ["markdown", "attachment", "markdown"] : ["markdown", "attachment"],
+    );
   });
 });
 
