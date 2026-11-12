@@ -1018,10 +1018,20 @@ describe("buildThreadFeed", () => {
       inputIntent: "steer" as const,
     };
     const after = { ...command("2026-06-20T00:00:06.000Z"), id: TurnItemId.make("item-after") };
+    const progress = {
+      ...assistantMessage("2026-06-20T00:00:07.000Z"),
+      id: TurnItemId.make("item-progress"),
+      messageId: MessageId.make("message-progress"),
+    };
     const feed = buildThreadFeed(
-      [userMessage(), command(), steer, after, assistantMessage("2026-06-20T00:00:09.000Z")].map(
-        (item, position) => projected(item, position),
-      ),
+      [
+        userMessage(),
+        command(),
+        steer,
+        after,
+        progress,
+        assistantMessage("2026-06-20T00:00:09.000Z"),
+      ].map((item, position) => projected(item, position)),
     );
 
     expect(
@@ -1029,6 +1039,20 @@ describe("buildThreadFeed", () => {
         entry.type === "message" ? entry.id : entry.type,
       ),
     ).toEqual(["message-user", "run-fold", "message-steer", "run-fold", "message-assistant"]);
+    const foldRunId = messageFoldRunId(feed, "message-progress");
+    expect(
+      deriveThreadFeedPresentation(feed, null, new Set([foldRunId!])).map((entry) =>
+        entry.type === "message" ? entry.id : entry.type,
+      ),
+    ).toEqual([
+      "message-user",
+      "run-fold",
+      "message-steer",
+      "run-fold",
+      "activity-group",
+      "message-progress",
+      "message-assistant",
+    ]);
   });
 
   it("folds subagents while keeping created-thread and fork cards visible", () => {
