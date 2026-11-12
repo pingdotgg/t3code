@@ -508,6 +508,20 @@ describe("mobile composer drafts", () => {
       expect(recallComposerText(combinedMessage.text, combinedMessage.context)).toBe(
         " another draft \n\n  original\n",
       );
+      const legacy = { text: combined.text, attachments: [] };
+      const deduplicated = mergeComposerDraftContentState(
+        { thread: legacy },
+        "thread",
+        restored,
+      ).thread!;
+      const retriedMessage = serializeComposerMessageForServer(
+        deduplicated.text,
+        deduplicated.context,
+      );
+      expect(deduplicated.text).toBe(legacy.text);
+      expect(recallComposerText(retriedMessage.text, retriedMessage.context)).toBe(
+        "another draft\n\n  original\n",
+      );
       appAtomRegistry.set(composerDraftsAtom, recovered);
       setComposerDraftText("thread", text);
       const unchanged = getComposerDraftSnapshot("thread");

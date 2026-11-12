@@ -1705,25 +1705,19 @@ function stripAttachmentUploadReference(
   return rest;
 }
 
-function mergeComposerDraftText(existing: string, incoming: string): string {
-  if (incoming.length === 0) {
-    return existing;
-  }
-  if (existing.length === 0) {
-    return incoming;
-  }
-  if (existing === incoming || existing.endsWith(`\n\n${incoming}`)) {
-    return existing;
-  }
-  return `${existing}\n\n${incoming}`;
-}
-
 function mergeComposerDraftPrompt(
   existing: Pick<ComposerDraft, "text" | "context">,
   incoming: Pick<ComposerDraftContent, "text" | "context">,
   options?: { readonly preferExistingRecords?: boolean },
 ) {
-  const text = mergeComposerDraftText(existing.text, incoming.text);
+  const suffix = `\n\n${incoming.text}`;
+  const deduplicatedSuffix = incoming.text.length > 0 && existing.text.endsWith(suffix);
+  let text = existing.text;
+  if (text.length === 0) {
+    text = incoming.text;
+  } else if (incoming.text.length > 0 && text !== incoming.text && !deduplicatedSuffix) {
+    text += suffix;
+  }
   const [first, second] = options?.preferExistingRecords
     ? [incoming.context, existing.context]
     : [existing.context, incoming.context];
@@ -1733,10 +1727,8 @@ function mergeComposerDraftPrompt(
     records.size === 0
       ? undefined
       : referencedComposerContext(text, { version: 1, records: [...records.values()] });
-  if (
-    existing.context?.composerRecall === undefined &&
-    incoming.context?.composerRecall === undefined
-  ) {
+  const previousRecall = existing.context?.composerRecall;
+  if (previousRecall === undefined && incoming.context?.composerRecall === undefined) {
     return { text, context };
   }
 
@@ -1744,13 +1736,11 @@ function mergeComposerDraftPrompt(
   const added = recallComposerText(incoming.text, incoming.context);
   // Keep recall aligned with the text merge, including a retried restoration of the same text.
   let recalled = previous;
-  if (
-    text === incoming.text &&
-    (text !== existing.text || existing.context?.composerRecall === undefined)
-  ) {
+  if (text === incoming.text && (text !== existing.text || previousRecall === undefined)) {
     recalled = added;
-  } else if (text !== existing.text) {
-    recalled = [previous, added].filter((part) => part.length > 0).join("\n\n");
+  } else if (text !== existing.text || (deduplicatedSuffix && previousRecall === undefined)) {
+    const prefix = deduplicatedSuffix ? existing.text.slice(0, -suffix.length) : previous;
+    recalled = [prefix, added].filter((part) => part.length > 0).join("\n\n");
   }
   return { text, context: composerRecallContext(text, recalled, context) };
 }
@@ -1793,7 +1783,7 @@ export function mergeComposerDraftContentState(
     // The composer shows non-image files only as inline chips, so a shared file
     // merged without one would be attached but invisible until sent. Other
     // merges carry their own text, and appending chips to it would defeat
-    // mergeComposerDraftText's duplicate check on a retried merge.
+    // the duplicate text check on a retried merge.
     [draftKey]: restoreMissingComposerFileReferences(
       {
         ...existing,
