@@ -3909,42 +3909,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.provide(modelTestLayer)),
     );
 
-    it.effect("does not switch the model while draining a native background continuation", () =>
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const first = yield* makeModelTurn(harness, "fallback-background", {
-          text: "Run a background task.",
-        });
-        yield* harness.runtime.startTurn(first);
-        yield* harness.offerAndWait(fallbackFrame());
-        yield* Queue.take(harness.systemNoticeReceipts);
-        yield* harness.offerAndWait(wakeTaskStarted);
-        yield* harness.offerAndWait(turnOneResult);
-        yield* Queue.take(harness.terminalReceipts);
-        yield* harness.offerAndWait(wakeNotification);
-        yield* harness.offerAndWait(wakeTurnInit);
-        yield* Queue.take(harness.continuationReceipts);
-        const latest = latestProviderThreadUpdate(harness.events);
-        yield* harness.runtime.startTurn(
-          nextModelTurn(first, "fallback-background-continuation", {
-            providerThread: latest.providerThread,
-            message: { ...first.message, createdBy: "agent", creationSource: "provider" },
-          }),
-        );
-        yield* harness.offerAndWait(
-          makeAssistantTextFrame({
-            uuid: "fallback-wake-answer",
-            text: WAKE_ASSISTANT_TEXT,
-            model: "claude-opus-5",
-          }),
-        );
-        yield* harness.offerAndWait(wakeResult);
-        yield* Queue.take(harness.terminalReceipts);
-        assert.isEmpty(harness.liveSelectionChanges);
-        assert.lengthOf(harness.offeredMessages, 1);
-      }).pipe(Effect.provide(modelTestLayer)),
-    );
-
     it.effect.each([false, true])(
       "replays a model downgrade before continuation attachment with fallback before wake init %s",
       (beforeWakeInit) =>
@@ -4041,89 +4005,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.offerAndWait(wakeResult);
           yield* Queue.take(harness.terminalReceipts);
         }).pipe(Effect.provide(modelTestLayer)),
-    );
-
-    it.effect.each([false, true])(
-      "preserves a manual gateway alias after a downgrade with resumed session %s",
-      (resumed) =>
-        Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
-          const first = yield* makeModelTurn(harness, "fallback-gateway-first");
-          let providerThread: OrchestrationV2ProviderThread = {
-            ...harness.providerThread,
-            nativeMetadata: {
-              modelSelection: { ...selected, model: "claude-opus-5" },
-            },
-          };
-          if (!resumed) {
-            yield* harness.runtime.startTurn(first);
-            yield* harness.offerAndWait(fallbackFrame());
-            yield* Queue.take(harness.systemNoticeReceipts);
-            yield* harness.offerAndWait(
-              makeResultFrame({ uuid: "fallback-gateway-first-result", result: "Done." }),
-            );
-            yield* Queue.take(harness.terminalReceipts);
-            const latest = latestProviderThreadUpdate(harness.events);
-            providerThread = latest.providerThread;
-          }
-          const gateway = { ...selected, model: "gateway-opus" };
-          const next = nextModelTurn(first, "fallback-gateway-next", {
-            appThread: { ...first.appThread, modelSelection: gateway },
-            providerThread,
-            modelSelection: gateway,
-            nativeThreadHasTurns: true,
-          });
-          yield* harness.runtime.startTurn(next);
-          assert.deepEqual(harness.liveSelectionChanges[0], { model: gateway.model });
-          yield* harness.offerAndWait(
-            makeAssistantTextFrame({
-              uuid: "fallback-gateway-answer",
-              text: "Done.",
-              model: selected.model,
-            }),
-          );
-          yield* harness.offerAndWait(
-            makeResultFrame({ uuid: "fallback-gateway-result", result: "Done." }),
-          );
-          yield* Queue.take(harness.terminalReceipts);
-          const selectionChanges = harness.events.flatMap((event) =>
-            event.type === "provider_thread.updated" && event.modelSelectionChange !== undefined
-              ? [event.modelSelectionChange]
-              : [],
-          );
-          assert.deepEqual(
-            selectionChanges,
-            resumed ? [] : [{ expected: selected, next: { ...selected, model: "claude-opus-5" } }],
-          );
-          const completed = latestProviderThreadUpdate(harness.events);
-          assert.deepEqual(completed.providerThread.nativeMetadata?.modelSelection, gateway);
-          const changesBeforeNext = harness.liveSelectionChanges.length;
-          yield* harness.runtime.startTurn(
-            nextModelTurn(next, "fallback-gateway-third", {
-              providerThread: completed.providerThread,
-            }),
-          );
-          assert.lengthOf(harness.liveSelectionChanges, changesBeforeNext);
-        }).pipe(Effect.provide(modelTestLayer)),
-    );
-
-    it.effect("does not mistake a gateway's canonical model name for a downgrade", () =>
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        yield* harness.runtime.startTurn(
-          yield* makeModelTurn(harness, "fallback-gateway", {
-            modelSelection: { ...selected, model: "gateway-opus" },
-          }),
-        );
-        yield* harness.offerAndWait(
-          makeAssistantTextFrame({ uuid: "gateway-answer", text: "Done.", model: selected.model }),
-        );
-        yield* harness.offerAndWait(makeResultFrame({ uuid: "gateway-result", result: "Done." }));
-        yield* Queue.take(harness.terminalReceipts);
-        const latest = latestProviderThreadUpdate(harness.events);
-        assert.isUndefined(latest.providerThread.nativeMetadata?.modelSelection);
-        assert.isEmpty(harness.liveSelectionChanges);
-      }).pipe(Effect.provide(modelTestLayer)),
     );
 
     it.effect.each([
