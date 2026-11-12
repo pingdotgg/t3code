@@ -76,13 +76,13 @@ export type SheetMethods = {
   >;
   /** Makes a sheet the active one; rejects, leaving the sheet before it active, when it cannot open. */
   readonly show: Method<{ readonly sheet: number }, SheetLayout>;
-  /** Preview-only sizes in CSS pixels; the source file is never saved. */
+  /** Preview-only size changes in CSS pixels; the source file is never saved. */
   readonly resize: Method<
     {
       readonly sheet: number;
       readonly axis: "row" | "column";
       readonly index: number;
-      readonly size: number;
+      readonly delta: number;
     },
     SheetInfo
   >;

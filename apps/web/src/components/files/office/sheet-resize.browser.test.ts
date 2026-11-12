@@ -30,12 +30,32 @@ it.each([false, true])(
         bytes,
         view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
       });
+      if (frozen) {
+        const viewport = {
+          sheet: 0,
+          width: 400,
+          height: 200,
+          ratio: 1,
+          offset: { x: 0, y: 0 },
+          wider: undefined,
+        };
+        const clipped = await client.call("frame", { ...viewport, x: 32, y: 10 });
+        expect(clipped!.grid!.colOffsets[2]! - clipped!.grid!.colOffsets[1]!).toBeCloseTo(32, 0);
+        expect(clipped!.grid!.rowOffsets[2]! - clipped!.grid!.rowOffsets[1]!).toBeCloseTo(10, 0);
+        clipped!.bitmap.close();
+        await client.call("resize", { sheet: 0, axis: "column", index: 2, delta: 1 });
+        await client.call("resize", { sheet: 0, axis: "row", index: 2, delta: 1 });
+        const resized = await client.call("frame", { ...viewport, x: 0, y: 0 });
+        expect(resized!.grid!.colOffsets[2]! - resized!.grid!.colOffsets[1]!).toBeCloseTo(65, 0);
+        expect(resized!.grid!.rowOffsets[2]! - resized!.grid!.rowOffsets[1]!).toBeCloseTo(21, 0);
+        resized!.bitmap.close();
+      }
       const other = await client.call("position", { sheet: 1, cell: { row: 0, col: 0 } });
-      await client.call("resize", { sheet: 0, axis: "column", index: 0, size: 145 });
-      await client.call("resize", { sheet: 0, axis: "row", index: 0, size: 60 });
+      await client.call("resize", { sheet: 0, axis: "column", index: 0, delta: 81 });
+      await client.call("resize", { sheet: 0, axis: "row", index: 0, delta: 40 });
       await expect(
-        client.call("resize", { sheet: 0, axis: "row", index: 0, size: maximumTrackSize.row + 1 }),
-      ).rejects.toThrow("Invalid track size");
+        client.call("resize", { sheet: 0, axis: "row", index: 0, delta: NaN }),
+      ).rejects.toThrow("Invalid track resize");
       expect(await client.call("position", { sheet: 1, cell: { row: 0, col: 0 } })).toEqual(other);
       await client.call("show", { sheet: 1 });
       await client.call("show", { sheet: 0 });
@@ -66,6 +86,21 @@ it.each([false, true])(
         expect(frame?.grid?.rowIndices).not.toContain(1);
       }
       frame?.bitmap.close();
+      await client.call("resize", { sheet: 0, axis: "column", index: 0, delta: 10_000 });
+      await client.call("resize", { sheet: 0, axis: "row", index: 0, delta: -10_000 });
+      const limited = await client.call("frame", {
+        sheet: 0,
+        x: 0,
+        y: 0,
+        width: 2000,
+        height: 200,
+        ratio: 1,
+        offset: { x: 0, y: 0 },
+        wider: undefined,
+      });
+      expect(limited!.grid!.colOffsets[1]).toBeCloseTo(maximumTrackSize.column, 0);
+      expect(limited!.grid!.rowOffsets[1]).toBeCloseTo(16, 0);
+      limited!.bitmap.close();
     } finally {
       client.close();
     }

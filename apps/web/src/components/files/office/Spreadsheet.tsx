@@ -34,7 +34,6 @@ import {
   type Painted,
 } from "./sheet-paint";
 import { externalUrl } from "./links";
-import { maximumTrackSize, minimumTrackSize } from "./sheet-sizing";
 import { bufferedViewport, cachedViewport } from "./sheet-viewport";
 
 const isSupersededError = Schema.is(SupersededError);
@@ -200,9 +199,8 @@ function SpreadsheetGrid(props: {
           axis: "row" | "column";
           index: number;
           start: number;
-          size: number;
           edge: number;
-          next: number;
+          delta: number;
         }
       | undefined;
     let resizingPending = false;
@@ -333,7 +331,7 @@ function SpreadsheetGrid(props: {
       });
       paintHeaders(context, { grid, ratio, headers, width, height, selected: range() });
       if (resizing) {
-        const edge = resizing.edge + resizing.next - resizing.size;
+        const edge = resizing.edge + resizing.delta;
         context.save();
         context.setTransform(ratio, 0, 0, ratio, 0, 0);
         context.strokeStyle = "#217346";
@@ -455,8 +453,7 @@ function SpreadsheetGrid(props: {
             axis,
             index: indices?.[i - 1] ?? start + i - 1,
             start: axis === "column" ? event.clientX : event.clientY,
-            size,
-            next: size,
+            delta: 0,
             edge,
           } satisfies NonNullable<typeof resizing>;
       }
@@ -497,12 +494,7 @@ function SpreadsheetGrid(props: {
     const pointerMove = (event: PointerEvent) => {
       if (resizing) {
         const point = resizing.axis === "column" ? event.clientX : event.clientY;
-        resizing.next = Math.round(
-          Math.max(
-            minimumTrackSize,
-            Math.min(maximumTrackSize[resizing.axis], resizing.size + point - resizing.start),
-          ),
-        );
+        resizing.delta = Math.round(point - resizing.start);
         schedule();
         return;
       }
@@ -525,13 +517,13 @@ function SpreadsheetGrid(props: {
         root.style.cursor = "";
         root.releasePointerCapture(event.pointerId);
         schedule();
-        if (track.next === track.size) return;
+        if (track.delta === 0) return;
         resizingPending = true;
         setNotice("Resizing preview...");
         void engine
           .call(
             "resize",
-            { sheet, axis: track.axis, index: track.index, size: track.next },
+            { sheet, axis: track.axis, index: track.index, delta: track.delta },
             { signal: controller.signal },
           )
           .then((nextInfo) => {

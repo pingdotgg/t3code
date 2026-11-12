@@ -85,15 +85,23 @@ serveWorker<SheetMethods>({
       !Number.isInteger(input.index) ||
       input.index < 0 ||
       input.index > (input.axis === "row" ? lastCell.row : lastCell.col) ||
-      !Number.isFinite(input.size) ||
-      input.size < minimumTrackSize ||
-      input.size > maximumTrackSize[input.axis]
+      !Number.isFinite(input.delta)
     )
-      throw new Error("Invalid track size");
+      throw new Error("Invalid track resize");
+    const rect = opened.workbook.cellRect(
+      input.sheet,
+      input.axis === "row" ? input.index : 0,
+      input.axis === "column" ? input.index : 0,
+    );
+    const current = input.axis === "column" ? rect.w : rect.h;
+    const size = Math.max(
+      minimumTrackSize,
+      Math.min(maximumTrackSize[input.axis], current + input.delta),
+    );
     const operation =
       input.axis === "column"
-        ? { type: "setColWidth", sheet: input.sheet, col: input.index, width: (input.size - 5) / 7 }
-        : { type: "setRowHeight", sheet: input.sheet, row: input.index, height: input.size * 0.75 };
+        ? { type: "setColWidth", sheet: input.sheet, col: input.index, width: (size - 5) / 7 }
+        : { type: "setRowHeight", sheet: input.sheet, row: input.index, height: size * 0.75 };
     opened.info = opened.workbook.applyOps([operation]).sheetInfo;
     opened.ends.clear();
     return opened.info;
