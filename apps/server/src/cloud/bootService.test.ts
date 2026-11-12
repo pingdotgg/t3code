@@ -1328,7 +1328,8 @@ process.disconnect();
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, baseDir, statePath, commands, timeouts } = yield* makeHarness("darwin");
+      const { service, makeService, fs, baseDir, statePath, commands, timeouts } =
+        yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const launcherDir = path.join(baseDir, "runtime", "service");
       const plan = yield* service.install();
@@ -1356,7 +1357,8 @@ process.disconnect();
       expect((yield* service.status).current).toBe(false);
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
-      expect(yield* service.uninstall).toBe(true);
+      const otherHome = yield* makeService(undefined, "1.2.3", path.join(baseDir, "other-home"));
+      expect(yield* otherHome.uninstall).toBe(true);
       expect(yield* fs.exists(launcherDir)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
