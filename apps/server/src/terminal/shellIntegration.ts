@@ -60,21 +60,41 @@ builtin typeset -ga precmd_functions
 precmd_functions+=(__t3code_mark_prompt)
 `;
 
-const BASH_RCFILE = `# T3 Code starts bash with --rcfile pointing here, in place of ~/.bashrc.
-# --rcfile only works for a non-login shell, so where T3 Code wants a login
-# shell (macOS) this reads the files a login shell would have instead.
-if [[ -n "$T3CODE_BASH_LOGIN" ]]; then
-  builtin unset T3CODE_BASH_LOGIN
-  if [[ -r /etc/profile ]]; then builtin source /etc/profile; fi
-  for __t3code_rc in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
-    if [[ -r "$__t3code_rc" ]]; then
-      builtin source "$__t3code_rc"
-      break
-    fi
-  done
+const BASH_RCFILE = `# T3 Code starts bash in POSIX mode with ENV pointing here, as Ghostty's shell
+# integration does. A POSIX-mode shell reads only this file, so it turns POSIX
+# mode off and reads the startup files bash would have read. A login shell
+# stays one: \`shopt login_shell\` is on and ~/.bash_logout runs on exit.
+if [[ -n "$T3CODE_BASH_INJECT" ]]; then
+  builtin unset ENV T3CODE_BASH_INJECT
+  if [[ -n "$T3CODE_BASH_ENV" ]]; then
+    builtin export ENV="$T3CODE_BASH_ENV"
+    builtin unset T3CODE_BASH_ENV
+  fi
+  builtin set +o posix
+  builtin shopt -u inherit_errexit 2>/dev/null
+  if [[ -n "$T3CODE_BASH_UNEXPORT_HISTFILE" ]]; then
+    builtin export -n HISTFILE
+    builtin unset T3CODE_BASH_UNEXPORT_HISTFILE
+  fi
+  if builtin shopt -q login_shell; then
+    if [[ -r /etc/profile ]]; then builtin source /etc/profile; fi
+    for __t3code_rc in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+      if [[ -r "$__t3code_rc" ]]; then
+        builtin source "$__t3code_rc"
+        break
+      fi
+    done
+  else
+    # Where bash reads a system bashrc depends on how it was built.
+    for __t3code_rc in /etc/bash.bashrc /etc/bash/bashrc /etc/bashrc; do
+      if [[ -r "$__t3code_rc" ]]; then
+        builtin source "$__t3code_rc"
+        break
+      fi
+    done
+    if [[ -r "$HOME/.bashrc" ]]; then builtin source "$HOME/.bashrc"; fi
+  fi
   builtin unset __t3code_rc
-elif [[ -r "$HOME/.bashrc" ]]; then
-  builtin source "$HOME/.bashrc"
 fi
 
 # Mark the prompt's last line with OSC 133, the only line bash draws again
@@ -136,12 +156,14 @@ export const writeShellIntegration = Effect.fn("TerminalShellIntegration.write")
 });
 
 export function withShellIntegration(input: {
+  readonly shell: string;
   readonly shellName: string;
+  readonly platform: NodeJS.Platform;
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
   readonly paths: ShellIntegrationPaths;
 }): { readonly args: ReadonlyArray<string>; readonly env: NodeJS.ProcessEnv } {
-  const { shellName, args, env, paths } = input;
+  const { shell, shellName, platform, args, env, paths } = input;
   if (shellName === "zsh") {
     return {
       args,
@@ -152,13 +174,31 @@ export function withShellIntegration(input: {
       },
     };
   }
-  if (shellName === "bash") {
-    // bash ignores --rcfile in a login shell; the rcfile reads the login files instead.
-    const login = args.includes("-l");
+  if (shellName === "bash" && bashReadsEnvInPosixMode(shell, platform)) {
+    const home = env.HOME;
+    // T3 Code starts bash with no arguments or with -l; anything else is left as it is.
+    if (home === undefined || args.some((arg) => arg !== "-l")) return { args, env };
     return {
-      args: [...args.filter((arg) => arg !== "-l"), "--rcfile", paths.bashRcfile],
-      env: login ? { ...env, T3CODE_BASH_LOGIN: "1" } : env,
+      // bash takes long options only before short ones such as -l.
+      args: ["--posix", ...args],
+      env: {
+        ...env,
+        ENV: paths.bashRcfile,
+        T3CODE_BASH_INJECT: "1",
+        ...(env.ENV === undefined ? {} : { T3CODE_BASH_ENV: env.ENV }),
+        // POSIX mode would keep history in ~/.sh_history.
+        ...(env.HISTFILE === undefined
+          ? { HISTFILE: `${home}/.bash_history`, T3CODE_BASH_UNEXPORT_HISTFILE: "1" }
+          : {}),
+      },
     };
   }
   return { args, env };
+}
+
+// Apple's bash 3.2 in /bin/bash doesn't read ENV in POSIX mode, so it would start
+// without the user's files. As in Ghostty, it starts as before, and so does a bare
+// "bash" on macOS, which may resolve to it.
+function bashReadsEnvInPosixMode(shell: string, platform: NodeJS.Platform): boolean {
+  return platform !== "darwin" || (shell.startsWith("/") && shell !== "/bin/bash");
 }

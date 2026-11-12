@@ -2403,7 +2403,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       shellIntegration === null || platform === "win32"
         ? { args: candidate.args ?? [], env: spawnEnv }
         : withShellIntegration({
+            shell: candidate.shell,
             shellName: basenameForPlatform(candidate.shell, platform).toLowerCase(),
+            platform,
             args: candidate.args ?? [],
             env: spawnEnv,
             paths: shellIntegration,

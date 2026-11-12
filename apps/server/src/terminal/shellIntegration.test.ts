@@ -14,17 +14,26 @@ const PROMPT_START = "\u001b]133;A;redraw=1\u0007";
 const PROMPT_LINE_START = "\u001b]133;P;k=i\u0007";
 const INPUT_START = "\u001b]133;I\u0007";
 const PATH = process.env.PATH;
+const PLATFORM = HostProcess.Platform.defaultValue();
 
 const installed = (shell: string) =>
-  HostProcess.Platform.defaultValue() !== "win32" &&
-  NodeChildProcess.spawnSync(shell, ["-c", "true"]).status === 0;
+  PLATFORM !== "win32" && NodeChildProcess.spawnSync(shell, ["-c", "true"]).status === 0;
 
-const bashMajor = installed("bash")
-  ? Number(
-      NodeChildProcess.spawnSync("bash", ["-c", "echo ${BASH_VERSINFO[0]}"], { encoding: "utf8" })
-        .stdout,
-    )
-  : 0;
+// The bash on PATH, by its full path, as T3 Code would start it from $SHELL.
+const bash = installed("bash")
+  ? NodeChildProcess.spawnSync("bash", ["-c", 'command -v "$0"', "bash"], {
+      encoding: "utf8",
+    }).stdout.trim()
+  : "";
+const bashMajor =
+  bash === ""
+    ? 0
+    : Number(
+        NodeChildProcess.spawnSync(bash, ["-c", "echo ${BASH_VERSINFO[0]}"], { encoding: "utf8" })
+          .stdout,
+      );
+// macOS /bin/bash starts without integration; see bashReadsEnvInPosixMode.
+const bashIntegrated = bashMajor >= 4 && (PLATFORM !== "darwin" || bash !== "/bin/bash");
 
 // An interactive shell reading piped commands still prints each prompt to stderr.
 const runInteractive = (input: {
@@ -66,21 +75,27 @@ describe("terminal shell integration", () => {
         const result = runInteractive({
           shell: "zsh",
           launch: withShellIntegration({
+            shell: "zsh",
             shellName: "zsh",
+            platform: PLATFORM,
             args: ["-o", "nopromptsp"],
             env: { PATH, HOME: home, ZDOTDIR: zdotdir },
             paths,
           }),
-          commands: 'print -r -- "$FROM_ZSHENV $FROM_ZSHRC $ZDOTDIR"\n',
+          commands: 'print -r -- "FROM=$FROM_ZSHENV $FROM_ZSHRC $ZDOTDIR"\n',
         });
-        expect(result.stdout).toBe(`1 1 ${zdotdir}\n`);
+        // The host's own startup files can print too; look for this test's line.
+        expect(result.stdout).toContain(`FROM=1 1 ${zdotdir}\n`);
         expect(result.stderr).toContain(`${PROMPT_START}themed % ${INPUT_START}`);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  // Host startup files load first and may set a prompt command of their own, so the
+  // user's files clear it, as a user's own prompt setup would.
   const bashFixture = fixture({
-    ".bash_profile": "FROM=profile\nPS1='top\\nlast\\$ '\n",
-    ".bashrc": "FROM=bashrc\nPS1='rc\\$ '\n",
+    ".bash_profile": "unset PROMPT_COMMAND\nFROM=profile\nPS1='top\\nlast\\$ '\n",
+    ".bashrc": "unset PROMPT_COMMAND\nFROM=bashrc\nPS1='rc\\$ '\n",
+    ".bash_logout": "echo FROM=logout\n",
   });
   const runBash = (input: {
     readonly paths: Parameters<typeof withShellIntegration>[0]["paths"];
@@ -88,25 +103,36 @@ describe("terminal shell integration", () => {
     readonly login: boolean;
   }) =>
     runInteractive({
-      shell: "bash",
+      shell: bash,
       launch: withShellIntegration({
+        shell: bash,
         shellName: "bash",
+        platform: PLATFORM,
         args: input.login ? ["-l"] : [],
         env: { PATH, HOME: input.home },
         paths: input.paths,
       }),
-      commands: 'echo "$FROM"\n',
+      commands:
+        'echo "FROM=$FROM"\n' +
+        "shopt -q login_shell && echo LOGIN=on || echo LOGIN=off\n" +
+        "shopt -qo posix && echo POSIX=on || echo POSIX=off\n",
     });
 
-  it.live.skipIf(!installed("bash"))("bash reads the files it would have read", () =>
-    Effect.gen(function* () {
-      const { home, paths } = yield* bashFixture;
-      expect(runBash({ paths, home, login: true }).stdout).toBe("profile\n");
-      expect(runBash({ paths, home, login: false }).stdout).toBe("bashrc\n");
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.live.skipIf(!bashIntegrated)(
+    "bash keeps its login mode and reads the files it would have read",
+    () =>
+      Effect.gen(function* () {
+        const { home, paths } = yield* bashFixture;
+        const login = runBash({ paths, home, login: true }).stdout;
+        expect(login).toContain("FROM=profile\nLOGIN=on\nPOSIX=off\n");
+        expect(login).toContain("FROM=logout\n");
+        const nonLogin = runBash({ paths, home, login: false }).stdout;
+        expect(nonLogin).toContain("FROM=bashrc\nLOGIN=off\nPOSIX=off\n");
+        expect(nonLogin).not.toContain("FROM=logout");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live.skipIf(bashMajor < 4)("bash 4 and later mark only the last line of the prompt", () =>
+  it.live.skipIf(!bashIntegrated)("bash marks only the last line of the prompt", () =>
     Effect.gen(function* () {
       const { home, paths } = yield* bashFixture;
       expect(runBash({ paths, home, login: true }).stderr).toContain(
@@ -118,12 +144,39 @@ describe("terminal shell integration", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live.skipIf(bashMajor !== 3)("bash 3 leaves its prompt unmarked", () =>
-    Effect.gen(function* () {
-      const { home, paths } = yield* bashFixture;
-      const stderr = runBash({ paths, home, login: false }).stderr;
-      expect(stderr).toContain("rc$ ");
-      expect(stderr).not.toContain("\u001b]133;");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+  it("macOS starts /bin/bash and a bare bash as before", () => {
+    const paths = { zdotdir: "/t3/zsh", bashRcfile: "/t3/bash/t3code.bash" };
+    const env = { HOME: "/home/user" };
+    for (const shell of ["/bin/bash", "bash"]) {
+      expect(
+        withShellIntegration({
+          shell,
+          shellName: "bash",
+          platform: "darwin",
+          args: ["-l"],
+          env,
+          paths,
+        }),
+      ).toEqual({ args: ["-l"], env });
+    }
+    expect(
+      withShellIntegration({
+        shell: "/opt/homebrew/bin/bash",
+        shellName: "bash",
+        platform: "darwin",
+        args: ["-l"],
+        env,
+        paths,
+      }),
+    ).toEqual({
+      args: ["--posix", "-l"],
+      env: {
+        HOME: "/home/user",
+        ENV: "/t3/bash/t3code.bash",
+        T3CODE_BASH_INJECT: "1",
+        HISTFILE: "/home/user/.bash_history",
+        T3CODE_BASH_UNEXPORT_HISTFILE: "1",
+      },
+    });
+  });
 });
