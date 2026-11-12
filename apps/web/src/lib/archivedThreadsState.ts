@@ -71,10 +71,12 @@ export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentI
 /**
  * The most recently archived threads, a page at a time, for the archive view. Pages span every
  * project, so a view filtered to some projects passes `paged: false` and reads the whole archive.
+ * While tags are hidden it reads the whole archive too: the tag filter hides a task whose parent
+ * is not loaded, and a page can leave the parent out.
  */
 export function useArchivedThreadPages(
   environmentIds: ReadonlyArray<EnvironmentId>,
-  { paged }: { readonly paged: boolean },
+  options: { readonly paged: boolean },
 ): {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly error: string | null;
@@ -83,6 +85,8 @@ export function useArchivedThreadPages(
   readonly loadMore: () => void;
   readonly refresh: () => void;
 } {
+  const hidingTags = useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
+  const paged = options.paged && !hidingTags;
   const environmentKey = makeArchivedThreadsEnvironmentKey(environmentIds);
   const result = useAtomValue(
     paged ? archivedPagesAtom(environmentKey) : archivedSnapshotsAtom(environmentKey),
