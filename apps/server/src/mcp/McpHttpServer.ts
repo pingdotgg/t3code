@@ -16,6 +16,7 @@ import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effec
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
+  type EnvironmentId,
   OrchestratorMcpFailure,
   PreviewAutomationError,
   ProviderInteractionMode,
@@ -1169,6 +1170,81 @@ const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(f
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, advertisingServer));
 });
 
+/**
+ * Ids are only valid on their own environment, so every result of a tool
+ * that can run in a linked one names the environment that answered, and an
+ * omitted `environmentId` cannot pass for another machine's answer. A linked
+ * peer's call is left as it was: the environment that forwarded it says that.
+ */
+const withAnsweringEnvironment = Effect.fn("McpHttpServer.withAnsweringEnvironment")(function* <
+  Tools extends Record<string, Tool.Any>,
+  A,
+  E,
+  R,
+>(toolkit: Toolkit.Toolkit<Tools>, registration: Effect.Effect<A, E, R>) {
+  const server = yield* McpServer.McpServer;
+  const tools: Record<string, Tool.Any> = toolkit.tools;
+  const answeringServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      const tool = tools[options.tool.name];
+      if (tool === undefined || !McpToolAccess.takesLinkedEnvironment(tool))
+        return server.addTool(options);
+      return server.addTool({
+        ...options,
+        handle: (payload) =>
+          Effect.withFiber((fiber) => {
+            const scope = Context.getOrUndefined(
+              fiber.context,
+              McpInvocationContext.McpInvocationContext,
+            );
+            const requested = Predicate.hasProperty(payload, "environmentId")
+              ? payload.environmentId
+              : undefined;
+            if (scope === undefined || scope.client?.linked === true)
+              return options.handle(payload);
+            const answeredBy =
+              typeof requested === "string" ? (requested as EnvironmentId) : scope.environmentId;
+            return options.handle(payload).pipe(
+              // A failure may come from here even when a link was asked, so it says where itself.
+              Effect.map((result) =>
+                isCallToolResult(result) && result.isError !== true
+                  ? stampAnsweringEnvironment(
+                      result,
+                      answeredBy,
+                      answeredBy === scope.environmentId,
+                    )
+                  : result,
+              ),
+            );
+          }),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, answeringServer));
+});
+
+const isCallToolResult = Schema.is(McpSchema.CallToolResult);
+
+const stampAnsweringEnvironment = (
+  result: McpSchema.CallToolResult,
+  environmentId: EnvironmentId,
+  thisEnvironment: boolean,
+) => {
+  const structured = result.structuredContent;
+  if (!Predicate.isObject(structured) || Array.isArray(structured)) return result;
+  const stamped = { ...structured, answeredBy: { environmentId, thisEnvironment } };
+  const [only, ...rest] = result.content;
+  // Clients that read only the text parse it as this same JSON, so it stays one object.
+  const mirrorsStructured =
+    rest.length === 0 && only?.type === "text" && only.text === encodeJsonText(structured);
+  return new McpSchema.CallToolResult({
+    ...result,
+    structuredContent: stamped,
+    content: mirrorsStructured ? [{ type: "text", text: encodeJsonText(stamped) }] : result.content,
+  });
+};
+
 /** Hands each call the services its registration was built with; the request's own still win. */
 const provideRegistrationServices = <Services>() =>
   McpServer.middleware<{ provides: Services }>()(
@@ -1193,7 +1269,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   Layer.effectDiscard(
     withToolAnalytics(
       withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        withAnsweringEnvironment(
+          toolkit,
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(

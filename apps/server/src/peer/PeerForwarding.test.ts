@@ -474,6 +474,7 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
         runId: boxRun,
         status: "completed",
         timedOut: false,
+        answeredBy: { environmentId: box.environmentId, thisEnvironment: false },
       });
       // Three pieces of at most 50 s each, the later ones pinned to the run
       // the first one found.

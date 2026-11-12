@@ -1334,8 +1334,11 @@ it.effect("hides tools for links and refuses another environment while the beta 
             ),
           ),
         );
-      const ranIn = (where: EnvironmentId) =>
-        rpc("tools/call", { name: "where", arguments: { environmentId: where } }).pipe(
+      const ranIn = (where: EnvironmentId | undefined) =>
+        rpc("tools/call", {
+          name: "where",
+          arguments: where === undefined ? {} : { environmentId: where },
+        }).pipe(
           Effect.map(
             (body) =>
               (
@@ -1356,14 +1359,31 @@ it.effect("hides tools for links and refuses another environment while the beta 
         isError: true,
         content: [{ text: expect.stringContaining("Linked environments is off on this machine") }],
       });
-      expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
+      const answeredHere = {
+        structuredContent: {
+          ranIn: "here",
+          answeredBy: { environmentId, thisEnvironment: true },
+        },
+        content: [
+          {
+            text: JSON.stringify({
+              ranIn: "here",
+              answeredBy: { environmentId, thisEnvironment: true },
+            }),
+          },
+        ],
+      };
+      expect(yield* ranIn(environmentId)).toMatchObject(answeredHere);
+      expect(yield* ranIn(undefined)).toMatchObject(answeredHere);
 
       yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
       expect(yield* listed()).toEqual(["links", "where"]);
       // On, the call goes on to the forwarding, which this server lacks.
-      expect(yield* ranIn(elsewhere)).toMatchObject({
+      expect(yield* ranIn(elsewhere)).toEqual({
         isError: true,
-        content: [{ text: expect.stringContaining("cannot reach linked environments") }],
+        content: [
+          { type: "text", text: expect.stringContaining("cannot reach linked environments") },
+        ],
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

@@ -390,7 +390,7 @@ const checkedHandlers = <Handlers>(declarations: Declarations<Handlers>): Handle
  * as `environmentId`. Other tools may name an environment for their own
  * reasons, such as the one to link or to move a thread to.
  */
-const takesLinkedEnvironment = (tool: Tool.Any) => {
+export const takesLinkedEnvironment = (tool: Tool.Any) => {
   const parameters: unknown = tool.parametersSchema;
   return (
     Predicate.hasProperty(parameters, "fields") &&
