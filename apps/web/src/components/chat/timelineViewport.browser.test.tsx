@@ -80,7 +80,7 @@ describe("attachTimelineViewport", () => {
     expect(sources).toEqual(["command", "command"]);
   });
 
-  it("does not report a click on the scroller's empty padding as a scrollbar press", async () => {
+  it("reports a scrollbar press but not a click on the scroller's empty padding", async () => {
     await using screen = await render(
       <div
         data-testid="timeline"
@@ -96,8 +96,14 @@ describe("attachTimelineViewport", () => {
     viewport.subscribe((navigation) => navigations.push(navigation));
 
     await userEvent.click(screen.getByTestId("timeline"), { position: { x: 10, y: 150 } });
+    await userEvent.click(screen.getByTestId("timeline"), {
+      position: { x: timeline.offsetWidth - 2, y: 150 },
+    });
 
-    expect(navigations).toEqual([{ source: "pointer", onScrollbar: false }]);
+    expect(navigations).toEqual([
+      { source: "pointer", onScrollbar: false },
+      { source: "pointer", onScrollbar: true },
+    ]);
     viewport.dispose();
   });
 });
