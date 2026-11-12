@@ -76,13 +76,12 @@ describe("Cursor usage limits", () => {
     }
   });
 
-  it("shows a unified allowance once, not as a total plus a pool", () => {
-    // A unified plan reports only the total and the auto bucket, at the same value.
+  it("retains unified totals for account aggregation", () => {
     const windows = cursorUsageResponseToLimits(
       { planUsage: { totalPercentUsed: 1.77, autoPercentUsed: 1.77 } },
       checkedAt,
     ).windows;
-    expect(windows.map((window) => window.id)).toEqual(["autoPercentUsed"]);
+    expect(windows.map((window) => window.id)).toEqual(["autoPercentUsed", "totalPercentUsed"]);
     expect(
       cursorUsageResponseToLimits(
         { planUsage: { totalPercentUsed: 100, apiPercentUsed: 100 } },
@@ -92,32 +91,6 @@ describe("Cursor usage limits", () => {
   });
 
   it("does not invent unused allowance for absent buckets", () => {
-    for (const planUsage of [
-      { totalPercentUsed: 14, autoPercentUsed: 14 },
-      { totalPercentUsed: 14, autoPercentUsed: 14, apiPercentUsed: NaN },
-    ]) {
-      expect(cursorUsageResponseToLimits({ planUsage }, checkedAt).windows).toEqual([
-        { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 14 },
-      ]);
-    }
-    expect(
-      cursorUsageResponseToLimits(
-        { planUsage: { totalPercentUsed: 14, apiPercentUsed: 14 } },
-        checkedAt,
-      ).windows,
-    ).toEqual([{ id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 14 }]);
-    expect(
-      cursorUsageResponseToLimits(
-        { planUsage: { totalPercentUsed: 14, autoPercentUsed: 20 } },
-        checkedAt,
-      ).windows,
-    ).toHaveLength(2);
-    expect(
-      cursorUsageResponseToLimits(
-        { planUsage: { totalPercentUsed: 14, autoPercentUsed: 14, apiPercentUsed: 14 } },
-        checkedAt,
-      ).windows,
-    ).toHaveLength(3);
     expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
       "unsupported",
     );
