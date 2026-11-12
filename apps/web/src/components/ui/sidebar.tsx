@@ -634,6 +634,9 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
     <main
       className={cn(
         "relative flex min-w-0 w-full flex-1 flex-col bg-background surface-grain",
+        // Settings or Usage shown as a page (a plugin's `app.pageFrame`) hides the thread kept
+        // mounted under it.
+        "has-[~_[data-app-route-page]]:hidden",
         "md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-2 md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ms-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm/5",
         className,
       )}
