@@ -13242,12 +13242,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               live.selection.apiModelId !== selection.apiModelId ||
               !canApplyClaudeSelectionLive(live.selection, selection)
             ) {
-              return;
+              return false;
             }
             // A failed update clears the live identity, so the next turn applies the selection again.
-            yield* applySelectionLive(live, selection).pipe(
+            return yield* applySelectionLive(live, selection).pipe(
+              Effect.as(true),
               Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.claude-live-selection-failed", { cause }),
+                Effect.logWarning("orchestration-v2.claude-live-selection-failed", { cause }).pipe(
+                  Effect.as(false),
+                ),
               ),
             );
           }),

@@ -659,6 +659,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
     case "thread.interrupt.unresponsive":
+    case "run.model-selection.applied":
     case "thread.stop":
     case "provider.switch":
       return command.threadId;
@@ -4874,16 +4875,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       !providerSwitchPlan.instanceChanged &&
       providerSwitchPlan.releaseProviderSessionIds.length === 0
     ) {
-      const { run, providerThread, providerTurn } = yield* projectionStore
+      const { providerThread, providerTurn } = yield* projectionStore
         .getRunningTurnContext(command.threadId)
         .pipe(mapDispatchError(command));
       const providerSessionId = providerThread?.providerSessionId;
-      if (
-        run !== undefined &&
-        providerThread !== undefined &&
-        providerTurn !== undefined &&
-        providerSessionId
-      ) {
+      if (providerThread !== undefined && providerTurn !== undefined && providerSessionId) {
         const session = yield* providerSessions.get(providerSessionId).pipe(
           Effect.mapError(
             (cause) =>
@@ -4895,18 +4891,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
         if (Option.isSome(session) && session.value.applyModelSelection !== undefined) {
-          // The running run now runs at the new selection; task_status reads it from here.
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "run.updated",
-            threadId: command.threadId,
-            runId: run.id,
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: now,
-            payload: { ...run, modelSelection: command.modelSelection },
-          });
           yield* Ref.update(effects, (existing) => [
             ...existing,
             {
@@ -12264,6 +12248,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchRunModelSelectionApplied = Effect.fn(
+    "Orchestrator.dispatchRunModelSelectionApplied",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "run.model-selection.applied" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const { runs } = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs"])
+      .pipe(mapDispatchError(command));
+    const run = runs.find((candidate) => candidate.id === command.runId);
+    if (run === undefined || modelSelectionsEqual(run.modelSelection, command.modelSelection)) {
+      return;
+    }
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "run.updated",
+      threadId: command.threadId,
+      runId: run.id,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: yield* DateTime.now,
+      payload: { ...run, modelSelection: command.modelSelection },
+    });
+  });
+
   const dispatchBackgroundWorkSettle = Effect.fn("Orchestrator.dispatchBackgroundWorkSettle")(
     function* (
       command: Extract<
@@ -14674,6 +14687,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interrupt.unresponsive":
         yield* dispatchInterruptUnresponsive(command, events);
         break;
+      case "run.model-selection.applied":
+        yield* dispatchRunModelSelectionApplied(command, events);
+        break;
       case "thread.fork":
         yield* dispatchThreadFork(command, events);
         break;
@@ -14819,6 +14835,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
+          command.type === "run.model-selection.applied" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.

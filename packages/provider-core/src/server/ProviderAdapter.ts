@@ -705,11 +705,14 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly steerTurn: (
     input: ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
-  /** Applies a thread's new selection to its running process where the provider can; otherwise it waits for the next turn. */
+  /**
+   * Applies a thread's new selection to its running process where the provider can; otherwise it
+   * waits for the next turn. Returns whether the running process now runs at it.
+   */
   readonly applyModelSelection?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly modelSelection: ModelSelection;
-  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  }) => Effect.Effect<boolean, ProviderAdapterV2Error>;
   readonly stopTask?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly taskId: string;

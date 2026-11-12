@@ -3605,6 +3605,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     requestId: RuntimeRequestId,
   }),
+  /** The provider applied `modelSelection` to run `runId` while it was running. */
+  Schema.Struct({
+    type: Schema.Literal("run.model-selection.applied"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    modelSelection: ModelSelection,
+  }),
   /** The provider did not confirm a Stop of this turn in time. */
   Schema.Struct({
     type: Schema.Literal("thread.interrupt.unresponsive"),

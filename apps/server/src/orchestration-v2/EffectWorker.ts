@@ -141,15 +141,27 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-session.apply-model-selection":
+          case "provider-session.apply-model-selection": {
+            const { modelSelection } = effect.request;
             return providerTurnControl
               .applyModelSelection({
                 threadId: effect.threadId,
                 providerSessionId: effect.request.providerSessionId,
                 providerThreadId: effect.request.providerThreadId,
-                modelSelection: effect.request.modelSelection,
+                modelSelection,
               })
               .pipe(
+                Effect.flatMap((runId) =>
+                  runId === undefined
+                    ? Effect.void
+                    : threads.dispatch({
+                        type: "run.model-selection.applied",
+                        commandId: CommandId.make(`${effect.id}:applied`),
+                        threadId: effect.threadId,
+                        runId,
+                        modelSelection,
+                      }),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
@@ -159,6 +171,7 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          }
           case "provider-turn.start":
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })

@@ -582,6 +582,24 @@ it.effect("applies an effort change to the running Claude query without waiting 
         yield* Fiber.join(running);
         assert.deepEqual(flagSettings, []);
 
+        // A model change waits for the next turn, so the running run keeps its selection.
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make("opus"),
+          threadId,
+          modelSelection: {
+            ...modelSelection,
+            model: "claude-opus-4-6",
+            options: [{ id: "effort", value: "medium" }],
+          },
+        });
+        yield* worker.drain();
+        assert.deepEqual(flagSettings, []);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.modelSelection,
+          high,
+        );
+
         yield* orchestrator.dispatch({
           type: "thread.model-selection.set",
           commandId: CommandId.make("medium"),
