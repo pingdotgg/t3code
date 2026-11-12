@@ -1111,7 +1111,8 @@ const make = Effect.gen(function* () {
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
         if (yield* branchChanged(worktreePath, thread.branch)) {
-          yield* followBranch(worktreePath);
+          // A deleted owner cannot follow, so its remaining subagents stay on its branch.
+          if (!deleted) yield* followBranch(worktreePath);
           return keep("repository or branch changed");
         }
         const changes = yield* localChangesReason(worktreePath, settings);

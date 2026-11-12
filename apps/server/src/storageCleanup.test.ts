@@ -1219,6 +1219,28 @@ describe("deleted thread worktrees", () => {
       }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
+  it.effect("leaves a deleted owner's subagent on the owner's saved branch", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture({
+        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+        worktreeAfterDays: null,
+        worktreeOnDelete: true,
+      });
+      const owner = parent(fixture.worktree);
+      fixture.setDeletedThreads([owner]);
+      fixture.setThreads([subagent(owner)]);
+      yield* fixture.command(fixture.worktree, ["switch", "-c", "renamed"]);
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        threadId: owner.id,
+        outcome: "kept",
+        reason: "Repository or branch changed",
+      });
+      // The deleted owner cannot follow, so moving its subagent would split their records.
+      expect(fixture.threadBranches()).toEqual(["feature"]);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
   it.effect("applies the remaining subagent's rules when deletion cleanup is off", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);
