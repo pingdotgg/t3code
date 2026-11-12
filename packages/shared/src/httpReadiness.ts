@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
 
@@ -38,6 +38,10 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
   readonly timeoutMs?: number;
   readonly intervalMs?: number;
   readonly probeTimeoutMs?: number;
+  /** Returning false rejects an OK response as a failed probe, retried like any other. */
+  readonly validateResponse?: (
+    response: HttpClientResponse.HttpClientResponse,
+  ) => Effect.Effect<boolean>;
   readonly makeError: (info: {
     readonly requestUrl: string;
     readonly probeTimeoutMs: number;
@@ -102,7 +106,19 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
         ),
       ),
     ),
-    HttpClient.tap((response) => response.text.pipe(Effect.ignore)),
+    HttpClient.tap((response) =>
+      input.validateResponse === undefined
+        ? response.text.pipe(Effect.ignore)
+        : input.validateResponse(response).pipe(
+            Effect.flatMap((valid) => {
+              if (valid) return Effect.void;
+              const cause = { kind: "unexpected-response", attempt, status: response.status };
+              return Ref.set(lastProbeFailure, cause).pipe(
+                Effect.andThen(Effect.fail(fail(cause))),
+              );
+            }),
+          ),
+    ),
     HttpClient.retry(retryPolicy),
   );
 

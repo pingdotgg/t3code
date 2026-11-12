@@ -21,6 +21,7 @@ import {
   canReuseCachedPlatformRegistration,
   layer,
   isRejectedBootstrapCredentialError,
+  loadPrimaryConnectionRegistration,
   isRejectedSecondaryBootstrap,
   nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
@@ -29,6 +30,7 @@ import {
   secondaryRegistrationsToRetainAfterTopologyRead,
 } from "./platform.ts";
 import { APP_VERSION } from "../branding.ts";
+import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
   alias: "devbox",
@@ -448,5 +450,70 @@ describe("primary topology cache", () => {
         cause: new Error("IPC unavailable"),
       }),
     ).toBe(cached);
+  });
+});
+
+describe("primary connection registration", () => {
+  afterEach(() => {
+    __resetDesktopPrimaryAuthForTests();
+  });
+
+  it.effect("targets the port the desktop backend is on once its bearer is issued", () => {
+    let port = 3773;
+    let requested!: () => void;
+    const bearerRequested = new Promise<void>((resolve) => {
+      requested = resolve;
+    });
+    let issueBearer!: (token: string) => void;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          environmentId: "environment-1",
+          label: "Local environment",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "1.0.0",
+          capabilities: {},
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", {
+      location: { origin: "t3code://app" },
+      desktopBridge: {
+        getLocalEnvironmentEnabled: () => true,
+        getLocalEnvironmentBootstraps: () => [
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: "Local environment",
+            runningDistro: null,
+            httpBaseUrl: `http://127.0.0.1:${port}/`,
+            wsBaseUrl: `ws://127.0.0.1:${port}/`,
+          },
+        ],
+        getLocalEnvironmentBearerToken: () => {
+          requested();
+          return new Promise<string>((resolve) => {
+            issueBearer = resolve;
+          });
+        },
+      } as unknown as DesktopBridge,
+    });
+
+    return Effect.gen(function* () {
+      const registration = yield* loadPrimaryConnectionRegistration({
+        source: "desktop-managed",
+        target: { httpBaseUrl: "http://127.0.0.1:3773/", wsBaseUrl: "ws://127.0.0.1:3773/" },
+      }).pipe(Effect.forkChild);
+      yield* Effect.promise(() => bearerRequested);
+      // Another server took 3773, so the desktop moved its backend before issuing the bearer.
+      port = 3774;
+      issueBearer("desktop-bearer-token");
+      const built = yield* Fiber.join(registration);
+
+      const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
+      expect(new URL(request.url).port).toBe("3774");
+      expect(built.target.httpBaseUrl).toBe("http://127.0.0.1:3774/");
+      expect(built.target.wsBaseUrl).toBe("ws://127.0.0.1:3774/");
+    });
   });
 });

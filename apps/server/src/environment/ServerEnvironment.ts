@@ -219,6 +219,9 @@ export const make = Effect.gen(function* () {
     serverVersion: packageJson.version,
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
+    ...(serverConfig.desktopLaunchId === undefined
+      ? {}
+      : { desktopLaunchId: serverConfig.desktopLaunchId }),
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,

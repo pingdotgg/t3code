@@ -75,7 +75,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly env: Record<string, string | undefined>;
   /** False passes env verbatim, preventing the Windows T3CODE_HOME from leaking into WSL. */
   readonly extendEnv: boolean;
-  readonly bootstrap: DesktopBackendBootstrapValue;
+  readonly bootstrap: DesktopBackendBootstrapValue & { readonly desktopLaunchId: string };
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
@@ -206,6 +206,8 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly onExitObserved?: () => Effect.Effect<void>;
   readonly onReady?: () => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
+  /** Fires once per run when another server answers on the port; true stops this run so it restarts. */
+  readonly onForeignServer?: () => Effect.Effect<boolean>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
     chunk: Uint8Array,
@@ -258,6 +260,8 @@ export interface BackendInstanceSpec {
   readonly onStateDirOwned?: () => Effect.Effect<void>;
   /** Fires on each repeated crash or readiness timeout until the backend becomes ready. */
   readonly onStartupFailure?: (failure: BackendStartupFailure) => Effect.Effect<void>;
+  /** Moves the backend to another port when a foreign server answers on its own; true when moved. */
+  readonly relocatePort?: () => Effect.Effect<boolean>;
 }
 
 interface ActiveBackendRun {
@@ -342,8 +346,17 @@ const closeRun = (
   );
 };
 
+const BackendReadinessDescriptor = Schema.Struct({
+  desktopLaunchId: Schema.optionalKey(Schema.String),
+});
+const decodeBackendReadinessDescriptor = Schema.decodeUnknownEffect(BackendReadinessDescriptor);
+
 const waitForHttpReady = (
-  options: BackendProcessContext & { readonly timeout: Duration.Duration },
+  options: BackendProcessContext & {
+    readonly timeout: Duration.Duration;
+    readonly desktopLaunchId: string;
+    readonly onForeignServer: Effect.Effect<void>;
+  },
 ): Effect.Effect<void, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
   const readinessUrl = new URL(BACKEND_READINESS_PATH, options.httpBaseUrl);
   return waitForHttpReadyShared({
@@ -352,6 +365,14 @@ const waitForHttpReady = (
     timeoutMs: Duration.toMillis(options.timeout),
     intervalMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_INTERVAL),
     probeTimeoutMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
+    // Another server can take the port after it was scanned; never treat it as this backend.
+    validateResponse: (response) =>
+      response.json.pipe(
+        Effect.flatMap(decodeBackendReadinessDescriptor),
+        Effect.map(({ desktopLaunchId }) => desktopLaunchId === options.desktopLaunchId),
+        Effect.orElseSucceed(() => false),
+        Effect.tap((own) => (own ? Effect.void : options.onForeignServer)),
+      ),
     makeError: ({ cause }) =>
       new BackendReadinessTimeoutError({
         executablePath: options.executablePath,
@@ -568,6 +589,19 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       ).pipe(Effect.forkScoped),
     );
   }
+  let foreignServerReported = false;
+  const onForeignServer = Effect.suspend(() => {
+    if (foreignServerReported) return Effect.void;
+    foreignServerReported = true;
+    return logBackendProcessWarning("another server is answering on the backend port", {
+      httpBaseUrl: options.httpBaseUrl.href,
+      pid: Number(handle.pid),
+    }).pipe(
+      Effect.andThen(options.onForeignServer?.() ?? Effect.succeed(false)),
+      // A live backend can sit behind a more specific bind (wslrelay on 127.0.0.1); exit to restart elsewhere.
+      Effect.flatMap((restart) => (restart ? handle.kill().pipe(Effect.ignore) : Effect.void)),
+    );
+  });
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
     waitForHttpReady({
@@ -576,6 +610,8 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       cwd: options.cwd,
       httpBaseUrl: options.httpBaseUrl,
       timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+      desktopLaunchId: options.bootstrap.desktopLaunchId,
+      onForeignServer,
     }).pipe(
       Effect.flatMap(() => options.onReady?.() ?? Effect.void),
       Effect.as(true),
@@ -968,6 +1004,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 config.value.wslRuntimeId,
               );
             }
+          }),
+          onForeignServer: Effect.fn("desktop.backendInstance.onForeignServer")(function* () {
+            if (yield* spec.relocatePort?.() ?? Effect.succeed(false)) return true;
+            yield* reportStartupFailure(
+              `Another server is answering on port ${config.value.bootstrap.port}.`,
+            );
+            return false;
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {

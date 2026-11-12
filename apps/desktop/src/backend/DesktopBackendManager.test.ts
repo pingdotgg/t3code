@@ -2,7 +2,6 @@ import {
   SERVER_EXIT_CODE_MANAGED_POLICY,
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
   DesktopBackendBootstrap,
-  type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   DesktopTelemetryControlMessage,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -50,6 +49,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     t3Home: "/tmp/t3",
     host: "127.0.0.1",
     desktopBootstrapToken: "token",
+    desktopLaunchId: "launch-id",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
     desktopTelemetryFd: 4,
@@ -62,7 +62,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   preflightFailure: Option.none(),
 };
 
-const configWithObservability: DesktopBackendBootstrapValue = {
+const configWithObservability = {
   ...baseConfig.bootstrap,
   tailscaleServeEnabled: true,
   desktopTelemetryFd: 4,
@@ -95,7 +95,8 @@ function responseForRequest(
   request: HttpClientRequest.HttpClientRequest,
   status: number,
 ): HttpClientResponse.HttpClientResponse {
-  return HttpClientResponse.fromWeb(request, new Response(null, { status }));
+  const body = status === 200 ? JSON.stringify({ desktopLaunchId: "launch-id" }) : null;
+  return HttpClientResponse.fromWeb(request, new Response(body, { status }));
 }
 
 function layerHttpClient(
@@ -140,6 +141,7 @@ interface MakeInstanceInput {
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
   >;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly relocatePort?: () => Effect.Effect<boolean>;
 }
 
 function makeTestInstance(input: MakeInstanceInput) {
@@ -187,6 +189,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
     ...(input.onStartupFailure ? { onStartupFailure: input.onStartupFailure } : {}),
+    ...(input.relocatePort ? { relocatePort: input.relocatePort } : {}),
   });
 
   return instance.pipe(Effect.provide(layerServices));
@@ -220,7 +223,7 @@ describe("DesktopBackendManager", () => {
             HttpClient.make((request) =>
               Deferred.succeed(probe, undefined).pipe(
                 Effect.andThen(Deferred.await(ready)),
-                Effect.as(HttpClientResponse.fromWeb(request, new Response("{}"))),
+                Effect.as(responseForRequest(request, 200)),
               ),
             ),
           ),
@@ -688,7 +691,12 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
-        const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>) =>
+        const startInstance = (
+          respond: (
+            request: HttpClientRequest.HttpClientRequest,
+          ) => Effect.Effect<HttpClientResponse.HttpClientResponse>,
+          onReady?: Effect.Effect<void>,
+        ) =>
           makeTestInstance({
             spawnerLayer: Layer.succeed(
               ChildProcessSpawner.ChildProcessSpawner,
@@ -696,28 +704,107 @@ describe("DesktopBackendManager", () => {
                 Effect.succeed(makeProcess({ exitCode: Effect.never })),
               ),
             ),
-            httpClientLayer: layerHttpClient((request) =>
-              Ref.get(status).pipe(Effect.map((code) => responseForRequest(request, code))),
-            ),
+            httpClientLayer: layerHttpClient(respond),
             onStartupFailure: (failure) => Queue.offer(reports, failure).pipe(Effect.asVoid),
             ...(onReady ? { onReady } : {}),
           }).pipe(Effect.tap((instance) => instance.start));
 
+        const respondWith =
+          (status: Ref.Ref<number>) => (request: HttpClientRequest.HttpClientRequest) =>
+            Ref.get(status).pipe(Effect.map((code) => responseForRequest(request, code)));
         const slowStatus = yield* Ref.make(503);
         const ready = yield* Deferred.make<void>();
-        yield* startInstance(slowStatus, Deferred.succeed(ready, undefined).pipe(Effect.asVoid));
+        yield* startInstance(
+          respondWith(slowStatus),
+          Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+        );
         yield* TestClock.adjust(Duration.seconds(66));
         yield* Ref.set(slowStatus, 200);
         yield* TestClock.adjust(Duration.millis(100));
         yield* Deferred.await(ready);
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
 
-        yield* startInstance(yield* Ref.make(503));
+        yield* startInstance(respondWith(yield* Ref.make(503)));
         yield* TestClock.adjust(Duration.seconds(179));
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
         yield* TestClock.adjust(Duration.seconds(1));
         const failure = yield* Queue.take(reports);
         assert.equal(failure.reason, "The server started but did not become ready in time.");
+
+        // Another T3 server holding the port answers OK with its own launch id.
+        const foreignReady = yield* Deferred.make<void>();
+        yield* startInstance(
+          (request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(JSON.stringify({ desktopLaunchId: "other-launch" })),
+              ),
+            ),
+          Deferred.succeed(foreignReady, undefined).pipe(Effect.asVoid),
+        );
+        yield* TestClock.adjust(Duration.millis(100));
+        const foreignFailure = yield* Queue.take(reports);
+        assert.equal(foreignFailure.reason, "Another server is answering on port 3773.");
+        assert.isFalse(yield* Deferred.isDone(foreignReady));
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("moves a live backend to another port when a foreign server answers on its own", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const port = yield* Ref.make(3773);
+        const kills = yield* Ref.make(0);
+        const killed = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const instance = yield* makeTestInstance({
+          configResolve: Ref.get(port).pipe(
+            Effect.map((value) => ({
+              ...baseConfig,
+              bootstrap: { ...baseConfig.bootstrap, port: value },
+              httpBaseUrl: new URL(`http://127.0.0.1:${value}`),
+            })),
+          ),
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Deferred.make<ChildProcessSpawner.ExitCode>().pipe(
+                Effect.map((exit) =>
+                  makeProcess({
+                    exitCode: Deferred.await(exit),
+                    kill: () =>
+                      Ref.update(kills, (count) => count + 1).pipe(
+                        Effect.andThen(Deferred.succeed(killed, undefined)),
+                        Effect.andThen(Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0))),
+                        Effect.asVoid,
+                      ),
+                  }),
+                ),
+              ),
+            ),
+          ),
+          // A relay on the original port forwards to another T3 server; the moved backend answers itself.
+          httpClientLayer: layerHttpClient((request) =>
+            Effect.succeed(
+              new URL(request.url).port === "3773"
+                ? HttpClientResponse.fromWeb(
+                    request,
+                    new Response(JSON.stringify({ desktopLaunchId: "other-launch" })),
+                  )
+                : responseForRequest(request, 200),
+            ),
+          ),
+          relocatePort: () => Ref.set(port, 3774).pipe(Effect.as(true)),
+          onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+        });
+        yield* instance.start;
+        yield* Deferred.await(killed);
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* Deferred.await(ready);
+        assert.equal(yield* Ref.get(kills), 1);
+        const config = yield* instance.currentConfig;
+        assert.equal(Option.getOrThrow(config).bootstrap.port, 3774);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

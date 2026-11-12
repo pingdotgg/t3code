@@ -31,6 +31,7 @@ const config = {
     t3Home: "/tmp/t3",
     host: "127.0.0.1",
     desktopBootstrapToken: "desktop-bootstrap-token",
+    desktopLaunchId: "launch-id",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
   },

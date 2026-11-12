@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NetService from "@t3tools/shared/Net";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -29,6 +30,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
+import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import type { DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
 
 // Models the spawner's release for a backend that ignores SIGTERM, without OS signals.
@@ -98,6 +100,7 @@ const runningConfig = {
     t3Home: "/tmp/t3",
     host: "127.0.0.1",
     desktopBootstrapToken: "token",
+    desktopLaunchId: "launch-id",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
   },
@@ -128,7 +131,10 @@ function layerPool(
             backend === undefined
               ? Effect.die("unexpected HTTP request")
               : Effect.succeed(
-                  HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(JSON.stringify({ desktopLaunchId: "launch-id" })),
+                  ),
                 ),
           ),
         ),
@@ -161,6 +167,8 @@ function layerPool(
           currentBootstrapToken: Effect.die("unexpected bootstrap token read"),
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
         DesktopAppSettings.layerTest(),
+        Layer.mock(NetService.NetService, {}),
+        Layer.mock(DesktopServerExposure.DesktopServerExposure, {}),
         DesktopEnvironment.layer({
           dirname: "/repo/apps/desktop/src",
           homeDirectory: "/home/test",

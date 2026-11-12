@@ -51,6 +51,7 @@ const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     port: 3774,
     host: "0.0.0.0",
     desktopBootstrapToken: "bootstrap-token",
+    desktopLaunchId: "launch-id",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
   },
