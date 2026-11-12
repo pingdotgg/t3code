@@ -2482,7 +2482,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   // git add takes --pathspec-from-file from Git 2.25; older Git keeps the argument form.
   let pathspecFromFileSupported: boolean | undefined;
-  const supportsPathspecFromFile = Effect.fnUntraced(function* (cwd: string) {
+  const supportsPathspecFromFile = Effect.fn("GitVcsDriver.supportsPathspecFromFile")(function* (
+    cwd: string,
+  ) {
     if (pathspecFromFileSupported !== undefined) return pathspecFromFileSupported;
     const version = yield* executeGit("GitVcsDriver.version", cwd, ["version"]).pipe(Effect.option);
     if (Option.isNone(version)) return false;
