@@ -4,7 +4,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
@@ -22,7 +26,11 @@ import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
 
-import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadIdAfterDelete,
+  isSidebarHiddenThread,
+  pinOrderKeyBetween,
+} from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -711,6 +719,39 @@ export function useThreadActions() {
     });
   };
 
+  const unsettleLastThread = async () => {
+    let target: ScopedThreadRef | null = null;
+    let latestSettledAt = -Infinity;
+    for (const thread of readThreadShells()) {
+      if (
+        thread.archivedAt !== null ||
+        isSidebarHiddenThread(thread) ||
+        thread.settledOverride !== "settled" ||
+        thread.settledAt === null ||
+        !readEnvironmentServerConfigLoaded(thread.environmentId) ||
+        !readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)
+      ) {
+        continue;
+      }
+      const settledAt = Date.parse(thread.settledAt);
+      if (Number.isFinite(settledAt) && settledAt > latestSettledAt) {
+        target = scopeThreadRef(thread.environmentId, thread.id);
+        latestSettledAt = settledAt;
+      }
+    }
+    if (target === null) return;
+    const result = await unsettleThread(target);
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Failed to un-settle thread",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  };
+
   const setThreadAutoSettle = async (target: ScopedThreadRef, enabled: boolean) => {
     if (!readEnvironmentSupportsAutoSettleOptOut(target.environmentId)) {
       return AsyncResult.failure(
@@ -1000,6 +1041,7 @@ export function useThreadActions() {
     confirmAndDeleteThread,
     settleThread,
     unsettleThread,
+    unsettleLastThread,
     snoozeThread,
     unsnoozeThread,
     pinThread,

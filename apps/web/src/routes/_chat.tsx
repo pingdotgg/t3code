@@ -1,18 +1,46 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-router";
-import { useState } from "react";
+import { Outlet, createFileRoute, redirect, useMatches, useRouter } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 
+import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { registerCommands } from "../shortcuts/dispatcher";
 
 function threadRouteTargetKey(target: ThreadRouteTarget | null) {
   if (!target) return null;
   return target.kind === "server" ? scopedThreadKey(target.threadRef) : target.draftId;
+}
+
+function UnsettleLastThreadShortcut() {
+  const router = useRouter();
+  const { unsettleLastThread } = useThreadActions();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the shortcut with the app-wide keydown dispatcher
+  useEffect(
+    () =>
+      registerCommands(
+        {
+          "thread.unsettleLast": (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!event.repeat) void unsettleLastThread();
+          },
+        },
+        {
+          when: () =>
+            !router.state.matches.some((match) => isAppModalPage(match.pathname)) &&
+            !isCommandPaletteOpen(),
+        },
+      ),
+    [router, unsettleLastThread],
+  );
+  return null;
 }
 
 function ChatRouteLayout() {
@@ -30,6 +58,7 @@ function ChatRouteLayout() {
   const shownTarget = modalOpen ? backgroundTarget : threadTarget;
   return (
     <>
+      <UnsettleLastThreadShortcut />
       {shownTarget?.kind === "server" && !modalOpen ? (
         <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
       ) : null}
