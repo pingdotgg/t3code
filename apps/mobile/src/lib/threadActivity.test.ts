@@ -472,16 +472,27 @@ describe("buildThreadFeed", () => {
       ),
     ]);
     const cache = createThreadFeedCache();
+    const standIn = (
+      ignoredCommandPrefixes: ReadonlyArray<string>,
+      expandedWorkGroupIds: ReadonlySet<string> = new Set(),
+    ) =>
+      deriveThreadFeedPresentation(
+        feed,
+        null,
+        new Set([runId]),
+        expandedWorkGroupIds,
+        null,
+        false,
+        cache,
+        { toolCallVisibility: "showAll", revealedMessageId: null, ignoredCommandPrefixes },
+      ).flatMap((row) => (row.type === "activity-group" ? row.activities : []))[0]?.groupStandIn;
     const preview = (ignoredCommandPrefixes: ReadonlyArray<string>) =>
-      deriveThreadFeedPresentation(feed, null, new Set([runId]), new Set(), null, false, cache, {
-        toolCallVisibility: "showAll",
-        revealedMessageId: null,
-        ignoredCommandPrefixes,
-      }).flatMap((row) => (row.type === "activity-group" ? row.activities : []))[0]?.groupStandIn
-        ?.label;
+      standIn(ignoredCommandPrefixes)?.label;
     expect(preview([])).toBe("rtk proxy git status");
     expect(preview(["rtk", "rtk proxy"])).toBe("git status");
     expect(preview([])).toBe("rtk proxy git status");
+    const groupId = standIn([])!.groupId;
+    expect(standIn(["rtk", "rtk proxy"], new Set([groupId]))?.label).toBe("rtk proxy git status");
   });
 
   it("keeps async answers in question history instead of user bubbles", () => {

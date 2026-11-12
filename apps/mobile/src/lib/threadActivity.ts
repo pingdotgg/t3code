@@ -893,7 +893,7 @@ function singleToolCallLabel(
   const command = activity.workEntry.command?.trim();
   return command
     ? truncate(
-        ignoredCommandPrefixes.length > 0
+        !expanded && ignoredCommandPrefixes.length > 0
           ? commandDisplayText(command, ignoredCommandPrefixes)
           : command,
         WORK_LOG_LABEL_MAX_LENGTH,
