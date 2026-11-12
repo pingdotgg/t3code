@@ -1379,139 +1379,6 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
   ),
 );
 
-it.effect("starts a steer of a finished run from before the last compaction as a new turn", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { events, started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-        "steering-before-compaction",
-      );
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const threadId = yield* startFirstTurn;
-        const finish = (turn: (typeof started)[number]) =>
-          Effect.gen(function* () {
-            const settled = yield* orchestrator.streamDomainEvents.pipe(
-              Stream.filter(
-                (event) =>
-                  event.type === "run.updated" &&
-                  event.payload.id === turn.runId &&
-                  event.payload.status === "waiting",
-              ),
-              Stream.take(1),
-              Stream.runDrain,
-              Effect.forkScoped,
-            );
-            const providerTurn = (yield* orchestrator.getThreadProjection(
-              threadId,
-            )).providerTurns.find((candidate) => candidate.runAttemptId === turn.attemptId)!;
-            yield* Queue.offer(events, {
-              type: "provider_turn.updated",
-              driver,
-              providerTurn: {
-                ...providerTurn,
-                status: "completed",
-                completedAt: yield* DateTime.now,
-              },
-            });
-            yield* Queue.offer(events, {
-              type: "turn.terminal",
-              driver,
-              providerThreadId: providerTurn.providerThreadId,
-              providerTurnId: providerTurn.id,
-              runOrdinal: turn.runOrdinal,
-              status: "completed",
-              failure: null,
-              threadDisposition: "reusable",
-            });
-            yield* Fiber.join(settled);
-            yield* worker.drain();
-          });
-        const first = started[0]!;
-        yield* finish(first);
-        for (const id of ["second", "third"]) {
-          const running = yield* orchestrator.streamDomainEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.type === "provider-turn.updated" && event.payload.status === "running",
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(id),
-            threadId,
-            messageId: MessageId.make(`message:${id}`),
-            text: id,
-            attachments: [],
-            modelSelection: runSelection,
-            dispatchMode: { type: "start_immediately" },
-            createdBy: "user",
-            creationSource: "web",
-          });
-          yield* worker.drain();
-          yield* Fiber.join(running);
-          yield* finish(started.at(-1)!);
-        }
-        // The window starts at the second run, the prompt before the compaction in the third.
-        const third = started[2]!;
-        const now = yield* DateTime.now;
-        yield* sink.write({
-          events: [
-            {
-              id: EventId.make("event:compaction"),
-              type: "turn-item.updated" as const,
-              threadId,
-              runId: third.runId,
-              nodeId: third.rootNodeId,
-              occurredAt: now,
-              payload: {
-                id: TurnItemId.make("item:compaction"),
-                threadId,
-                runId: third.runId,
-                nodeId: third.rootNodeId,
-                providerThreadId: null,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: 1_000,
-                status: "completed" as const,
-                title: null,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-                type: "compaction" as const,
-                driver,
-              },
-            },
-          ],
-        });
-
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("steer"),
-          threadId,
-          messageId: MessageId.make("message:steer"),
-          text: "late steer",
-          attachments: [],
-          modelSelection: runSelection,
-          dispatchMode: { type: "steer_active", targetRunId: first.runId },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* worker.drain();
-
-        assert.deepEqual(steered, []);
-        assert.equal(started.length, 4);
-        assert.equal(started[3]?.message.messageId, MessageId.make("message:steer"));
-      }).pipe(Effect.provide(layer));
-    }),
-  ),
-);
-
 it.effect.each(["complete", "stop-before-decline", "stop-after-decline", "queued-model"] as const)(
   "persists a declined steer without blocking the worker: %s",
   (timing) =>
@@ -1931,7 +1798,7 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
   const wake = harness.started[wakeOrdinal - 1]!;
   assert.equal(wake.message.messageId, firstDelivery.messageId);
   if (userRunBeforeWake) {
-    // The wake's run holds a compaction, so the window starts at the user run and drops the origin.
+    // The wake's run holds a compaction, so the origin run's records are older than the window.
     const compactedAt = yield* DateTime.now;
     yield* sink.write({
       events: [
