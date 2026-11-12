@@ -963,12 +963,15 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
-    const callerAfterSequence =
+    const caller =
       input.caller === undefined
         ? undefined
-        : yield* orchestrator
-            .getThreadEventSequence(input.caller.threadId)
-            .pipe(Effect.mapError(loadError));
+        : {
+            ...input.caller,
+            afterSequence: yield* orchestrator
+              .getThreadEventSequence(input.caller.threadId)
+              .pipe(Effect.mapError(loadError)),
+          };
     const target = yield* getProjectThreadRecords(input, ["runs"]);
     const selectedRun =
       input.runId === undefined
@@ -1084,14 +1087,13 @@ const make = Effect.gen(function* () {
       Stream.runHead,
       Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
     );
-    const caller = input.caller;
     const incoming =
       caller === undefined
         ? Effect.never
         : orchestrator
             .streamStoredEventsFrom({
               threadId: caller.threadId,
-              afterSequence: callerAfterSequence!,
+              afterSequence: caller.afterSequence,
               eventType: "turn-item.updated",
             })
             .pipe(

@@ -106,7 +106,7 @@ const boxThreads = (
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
     sendToThread: (input) =>
       Ref.update(seen, (current) => ({ ...current, sends: [...current.sends, input] })).pipe(
-        Effect.as({ run: run("running"), message: {}, delivery: "started" } as never),
+        Effect.as({ run: run("running"), delivery: "started" } as never),
       ),
     dispatch: (command) =>
       Ref.update(seen, (current) => ({

@@ -180,16 +180,9 @@ const replayHttpClient = (
         if (operation.type === "event.subscribe") {
           controller.exited = false;
           const encoder = new TextEncoder();
-          const abort = new AbortController();
-          const events = controller.events(
-            abort.signal,
-            (label) => replayGate?.beforeEmit(label, abort.signal) ?? Promise.resolve(),
-          );
+          const events = controller.events(undefined, replayGate?.beforeEmit);
           const frames = events[Symbol.asyncIterator]();
           const body = new ReadableStream<Uint8Array>({
-            cancel() {
-              abort.abort();
-            },
             async pull(stream) {
               const next = await frames.next();
               if (next.done === true) stream.close();

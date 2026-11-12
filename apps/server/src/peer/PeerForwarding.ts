@@ -195,18 +195,15 @@ const make = Effect.gen(function* () {
     "PeerForwarding.waitForThread",
   )(function* (scope, environmentId, input) {
     const callerThreadId = scope.thread?.threadId;
+    const watchFailure = () =>
+      new OrchestratorMcpFailure({
+        code: "orchestration_error",
+        message: "Unable to watch incoming messages while waiting.",
+      });
     const afterSequence =
       callerThreadId === undefined
         ? 0
-        : yield* threads.getThreadEventSequence(callerThreadId).pipe(
-            Effect.mapError(
-              () =>
-                new OrchestratorMcpFailure({
-                  code: "orchestration_error",
-                  message: "Unable to watch incoming messages while waiting.",
-                }),
-            ),
-          );
+        : yield* threads.getThreadEventSequence(callerThreadId).pipe(Effect.mapError(watchFailure));
     let remaining = Math.min(
       MAX_WAIT_TIMEOUT_MS,
       Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
@@ -247,13 +244,7 @@ const make = Effect.gen(function* () {
         Stream.map((stored) => ThreadManagement.steeringInputMessage(stored)),
         Stream.filter((id): id is MessageId => id !== undefined),
         Stream.runHead,
-        Effect.mapError(
-          () =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: "Unable to watch incoming messages while waiting.",
-            }),
-        ),
+        Effect.mapError(watchFailure),
         Effect.flatMap((id) => (Option.isSome(id) ? Effect.succeed(id.value) : Effect.never)),
       );
     const outcome = yield* Effect.raceFirst(
