@@ -282,6 +282,7 @@ export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
   customModels: ReadonlyArray<string>,
+  previousModels: ReadonlyArray<ServerProviderModel> = provider.models,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   // session/load may omit models (Kimi returns `{}`); keep the probed list
@@ -305,7 +306,11 @@ export function applyAcpRegistryLiveConfiguration(
     models:
       configuration.models.length === 0 && configuration.configOptions.length === 0
         ? provider.models
-        : modelsFromDiscovery(discovery, customModels, probedModels),
+        : modelsFromDiscovery(
+            discovery,
+            customModels,
+            previousModels.filter((model) => !model.isCustom),
+          ),
   };
 }
 
@@ -574,6 +579,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         environment,
         processEnvironment,
       });
+    // Refreshes rebuild the snapshot from the probe, so per-model options
+    // learned from earlier sessions are kept here.
+    const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
+    const applyLiveConfiguration = (
+      provider: ServerProvider,
+      configuration: AcpRegistryLiveConfiguration,
+    ) =>
+      Ref.modify(learnedModels, (learned) => {
+        const next = applyAcpRegistryLiveConfiguration(
+          provider,
+          configuration,
+          effectiveConfig.customModels,
+          learned.length > 0 ? learned : provider.models,
+        );
+        return [next, next.models === provider.models ? learned : next.models];
+      });
+    const clearLearnedModels = Ref.set(learnedModels, []);
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
     ) {
@@ -592,18 +614,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             configuration: runtimeCoordinator.value.getLiveConfiguration(instanceId),
             authAction: runtimeCoordinator.value.getUrlAuthAction(instanceId),
           }).pipe(
-            Effect.map(({ commands, configuration, authAction }) => {
+            Effect.flatMap(({ commands, configuration, authAction }) => {
               const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-              const withConfiguration = Option.match(configuration, {
-                onNone: () => withCommands,
+              return Option.match(configuration, {
+                onNone: () => Effect.succeed(withCommands),
                 onSome: (liveConfiguration) =>
-                  applyAcpRegistryLiveConfiguration(
-                    withCommands,
-                    liveConfiguration,
-                    effectiveConfig.customModels,
-                  ),
-              });
-              return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
+                  applyLiveConfiguration(withCommands, liveConfiguration),
+              }).pipe(
+                Effect.map((withConfiguration) =>
+                  applyAcpRegistryUrlAuthAction(withConfiguration, authAction),
+                ),
+              );
             }),
           );
     });
@@ -730,15 +751,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           (configuration) =>
             liveSnapshotSemaphore.withPermit(
               getSnapshot.pipe(
-                Effect.flatMap((current) =>
-                  publishSnapshot(
-                    applyAcpRegistryLiveConfiguration(
-                      current,
-                      configuration,
-                      effectiveConfig.customModels,
-                    ),
-                  ),
-                ),
+                Effect.flatMap((current) => applyLiveConfiguration(current, configuration)),
+                Effect.flatMap(publishSnapshot),
               ),
             ),
         );
@@ -799,11 +813,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         : provided;
     };
 
-    const clearLiveState = Option.isSome(runtimeCoordinator)
-      ? runtimeCoordinator.value
-          .clearLiveConfiguration(instanceId)
-          .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
-      : Effect.void;
+    const clearLiveState = (
+      Option.isSome(runtimeCoordinator)
+        ? runtimeCoordinator.value
+            .clearLiveConfiguration(instanceId)
+            .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
+        : Effect.void
+    ).pipe(Effect.andThen(clearLearnedModels));
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
@@ -849,7 +865,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
         : Effect.void
-      ).pipe(Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache))),
+      ).pipe(
+        Effect.andThen(clearLearnedModels),
+        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+      ),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),
       acpSessionManagement: {
