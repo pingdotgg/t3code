@@ -355,6 +355,7 @@ describe("ssh tunnel scripts", () => {
           { shell: "", outerShell: "/bin/sh", expected: "missing" },
           { shell: "/unavailable/csh", outerShell: "/bin/sh", expected: "missing" },
           { shell: "/unavailable/tcsh", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "/unavailable/pwsh", outerShell: "/bin/sh", expected: "missing" },
         ];
         if (yield* fs.exists("/bin/zsh")) {
           cases.push({ shell: "/bin/zsh", outerShell: "/bin/zsh", expected: "loaded" });
