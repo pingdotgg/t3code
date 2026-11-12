@@ -399,12 +399,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
-    const result = yield* Effect.try({
-      try: () => finder.scanFiles(),
+    // scanFiles waits on fff's picker lock, which its watcher can hold for seconds.
+    const result = yield* Effect.tryPromise({
+      try: () => finder.scanFilesAsync(),
       catch: (cause) =>
         new WorkspaceSearchIndexRefreshFailed({
           cwd,
-          reason: "FileFinder.scanFiles threw unexpectedly.",
+          reason: "FileFinder.scanFilesAsync rejected unexpectedly.",
           cause,
         }),
     });
