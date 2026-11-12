@@ -692,6 +692,10 @@ export const layer = Layer.effect(
           title = excluded.title,
           prompt = excluded.prompt,
           enabled = excluded.enabled,
+          consecutive_failures = CASE
+            WHEN scheduled_tasks.enabled = 0 AND excluded.enabled = 1 THEN 0
+            ELSE scheduled_tasks.consecutive_failures
+          END,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           -- A first run may bind the thread while this save is in flight; only a

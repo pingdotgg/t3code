@@ -799,6 +799,11 @@ it.effect("repeated delivery failures pause a task, and a success resets the cou
       assert.equal(paused?.enabled, false);
       assert.isNull(paused?.nextRunAt);
       assert.match(paused?.lastRunError ?? "", /^Paused after 5 failed runs in a row\./);
+      yield* service.upsert(boundTaskInput("thread:flaky"));
+      yield* runTimes(1);
+      const [resumed] = (yield* service.list()).tasks;
+      assert.equal(resumed?.enabled, true);
+      assert.isNotNull(resumed?.nextRunAt);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
