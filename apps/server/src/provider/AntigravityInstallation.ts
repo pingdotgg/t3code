@@ -1,4 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or free-space query.
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as ModelManifest from "./ModelManifest.ts";
+import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
@@ -111,6 +114,7 @@ interface AntigravityInstallationService {
   ) => Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
   readonly state: Effect.Effect<ProviderInstallState>;
   readonly changes: Stream.Stream<ProviderInstallState>;
+  readonly checkForUpdate: Effect.Effect<void>;
   readonly remove: (
     protectedBinaryPaths?: ReadonlyArray<string>,
   ) => Effect.Effect<void, AntigravityInstallationError>;
@@ -178,6 +182,7 @@ function isRunning(state: ProviderInstallState) {
 export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.make")(function* (
   options: AntigravityInstallationOptions,
 ) {
+  const manifestService = yield* ModelManifest.ModelManifest;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
@@ -215,6 +220,28 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     installedVersion: null,
     canRemove: false,
     message: null,
+  });
+
+  const isWithdrawn = Effect.fn("AntigravityInstallation.isWithdrawn")(function* (version: string) {
+    const manifest = yield* manifestService.current;
+    const status = (
+      resolveProviderCompatibility(manifest.compatibility, DRIVER, version) ??
+      resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        DRIVER,
+        version,
+      )
+    )?.status;
+    return status === "broken" || status === "unsupported";
+  });
+  const ensureEligible = Effect.fn("AntigravityInstallation.ensureEligible")(function* (
+    version: string,
+  ) {
+    if (yield* isWithdrawn(version))
+      return yield* installationError(
+        "verify",
+        "This Antigravity release was withdrawn. Check for updates and try again.",
+      );
   });
 
   const readRecord = Effect.fn("AntigravityInstallation.readRecord")(function* <A>(
@@ -353,7 +380,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     "AntigravityInstallation.resolve",
   )(
     function* (binaryPath?: string, processEnvironment?: NodeJS.ProcessEnv) {
-      const override = binaryPath?.trim();
+      const override = expandHomePath(binaryPath?.trim() ?? "", yield* HostProcess.HomeDirectory);
       if (override) {
         for (const candidate of yield* commandCandidates(override, processEnvironment)) {
           const selected = yield* fromExternal(candidate, "override");
@@ -366,7 +393,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       }
       if (yield* fs.exists(activePath)) {
         const active = yield* readRecord(activePath, ActiveRelease);
-        return yield* completedRelease(active.releaseId);
+        const installed = yield* completedRelease(active.releaseId);
+        if (yield* isWithdrawn(installed.version))
+          return yield* installationError(
+            "resolve",
+            `Antigravity ${installed.version} no longer works with this T3 Code release. Update it in Antigravity setup.`,
+          );
+        return installed;
       }
       for (const candidate of yield* commandCandidates(names.executable, processEnvironment)) {
         const selected = yield* fromExternal(candidate, "path");
@@ -498,6 +531,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
 
   const install = Effect.fn("AntigravityInstallation.install")(
     function* (asset: AntigravityReleaseAsset | AntigravityCliReleaseAsset) {
+      yield* ensureEligible(asset.version);
       const cli = "sha512" in asset;
       // Existing installation records use 64-character IDs, including native SHA-512 prefixes.
       const releaseId = cli ? asset.sha512.slice(0, 64) : asset.sha256;
@@ -529,6 +563,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       const destination = path.join(versionsDirectory, releaseId);
       const activate = Effect.fn("AntigravityInstallation.activate")(
         function* () {
+          yield* ensureEligible(asset.version);
           const pointerDirectory = yield* fs.makeTempDirectoryScoped({
             directory: managedDirectory,
             prefix: "active.json.",
@@ -908,6 +943,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.orElseSucceed(() => null),
     );
     if (latest === null) return;
+    if (yield* isWithdrawn(latest.version)) {
+      releaseAsset = null;
+      return;
+    }
     releaseAsset = latest;
     yield* SubscriptionRef.update(state, (value) =>
       isRunning(value)
@@ -923,7 +962,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           },
     );
   });
-  const checkForUpdates = refreshRelease().pipe(Effect.forkIn(serviceScope), Effect.asVoid);
 
   const start = gate
     .withPermit(
@@ -937,7 +975,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
         }
         yield* refreshRelease(true);
-        const asset = releaseAsset;
+        const asset =
+          releaseAsset !== null && !(yield* isWithdrawn(releaseAsset.version))
+            ? releaseAsset
+            : null;
         const installed = yield* resolve().pipe(Effect.option);
         const reuse =
           Option.isSome(installed) &&
@@ -970,6 +1011,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             : validate(reuse, reuse.version!).pipe(
                 Effect.scoped,
                 Effect.timeout(VALIDATION_TIMEOUT),
+                Effect.andThen(ensureEligible(reuse.version!)),
                 Effect.andThen(
                   SubscriptionRef.update(state, (value) => ({
                     ...value,
@@ -1120,8 +1162,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     acquire,
     start,
     cancel,
-    state: checkForUpdates.pipe(Effect.andThen(SubscriptionRef.get(state))),
-    changes: Stream.unwrap(checkForUpdates.pipe(Effect.as(SubscriptionRef.changes(state)))),
+    state: SubscriptionRef.get(state),
+    changes: SubscriptionRef.changes(state),
+    checkForUpdate: refreshRelease().pipe(Effect.ignore),
     remove,
   });
 });

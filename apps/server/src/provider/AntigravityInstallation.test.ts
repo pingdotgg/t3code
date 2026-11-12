@@ -22,6 +22,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
 const serverContents = "antigravity runtime\n";
@@ -127,6 +128,7 @@ interface HarnessOptions {
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
   readonly connectTimeout?: boolean;
+  readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
   readonly native?: boolean;
   readonly nativeVersion?: string;
   readonly nativeManifest?: (manifest: { version: string; url: string; sha512: string }) => unknown;
@@ -194,6 +196,13 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
+    Effect.provideService(ModelManifest.ModelManifest, {
+      current: options.manifest ?? Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refreshOnDemand: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refreshInBackground: Effect.void,
+    }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
@@ -357,7 +366,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           platform: "win32",
           updateChecksEnabled: Effect.succeed(enabled),
         });
-        yield* installation.state;
+        yield* installation.checkForUpdate;
         if (enabled) {
           yield* installation.changes.pipe(
             Stream.filter((value) => value.version === "1.5.7"),
@@ -372,6 +381,57 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* installation.start;
         expect((yield* terminalState(installation)).phase).toBe("succeeded");
       }),
+  );
+
+  it.effect("keeps withdrawn native releases from activating or launching", () =>
+    Effect.gen(function* () {
+      let withdrawn = false;
+      const manifest = Effect.sync(() =>
+        withdrawn
+          ? ({
+              ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+              compatibility: [
+                {
+                  driver: "antigravity",
+                  t3CodeRange: ">=0.0.42",
+                  ranges: [{ range: ">=1.5.0", status: "broken" }],
+                },
+              ],
+            } satisfies ModelManifest.ModelManifestData)
+          : ModelManifest.BUNDLED_MODEL_MANIFEST,
+      );
+      const first = yield* makeHarness({
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        previous: true,
+        manifest,
+        validate: () =>
+          Effect.sync(() => {
+            withdrawn = true;
+          }),
+      });
+      yield* first.installation.start;
+      expect((yield* terminalState(first.installation)).phase).toBe("failed");
+      yield* expectPreviousRelease(first.installation);
+      withdrawn = false;
+      const retry = yield* makeHarness({
+        baseDir: first.baseDir,
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        manifest,
+      });
+      yield* retry.installation.start;
+      expect((yield* terminalState(retry.installation)).phase).toBe("succeeded");
+      withdrawn = true;
+      expect(yield* retry.installation.resolve().pipe(Effect.flip)).toMatchObject({
+        operation: "resolve",
+      });
+      expect(yield* retry.installation.start.pipe(Effect.flip)).toMatchObject({
+        operation: "start",
+      });
+    }),
   );
 
   it.effect("discovers subsequent native releases from Google's CLI channel", () =>
@@ -1012,6 +1072,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(yield* installation.resolve(executableName)).toMatchObject({
           source: "override",
         });
+        expect(
+          yield* installation
+            .resolve(`~/external/${executableName}`)
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, baseDir)),
+        ).toMatchObject({ source: "override", executablePath: externalExecutable });
         yield* fs.remove(externalHarness);
         expect(yield* installation.resolve(externalExecutable).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
