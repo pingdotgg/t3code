@@ -211,7 +211,7 @@ export function useQueuedRunEdit(input: {
     composerRef,
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
-  // An older server has no hold; the edit then works as before.
+  // A failed hold keeps the editor closed and says so below.
   const holdQueuedRunEdit = useAtomCommand(threadEnvironment.holdQueuedRunEdit, {
     reportFailure: false,
   });
@@ -272,61 +272,76 @@ export function useQueuedRunEdit(input: {
     );
     if (reply) store.setReplyTo(target, reply);
     const threadRef = { environmentId, threadId: activeThreadId };
-    queuedRunEdits.begin(
-      editKey,
-      {
-        threadId: activeThreadId,
-        runId: request.runId,
-        messageId: request.messageId,
-        originalText: text,
-        existingAttachments: request.attachments,
-        context,
-      },
-      {
-        runs: makeQueuedRunsAtom({
+    void queuedRunEdits
+      .begin(
+        editKey,
+        {
           threadId: activeThreadId,
-          snapshot: threadEnvironment.snapshotAtom(environmentId),
-          detailStatus: environmentThreadDetails.statusAtom(threadRef),
-          runs: Atom.make(
-            (get) =>
-              get(environmentThreadDetails.quietThreadAtom(threadRef))?.projection.runs ?? null,
-          ),
-        }),
-        hold: (held) =>
-          void holdQueuedRunEdit({
-            environmentId,
-            input: { threadId: activeThreadId, runId: request.runId, held },
-          }),
-        // The run started or was cancelled from another client. A changed
-        // edit moves into the thread's own draft when that draft is empty;
-        // otherwise it is dropped. Edits outlive navigation, so the toast is
-        // unscoped and names the thread: the user may be anywhere by now.
-        onRunLeftQueue: (_, edit) => {
-          const recovery = recoverQueuedMessageEdit({
-            editTarget: queuedEditDraftTarget(routeThreadRef, edit.runId),
-            threadTarget: threadDraftTarget,
-            originalText: edit.originalText,
-            removedExistingAttachment: edit.removedExistingAttachment === true,
-          });
-          if (recovery === "clean") return;
-          const title = appAtomRegistry.get(
-            environmentThreadShells.threadShellAtom(threadRef),
-          )?.title;
-          const where = title === undefined ? "" : ` in “${title}”`;
-          toastManager.add(
-            stackedThreadToast({
-              type: recovery === "kept" ? "info" : "warning",
-              title: "Queued message is no longer queued",
-              description:
-                recovery === "kept"
-                  ? `Your unsaved edit${where} was kept in the composer.`
-                  : `Your unsaved edit${where} was discarded.`,
-            }),
-          );
+          runId: request.runId,
+          messageId: request.messageId,
+          originalText: text,
+          existingAttachments: request.attachments,
+          context,
         },
-      },
-    );
-    focusComposerSoon();
+        {
+          runs: makeQueuedRunsAtom({
+            threadId: activeThreadId,
+            snapshot: threadEnvironment.snapshotAtom(environmentId),
+            detailStatus: environmentThreadDetails.statusAtom(threadRef),
+            runs: Atom.make(
+              (get) =>
+                get(environmentThreadDetails.quietThreadAtom(threadRef))?.projection.runs ?? null,
+            ),
+          }),
+          hold: (held) =>
+            holdQueuedRunEdit({
+              environmentId,
+              input: { threadId: activeThreadId, runId: request.runId, held },
+            }).then((result) => result._tag === "Success"),
+          // The run started or was cancelled from another client. A changed
+          // edit moves into the thread's own draft when that draft is empty;
+          // otherwise it is dropped. Edits outlive navigation, so the toast is
+          // unscoped and names the thread: the user may be anywhere by now.
+          onRunLeftQueue: (_, edit) => {
+            const recovery = recoverQueuedMessageEdit({
+              editTarget: queuedEditDraftTarget(routeThreadRef, edit.runId),
+              threadTarget: threadDraftTarget,
+              originalText: edit.originalText,
+              removedExistingAttachment: edit.removedExistingAttachment === true,
+            });
+            if (recovery === "clean") return;
+            const title = appAtomRegistry.get(
+              environmentThreadShells.threadShellAtom(threadRef),
+            )?.title;
+            const where = title === undefined ? "" : ` in “${title}”`;
+            toastManager.add(
+              stackedThreadToast({
+                type: recovery === "kept" ? "info" : "warning",
+                title: "Queued message is no longer queued",
+                description:
+                  recovery === "kept"
+                    ? `Your unsaved edit${where} was kept in the composer.`
+                    : `Your unsaved edit${where} was discarded.`,
+              }),
+            );
+          },
+        },
+      )
+      .then((outcome) => {
+        if (outcome === "opened") {
+          focusComposerSoon();
+          return;
+        }
+        if (outcome === "superseded") return;
+        clearEditDraft(request.runId);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Couldn't edit the queued message",
+            description: "It may have already started. Try again if it is still queued.",
+          }),
+        );
+      });
   });
   const cancelEdit = useStableCallback(() => {
     if (editing === null) return;

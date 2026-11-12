@@ -76,8 +76,8 @@ interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;
   readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
-  /** Sets or releases the server's hold on the run. */
-  readonly hold: (held: boolean) => void;
+  /** Sets or releases the server's hold on the run; resolves whether it took effect. */
+  readonly hold: QueuedRunEditHold;
   cancel: (() => void) | null;
 }
 
@@ -87,6 +87,8 @@ interface ExitWatch<E> {
  * exit watch and returns whether the edit survived it.
  */
 export type FinishQueuedRunEditSave = (succeeded: boolean) => boolean;
+
+export type QueuedRunEditHold = (held: boolean) => Promise<boolean>;
 
 export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(options: {
   readonly registry: AtomRegistry.AtomRegistry;
@@ -103,6 +105,8 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
   );
   // Each begin creates a new watch, so the watch is the edit's identity.
   const watches = new Map<string, ExitWatch<E>>();
+  // A begin waiting for its hold; a later begin or end supersedes it.
+  const acquiring = new Map<string, { readonly runId: RunId }>();
 
   const setSaving = (threadKey: string, saving: boolean) => {
     const current = registry.get(savingAtom);
@@ -162,34 +166,51 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
     savingAtom,
     get,
     /**
-     * Starts an edit, replacing any edit already open on the thread. When the
-     * run leaves the queue the edit is removed and `onRunLeftQueue` receives
-     * it; if the run already left, that happens immediately.
+     * Starts an edit, replacing any open one. It opens only once the server holds
+     * the run, so the run never starts with its original text while the user types.
+     * When the run leaves the queue, `onRunLeftQueue` receives the edit.
      */
-    begin(
+    async begin(
       threadKey: string,
       edit: E,
       watch: {
         readonly runs: QueuedRunsAtom;
         readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
-        readonly hold: (held: boolean) => void;
+        readonly hold: QueuedRunEditHold;
       },
-    ) {
+    ): Promise<"opened" | "failed" | "superseded"> {
+      const open = () => {
+        write(threadKey, edit);
+        const next: ExitWatch<E> = { ...watch, runId: edit.runId, cancel: null };
+        watches.set(threadKey, next);
+        subscribe(threadKey, next);
+        return "opened" as const;
+      };
       const previous = stopWatch(threadKey);
       // Reopening the same run keeps its hold; releasing first could let it start.
-      if (previous !== undefined && previous.runId !== edit.runId) previous.hold(false);
-      write(threadKey, edit);
-      const next: ExitWatch<E> = { ...watch, runId: edit.runId, cancel: null };
-      watches.set(threadKey, next);
-      watch.hold(true);
-      subscribe(threadKey, next);
+      if (previous?.runId === edit.runId) return open();
+      if (previous !== undefined) {
+        write(threadKey, null);
+        void previous.hold(false);
+      }
+      const attempt = { runId: edit.runId };
+      acquiring.set(threadKey, attempt);
+      const held = await watch.hold(true);
+      if (acquiring.get(threadKey) !== attempt) {
+        const current = acquiring.get(threadKey) ?? watches.get(threadKey);
+        if (held && current?.runId !== edit.runId) void watch.hold(false);
+        return "superseded";
+      }
+      acquiring.delete(threadKey);
+      return held ? open() : "failed";
     },
     update(threadKey: string, f: (edit: E) => E) {
       const edit = get(threadKey);
       if (edit !== null) write(threadKey, f(edit));
     },
     end(threadKey: string) {
-      stopWatch(threadKey)?.hold(false);
+      acquiring.delete(threadKey);
+      void stopWatch(threadKey)?.hold(false);
       write(threadKey, null);
     },
     /**

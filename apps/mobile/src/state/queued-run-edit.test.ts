@@ -118,7 +118,7 @@ describe("resolveQueuedEditPayload", () => {
 describe("beginQueuedRunEdit", () => {
   it.each(["", "Ultrathink:\n"])(
     "opens attachment-only edits without the placeholder and treats them as untouched (%j)",
-    (prefix) => {
+    async (prefix) => {
       const threadKey = `env-exit:attachment-only-${prefix.length}`;
       const original = {
         ...edit([image("kept")]),
@@ -127,7 +127,7 @@ describe("beginQueuedRunEdit", () => {
       const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>(
         [{ id: original.runId, status: "queued" }],
       );
-      beginQueuedRunEdit(threadKey, original, runs, () => {});
+      await beginQueuedRunEdit(threadKey, original, runs, () => Promise.resolve(true));
       const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, original.runId));
       expect(draft.text).toBe(prefix.trimEnd());
       expect(
@@ -140,13 +140,13 @@ describe("beginQueuedRunEdit", () => {
     },
   );
 
-  it("silently drops an untouched edit when its run starts", () => {
+  it("silently drops an untouched edit when its run starts", async () => {
     const threadKey = "env-exit:thread-untouched";
     const runId = RunId.make("run-1");
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
+    await beginQueuedRunEdit(threadKey, edit([]), runs, () => Promise.resolve(true));
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
 
@@ -163,7 +163,9 @@ describe("beginQueuedRunEdit", () => {
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([image("removed")]), runs, () => {});
+    await beginQueuedRunEdit(threadKey, edit([image("removed")]), runs, () =>
+      Promise.resolve(true),
+    );
     removeQueuedRunEditAttachment(threadKey, "removed");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -184,7 +186,7 @@ describe("beginQueuedRunEdit", () => {
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
+    await beginQueuedRunEdit(threadKey, edit([]), runs, () => Promise.resolve(true));
     setComposerDraftText(queuedEditDraftKey(threadKey, runId), "revised");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -198,14 +200,14 @@ describe("beginQueuedRunEdit", () => {
     );
   });
 
-  it("ends a changed edit when its run starts, without the thread's composer mounted", () => {
+  it("ends a changed edit when its run starts, without the thread's composer mounted", async () => {
     const threadKey = "env-exit:thread-exit";
     const runId = RunId.make("run-1");
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
     setComposerDraftText(threadKey, "other work");
-    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
+    await beginQueuedRunEdit(threadKey, edit([]), runs, () => Promise.resolve(true));
     setComposerDraftText(queuedEditDraftKey(threadKey, runId), "changed");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -217,13 +219,13 @@ describe("beginQueuedRunEdit", () => {
     );
   });
 
-  it("reports a cleared edit as discarded when the run starts", () => {
+  it("reports a cleared edit as discarded when the run starts", async () => {
     const threadKey = "env-exit:thread-cleared";
     const runId = RunId.make("run-1");
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
+    await beginQueuedRunEdit(threadKey, edit([]), runs, () => Promise.resolve(true));
     setComposerDraftText(queuedEditDraftKey(threadKey, runId), "");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -235,14 +237,14 @@ describe("beginQueuedRunEdit", () => {
     );
   });
 
-  it("treats a removed server attachment as a change when the run starts", () => {
+  it("treats a removed server attachment as a change when the run starts", async () => {
     const threadKey = "env-exit:thread-removed";
     const runId = RunId.make("run-1");
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
     setComposerDraftText(threadKey, "other work");
-    beginQueuedRunEdit(threadKey, edit([image("kept")]), runs, () => {});
+    await beginQueuedRunEdit(threadKey, edit([image("kept")]), runs, () => Promise.resolve(true));
     removeQueuedRunEditAttachment(threadKey, "kept");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -258,11 +260,11 @@ describe("activeComposerDraftKey", () => {
   const threadKey = "env:thread";
   const editKey = queuedEditDraftKey(threadKey, RunId.make("run-1"));
 
-  it("keeps a queued edit's draft while that edit is open", () => {
+  it("keeps a queued edit's draft while that edit is open", async () => {
     expect(activeComposerDraftKey(threadKey, editKey, edit([]))).toBe(editKey);
   });
 
-  it("falls back to the thread's draft once the edit has ended", () => {
+  it("falls back to the thread's draft once the edit has ended", async () => {
     expect(activeComposerDraftKey(threadKey, editKey, null)).toBe(threadKey);
   });
 });

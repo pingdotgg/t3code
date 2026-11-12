@@ -426,7 +426,9 @@ export const make = Effect.gen(function* () {
           runs.push(run);
           continue;
         }
-        if (run.queueHeld === true && retryableRuns.length === 0) continue;
+        if (run.queueHeld === true && run.queueEditing !== true && retryableRuns.length === 0) {
+          continue;
+        }
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -438,6 +440,8 @@ export const make = Effect.gen(function* () {
             ...run,
             status: "queued",
             queueHeld: true,
+            // No editor outlives a restart, so its hold would never be released.
+            ...(run.queueEditing === true ? { queueEditing: false } : {}),
             ...(retryableRuns.length === 0 ? {} : { queuePosition: index + 1 }),
           },
         });

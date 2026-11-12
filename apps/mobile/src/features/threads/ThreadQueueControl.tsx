@@ -132,7 +132,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
-  // An older server has no hold; the edit then works as before.
+  // beginQueuedRunEdit reports a failed hold itself.
   const holdEdit = useAtomCommand(threadEnvironment.holdQueuedRunEdit, { reportFailure: false });
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -157,7 +157,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       if (editBlockedReason !== null) return;
       const entry = queuedRuns[index]!;
       void Haptics.selectionAsync();
-      beginQueuedRunEdit(
+      void beginQueuedRunEdit(
         threadKey,
         {
           runId,
@@ -174,7 +174,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             (get) => get(environmentThreadDetails.quietThreadAtom(target))?.projection.runs ?? null,
           ),
         }),
-        (held) => void holdEdit({ ...target, input: { threadId: target.threadId, runId, held } }),
+        (held) =>
+          holdEdit({ ...target, input: { threadId: target.threadId, runId, held } }).then(
+            (result) => result._tag === "Success",
+          ),
       );
       navigation.goBack();
       return;

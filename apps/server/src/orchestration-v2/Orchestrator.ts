@@ -14668,7 +14668,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queueHeld: false },
+            // Resuming also lifts an edit hold whose editor is gone.
+            payload: {
+              ...run,
+              queueHeld: false,
+              ...(run.queueEditing ? { queueEditing: false } : {}),
+            },
           });
         }
         if (queued.length === 0) {

@@ -25,6 +25,7 @@ import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import {
   AcpRegistryOperationError,
   CommandId,
+  type RunId,
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
@@ -1554,6 +1555,31 @@ export const layerWsRpc = (
           Effect.ignore,
         ),
       );
+      // A client's edit holds end with its connection, since only it can release them.
+      const queuedRunEditHolds = new Map<RunId, ThreadId>();
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(
+          queuedRunEditHolds,
+          ([runId, threadId]) =>
+            DateTime.now.pipe(
+              Effect.flatMap((now) =>
+                startup.enqueueCommand(
+                  ThreadMessageIntake.dispatchCommand({
+                    type: "queued-run.edit.hold",
+                    commandId: CommandId.make(
+                      `command:queued-run-edit-release:${currentSessionId}:${runId}:${DateTime.formatIso(now)}`,
+                    ),
+                    threadId,
+                    runId,
+                    held: false,
+                  }).pipe(Effect.provide(intakeContext)),
+                ),
+              ),
+              Effect.ignore,
+            ),
+          { discard: true },
+        ),
+      );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
@@ -1973,6 +1999,18 @@ export const layerWsRpc = (
                   ).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (command.type === "queued-run.edit.hold" && command.held) {
+                        queuedRunEditHolds.set(command.runId, command.threadId);
+                      } else if (
+                        command.type === "queued-run.edit.hold" ||
+                        command.type === "queued-run.edit"
+                      ) {
+                        queuedRunEditHolds.delete(command.runId);
+                      }
+                    }),
+                  ),
                   Effect.tap((result) =>
                     result.replayed ? Effect.void : recordClientCommandAnalytics(command),
                   ),

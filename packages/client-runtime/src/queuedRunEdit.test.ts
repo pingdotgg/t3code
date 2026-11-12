@@ -29,7 +29,10 @@ function setup(initialRuns: ReadonlyArray<QueuedRunStatus> | null = queued()) {
       {
         runs,
         onRunLeftQueue: (threadKey, edit) => exits.push({ threadKey, text: edit.text }),
-        hold: (held) => holds.push({ runId, held }),
+        hold: (held) => {
+          holds.push({ runId, held });
+          return Promise.resolve(true);
+        },
       },
     );
   return { registry, runs, store, exits, holds, begin };
@@ -56,9 +59,9 @@ describe("queuedRunEditBlockedReason", () => {
 });
 
 describe("makeQueuedRunEditStore", () => {
-  it("fires once when the edited run leaves the queue, with the latest edit", () => {
+  it("fires once when the edited run leaves the queue, with the latest edit", async () => {
     const { registry, runs, store, exits, begin } = setup();
-    begin();
+    await begin();
     store.update("env:thread", (edit) => ({ ...edit, text: "changed" }));
     registry.set(runs, queued());
     expect(exits).toEqual([]);
@@ -67,38 +70,37 @@ describe("makeQueuedRunEditStore", () => {
     expect(exits).toEqual([{ threadKey: "env:thread", text: "changed" }]);
   });
 
-  it("waits while the runs are unknown and treats a vanished run as left", () => {
+  it("waits while the runs are unknown and treats a vanished run as left", async () => {
     const { registry, runs, exits, begin } = setup(null);
-    begin();
+    await begin();
     expect(exits).toEqual([]);
     registry.set(runs, []);
     expect(exits).toHaveLength(1);
   });
 
-  it("fires immediately when the run already left the queue", () => {
+  it("fires immediately when the run already left the queue", async () => {
     const { exits, begin } = setup(queued("running"));
-    begin();
+    await begin();
     expect(exits).toHaveLength(1);
   });
 
-  it("stops watching when the edit ends", () => {
+  it("stops watching when the edit ends", async () => {
     const { registry, runs, store, exits, begin } = setup();
-    begin();
+    await begin();
     store.end("env:thread");
     registry.set(runs, []);
     expect(exits).toEqual([]);
     expect(store.get("env:thread")).toBeNull();
   });
 
-  it("holds the run while editing and releases it on cancel or when another run is edited", () => {
+  it("holds the run while editing and releases it on cancel or when another run is edited", async () => {
     const OTHER = RunId.make("run-2");
     const { store, holds, begin } = setup([...queued(), { id: OTHER, status: "queued" }]);
-    begin();
-    begin();
-    begin(OTHER);
+    await begin();
+    await begin();
+    await begin(OTHER);
     store.end("env:thread");
     expect(holds).toEqual([
-      { runId: RUN, held: true },
       { runId: RUN, held: true },
       { runId: RUN, held: false },
       { runId: OTHER, held: true },
@@ -106,9 +108,50 @@ describe("makeQueuedRunEditStore", () => {
     ]);
   });
 
-  it("holds the exit during a save and replays it when the save fails", () => {
+  it("opens the edit only once the server holds its run", async () => {
+    const { store } = setup();
+    const replies: Array<(held: boolean) => void> = [];
+    const released: Array<boolean> = [];
+    const begin = () =>
+      store.begin(
+        "env:thread",
+        { runId: RUN, text: "draft" },
+        {
+          runs: Atom.make(queued()),
+          onRunLeftQueue: () => {},
+          hold: (held) => {
+            if (!held) {
+              released.push(held);
+              return Promise.resolve(true);
+            }
+            return new Promise((resolve) => replies.push(resolve));
+          },
+        },
+      );
+
+    const refused = begin();
+    expect(store.get("env:thread")).toBeNull();
+    replies[0]!(false);
+    expect(await refused).toBe("failed");
+    expect(store.get("env:thread")).toBeNull();
+
+    // Cancelled before the server answered: the late hold is released.
+    const cancelled = begin();
+    store.end("env:thread");
+    replies[1]!(true);
+    expect(await cancelled).toBe("superseded");
+    expect(store.get("env:thread")).toBeNull();
+    expect(released).toEqual([false]);
+
+    const accepted = begin();
+    replies[2]!(true);
+    expect(await accepted).toBe("opened");
+    expect(store.get("env:thread")).toEqual({ runId: RUN, text: "draft" });
+  });
+
+  it("holds the exit during a save and replays it when the save fails", async () => {
     const { registry, runs, store, exits, begin } = setup();
-    begin();
+    await begin();
     const finishSave = store.startSave("env:thread");
     registry.set(runs, []);
     expect(exits).toEqual([]);
@@ -116,18 +159,18 @@ describe("makeQueuedRunEditStore", () => {
     expect(exits).toHaveLength(1);
   });
 
-  it("reports the edit still open when a save fails while its run is queued", () => {
+  it("reports the edit still open when a save fails while its run is queued", async () => {
     const { store, exits, begin } = setup();
-    begin();
+    await begin();
     const finishSave = store.startSave("env:thread");
     expect(finishSave?.(false)).toBe(true);
     expect(exits).toEqual([]);
     expect(store.get("env:thread")).toEqual({ runId: RUN, text: "draft" });
   });
 
-  it("allows one save at a time and ends the edit when it succeeds", () => {
+  it("allows one save at a time and ends the edit when it succeeds", async () => {
     const { registry, store, holds, begin } = setup();
-    begin();
+    await begin();
     const finishSave = store.startSave("env:thread");
     expect(registry.get(store.savingAtom)).toEqual({ "env:thread": true });
     expect(store.startSave("env:thread")).toBeNull();
@@ -138,11 +181,11 @@ describe("makeQueuedRunEditStore", () => {
     expect(holds).toEqual([{ runId: RUN, held: true }]);
   });
 
-  it("leaves an edit begun again during a save to that edit", () => {
+  it("leaves an edit begun again during a save to that edit", async () => {
     const { registry, runs, store, exits, begin } = setup();
-    begin();
+    await begin();
     const finishStale = store.startSave("env:thread");
-    begin();
+    await begin();
     store.update("env:thread", (edit) => ({ ...edit, text: "newer" }));
 
     expect(finishStale?.(true)).toBe(false);
@@ -154,15 +197,15 @@ describe("makeQueuedRunEditStore", () => {
 
   // The server orders saves by arrival, not by edit age, so a second save could
   // land before the first and then be overwritten by it.
-  it("keeps the save claimed until it settles, even when the edit is begun again or ended", () => {
+  it("keeps the save claimed until it settles, even when the edit is begun again or ended", async () => {
     const { registry, store, begin } = setup();
-    begin();
+    await begin();
     const finishStale = store.startSave("env:thread");
-    begin();
+    await begin();
     expect(registry.get(store.savingAtom)).toEqual({ "env:thread": true });
     expect(store.startSave("env:thread")).toBeNull();
     store.end("env:thread");
-    begin();
+    await begin();
     expect(store.startSave("env:thread")).toBeNull();
 
     expect(finishStale?.(true)).toBe(false);
@@ -173,9 +216,9 @@ describe("makeQueuedRunEditStore", () => {
     expect(store.get("env:thread")).toBeNull();
   });
 
-  it("does not revive a cancelled edit when its save fails", () => {
+  it("does not revive a cancelled edit when its save fails", async () => {
     const { registry, runs, store, exits, begin } = setup();
-    begin();
+    await begin();
     const finishSave = store.startSave("env:thread");
     store.end("env:thread");
     expect(finishSave?.(false)).toBe(false);
@@ -186,7 +229,7 @@ describe("makeQueuedRunEditStore", () => {
 
   // The runs read the thread's detail, a live server subscription; a thread
   // with no edit open must not keep it.
-  it("holds the thread's runs only while an edit is open and watching", () => {
+  it("holds the thread's runs only while an edit is open and watching", async () => {
     // The registry removes idle nodes in a scheduled task; the test runs those tasks itself.
     const tasks: Array<() => void> = [];
     const registry = AtomRegistry.make({
@@ -212,15 +255,19 @@ describe("makeQueuedRunEditStore", () => {
       label: "test-queued-run-edits",
     });
     const begin = () =>
-      store.begin("env:thread", { runId: RUN }, { runs, onRunLeftQueue: () => {}, hold: () => {} });
+      store.begin(
+        "env:thread",
+        { runId: RUN },
+        { runs, onRunLeftQueue: () => {}, hold: () => Promise.resolve(true) },
+      );
 
-    begin();
+    await begin();
     expect(mounted).toBe(1);
     store.end("env:thread");
     settle();
     expect(mounted).toBe(0);
 
-    begin();
+    await begin();
     const finishSave = store.startSave("env:thread");
     settle();
     expect(mounted).toBe(0);
@@ -242,7 +289,7 @@ describe("makeQueuedRunsAtom", () => {
     ...overrides,
   });
 
-  function setupWatched() {
+  async function setupWatched() {
     const registry = AtomRegistry.make();
     const snapshot = Atom.make<{ threads: ReadonlyArray<ReturnType<typeof thread>> } | null>({
       threads: [thread()],
@@ -264,10 +311,10 @@ describe("makeQueuedRunsAtom", () => {
       label: "test-queued-run-edits",
     });
     const exits: Array<string> = [];
-    store.begin(
+    await store.begin(
       "env:thread",
       { runId: RUN },
-      { runs, onRunLeftQueue: (key) => exits.push(key), hold: () => {} },
+      { runs, onRunLeftQueue: (key) => exits.push(key), hold: () => Promise.resolve(true) },
     );
     return {
       registry,
@@ -280,8 +327,8 @@ describe("makeQueuedRunsAtom", () => {
     };
   }
 
-  it("ends the edit when the shell marks the thread deleted, without reading its detail again", () => {
-    const { registry, snapshot, detail, exits, detailReads } = setupWatched();
+  it("ends the edit when the shell marks the thread deleted, without reading its detail again", async () => {
+    const { registry, snapshot, detail, exits, detailReads } = await setupWatched();
     expect(exits).toEqual([]);
     registry.set(snapshot, { threads: [thread({ deletedAt: "2026-10-24T00:00:00Z" })] });
     expect(exits).toEqual(["env:thread"]);
@@ -290,16 +337,16 @@ describe("makeQueuedRunsAtom", () => {
     expect(detailReads()).toBe(reads);
   });
 
-  it("ends the edit when the detail reports the thread gone", () => {
-    const { registry, snapshot, detailStatus, exits } = setupWatched();
+  it("ends the edit when the detail reports the thread gone", async () => {
+    const { registry, snapshot, detailStatus, exits } = await setupWatched();
     registry.set(snapshot, { threads: [] });
     expect(exits).toEqual([]);
     registry.set(detailStatus, "deleted");
     expect(exits).toEqual(["env:thread"]);
   });
 
-  it("keeps an archived thread's edit open, ending it only when the run leaves the queue", () => {
-    const { registry, snapshot, detail, store, exits } = setupWatched();
+  it("keeps an archived thread's edit open, ending it only when the run leaves the queue", async () => {
+    const { registry, snapshot, detail, store, exits } = await setupWatched();
     // The shell drops archived threads, but their queue stays editable.
     registry.set(snapshot, { threads: [] });
     registry.set(snapshot, { threads: [thread({ archivedAt: "2026-10-24T00:00:00Z" })] });
@@ -309,8 +356,8 @@ describe("makeQueuedRunsAtom", () => {
     expect(exits).toEqual(["env:thread"]);
   });
 
-  it("waits while the thread detail is unknown", () => {
-    const { registry, snapshot, detail, exits } = setupWatched();
+  it("waits while the thread detail is unknown", async () => {
+    const { registry, snapshot, detail, exits } = await setupWatched();
     registry.set(snapshot, null);
     registry.set(detail, null);
     expect(exits).toEqual([]);

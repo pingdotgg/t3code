@@ -10,6 +10,7 @@ import { stripAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerCont
 import {
   makeQueuedRunEditStore,
   resolveQueuedEditExit,
+  type QueuedRunEditHold,
   type QueuedRunsAtom,
 } from "@t3tools/client-runtime/queued-run-edit";
 
@@ -108,14 +109,14 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
 
 /**
  * `runs` is the thread's runs; the edit ends when its run leaves the queue.
- * `hold` sets or releases the server's hold on the run while it is edited.
+ * The edit opens once `hold` has the server hold the run, and reports when it cannot.
  */
 export function beginQueuedRunEdit(
   threadKey: string,
   edit: QueuedRunEdit,
   runs: QueuedRunsAtom,
-  hold: (held: boolean) => void,
-): void {
+  hold: QueuedRunEditHold,
+): Promise<void> {
   const previous = getQueuedRunEdit(threadKey);
   if (previous !== null && previous.runId !== edit.runId) {
     clearComposerDraft(queuedEditDraftKey(threadKey, previous.runId));
@@ -127,11 +128,13 @@ export function beginQueuedRunEdit(
   clearComposerDraft(draftKey);
   setComposerDraftText(draftKey, originalText);
   setComposerDraftContext(draftKey, edit.context);
-  queuedRunEdits.begin(
-    threadKey,
-    { ...edit, originalText },
-    { runs, onRunLeftQueue: exitQueuedRunEdit, hold },
-  );
+  return queuedRunEdits
+    .begin(threadKey, { ...edit, originalText }, { runs, onRunLeftQueue: exitQueuedRunEdit, hold })
+    .then((outcome) => {
+      if (outcome !== "failed") return;
+      clearComposerDraft(draftKey);
+      setThreadComposerError(threadKey, "Couldn't edit that message. It may have already started.");
+    });
 }
 
 export function removeQueuedRunEditAttachment(threadKey: string, attachmentId: string): void {

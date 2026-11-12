@@ -8084,8 +8084,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect.each(["save", "cancel"] as const)(
-    "holds an edited queued run when the active run ends until its edit is %s",
+  // An abandoned edit (reload, quit, restart) is released by Resume queue or by restart recovery.
+  it.effect.each(["save", "cancel", "resume", "restart"] as const)(
+    "holds an edited queued run when the active run ends until %s",
     (release) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -8141,6 +8142,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ["interrupted", "queued", "queued"],
         );
 
+        if (release === "restart") {
+          const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+          yield* recovery.reconcile("startup");
+          const recovered = yield* orchestrator.getThreadProjection(threadId);
+          assert.notEqual(recovered.runs[1]!.queueEditing, true);
+        }
         yield* orchestrator.dispatch(
           release === "save"
             ? {
@@ -8150,13 +8157,19 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 runId: editedRun!.id,
                 text: "Saved edit",
               }
-            : {
-                type: "queued-run.edit.hold",
-                commandId: CommandId.make(`${threadId}:release`),
-                threadId,
-                runId: editedRun!.id,
-                held: false,
-              },
+            : release === "cancel"
+              ? {
+                  type: "queued-run.edit.hold",
+                  commandId: CommandId.make(`${threadId}:release`),
+                  threadId,
+                  runId: editedRun!.id,
+                  held: false,
+                }
+              : {
+                  type: "queue.resume",
+                  commandId: CommandId.make(`${threadId}:resume`),
+                  threadId,
+                },
         );
         const released = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(

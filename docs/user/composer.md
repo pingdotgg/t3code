@@ -268,7 +268,7 @@ attachments appear above the text with a remove control, and new images can be a
 The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
 you had typed in the composer before starting the edit is restored afterwards. The queue waits
 while you edit: if the running turn ends, the message and those behind it are sent only after you
-save or cancel. If the message is sent or removed from another device while you are editing, the
+save or cancel, or until you close or reload the app. If the message is sent or removed from another device while you are editing, the
 edit ends: changed content moves into the composer when it is empty, and is discarded otherwise.
 
 ## Commands and skills
