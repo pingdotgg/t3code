@@ -34,6 +34,7 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
@@ -426,6 +427,7 @@ const scope = {
   capabilities: new Set(["preview"] as const),
   issuedAt: 1,
 };
+const revokedCredentials = new Set<string>();
 const asSession = (providerSessionId: string) => ({
   ...scope,
   thread: { ...testThread, providerSessionId },
@@ -505,6 +507,10 @@ const dependencies = Layer.mergeAll(
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,
+  Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+    revokeProviderSession: (providerSessionId) =>
+      Effect.sync(() => revokedCredentials.add(providerSessionId)),
+  }),
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -581,6 +587,7 @@ beforeEach(() => {
   desktopReleased = Promise.withResolvers<void>();
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
+  revokedCredentials.clear();
 });
 
 it.live("tells the desktop once per thread when its agent turns start and end", () =>
@@ -1008,6 +1015,35 @@ it.live("enforces provider ownership and explicit targets when a session has mul
       });
       expect(result).toBe("evaluated");
       expect(contexts).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("the thread's next session can use and close a tab whose opening session ended", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      // An idle stop revokes the opener's MCP credential; the resumed provider gets a new one.
+      yield* registry.revokeProviderSession(scope.thread.providerSessionId);
+      const resumed = asSession("agent-a-resumed");
+      yield* broker.invoke({
+        scope: resumed,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:5173/resumed" },
+      });
+      expect(contexts[0]!.page.goto).toHaveBeenCalledWith(
+        "http://localhost:5173/resumed",
+        expect.anything(),
+      );
+      yield* broker.invoke({ scope: resumed, tabId, operation: "close", input: {} });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: resumed,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).not.toEqual(expect.arrayContaining([expect.objectContaining({ tabId })]));
     }),
   ).pipe(Effect.provide(layer)),
 );
