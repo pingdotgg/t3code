@@ -177,8 +177,10 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true },
   { order: "cleanup-first", restoreFiles: false, leavesFolder: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true, shared: true },
-])("locks rollback with %s", ({ order, restoreFiles, unmanaged, leavesFolder, shared }) =>
+  { order: "cleanup-first", restoreFiles: true, leavesFolder: true, createFails: true },
+])("locks rollback with %s", (row) =>
   Effect.gen(function* () {
+    const { order, restoreFiles, unmanaged, leavesFolder, shared, createFails } = row;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workspaceRoot = yield* fileSystem.realPath(
@@ -249,6 +251,7 @@ it.effect.each([
                   path: worktreePath,
                 });
                 calls.push("create");
+                if (createFails) return yield* Effect.die("the branch is gone");
                 yield* fileSystem
                   .makeDirectory(path.join(worktreePath, ".git"), { recursive: true })
                   .pipe(Effect.orDie);
@@ -360,6 +363,16 @@ it.effect.each([
           assert.equal(error.reason, "shared-workspace");
           assert.isTrue(yield* fileSystem.exists(path.join(worktreePath, "unsaved.txt")));
         }
+        return;
+      }
+      if (createFails) {
+        yield* Fiber.join(rollback).pipe(Effect.exit);
+        assert.deepEqual(calls, ["cleanup", "prune", "create"]);
+        assert.equal(
+          yield* fileSystem.readFileString(path.join(worktreePath, "unsaved.txt")),
+          "keep",
+        );
+        assert.deepEqual(yield* fileSystem.readDirectory(path.dirname(worktreePath)), ["feature"]);
         return;
       }
       yield* Fiber.join(rollback);
