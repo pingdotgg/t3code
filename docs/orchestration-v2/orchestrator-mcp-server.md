@@ -100,13 +100,15 @@ server headers or token.
 ### Cursor Agent SDK V2
 
 Cursor receives the same authenticated HTTP MCP endpoint through the SDK's
-`mcpServers` on `Agent.create` / `Agent.resume`. Ambient servers from
-`settingSources` (`project`, `user`, `team`, `mdm`, `plugins`) load alongside it.
+`mcpServers` on `Agent.create` / `Agent.resume`, alongside `mcp.json` servers
+whose `${workspaceFolder}` paths the SDK cannot start as written. Ambient servers
+from `settingSources` (`project`, `user`, `team`, `mdm`, `plugins`) load with them.
 Sends never carry `mcpServers`: a send that does makes the SDK reconnect every
 server, ambient ones included, which respawns stdio servers and delays the run.
-When the endpoint or token changes, the adapter reopens the agent with the new
-set instead. The adapter passes the authorization header to the SDK but projects
-only redacted option metadata into protocol diagnostics.
+The adapter resolves the set on every turn and reopens the agent when it changes,
+such as a new endpoint or token, or an edit to `mcp.json` or `mcp-disabled.json`.
+The adapter passes the authorization header to the SDK but projects only redacted
+option metadata into protocol diagnostics.
 
 ### Grok ACP V2
 
@@ -430,6 +432,12 @@ List and read results report `snoozed` and `snoozedUntil`, and
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
 wakes early only when it has a pending request or fails after snoozing. Completed
 runs, background wakes, and delegated completions keep it snoozed.
+
+They also report `blockedOnThreadWait` and `pendingBackgroundTasks`, the shell
+fields behind the sidebar's Waiting label, so an agent can see what a thread
+still waits on after its run completed. A subagent or `background_task` holds
+the thread. A command or monitor holds it only with `awaited: true`, since agents
+often leave a dev server running.
 
 ### `t3_thread_update`
 
