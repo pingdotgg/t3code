@@ -8085,7 +8085,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   // An abandoned edit (reload, quit, restart) is released by Resume queue or by restart recovery.
-  it.effect.each(["save", "cancel", "resume", "restart"] as const)(
+  it.effect.each(["save", "cancel", "remove", "resume", "restart"] as const)(
     "holds an edited queued run when the active run ends until %s",
     (release) =>
       Effect.gen(function* () {
@@ -8165,16 +8165,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   runId: editedRun!.id,
                   held: false,
                 }
-              : {
-                  type: "queue.resume",
-                  commandId: CommandId.make(`${threadId}:resume`),
-                  threadId,
-                },
+              : release === "remove"
+                ? {
+                    type: "queued-run.cancel",
+                    commandId: CommandId.make(`${threadId}:remove`),
+                    threadId,
+                    runId: editedRun!.id,
+                  }
+                : {
+                    type: "queue.resume",
+                    commandId: CommandId.make(`${threadId}:resume`),
+                    threadId,
+                  },
         );
         const released = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           released.runs.map((run) => run.status),
-          ["interrupted", "starting", "queued"],
+          release === "remove"
+            ? ["interrupted", "cancelled", "starting"]
+            : ["interrupted", "starting", "queued"],
         );
         assert.equal(released.runs[2]!.id, behindRun!.id);
         assert.equal(
