@@ -4333,6 +4333,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("uses the only remote's HEAD for default-branch detection without origin", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-github-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["branch", "-M", "trunk"]);
+        yield* git(cwd, ["remote", "add", "github", remote]);
+        yield* git(cwd, ["push", "-u", "github", "trunk"]);
+        yield* git(cwd, ["remote", "set-head", "github", "trunk"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.isTrue((yield* driver.statusDetailsRemote(cwd)).isDefaultBranch);
+        assert.isTrue((yield* driver.statusDetailsLocal(cwd)).isDefaultBranch);
+      }),
+    );
+
     it.effect("makes background upstream status fetches non-interactive", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
