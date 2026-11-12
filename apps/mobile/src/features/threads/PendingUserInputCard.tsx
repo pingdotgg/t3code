@@ -81,6 +81,7 @@ function QuestionText(props: {
   readonly threadId: ThreadId;
   readonly workspaceRoot: string | null;
   readonly setDirection: TextDirection | undefined;
+  readonly preserveSoftBreaks?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
@@ -113,6 +114,7 @@ function QuestionText(props: {
         Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
       }
       onLinkPress={openLink}
+      preserveSoftBreaks={props.preserveSoftBreaks}
     />
   );
 }
@@ -324,6 +326,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                             threadId={props.threadId}
                             workspaceRoot={props.workspaceRoot}
                             setDirection={setDirection}
+                            preserveSoftBreaks
                           />
                         </View>
                       ) : null}

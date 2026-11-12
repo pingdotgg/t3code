@@ -329,6 +329,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         text={option.preview}
                         cwd={cwd}
                         threadRef={threadRef}
+                        lineBreaks
                         className="ps-9 pe-2 pb-1.5 text-xs text-foreground/70 sm:ps-8"
                       />
                     ) : null}
