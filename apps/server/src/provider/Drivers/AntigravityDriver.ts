@@ -462,6 +462,11 @@ export const AntigravityDriver: ProviderDriver<
       makeRuntime,
       withProcess: authFlow.withProcess,
       defaultModel,
+      supportsNativeGoals: provider.snapshot.getSnapshot.pipe(
+        Effect.map(
+          (snapshot) => snapshot.slashCommands?.some((command) => command.name === "goal") === true,
+        ),
+      ),
       profileDirectory,
       onSessionStarted: provider.onSessionStarted,
       onSessionEvent: (event) => {
