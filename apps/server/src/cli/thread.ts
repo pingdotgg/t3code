@@ -9,6 +9,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   type OrchestratorMcpThreadListItem,
+  type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadStatus,
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
@@ -39,6 +40,15 @@ import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
  * soon, since `t3_thread_wait` only returns on a terminal run.
  */
 const WAIT_SLICE_MS = 15_000;
+const WAKE_GRACE_MS = 10_000;
+const WAKE_POLL_MS = 500;
+const TERMINAL_RUN_STATUSES = new Set<OrchestratorMcpThreadRun["status"]>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "rolled_back",
+]);
 const READ_PAGE_LIMIT = 100;
 const TITLE_MAX_CHARS = 80;
 
@@ -531,14 +541,12 @@ const runsAfter = Effect.fn("cli.thread.runsAfter")(function* (
     OrchestratorMcpThreadReadResult,
   );
   const own = recentRuns.find((run) => run.runId === runId);
-  if (own === undefined) return { later: new Set<RunId>(), sent: true };
-  const later = new Set(
-    recentRuns.filter((run) => run.ordinal > own.ordinal).map((run) => run.runId),
-  );
-  if (later.size === 0) return { later, sent: false };
+  if (own === undefined) return { later: [], sent: true };
+  const later = recentRuns.filter((run) => run.ordinal > own.ordinal);
+  if (later.length === 0) return { later, sent: false };
   const { items } = yield* readTimeline(tools, threadId, "messages");
   const sent = items.some(
-    (item) => item.type === "user_message" && item.runId !== null && later.has(item.runId),
+    (item) => item.type === "user_message" && later.some((run) => run.runId === item.runId),
   );
   return { later, sent };
 });
@@ -590,6 +598,18 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
   const outcome = yield* ownRun;
   if (!followWakes || outcome.type !== "ended" || outcome.status !== "completed") return outcome;
   const finalRunId = outcome.runId ?? runId;
+  // A provider records the run that background work wakes only after that
+  // work has ended, so the thread briefly looks settled in between.
+  const wakeRunRecorded = Effect.gen(function* () {
+    for (let waited = 0; waited < WAKE_GRACE_MS; waited += WAKE_POLL_MS) {
+      yield* Effect.sleep(WAKE_POLL_MS);
+      const after = yield* runsAfter(tools, threadId, finalRunId);
+      if (after.sent) return false;
+      if (after.later.length > 0) return true;
+    }
+    return false;
+  });
+  let workOutlivedRun = false;
   while (true) {
     const waited = yield* waitSlice(WAIT_SLICE_MS, true);
     // `resultRun` is the thread's latest finished run, whoever sent it.
@@ -597,10 +617,15 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
     const after = yield* runsAfter(tools, threadId, finalRunId);
     if (after.sent) return outcome;
     if (!waited.timedOut) {
-      return result !== undefined && after.later.has(result.runId)
-        ? ({ type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome)
-        : outcome;
+      if (result !== undefined && after.later.some((run) => run.runId === result.runId)) {
+        return { type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome;
+      }
+      if (!workOutlivedRun) return outcome;
+      if (after.later.some((run) => !TERMINAL_RUN_STATUSES.has(run.status))) continue;
+      if (after.later.length === 0 && (yield* wakeRunRecorded)) continue;
+      return outcome;
     }
+    workOutlivedRun = true;
     const { thread } = yield* tools.call(
       "t3_thread_read",
       { threadId, limit: 1, runLimit: 1 },
