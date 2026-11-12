@@ -32,8 +32,6 @@ interface MutableDirectoryNode {
 
 let sortCollator: Intl.Collator | undefined;
 
-// Checkpoint paths come from Git, which separates directories with "/" on every
-// platform. A backslash is part of a POSIX file name, not a separator.
 function normalizePathSegments(pathValue: string): string[] {
   return pathValue.split("/").filter((segment) => segment.length > 0);
 }
