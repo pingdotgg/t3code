@@ -12,6 +12,7 @@ import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
   resetPreviewStateForTests,
+  updatePreviewServerSnapshot,
 } from "~/previewStateStore";
 
 import { useClosedViewStore } from "~/closedViewStore";
@@ -106,6 +107,9 @@ describe("closePreviewSession", () => {
     expect(readThreadPreviewState(threadRef).sessions).toEqual({ "tab-1": desktopSnapshot });
     // The page has unloaded once the close returns, even if its closed event never arrives.
     await closing;
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
+    // A resize or adjust response sent before the close must not bring the tab back.
+    updatePreviewServerSnapshot(threadRef, desktopSnapshot);
     expect(readThreadPreviewState(threadRef).sessions).toEqual({});
   });
 });

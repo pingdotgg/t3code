@@ -430,8 +430,13 @@ export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): v
   });
 }
 
+/** Removes a closed tab; a stale snapshot cannot restore it until its closed event lands. */
 export function finishPreviewSessionClose(ref: ScopedThreadRef, tabId: string): void {
-  updateThreadPreviewState(ref, (current) => removeSession(current, tabId));
+  updateThreadPreviewState(ref, (current) => {
+    const closed = removeSession(current, tabId);
+    if (closed.suppressedTabIds.has(tabId)) return closed;
+    return { ...closed, suppressedTabIds: new Set(closed.suppressedTabIds).add(tabId) };
+  });
 }
 
 export function cancelPreviewSessionClose(

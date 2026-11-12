@@ -1624,6 +1624,32 @@ it.live("a client close while the desktop page attaches lets the page unload fir
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a desktop page that attaches after a close gave up on it never becomes a tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const gate = (desktopConnectGate = Promise.withResolvers<void>());
+      const { tabId } = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* Effect.promise(() => desktopConnecting.promise);
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const closing = yield* browser
+        .close({ threadId: scope.thread.threadId, tabId })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      vi.advanceTimersByTime(5_000);
+      yield* Fiber.join(closing);
+      vi.useRealTimers();
+      gate.resolve();
+      yield* Effect.promise(() => desktopReleased.promise);
+      const page = desktopConnections[0]!.context.page;
+      expect(page.waitForLoadState).not.toHaveBeenCalled();
+      expect(page.goto).not.toHaveBeenCalled();
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers()))),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("an interrupted client close still closes the session after the unload grace", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -3542,6 +3568,58 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),
       );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("two opens from an agent one tab short of its limit reclaim only one slot", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const now = vi.spyOn(Date, "now").mockReturnValue(0);
+      yield* Effect.addFinalizer(() => Effect.sync(() => now.mockRestore()));
+      const open = (providerSessionId: string) => {
+        desktopRendersNext = true;
+        return broker.invoke<PreviewAutomationStatus>({
+          scope: asSession(providerSessionId),
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        });
+      };
+      for (let index = 0; index < 32; index++) {
+        now.mockReturnValue(index);
+        yield* open(index < 25 ? `agent-${index % 4}` : "agent-full");
+      }
+      now.mockReturnValue(31 * 60 * 1000);
+      const pages = desktopConnections.map((connection) => connection.context.page);
+      const unloaded = () =>
+        pages.flatMap((page, index) => (page.unloadEvents.includes("pagehide") ? [index] : []));
+      for (const page of pages) {
+        page.beforeUnload = "listen";
+        page.unloadGate = Promise.withResolvers<void>();
+      }
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const page of pages) page.unloadGate?.resolve();
+        }),
+      );
+      // The first open holds the tab it reclaims mid-unload while the second arrives.
+      const firstOpen = yield* open("agent-full").pipe(Effect.forkScoped);
+      const reclaimed = yield* Effect.promise(() =>
+        Promise.race(pages.map((page, index) => page.pagehideWatched.promise.then(() => index))),
+      );
+      for (const page of pages) if (page !== pages[reclaimed]) page.unloadGate = null;
+      const second = yield* open("agent-full").pipe(
+        Effect.match({ onFailure: (error) => error, onSuccess: () => null }),
+      );
+      // A reservation that cannot succeed must not close a tab for it.
+      expect(unloaded()).toEqual([]);
+      expect(second).toMatchObject({ reason: "tabLimit" });
+      pages[reclaimed]!.unloadGate!.resolve();
+      expect((yield* Fiber.join(firstOpen)).tabId).toBeDefined();
+      expect(unloaded()).toEqual([reclaimed]);
     }),
   ).pipe(Effect.provide(layer)),
 );
