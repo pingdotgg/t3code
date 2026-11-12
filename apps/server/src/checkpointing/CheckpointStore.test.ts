@@ -546,6 +546,34 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("leaves out paths that only the left branch's commits changed", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-authored-paths-branch-switch");
+        const refs = {
+          cwd: tmp,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        yield* git(tmp, ["branch", "b"]);
+        yield* git(tmp, ["checkout", "-b", "a"]);
+        yield* writeTextFile(NodePath.join(tmp, "x.txt"), "edited on a\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "x on a"], { committedAt: "2020-01-01T00:00:00Z" });
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+
+        yield* git(tmp, ["checkout", "b"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
+
+        expect([...((yield* checkpointStore.listAuthoredPaths(refs)) ?? [])]).toEqual([]);
+      }),
+    );
+
     it.effect("keeps paths from signed commits under log.showSignature", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
