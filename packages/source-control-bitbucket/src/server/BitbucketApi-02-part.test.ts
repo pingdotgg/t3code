@@ -1,0 +1,246 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import { assert, it, vi } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
+
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+
+import * as BitbucketApi from "./BitbucketApi.ts";
+
+type HostGit = SourceControlHost.SourceControlHost["Service"]["git"];
+
+const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
+
+const bitbucketPullRequest = {
+  id: 42,
+  title: "Add Bitbucket provider",
+  state: "OPEN",
+  updated_on: "2026-01-02T00:00:00.000Z",
+  links: {
+    html: {
+      href: "https://bitbucket.org/pingdotgg/t3code/pull-requests/42",
+    },
+  },
+  source: {
+    branch: { name: "feature/source-control" },
+    repository: {
+      full_name: "octocat/t3code",
+      workspace: { slug: "octocat" },
+    },
+  },
+  destination: {
+    branch: { name: "main" },
+    repository: {
+      full_name: "pingdotgg/t3code",
+      workspace: { slug: "pingdotgg" },
+    },
+  },
+};
+
+const repositoryJson = {
+  full_name: "pingdotgg/t3code",
+  links: {
+    html: { href: "https://bitbucket.org/pingdotgg/t3code" },
+    clone: [
+      { name: "https", href: "https://bitbucket.org/pingdotgg/t3code.git" },
+      { name: "ssh", href: "git@bitbucket.org:pingdotgg/t3code.git" },
+    ],
+  },
+  mainbranch: { name: "main" },
+};
+
+function makeLayer(input: {
+  readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
+  /** Holds the answer until it resolves, in place of answering at once. */
+  readonly answer?: (response: Response) => Effect.Effect<Response>;
+  readonly requestFailure?: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => HttpClientError.HttpClientError;
+  readonly stall?: boolean;
+  readonly git?: Partial<HostGit>;
+  readonly env?: Record<string, string>;
+  readonly remoteUrl?: string;
+}) {
+  const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
+    input.stall
+      ? Effect.never
+      : input.requestFailure
+        ? Effect.fail(input.requestFailure(request))
+        : (input.answer ?? Effect.succeed)(input.response(request)).pipe(
+            Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+          ),
+  );
+  const gitMock = {
+    readConfigValue: vi.fn<HostGit["readConfigValue"]>(() =>
+      Effect.succeed<string | null>("git@bitbucket.org:pingdotgg/t3code.git"),
+    ),
+    resolvePrimaryRemoteName: vi.fn<HostGit["resolvePrimaryRemoteName"]>(() =>
+      Effect.succeed("origin"),
+    ),
+    ensureRemote: vi.fn<HostGit["ensureRemote"]>(() => Effect.succeed("octocat")),
+    fetchRemoteBranch: vi.fn<HostGit["fetchRemoteBranch"]>(() => Effect.void),
+    fetchRemoteTrackingBranch: vi.fn<HostGit["fetchRemoteTrackingBranch"]>(() => Effect.void),
+    setBranchUpstream: vi.fn<HostGit["setBranchUpstream"]>(() => Effect.void),
+    switchRef: vi.fn<HostGit["switchRef"]>((request) =>
+      Effect.succeed({ refName: request.refName }),
+    ),
+    listLocalBranchNames: vi.fn<HostGit["listLocalBranchNames"]>(() => Effect.succeed([])),
+  };
+  const git = {
+    ...gitMock,
+    ...input.git,
+  } satisfies Partial<HostGit>;
+
+  const listRemotes = vi.fn(() =>
+    Effect.succeed({
+      remotes: [
+        {
+          name: "origin",
+          url: input.remoteUrl ?? "git@bitbucket.org:pingdotgg/t3code.git",
+          pushUrl: Option.none(),
+          isPrimary: true,
+        },
+      ],
+      freshness: {
+        source: "live-local" as const,
+        observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
+        expiresAt: Option.none(),
+      },
+    }),
+  );
+  // The outer effect resolves the repository; the inner one lists its remotes.
+  const resolve = vi.fn((_cwd: string) => Effect.succeed(Effect.suspend(listRemotes)));
+
+  const layer = BitbucketApi.layer.pipe(
+    Layer.provide(SourceControlRateLimit.layer),
+    Layer.provide(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => execute(request)),
+      ),
+    ),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromEnv({
+          env: input.env ?? {
+            T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0",
+            T3CODE_BITBUCKET_EMAIL: "user@example.com",
+            T3CODE_BITBUCKET_API_TOKEN: "token",
+          },
+        }),
+      ),
+    ),
+    Layer.provideMerge(TestSourceControlHost.layer({ git: { ...git, remotes: resolve } })),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+  return { execute, git: gitMock, resolve, listRemotes, layer };
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+it.effect.each([false, true])("honors PR URL repositories, context=%s", (withContext) => {
+  const { execute, git, layer } = makeLayer({
+    response: (request) =>
+      Response.json(
+        request.url.endsWith("/pullrequests/42")
+          ? {
+              ...bitbucketPullRequest,
+              source: {
+                branch: { name: "feature/source-control" },
+                repository: { full_name: "another/app" },
+              },
+              destination: { branch: { name: "main" }, repository: { full_name: "another/app" } },
+            }
+          : {
+              ...repositoryJson,
+              full_name: "another/app",
+              links: { clone: [{ name: "ssh", href: "git@bitbucket.org:another/app.git" }] },
+            },
+      ),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const input = {
+      cwd: "/repo",
+      reference: "https://bitbucket.org/another/app/pull-requests/42",
+      ...(withContext
+        ? {
+            context: {
+              provider: {
+                kind: SourceControlProviderKind.make("bitbucket"),
+                name: "Bitbucket",
+                baseUrl: "https://bitbucket.org",
+              },
+              remoteName: "origin",
+              remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+            },
+          }
+        : {}),
+    };
+    yield* bitbucket.getPullRequest(input);
+    yield* bitbucket.checkoutPullRequest(input);
+    assert.deepStrictEqual(
+      execute.mock.calls.slice(0, 2).map(([request]) => request.url),
+      [
+        "https://api.test.local/2.0/repositories/another/app/pullrequests/42",
+        "https://api.test.local/2.0/repositories/another/app/pullrequests/42",
+      ],
+    );
+    assert.deepStrictEqual(git.ensureRemote.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      preferredName: "another",
+      url: "git@bitbucket.org:another/app.git",
+    });
+    assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      remoteName: "octocat",
+      remoteBranch: "feature/source-control",
+      localBranch: "feature/source-control",
+    });
+    assert.deepStrictEqual(git.setBranchUpstream.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      branch: "feature/source-control",
+      remoteName: "octocat",
+      remoteBranch: "feature/source-control",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
