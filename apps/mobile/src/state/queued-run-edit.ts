@@ -175,8 +175,17 @@ export function resolveQueuedEditPayload(input: {
     input.draftAttachments,
     input.uploaded,
   );
+  // Typing clears the draft's provenance; the edit's original provenance locates the effort prefix.
+  const originalRecall = input.edit.context?.composerRecall;
   const recall = (context: OrchestrationMessageContext | undefined) =>
-    composerRecallContext(text, input.draftText, context, input.edit.originalText) ?? {
+    composerRecallContext(
+      text,
+      input.draftText,
+      originalRecall === undefined
+        ? context
+        : { ...(context ?? { version: 1, records: [] }), composerRecall: originalRecall },
+      input.edit.originalText,
+    ) ?? {
       version: 1,
       records: [],
     };

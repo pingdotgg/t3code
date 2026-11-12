@@ -525,7 +525,15 @@ export function composerRecallContext(
   // Recompute rather than carrying provenance from a message being edited.
   const { composerRecall: _previousRecall, ...base } = context ?? { version: 1, records: [] };
   // Absent provenance falls back to the legacy heuristic, so record it whenever that would differ.
-  if (text === sentText && stripLegacyPromptDecoration(sentText) === sentText.trim()) {
+  // A message sent without provenance where the heuristic applies is legacy: an edit keeps it so.
+  const legacyEdit =
+    previousSentText !== undefined &&
+    context?.composerRecall === undefined &&
+    stripLegacyPromptDecoration(previousSentText) !== previousSentText.trim();
+  if (
+    legacyEdit ||
+    (text === sentText && stripLegacyPromptDecoration(sentText) === sentText.trim())
+  ) {
     return base.records.length > 0 || base.guest ? base : undefined;
   }
   const start = text.length > 0 ? sentText.indexOf(text) : -1;

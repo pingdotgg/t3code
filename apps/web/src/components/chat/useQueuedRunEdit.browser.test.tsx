@@ -329,19 +329,12 @@ describe("useQueuedRunEdit", () => {
       () => {},
     );
 
-    const keptReference = formatInlineContextReference(threadContextReference(kept));
-    const sentText = `${keptReference} and`;
+    const sentText = `${formatInlineContextReference(threadContextReference(kept))} and`;
     expect(mocks.editQueuedRun).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
           text: sentText,
-          edit: expect.objectContaining({
-            context: {
-              version: 1,
-              records: [kept],
-              composerRecall: [keptReference.length + 1, sentText.length],
-            },
-          }),
+          edit: expect.objectContaining({ context: { version: 1, records: [kept] } }),
         }),
       }),
     );

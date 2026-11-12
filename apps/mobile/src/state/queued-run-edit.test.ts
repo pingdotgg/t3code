@@ -134,6 +134,25 @@ describe("resolveQueuedEditPayload", () => {
     expect(payload.context).toEqual(recalled);
   });
 
+  it("keeps the effort prefix generated after typing cleared the draft's provenance", () => {
+    const originalText = "Ultrathink:\noriginal";
+    const revised = "Ultrathink:\noriginal revised";
+    const payload = resolveQueuedEditPayload({
+      edit: {
+        ...edit([]),
+        originalText,
+        context: { version: 1, records: [], composerRecall: [12, originalText.length] },
+      },
+      text: revised,
+      draftText: revised,
+      draftContext: undefined,
+      draftAttachments: [],
+      uploaded: [],
+    });
+
+    expect(recallComposerText(payload.text, payload.context)).toBe("original revised");
+  });
+
   it.each(["", "Ultrathink:"])(
     "omits the generated bootstrap when an attachment remains after editing to %j",
     (draftText) => {

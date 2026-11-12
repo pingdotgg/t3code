@@ -626,6 +626,10 @@ describe("composer recall provenance", () => {
         composerRecallContext(revised, revised, previous, "Ultrathink:\nold"),
       ),
     ).toBe("old revised");
+    // A message sent without provenance stays on the legacy fallback, saved unchanged or edited.
+    const legacy = "Ultrathink:\nold";
+    expect(composerRecallContext(legacy, legacy, undefined, legacy)).toBeUndefined();
+    expect(composerRecallContext(revised, revised, undefined, legacy)).toBeUndefined();
   });
 
   it("retains original whitespace when an unchanged queued draft is saved again", () => {
