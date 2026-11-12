@@ -22,8 +22,13 @@ enum AgentWidgetState {
       return !covered.contains(environmentId)
     }
     let localActiveCount = allLocalRows.filter { isUnfinished($0) }.count
-    let countUnavailable = !localRows.isEmpty && localObservation != nil &&
-      (localCount.map { $0 < 0 || $0 > localActiveCount } ?? true)
+    let observedScope = Set(localObservation?["observedEnvironmentIds"] as? [String] ?? [])
+    let hasUncoveredScope = !observedScope.isSubset(of: covered)
+    let hasUncoveredObservations = !localRows.isEmpty || hasUncoveredScope
+    let localTotal = localObservation?["totalCount"] as? Int
+    let incompleteScope = hasUncoveredScope && (localTotal.map { $0 > allLocalRows.count } ?? true)
+    let countUnavailable = incompleteScope || (hasUncoveredObservations && localObservation != nil &&
+      (localCount.map { $0 < 0 || $0 > localActiveCount } ?? true))
     let localDeadline = (localObservation?["expiresAt"] as? NSNumber).map {
       Date(timeIntervalSince1970: $0.doubleValue / 1000)
     }
@@ -38,7 +43,6 @@ enum AgentWidgetState {
       props["activeCount"] = unavailable || countUnavailable ? -1 : (base["activeCount"] as? Int ?? 0) + directCount
       for key in ["workingCount", "attentionCount", "totalCount"] {
         let total = base[key] as? Int
-        let localTotal = localObservation?["totalCount"] as? Int
         let allLocalRowsPresent = localTotal == allLocalRows.count
         let direct = directRows.filter { row in
           let phase = row["phase"] as? String

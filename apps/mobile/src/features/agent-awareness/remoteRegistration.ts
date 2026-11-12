@@ -551,6 +551,9 @@ function publishRegularWidget(props: AgentActivityProps): void {
     workingCount: props.workingCount,
     attentionCount: props.attentionCount,
     totalCount: props.totalCount,
+    observedEnvironmentIds: props.observedEnvironmentIds
+      ? [...props.observedEnvironmentIds].sort()
+      : undefined,
     isStale: props.isStale,
     expiresAt: props.expiresAt === undefined ? undefined : Math.floor(props.expiresAt / 60_000),
     activities: props.activities.map(({ updatedAt: _updatedAt, ...row }) => row),
@@ -585,6 +588,7 @@ function publishReconciledWidget(): void {
     workingCount: result.workingCount,
     attentionCount: result.attentionCount,
     totalCount: result.totalCount,
+    observedEnvironmentIds: [...observedWidgetActivities.keys()],
     isStale: [...observedWidgetActivities.keys()].some((id) => !liveWidgetActivities.has(id)),
     expiresAt: confirmedAt + AGENT_ACTIVITY_FRESHNESS_MS,
     updatedAt: new Date().toISOString(),
