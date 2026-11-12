@@ -83,6 +83,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -4767,7 +4768,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return thread.titleRegeneration?.requestId === command.requestId
             ? {
                 ...thread,
-                ...(command.title === undefined ? {} : { title: command.title }),
+                // No title means generation failed or declined; ownership stays as it was.
+                ...(command.title === undefined
+                  ? {}
+                  : { title: command.title, automaticTitle: command.title }),
                 titleRegeneration: null,
                 updatedAt: now,
               }
@@ -6307,6 +6311,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
   });
 
+  /* Runs inside dispatchMessage, which owns the span. */
+  const automaticTitleRegenerationDue = Effect.fnUntraced(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    thread: OrchestrationV2AppThread,
+    userMessages: ReadonlyArray<OrchestrationV2ConversationMessage>,
+  ) {
+    // Scheduled tasks send as their owner; like agent traffic, they should not spend title requests.
+    const fromPerson = (
+      message: Pick<
+        OrchestrationV2ConversationMessage,
+        "createdBy" | "scheduledTaskId" | "text" | "attachments"
+      >,
+    ) =>
+      message.createdBy === "user" &&
+      message.scheduledTaskId === undefined &&
+      !isNativeMaintenanceCommand(message);
+    // A title that differs from the last generated one was chosen by someone and stays.
+    if (
+      !fromPerson(command) ||
+      thread.titleRegeneration != null ||
+      thread.automaticTitle !== thread.title
+    ) {
+      return false;
+    }
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    const interval = resolveProjectSettings(settings, thread.projectId).settings
+      .threadTitleRegenerationInterval;
+    if (interval === null) return false;
+    // A compacted command projection omits older messages. Read only user messages, and keep
+    // any pending messages already added in this transaction without counting them twice.
+    const stored = yield* projectionStore
+      .getThreadRecords(command.threadId, ["messages"], { messageRoles: ["user"] })
+      .pipe(mapDispatchError(command));
+    const all = new Map(
+      [...stored.messages, ...userMessages].map((message) => [message.id, message]),
+    );
+    return ([...all.values()].filter(fromPerson).length + 1) % interval === 0;
+  });
+
   const dispatchMessage = Effect.fn("Orchestrator.dispatchMessage")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -6599,18 +6642,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             mapDispatchError(command),
           )
       : Effect.succeed(false);
-    if (
+    const startsTitle =
       !isNativeMaintenanceCommand(command) &&
       ((command.titleSeed !== undefined &&
         (yield* projectionStore
           .getMessageCount(command.threadId)
           .pipe(mapDispatchError(command))) === 0) ||
-        (command.createdBy === "user" && (yield* onlyMaintenanceHistory)))
-    ) {
+        (command.createdBy === "user" && (yield* onlyMaintenanceHistory)));
+    const titleGeneration = startsTitle
+      ? ({ type: "initial", messageId: command.messageId } as const)
+      : (yield* automaticTitleRegenerationDue(command, projection.thread, userMessages))
+        ? ({ type: "regenerate" } as const)
+        : undefined;
+    if (titleGeneration !== undefined) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
-        title: command.titleSeed ?? projection.thread.title,
+        // The seed is T3's own first title, so a later regeneration may replace it.
+        ...(startsTitle && command.titleSeed !== undefined
+          ? { title: command.titleSeed, automaticTitle: command.titleSeed }
+          : {}),
         titleRegeneration: { requestId: command.commandId, startedAt: now },
         updatedAt: now,
       };
@@ -6626,10 +6677,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,
-        pendingThreadTitleGenerationEffect(command.commandId, command.threadId, {
-          type: "initial",
-          messageId: command.messageId,
-        }),
+        pendingThreadTitleGenerationEffect(command.commandId, command.threadId, titleGeneration),
       ]);
       projection = applyToProjection(projection, event);
     }

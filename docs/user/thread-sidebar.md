@@ -125,6 +125,12 @@ To change how titles are written, add **Thread title instructions** in **Setting
 Text generation**, under Advanced, such as a length limit or an identifier to put first. They apply to new and
 regenerated titles. Select a project to give it its own instructions.
 
+A long thread can drift away from the title it started with. To keep titles current, turn on
+**Regenerate thread titles automatically** in the same Advanced section and choose how many of your
+messages pass between regenerations. Each regeneration is one text generation request. A thread
+that you or an agent renamed keeps its name, and so does a thread titled before you updated T3 Code.
+Choose **Regenerate title** on such a thread to have its title follow the conversation again.
+
 Agents connected through T3 Code can use the same server-owned metadata workflow to
 rename a thread, regenerate its title, or link and unlink a pull request. These changes
 appear on web, desktop, and mobile without requiring the originating browser to remain

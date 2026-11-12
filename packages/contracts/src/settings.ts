@@ -96,6 +96,17 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
 
+export const MIN_THREAD_TITLE_REGENERATION_INTERVAL = 1;
+export const MAX_THREAD_TITLE_REGENERATION_INTERVAL = 100;
+/** How many messages the user sends between automatic title regenerations. */
+export const ThreadTitleRegenerationInterval = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_THREAD_TITLE_REGENERATION_INTERVAL,
+    maximum: MAX_THREAD_TITLE_REGENERATION_INTERVAL,
+  }),
+);
+export type ThreadTitleRegenerationInterval = typeof ThreadTitleRegenerationInterval.Type;
+
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
 export const SnoozePresetDay = Schema.Literals([
@@ -1175,6 +1186,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
   "threadTitleInstructions",
+  "threadTitleRegenerationInterval",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
   "reviewGuideInstructions",
@@ -1213,6 +1225,9 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
+  threadTitleRegenerationInterval: Schema.optionalKey(
+    Schema.NullOr(ThreadTitleRegenerationInterval),
+  ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
@@ -1258,6 +1273,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "reviewGuideModelSelection",
   "pullRequestMergeMethod",
   "sidebarAutoSettleAfterDays",
+  "threadTitleRegenerationInterval",
 ]);
 
 /** Reclaimable bytes from which the offline `t3 doctor` repair is worth suggesting. */
@@ -1519,6 +1535,10 @@ export const ServerSettings = Schema.Struct({
     ),
   ),
   threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Null leaves titles alone until someone regenerates them by hand. */
+  threadTitleRegenerationInterval: Schema.NullOr(ThreadTitleRegenerationInterval).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   branchNamingMode: BranchNamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("static" as const)),
   ),
@@ -1906,6 +1926,9 @@ export const ServerSettingsPatch = Schema.Struct({
   ghqCloneLayout: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
+  threadTitleRegenerationInterval: Schema.optionalKey(
+    Schema.NullOr(ThreadTitleRegenerationInterval),
+  ),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
   branchNameInstructions: Schema.optionalKey(TrimmedString),

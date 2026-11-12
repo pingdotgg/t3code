@@ -19,7 +19,9 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_THREAD_TITLE_REGENERATION_INTERVAL,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_THREAD_TITLE_REGENERATION_INTERVAL,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
@@ -582,6 +584,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
       : []),
+    ...(settings.threadTitleRegenerationInterval !==
+    DEFAULT_UNIFIED_SETTINGS.threadTitleRegenerationInterval
+      ? ["Automatic title regeneration"]
+      : []),
     ...getChangedBrowserSettingLabels(settings),
     ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
       ? ["Agent browser access"]
@@ -691,6 +697,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
+      threadTitleRegenerationInterval: DEFAULT_UNIFIED_SETTINGS.threadTitleRegenerationInterval,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -722,13 +729,20 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
+const TITLE_REGENERATION_DEFAULT_INTERVAL = 5;
 
-function AutoSettleDaysInput({
+function BoundedIntegerInput({
   value,
+  min,
+  max,
   onCommit,
+  "aria-label": ariaLabel,
 }: {
   value: number;
-  onCommit: (days: number) => void;
+  min: number;
+  max: number;
+  onCommit: (value: number) => void;
+  "aria-label": string;
 }) {
   const [draft, setDraft] = useState(String(value));
   const [draftSource, setDraftSource] = useState(value);
@@ -741,23 +755,19 @@ function AutoSettleDaysInput({
     <Input
       size="sm"
       type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      min={min}
+      max={max}
       className="w-full sm:w-24"
       value={draft}
       onChange={(event) => {
         setDraft(event.target.value);
         const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
+        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
           onCommit(parsed);
         }
       }}
       onBlur={() => setDraft(String(value))}
-      aria-label="Days of inactivity before auto-settle"
+      aria-label={ariaLabel}
     />
   );
 }
@@ -1934,9 +1944,12 @@ export function ThreadsSettingsPanel() {
               title={searchableSetting("days-before-auto-settle").title}
               description="Any new activity un-settles a thread automatically."
               control={
-                <AutoSettleDaysInput
+                <BoundedIntegerInput
                   value={settings.sidebarAutoSettleAfterDays}
+                  min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+                  max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
                   onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                  aria-label="Days of inactivity before auto-settle"
                 />
               }
             />
@@ -2066,10 +2079,64 @@ export function ThreadsSettingsPanel() {
         <AdvancedSettings
           targetIds={[
             searchableSetting("thread-title-instructions").id,
+            searchableSetting("automatic-title-regeneration").id,
             searchableSetting("response-streaming").id,
           ]}
         >
           <ThreadTitleInstructionsSettings />
+          <SettingsRow
+            serverScoped
+            settingKeys={["threadTitleRegenerationInterval"]}
+            {...searchableSetting("automatic-title-regeneration")}
+            description="Regenerates a thread's title as the conversation moves on. Threads you rename keep their name."
+            resetAction={
+              settings.threadTitleRegenerationInterval !==
+              DEFAULT_UNIFIED_SETTINGS.threadTitleRegenerationInterval ? (
+                <SettingResetButton
+                  label="automatic title regeneration"
+                  onClick={() =>
+                    updateSettings({
+                      threadTitleRegenerationInterval:
+                        DEFAULT_UNIFIED_SETTINGS.threadTitleRegenerationInterval,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <ScopedSwitch
+                settingKeys={["threadTitleRegenerationInterval"]}
+                checked={settings.threadTitleRegenerationInterval !== null}
+                onCheckedChange={(checked) =>
+                  updateSettings({
+                    threadTitleRegenerationInterval: checked
+                      ? TITLE_REGENERATION_DEFAULT_INTERVAL
+                      : null,
+                  })
+                }
+                aria-label="Regenerate thread titles automatically"
+              />
+            }
+          />
+          {settings.threadTitleRegenerationInterval !== null ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["threadTitleRegenerationInterval"]}
+              title={searchableSetting("messages-between-title-regenerations").title}
+              description="Counts the messages you send. Each regeneration is one text generation request."
+              control={
+                <BoundedIntegerInput
+                  value={settings.threadTitleRegenerationInterval}
+                  min={MIN_THREAD_TITLE_REGENERATION_INTERVAL}
+                  max={MAX_THREAD_TITLE_REGENERATION_INTERVAL}
+                  onCommit={(interval) =>
+                    updateSettings({ threadTitleRegenerationInterval: interval })
+                  }
+                  aria-label="Messages between title regenerations"
+                />
+              }
+            />
+          ) : null}
           <SettingsRow
             serverScoped
             settingKeys={["responseStreamingMode"]}

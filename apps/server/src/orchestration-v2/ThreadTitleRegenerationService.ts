@@ -178,9 +178,8 @@ const make = Effect.gen(function* () {
         modelSelection: settings.textGenerationModelSelection,
         projectId: projection.thread.projectId,
       });
-      const generatedTitle = result.title.trim();
-      return generatedTitle === "New thread" ||
-        (input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim())
+      // An unchanged title still completes with it: that is how a kept title differs from a failure.
+      return result.title.trim() === "New thread"
         ? { type: "complete" as const }
         : { type: "complete" as const, title: result.title };
     }).pipe(
