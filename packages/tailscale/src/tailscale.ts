@@ -129,6 +129,27 @@ export type TailscaleCommandError =
   | TailscaleCommandExitError
   | TailscaleCommandTimeoutError;
 
+/** What a person can do when `ensureTailscaleServe` fails; stderr itself is never shown. */
+export const tailscaleServeRemedy = (
+  error: TailscaleCommandError,
+  command: { readonly servePort: number; readonly localUrl: string },
+): string => {
+  const retry = `\`tailscale serve --bg --https=${command.servePort} ${command.localUrl}\``;
+  if (error._tag === "TailscaleCommandSpawnError") {
+    return "Install Tailscale and make sure `tailscale` is on PATH, then restart T3 Code.";
+  }
+  switch (error._tag === "TailscaleCommandExitError" ? error.stderrDiagnostic : undefined) {
+    case "permission-denied":
+      return "Let this user manage Tailscale with `sudo tailscale set --operator=$USER`, then restart T3 Code.";
+    case "not-running":
+      return "Start Tailscale, then restart T3 Code.";
+    case "not-logged-in":
+      return "Log in with `tailscale up`, then restart T3 Code.";
+    default:
+      return `Run ${retry} to see Tailscale's reason (for example, HTTPS certificates not enabled for the tailnet), then restart T3 Code.`;
+  }
+};
+
 export class TailscaleStatusParseError extends Schema.TaggedError<TailscaleStatusParseError>()(
   "TailscaleStatusParseError",
   { cause: Schema.Defect() },

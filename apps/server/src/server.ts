@@ -219,6 +219,7 @@ import {
   ensureTailscaleServe,
   readTailscaleServeRoutesTo,
   readTailscaleStatus,
+  tailscaleServeRemedy,
 } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
@@ -935,11 +936,16 @@ const layerMakeServer = Layer.unwrap(
                   }),
                 ),
                 Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
+                  Effect.logError(
+                    `Tailscale Serve is not set up, so this server is not reachable over the tailnet: ${cause.message} ${tailscaleServeRemedy(
+                      cause,
+                      {
+                        servePort: config.tailscaleServePort,
+                        localUrl: `http://${localHost}:${localPort}`,
+                      },
+                    )}`,
+                    { cause, localPort, servePort: config.tailscaleServePort },
+                  ).pipe(Effect.as(null)),
                 ),
               );
             }),

@@ -595,7 +595,8 @@ export const make = Effect.gen(function* () {
 
       return {
         state: toContractState(nextState),
-        requiresRelaunch: result.changed,
+        // Enabling what is already saved retries Serve: setup may have failed in the running backend.
+        requiresRelaunch: result.changed || (input.enabled && nextState.tailscaleServeEnabled),
       };
     },
     changePermit.withPermit,
