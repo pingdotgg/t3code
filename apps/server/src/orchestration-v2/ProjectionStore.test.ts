@@ -9225,9 +9225,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const boundedFork = yield* projectionStore
         .getThreadSnapshotWindow(targetThreadId, { rowLimit: 2 })
         .pipe(Effect.withTracer(tracer));
-      assert.lengthOf(
-        statements.filter((statement) => statement.includes("WITH RECURSIVE retained")),
-        1,
+      const retained = statements.filter((statement) =>
+        statement.includes("WITH RECURSIVE retained"),
+      );
+      assert.lengthOf(retained, 1);
+      // The settled-leaf index also starts with thread_id, and through it this lookup fetches
+      // every node of the thread to check its status.
+      const retainedPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${retained[0]}`,
+      )).map((row) => row.detail);
+      assert.match(
+        retainedPlan.find((detail) => detail.startsWith("SEARCH live ")) ?? "",
+        /nodes_live_idx/,
+        JSON.stringify(retainedPlan),
       );
       assert.lengthOf(
         statements.filter((statement) => statement.includes("SELECT node.payload_json")),
