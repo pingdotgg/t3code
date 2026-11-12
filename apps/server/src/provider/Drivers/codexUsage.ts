@@ -54,10 +54,18 @@ function readCodexTokenUsage(value: unknown): CodexTokenUsage | null {
   return isCodexTokenUsage(usage) ? usage : null;
 }
 
+// The rewind guard compares against the newest counters seen, so an older record never lowers it.
+function advanceCodexTimestamp(state: CodexScanState, timestampMs: number) {
+  state.lastCumulativeTimestampMs = Math.max(
+    state.lastCumulativeTimestampMs ?? timestampMs,
+    timestampMs,
+  );
+}
+
 // A zeroed baseline rebases the counters, so the sequence start measured against it is forgotten.
 function rebaseCodexUsage(state: CodexScanState, cumulative: CodexTokenUsage, timestampMs: number) {
   state.lastCumulativeUsage = cumulative;
-  state.lastCumulativeTimestampMs = timestampMs;
+  advanceCodexTimestamp(state, timestampMs);
   delete state.unreportedRequests;
   if (cumulative.input_tokens + cumulative.output_tokens === 0) delete state.sequenceStartSignature;
 }
@@ -363,8 +371,6 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     // Only the same event is a replay; a later request can restart with identical counters.
     if (restarted && sequenceStart === state.sequenceStartSignature) {
       state.lastCumulativeUsage = previous;
-      if (previousTimestampMs === undefined) delete state.lastCumulativeTimestampMs;
-      else state.lastCumulativeTimestampMs = previousTimestampMs;
       return [];
     }
     // Forks and paginated continuations can inherit totals without copying a counter snapshot.
@@ -395,6 +401,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
       return [];
     }
     state.lastCumulativeUsage = advanced;
+    advanceCodexTimestamp(state, timestampMs);
   }
   state.lastUsageSignature = signature;
 

@@ -708,6 +708,40 @@ describe("parseCodexLine", () => {
 
   it.each([
     {
+      name: "a rejected stale snapshot",
+      lines: [
+        ["10:00:10", counters(100, 20), counters(100, 20)],
+        ["10:00:08", counters(20, 4), counters(50, 10)],
+        ["10:00:09", counters(10, 2), counters(30, 6)],
+      ],
+      processed: [120, 0, 0],
+    },
+    {
+      name: "a billed last-only request",
+      lines: [
+        ["10:00:00", counters(100, 20), counters(100, 20)],
+        ["10:00:05", counters(20, 4), undefined],
+        ["10:00:10", counters(30, 6), undefined],
+        ["10:00:05", counters(20, 4), counters(120, 24)],
+      ],
+      processed: [120, 24, 36, 0],
+    },
+  ])("keeps the rewind guard's timestamp from going back after $name", ({ lines, processed }) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    expect(
+      lines.map(([time, last, total]) => {
+        const record = parseCodexLine(
+          counted(last, total).replace("2026-08-01T05:17:49.919Z", `2026-08-01T${time}.000Z`),
+          state,
+        );
+        return record === null ? 0 : totalTokens(record.totals);
+      }),
+    ).toEqual(processed);
+  });
+
+  it.each([
+    {
       reset: true,
       markerTotal: counters(0, 0),
       nextTotal: counters(130, 25),
