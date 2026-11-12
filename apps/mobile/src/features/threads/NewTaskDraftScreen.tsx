@@ -92,6 +92,7 @@ import {
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
+import { shellCommandSendBlock } from "./userShellCommands";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -630,6 +631,17 @@ export function NewTaskDraftScreen(props: {
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
       Dialog.alert("Too much context", contextBlockReason);
+      return null;
+    }
+    const shellBlock = shellCommandSendBlock({
+      environmentId: selectedProject.environmentId,
+      text: initialMessageText,
+      connected: environmentConnected,
+      hasAttachmentsOrContext:
+        draft.attachments.length > 0 || (draft.context?.records.length ?? 0) > 0,
+    });
+    if (shellBlock) {
+      Dialog.alert(shellBlock.title, shellBlock.detail);
       return null;
     }
     const strandedThread = threadContextsOutsideEnvironment({

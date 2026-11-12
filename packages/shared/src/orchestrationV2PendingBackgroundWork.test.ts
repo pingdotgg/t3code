@@ -107,9 +107,21 @@ describe("derivePendingBackgroundWork", () => {
           nativeItemRef: { nativeId: "cmd-1" },
           input: "npm test",
         },
+        {
+          id: "shell-1" as never,
+          type: "command_execution",
+          status: "running",
+          title: "You ran",
+          nativeItemRef: { nativeId: "shell-1" },
+          input: "sleep 125",
+          userShell: { cwd: "/repo", delivery: "pending" },
+        },
       ],
     });
-    expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
+    expect(tasks).toEqual([
+      { taskId: "cmd-1", description: "npm test", kind: "command" },
+      { taskId: "shell-1", description: "sleep 125", kind: "command" },
+    ]);
   });
 
   it("excludes rolled_back items when the latest run is waiting", () => {

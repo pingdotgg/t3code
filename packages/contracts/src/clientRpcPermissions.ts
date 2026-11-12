@@ -12,7 +12,11 @@ import {
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
-import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
+import {
+  parseShellCommand,
+  userShellCommand,
+  ORCHESTRATION_V2_WS_METHODS,
+} from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -83,10 +87,53 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
+const shellDispatch = Schema.Struct({
+  type: Schema.String,
+  task: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String),
+  createdBy: Schema.optional(Schema.String),
+  creationSource: Schema.optional(Schema.String),
+  scheduledTaskId: Schema.optional(Schema.String),
+  guestMessageId: Schema.optional(Schema.String),
+});
+const shellLaunch = Schema.Struct({
+  creationSource: Schema.optional(Schema.String),
+  initialMessage: Schema.optional(Schema.Struct({ text: Schema.String })),
+});
+
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === ORCHESTRATION_V2_WS_METHODS.dispatchCommand && input !== undefined) {
+    const payload = Schema.decodeUnknownSync(shellDispatch)(input);
+    if (
+      payload.type === "shell-command.stop" ||
+      (payload.type === "queued-run.edit" && parseShellCommand(payload.text ?? "") !== null) ||
+      ((payload.type === "message.dispatch" || payload.type === "delegated_task.request") &&
+        userShellCommand({
+          ...payload,
+          createdBy: "user",
+          creationSource: payload.creationSource ?? "web",
+          text:
+            payload.type === "delegated_task.request" ? (payload.task ?? "") : (payload.text ?? ""),
+        }) !== null)
+    ) {
+      return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
+    }
+  }
+  if (method === ORCHESTRATION_V2_WS_METHODS.launchThread && input !== undefined) {
+    const payload = Schema.decodeUnknownSync(shellLaunch)(input);
+    if (
+      userShellCommand({
+        createdBy: "user",
+        creationSource: payload.creationSource ?? "web",
+        text: payload.initialMessage?.text ?? "",
+      }) !== null
+    ) {
+      return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
+    }
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

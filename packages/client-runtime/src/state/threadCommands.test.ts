@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
   CommandId,
   RuntimeRequestId,
   EnvironmentId,
@@ -9,6 +11,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type AuthSessionState,
   type OrchestrationV2Command,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -23,7 +26,8 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { vi } from "vite-plus/test";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
@@ -32,6 +36,12 @@ import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
+}));
+const sessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState, string>>(AsyncResult.initial()),
+);
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
 const NOW = DateTime.makeUnsafe("2026-09-12T10:00:00.000Z");
@@ -195,6 +205,50 @@ describe("history loading", () => {
       expect(first.command).toMatchObject({ type: "message.dispatch", threadId: THREAD_ID });
       expect(second.command).toMatchObject({ type: "run.interrupt", threadId: controlThreadId });
       expect(results.map((value) => value._tag)).toEqual(["Success", "Success", "Success"]);
+    }),
+  );
+});
+
+describe("start turn", () => {
+  it.effect("sends a shell command when the connection has terminal access", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const scopes = [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
+      h.registry.mount(sessions(ENVIRONMENT_ID));
+      h.registry.set(
+        sessions(ENVIRONMENT_ID),
+        AsyncResult.success({
+          authenticated: true,
+          auth: {
+            policy: "remote-reachable",
+            bootstrapMethods: [],
+            sessionMethods: [],
+            sessionCookieName: "test",
+          },
+          scopes,
+          permissions: scopes,
+        }),
+      );
+      const send = h.commands.startTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: {
+          threadId: THREAD_ID,
+          message: {
+            messageId: MessageId.make("shell-message"),
+            role: "user",
+            text: "!git status",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        },
+      });
+      const request = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(request.reply, { sequence: 1 });
+
+      expect(request.command).toMatchObject({ type: "message.dispatch", text: "!git status" });
+      expect((yield* Effect.promise(() => send))._tag).toBe("Success");
     }),
   );
 });

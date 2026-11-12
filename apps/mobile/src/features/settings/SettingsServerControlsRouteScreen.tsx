@@ -394,6 +394,21 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                   />
                 </SettingsSection>
+                <SettingsSection title="Shell commands">
+                  <SettingsSwitchRow
+                    icon="terminal"
+                    label="Respond to shell commands"
+                    subtitle={managedSubtitle(
+                      "respondToShellCommands",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Start an agent response after a ! command finishes. When off, the result waits and goes with your next message.",
+                    )}
+                    value={uniform("respondToShellCommands")}
+                    disabled={disabledFor("respondToShellCommands")}
+                    onValueChange={(value) => write({ respondToShellCommands: value })}
+                  />
+                </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
               </>
             ) : null}

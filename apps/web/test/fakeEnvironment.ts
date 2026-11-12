@@ -3,6 +3,7 @@
 // stay pending so nothing retries on timers. Everything above the wire is the app's own.
 import {
   AuthStandardClientScopes,
+  type AuthEnvironmentScope,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
@@ -495,7 +496,11 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options?: { readonly acceptCommands?: boolean; readonly providers?: ReadonlyArray<unknown> },
+  options: {
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+    readonly acceptCommands?: boolean;
+    readonly providers?: ReadonlyArray<unknown>;
+  } = {},
 ): Disposable {
   threads = fixtures;
   baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);
@@ -509,7 +514,7 @@ export function installFakeEnvironment(
       return json({
         authenticated: true,
         auth,
-        scopes: AuthStandardClientScopes,
+        scopes: options.scopes ?? AuthStandardClientScopes,
         sessionMethod: "browser-session-cookie",
         expiresAt: "2099-01-01T00:00:00.000Z",
       });

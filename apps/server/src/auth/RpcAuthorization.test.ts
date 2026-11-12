@@ -1,4 +1,10 @@
 import {
+  RunId,
+  NodeId,
+  ORCHESTRATION_V2_WS_METHODS,
+  CommandId,
+  MessageId,
+  ProjectId,
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
@@ -471,4 +477,82 @@ it.effect("denies manual cleanup before the handler without settings permission"
     });
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
+);
+
+it.effect.each(["dispatch", "launch", "edit", "delegate"] as const)(
+  "rejects shell %s without terminal permission",
+  (entry) =>
+    Effect.gen(function* () {
+      const methods = [
+        ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+        ORCHESTRATION_V2_WS_METHODS.launchThread,
+      ] as const;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof methods)[number]> =>
+            !(methods as readonly string[]).includes(tag),
+        ),
+      );
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, () =>
+              Effect.die("unauthorized dispatch"),
+            ),
+            group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.launchThread, () =>
+              Effect.die("unauthorized launch"),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationOperateScope]),
+          ),
+        ),
+      );
+      const result = yield* entry === "delegate"
+        ? client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+            type: "delegated_task.request",
+            commandId: CommandId.make("delegate-shell"),
+            parentThreadId: ThreadId.make("parent"),
+            parentRunId: RunId.make("parent-run"),
+            parentNodeId: NodeId.make("parent-node"),
+            task: "!ls",
+            createdBy: "user",
+            creationSource: "web",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          }).pipe(Effect.flip)
+        : entry === "edit"
+          ? client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+              type: "queued-run.edit",
+              commandId: CommandId.make("edit"),
+              threadId: ThreadId.make("thread"),
+              runId: RunId.make("run"),
+              text: "!ls",
+            }).pipe(Effect.flip)
+          : entry === "dispatch"
+            ? client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+                type: "message.dispatch",
+                commandId: CommandId.make("shell"),
+                threadId: ThreadId.make("thread"),
+                messageId: MessageId.make("message"),
+                text: "!ls",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "mobile",
+                dispatchMode: { type: "start_immediately" },
+              }).pipe(Effect.flip)
+            : client[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+                commandId: CommandId.make("launch"),
+                projectId: ProjectId.make("project"),
+                title: "Shell",
+                modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                workspaceStrategy: { type: "root" },
+                initialMessage: { text: "!ls", attachments: [] },
+              }).pipe(Effect.flip);
+      expect(result).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthTerminalOperateScope,
+      });
+    }),
 );

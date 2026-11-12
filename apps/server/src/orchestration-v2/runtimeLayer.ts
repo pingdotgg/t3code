@@ -1,3 +1,4 @@
+import * as ShellCommandService from "./ShellCommandService.ts";
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
@@ -164,9 +165,23 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   ),
 );
 
+const layerShellCommandsProvided = ShellCommandService.layer.pipe(
+  Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide(ProviderContinuationRequests.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      layerEventSink,
+      ProjectionStore.layer,
+      IdAllocator.layer,
+      layerCommandOutputHubProvided,
+    ),
+  ),
+);
+
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerShellCommandsProvided,
       layerContextHandoffServiceProvided,
       layerEventSink,
       IdAllocator.layer,
@@ -329,6 +344,7 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
   ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
+  Layer.provide(layerShellCommandsProvided),
   Layer.provide(
     Layer.mergeAll(
       layerRunFinalizationServiceProvided,

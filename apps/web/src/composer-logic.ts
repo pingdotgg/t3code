@@ -318,6 +318,11 @@ export function composerStateAtPromptEnd(
   };
 }
 
+/** Sends trim the prompt, so leading whitespace before `!` still makes a shell command. */
+export function isShellModePrompt(prompt: string): boolean {
+  return prompt.trimStart().startsWith("!");
+}
+
 /**
  * A replacement ending in a space swallows one space already after the range, so inserting
  * `@file ` before existing text does not leave a double space.

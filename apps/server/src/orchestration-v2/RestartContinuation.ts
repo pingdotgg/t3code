@@ -123,6 +123,7 @@ export function restartContinuationRun(
     | "turnItems"
   >,
   now: DateTime.Utc,
+  respondToShellCommands = false,
 ): OrchestrationV2Run | undefined {
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
     (latest, candidate) =>
@@ -139,6 +140,19 @@ export function restartContinuationRun(
   const settled = run.status === "completed" || run.status === "waiting";
   if (run.status !== "running" && !preparedContinuation && !settled) return;
   if (restartContinuationBlocked(projection, run, now, settled)) return;
+  if (
+    settled &&
+    respondToShellCommands &&
+    projection.turnItems.some(
+      (item) =>
+        item.type === "command_execution" &&
+        item.userShell !== undefined &&
+        item.userShell.backgrounded === true &&
+        item.status === "running" &&
+        item.runId === run.id,
+    )
+  )
+    return run;
   const liveTurnRequired = !preparedContinuation && !settled;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(

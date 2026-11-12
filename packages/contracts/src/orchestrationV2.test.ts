@@ -4,6 +4,8 @@ import * as Schema from "effect/Schema";
 
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
+  parseShellCommand,
+  userShellCommand,
   latestProviderTurnForAttempt,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
@@ -638,4 +640,34 @@ describe("latestProviderTurnForAttempt", () => {
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
   });
+});
+
+it.each([
+  ["!printf hello", "printf hello"],
+  ["!  printf hello \n", "printf hello"],
+  ["!", null],
+  ["! \n", null],
+  [" !ls", null],
+  ["hello !ls", null],
+])("parses shell text %j", (text, expected) => {
+  expect(parseShellCommand(text!)).toBe(expected);
+});
+
+it.each([
+  { createdBy: "user", creationSource: "web", expected: "ls" },
+  { createdBy: "user", creationSource: "mobile", expected: "ls" },
+  { createdBy: "agent", creationSource: "web", expected: null },
+  { createdBy: "agent", creationSource: "mcp", expected: null },
+  { createdBy: "user", creationSource: "mcp", expected: null },
+  { createdBy: "user", creationSource: "server", expected: null },
+  { createdBy: "user", creationSource: "web", scheduledTaskId: "scheduled", expected: null },
+  { createdBy: "user", creationSource: "web", guestMessageId: "guest", expected: null },
+  {
+    createdBy: "user",
+    creationSource: "web",
+    context: { guest: { name: "Guest" } },
+    expected: null,
+  },
+])("gates execution by message provenance: %j", ({ expected, ...message }) => {
+  expect(userShellCommand({ ...message, text: "!ls" })).toBe(expected);
 });

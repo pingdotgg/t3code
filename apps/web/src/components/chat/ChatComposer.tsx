@@ -80,6 +80,7 @@ import {
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   extendReplacementRangeForTrailingSpace,
+  isShellModePrompt,
   replaceTextRange,
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -234,7 +235,11 @@ import { observeResize } from "~/lib/observeResize";
 
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
-import { BuildingIcon, PlayIcon } from "lucide-react";
+import { BuildingIcon, PlayIcon, TerminalIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import type { UserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
+import { ComposerPendingShellCommands } from "./ComposerPendingShellCommands";
+import { shellCommandPermissionAtom } from "./userShellCommands";
 import { Button } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
 import { hasProviderSetup } from "./ProviderStatusBanner";
@@ -373,6 +378,8 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   canSteer: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
+  /** Shell results the server sends with the next message. */
+  pendingShellCommands?: ReadonlyArray<UserShellItem>;
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -488,6 +495,7 @@ export interface ChatComposerProps {
 
 const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
+const NO_PENDING_SHELL_COMMANDS: ReadonlyArray<UserShellItem> = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
@@ -517,7 +525,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
-    canSteer,
+    canSteer: canSteerActiveTurn,
+    pendingShellCommands = NO_PENDING_SHELL_COMMANDS,
     environmentUnavailable,
     activePendingApproval: incomingPendingApproval,
     pendingApprovals,
@@ -1148,6 +1157,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   )
     ? "steer"
     : settings.followUpBehavior;
+  const isShellMode = pendingUserInputs.length === 0 && isShellModePrompt(prompt);
+  const canRunShellCommands = useAtomValue(shellCommandPermissionAtom(environmentId));
+  // The server queues a shell command behind an active run; it never steers.
+  const canSteer = canSteerActiveTurn && !isShellMode;
   const composerSuggestionsVisible = composerMenuOpen;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
@@ -2451,7 +2464,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
-  const bannerItems: readonly ComposerBannerStackItem[] =
+  const sendBannerItems: readonly ComposerBannerStackItem[] =
     runtimeModeCeilingDenial === undefined || activePendingProgress
       ? props.bannerItems
       : [
@@ -2476,6 +2489,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }),
           },
         ];
+  const bannerItems: readonly ComposerBannerStackItem[] = isShellMode
+    ? [
+        ...sendBannerItems,
+        canRunShellCommands
+          ? {
+              id: "shell-mode",
+              variant: "info",
+              icon: <TerminalIcon />,
+              title: "Shell command",
+              description: "Runs in the thread's working directory. Press Esc to exit.",
+            }
+          : {
+              id: "shell-mode",
+              variant: "warning",
+              icon: <TerminalIcon />,
+              title: "Shell commands need terminal access",
+              description: "This connection can't run commands here. Press Esc to exit.",
+            },
+      ]
+    : sendBannerItems;
   const shelfItems = hasBlockingComposerTopDrawer
     ? bannerItems.filter(
         (item) =>
@@ -3454,6 +3487,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onRemove={onRemoveEditingQueuedAttachment}
                   />
                 )}
+
+              {!isComposerCollapsedMobile &&
+              pendingUserInputs.length === 0 &&
+              pendingShellCommands.length > 0 ? (
+                <ComposerPendingShellCommands
+                  environmentId={environmentId}
+                  items={pendingShellCommands}
+                  canDismiss={canOperateThread}
+                />
+              ) : null}
 
               {composerAttachmentMediaRow}
 

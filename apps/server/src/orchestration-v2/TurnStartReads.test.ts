@@ -348,9 +348,18 @@ it.effect.each(["sqlite"] as const)(
         occurredAt: now,
         payload: marker,
       });
-      assert.include(
+      const shell = { ...marker, id: MessageId.make("old-shell"), text: "!ls" };
+      yield* store.apply({
+        id: EventId.make("old-shell-input"),
+        type: "message.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: shell,
+      });
+      assert.includeMembers(
         (yield* store.getTurnStartContext(threadId, runId)).messages.map((m) => m.id),
-        marker.id,
+        [marker.id, shell.id],
       );
       const other = ThreadId.make("other");
       yield* putThread({ ...thread, id: other });
