@@ -39,7 +39,12 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { getInitialServerConfig, isRpcClientError, request } from "../rpc/client.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  getInitialServerConfig,
+  isRpcClientError,
+  request,
+} from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -295,15 +300,31 @@ const dispatch = (command: OrchestrationV2Command) =>
 // stops a frame that kills the socket from looping.
 const MAX_LOST_TRANSPORT_RESENDS = 2;
 
+// A live socket can still carry a command the host never answers; the heartbeat
+// alone would leave the send pending forever.
+const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
+
 const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
   command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
   resendAfterSocketLoss: boolean,
 ) {
-  if (!resendAfterSocketLoss) return yield* dispatch(command);
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const attempt = dispatch(command).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: `${supervisor.target.label} did not confirm the message within 60 seconds.`,
+          }),
+        ),
+    }),
+  );
+  if (!resendAfterSocketLoss) return yield* attempt;
   for (let resends = 0; ; resends += 1) {
     const attemptSession = yield* SubscriptionRef.get(supervisor.session);
-    const exit = yield* Effect.exit(dispatch(command));
+    const exit = yield* Effect.exit(attempt);
     if (Exit.isSuccess(exit)) return exit.value;
     // Closing the session interrupts the request, which can beat the protocol error.
     const lostTransport =
