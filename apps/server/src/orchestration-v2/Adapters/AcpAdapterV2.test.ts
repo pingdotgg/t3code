@@ -4105,15 +4105,20 @@ describe("AcpAdapterV2", () => {
   it.effect("delivers a follow-up the agent rejects while it is still processing", () =>
     Effect.gen(function* () {
       let promptCalls = 0;
+      const rejected = yield* Deferred.make<void>();
       const harness = yield* makePromptInactivityHarness({
         environment: () => ({}),
         // pi-agent-core based agents (oh-my-pi) end a turn but keep background work running.
         wrapPrompt: (prompt) => (payload, options) => {
           promptCalls += 1;
           return promptCalls === 2
-            ? Effect.fail(
-                EffectAcpErrors.AcpRequestError.internalError(
-                  "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+            ? Deferred.succeed(rejected, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    EffectAcpErrors.AcpRequestError.internalError(
+                      "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+                    ),
+                  ),
                 ),
               )
             : prompt(payload, options);
@@ -4125,6 +4130,7 @@ describe("AcpAdapterV2", () => {
 
       const followUp = yield* harness.terminals(1).pipe(Effect.forkScoped);
       yield* harness.startTurn(2);
+      yield* Deferred.await(rejected);
       yield* TestClock.adjust("1 minute");
       const [delivered] = yield* Fiber.join(followUp);
       assert.equal(delivered?.status, "completed");
