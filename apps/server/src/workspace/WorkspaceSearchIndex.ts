@@ -450,9 +450,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
   )(function* (rawQuery, limit, kind, imageOnly) {
-    // fff parses any word containing "[" as a glob and has no escape for it; fuzzy
-    // matching is subsequence-based, so dropping "[" still matches "[id]" folders.
-    const query = rawQuery.replaceAll("[", "");
+    // fff parses any word containing "[" or "{" as a glob and has no escape for it;
+    // fuzzy matching is subsequence-based, so dropping them still matches "[id]" folders.
+    const query = rawQuery.replaceAll("[", "").replaceAll("{", "");
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
