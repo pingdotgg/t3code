@@ -961,6 +961,8 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   status: Schema.Literals(["starting", "ready", "running", "waiting", "stopped", "error"]),
   cwd: TrimmedNonEmptyString,
+  // The thread checkout a native move started from; set only after the provider moved itself.
+  cwdChangeSource: Schema.optional(TrimmedNonEmptyString),
   model: Schema.NullOr(TrimmedNonEmptyString),
   capabilities: OrchestrationV2ProviderCapabilities,
   extensionStatuses: Schema.optional(
