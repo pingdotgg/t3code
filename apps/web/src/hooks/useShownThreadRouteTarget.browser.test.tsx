@@ -10,7 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
 import { startMainAppLocationTracking } from "../components/sidebar/mainAppLocation";
-import { useShownThreadRouteTarget } from "./useThreadRouteTarget";
+import { useShownThreadRouteTarget } from "./useShownThreadRouteTarget";
 
 function ShownThread() {
   const { shownTarget } = useShownThreadRouteTarget();
