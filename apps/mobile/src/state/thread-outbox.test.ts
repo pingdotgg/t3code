@@ -112,10 +112,9 @@ function queuedMessage(input: {
 }
 
 describe("thread outbox", () => {
-  it("retains structured context and a model pick through a persisted offline queue round trip", () => {
+  it("retains structured context through a persisted offline queue round trip", () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "context-message", createdAt: "2026-09-06T12:00:00.000Z" }),
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
       text: "[Build](t3-context://v1/terminal/build-output)",
       context: {
         version: 1,
@@ -138,27 +137,6 @@ describe("thread outbox", () => {
       decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
     ).toEqual(message);
   });
-
-  it("drops the model an older build stored on a follow-up, so the server keeps the thread's own", () => {
-    const stale = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
-    const base = queuedMessage({ messageId: "older-entry", createdAt: "2026-10-23T23:00:00.000Z" });
-    const stored = { schemaVersion: 3, ...base, modelSelection: stale };
-
-    expect(decodeQueuedThreadMessage(stored)).toEqual(base);
-    // A new thread needs its model, so an older creation entry keeps it.
-    const creation = {
-      projectId: ProjectId.make("project-1"),
-      workspaceMode: "local" as const,
-      branch: null,
-      worktreePath: null,
-    };
-    expect(decodeQueuedThreadMessage({ ...stored, creation })).toEqual({
-      ...base,
-      modelSelection: stale,
-      creation,
-    });
-  });
-
   it.each(["read", "json", "schema"] as const)(
     "recovers usable messages without permitting cleanup after a record %s failure",
     async (failure) => {

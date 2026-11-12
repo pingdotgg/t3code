@@ -507,16 +507,17 @@ describe("mobile task permissions", () => {
 });
 
 describe("queued follow-up model", () => {
-  it("queues a follow-up with no model when the user picked none", async () => {
+  it("queues an unpicked follow-up on the thread's current model", async () => {
     state.grantedEnvironments.add("secondary");
     const composer = useThreadComposerState(NO_SIDE_CHATS);
 
     expect(await composer.onSendMessage()).toBe("message");
 
-    // The outbox can deliver after the thread moved elsewhere; only the server knows its model then.
-    expect(state.enqueue).toHaveBeenCalledOnce();
-    const [queued] = state.enqueue.mock.calls[0] as unknown as [object];
-    expect(queued).not.toHaveProperty("modelSelection");
+    // A same-instance pick leaves the draft once the thread accepts it; without a model the
+    // server would run this message on the model queued ahead of it instead.
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ modelSelection: { instanceId: "codex", model: "gpt-5.4" } }),
+    );
   });
 });
 
