@@ -23,6 +23,7 @@ import { sourceControlEnvironment } from "~/state/sourceControl";
 import { sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { DialogSubmitKbd, isDialogSubmitShortcut } from "./DialogSubmitShortcut";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -451,13 +452,10 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               ) : null}
 
               {publishError && !isPending ? (
-                <div
-                  role="alert"
-                  className="rounded-control border border-error/40 bg-error/10 px-3 py-2 text-meta text-destructive-foreground"
-                >
-                  <p className="text-label">Publish failed</p>
-                  <p className="mt-0.5 text-error-foreground">{publishError}</p>
-                </div>
+                <Alert variant="error">
+                  <AlertTitle>Publish failed</AlertTitle>
+                  <AlertDescription>{publishError}</AlertDescription>
+                </Alert>
               ) : null}
             </DialogPanel>
             <DialogFooter variant="bare">
