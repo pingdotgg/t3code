@@ -641,6 +641,7 @@ export class GhosttyTerminalSurface {
     moved: boolean;
   } | null = null;
   private lastMouseMotionData = "";
+  private heldPromptMark = "";
   private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Watch reduced motion changes to restart blink cycles that have no remaining timer.
@@ -785,6 +786,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
+    this.heldPromptMark = "";
     // The history was written at the PTY's grid. Replay it there and then
     // resize, as a live terminal would, so Ghostty reflows it and clears the
     // marked prompt that the shell redraws once the PTY takes this size.
@@ -810,7 +812,14 @@ export class GhosttyTerminalSurface {
   }
 
   private forPromptRedraw(data: string): string {
-    return this.input.readOnly ? data.replaceAll(SHELL_REDRAWS_PROMPT, SHELL_KEEPS_PROMPT) : data;
+    const text = this.heldPromptMark + data;
+    this.heldPromptMark = "";
+    if (!this.input.readOnly) return text;
+    // Output arrives in chunks; hold back an end that may be the mark's start.
+    let held = Math.min(text.length, SHELL_REDRAWS_PROMPT.length - 1);
+    while (held > 0 && !SHELL_REDRAWS_PROMPT.startsWith(text.slice(-held))) held -= 1;
+    this.heldPromptMark = text.slice(text.length - held);
+    return text.slice(0, text.length - held).replaceAll(SHELL_REDRAWS_PROMPT, SHELL_KEEPS_PROMPT);
   }
 
   setTheme(theme: GhosttyTheme): void {

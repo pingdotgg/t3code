@@ -519,6 +519,19 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(text).toContain("~/a-rather-long-folder $");
   });
 
+  it("keeps the prompt on a read-only surface when its mark arrives in two chunks", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.input.readOnly = true;
+    surface.setSharedGrid({ cols: 10, rows: 4 });
+    surface.write("done\r\n\x1b]133;A;re");
+    surface.write("draw=1\x07~/a $ \x1b]133;I\x07");
+    surface.setSharedGrid({ cols: 20, rows: 4 });
+    harness.flushFrame();
+    const text = harness.renderedSnapshot.rowData.map((row) => row.text.trimEnd()).join("");
+    expect(text).toContain("~/a $");
+  });
+
   it("replays history at the PTY's grid so a narrower surface clears the redrawn prompt", async () => {
     const harness = createHarness();
     const surface = await harness.create();
