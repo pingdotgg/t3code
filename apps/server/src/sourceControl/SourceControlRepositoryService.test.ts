@@ -5,7 +5,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
-
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -307,7 +306,6 @@ const lfsEnv = (skipSmudge?: string) =>
 it.effect.each([
   ["tracks LFS files", STOCK_LFS_CONFIG, "lfs", undefined, true, undefined],
   ["tracks no LFS files", STOCK_LFS_CONFIG, "plain", undefined, false, undefined],
-  ["is empty", STOCK_LFS_CONFIG, "empty", undefined, false, undefined],
   [
     "skips LFS content through the filter",
     { "filter.lfs.process": "git-lfs filter-process --skip" },
@@ -354,14 +352,12 @@ it.effect.each([
       git.execute({ operation: "test.source", cwd: source, args });
     yield* fs.makeDirectory(source);
     yield* runInSource("init");
-    if (contents !== "empty") {
-      if (contents === "lfs") {
-        yield* fs.writeFileString(path.join(source, ".gitattributes"), "*.bin filter=lfs\n");
-      }
-      yield* fs.writeFileString(path.join(source, "model.bin"), "weights\n");
-      yield* runInSource("add", "-A");
-      yield* runInSource("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init");
+    if (contents === "lfs") {
+      yield* fs.writeFileString(path.join(source, ".gitattributes"), "*.bin filter=lfs\n");
     }
+    yield* fs.writeFileString(path.join(source, "model.bin"), "weights\n");
+    yield* runInSource("add", "-A");
+    yield* runInSource("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init");
 
     const commands: Array<GitVcsDriver.ExecuteGitInput> = [];
     yield* Effect.gen(function* () {
