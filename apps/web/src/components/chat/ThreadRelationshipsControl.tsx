@@ -82,6 +82,12 @@ import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { openSideChatTab } from "../../lib/sideChatPane";
+import {
+  agentsSectionHeading,
+  relationshipDisplayStatus,
+  relationshipDisplayTitle,
+  relationshipSeatLabel,
+} from "./threadRelationshipPresentation";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -197,14 +203,6 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
       ) : null}
     </div>
   );
-}
-
-function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: ThreadId) {
-  if (edge.kind === "transfer") return "Context transfer";
-  if (edge.kind === "subagent") {
-    return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
-  }
-  return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
 }
 
 function relationshipThreadTitle(input: {
@@ -579,6 +577,11 @@ export function ThreadRelationshipsPanel(props: {
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+  const needsYouCount = [...related, ...active, ...sideChats].filter(({ threadId }) => {
+    const thread = graph.nodes.get(threadId)?.thread;
+    const pending = thread?.pendingRuntimeRequest;
+    return pending != null && pending.kind !== "auth_refresh";
+  }).length;
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
@@ -697,21 +700,32 @@ export function ThreadRelationshipsPanel(props: {
     const isSubagent = edge.kind === "subagent";
     const isMergeTarget = threadId === mergeTargetThreadId;
     const isParent = isParentThreadRelationship(edge, props.threadId);
+    const isSideChat = node?.thread?.lineage.sideChat === true && !isParent;
     const rowStatus =
       (isParent && threadId === parentRef?.threadId
         ? (node?.thread?.activityRunStatus ?? parentNativeStatus)
         : undefined) ?? threadRelationshipRowStatus(graph, { threadId, edge });
+    const displayStatus = relationshipDisplayStatus(
+      node?.thread,
+      rowStatus,
+      threadRelationshipStatusLabel,
+    );
+    const iconStatus =
+      displayStatus.kind === "needs_you" ? "needs_you" : (displayStatus.raw ?? rowStatus);
     const RelationshipIcon = isParent
       ? CornerLeftUpIcon
       : isSubagent
         ? BotIcon
-        : node?.thread?.lineage.sideChat === true
+        : isSideChat
           ? MessagesSquareIcon
           : GitForkIcon;
-    const relationship =
-      node?.thread?.lineage.sideChat === true && !isParent
-        ? "Side chat"
-        : relationshipLabel(edge, props.threadId);
+    // Subagent children are turn-scoped helpers; specialist labels only bind to listed seats.
+    const specialist = isSubagent && !isParent ? undefined : node?.thread?.specialist;
+    const relationship = relationshipSeatLabel({
+      edgeKind: isSideChat ? "side_chat" : edge.kind,
+      isParent,
+      specialist,
+    });
     const projectedAgent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
     const workflowGroup =
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
@@ -728,7 +742,7 @@ export function ThreadRelationshipsPanel(props: {
           ["pending", "running", "waiting"].includes(agent.nativeStatus))) &&
       agent.startedAt &&
       ["pending", "running", "waiting"].includes(agent.status);
-    const threadTitle = relationshipThreadTitle({
+    const baseTitle = relationshipThreadTitle({
       title:
         workflowGroup?.workflow.workflowName ??
         // Fresher than an archived snapshot's copy.
@@ -739,6 +753,11 @@ export function ThreadRelationshipsPanel(props: {
         agent?.title ??
         threadId,
       isSubagent,
+    });
+    const threadTitle = relationshipDisplayTitle({
+      title: baseTitle,
+      specialist,
+      isSubagentChild: isSubagent && !isParent,
     });
     const provider = providers?.find(
       (entry) =>
@@ -778,6 +797,12 @@ export function ThreadRelationshipsPanel(props: {
     ) : (
       <LineageTooltipContent title={threadTitle} hint={relationshipHint} />
     );
+    const statusToneClass =
+      displayStatus.kind === "needs_you"
+        ? "text-warning"
+        : failed
+          ? "text-destructive"
+          : "text-muted-foreground";
     const relationshipContent = (
       <>
         <ThreadRelationshipIcon
@@ -785,7 +810,7 @@ export function ThreadRelationshipsPanel(props: {
           provider={provider}
           providerEntries={providerEntries}
           fallbackIcon={RelationshipIcon}
-          status={rowStatus}
+          status={iconStatus}
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
@@ -795,7 +820,10 @@ export function ThreadRelationshipsPanel(props: {
         {agent ? null : (
           <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         )}
-        {agent && !failed && (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
+        {agent &&
+        !failed &&
+        displayStatus.kind !== "needs_you" &&
+        (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
           <span
             className={`shrink-0 text-2xs font-normal tabular-nums text-muted-foreground ${canStopWorkflow ? "min-w-6 text-end" : ""} ${trailingVisibilityClass}`}
           >
@@ -806,10 +834,15 @@ export function ThreadRelationshipsPanel(props: {
             className={
               workflowGroup
                 ? "sr-only"
-                : `shrink-0 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"} ${trailingVisibilityClass}`
+                : `flex max-w-[55%] shrink-0 items-center gap-1.5 text-2xs ${trailingVisibilityClass}`
             }
           >
-            {threadRelationshipStatusLabel(rowStatus)}
+            {specialist !== undefined || !agent ? (
+              <span className="truncate text-muted-foreground">{relationship}</span>
+            ) : null}
+            <span className={`shrink-0 font-medium tabular-nums ${statusToneClass}`}>
+              {displayStatus.label}
+            </span>
           </span>
         ) : null}
       </>
@@ -862,7 +895,7 @@ export function ThreadRelationshipsPanel(props: {
                     size="sm"
                     variant="ghost"
                     part="primary"
-                    aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus)}`}
+                    aria-label={`${threadTitle} ${displayStatus.label}`}
                     onClick={() => openThread(threadId)}
                   />
                 }
@@ -903,8 +936,10 @@ export function ThreadRelationshipsPanel(props: {
                     : "Merge this conversation back into its source"}
               </TooltipPopup>
             </Tooltip>
-            <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
-              {threadRelationshipStatusLabel(rowStatus)}
+            <span
+              className={`shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium ${statusToneClass}`}
+            >
+              {displayStatus.label}
             </span>
           </div>
         ) : (
@@ -945,10 +980,11 @@ export function ThreadRelationshipsPanel(props: {
       {lineageVisible ? (
         <ThreadDetailsSection
           headingId="thread-details-lineage-heading"
-          title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
+          title={agentsSectionHeading({ needsYou: needsYouCount, running: runningCount })}
           // A lone "Previous agents" row names itself; the heading returns for status or actions.
           showHeading={
             runningCount > 0 ||
+            needsYouCount > 0 ||
             canDetach ||
             related.length > 0 ||
             active.length > 0 ||
