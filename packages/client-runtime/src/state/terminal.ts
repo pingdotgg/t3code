@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   type EnvironmentId,
   type TerminalAttachInput,
   type TerminalCloseInput,
@@ -10,7 +11,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -18,7 +18,6 @@ import {
   type AtomCommand,
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
-  createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
   runAtomCommand,
 } from "./runtime.ts";
@@ -69,7 +68,11 @@ export function createTerminalEnvironmentAtoms<R, E>(
         // Retry an unanswered first attach unchanged so it can still open the shell.
         let replied = false;
         return subscribeDynamic(WS_METHODS.terminalAttach, () =>
-          Effect.sync(() => (replied ? { ...input, resume: true } : input)),
+          Effect.sync(() => ({
+            ...input,
+            ...(replied ? { resume: true } : {}),
+            maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+          })),
         ).pipe(
           Stream.onFirst(() =>
             Effect.sync(() => {
@@ -79,10 +82,6 @@ export function createTerminalEnvironmentAtoms<R, E>(
           Stream.scan(nextTerminalAttachSeedState, applyTerminalAttachStreamEvent),
         );
       },
-    }),
-    events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:terminal:events",
-      tag: WS_METHODS.subscribeTerminalEvents,
     }),
     metadata: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:metadata",
@@ -112,12 +111,6 @@ export function createTerminalEnvironmentAtoms<R, E>(
     clear: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:clear",
       tag: WS_METHODS.terminalClear,
-      scheduler: lifecycleScheduler,
-      concurrency: lifecycleConcurrency,
-    }),
-    restart: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:terminal:restart",
-      tag: WS_METHODS.terminalRestart,
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
@@ -334,7 +327,7 @@ export function createTerminalSession(
     result: AsyncResult.AsyncResult<TerminalBufferState, unknown>,
   ) => {
     resizeRegistry = registry;
-    const buffer = Option.getOrElse(AsyncResult.value(result), () => EMPTY_TERMINAL_BUFFER_STATE);
+    const buffer = AsyncResult.getOrElse(result, () => EMPTY_TERMINAL_BUFFER_STATE);
     const status = result._tag === "Failure" ? "error" : buffer.status;
     if (status !== lastStatus) {
       lastStatus = status;

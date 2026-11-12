@@ -29,7 +29,7 @@ export interface IncomingShareInboxDependencies {
   readonly onCleanupError?: (error: unknown) => void;
 }
 
-export function sortAndDedupeIncomingShares(
+function sortAndDedupeIncomingShares(
   drafts: ReadonlyArray<IncomingShareDraft>,
 ): ReadonlyArray<IncomingShareDraft> {
   const ids = new Set<string>();

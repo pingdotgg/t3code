@@ -105,15 +105,10 @@ describe("[Asset Worker] `getRequestKind`", () => {
     ["JavaScript path", "/app.js", undefined, "subresource"],
   ] as const;
 
-  it.for(cases)(
-    "classifies $0 as $3",
-    ([, path, destination, expected], { expect }) => {
-      const headers = destination
-        ? { "Sec-Fetch-Dest": destination }
-        : undefined;
-      const request = new Request(`https://example.com${path}`, { headers });
+  it.for(cases)("classifies $0 as $3", ([, path, destination, expected], { expect }) => {
+    const headers = destination ? { "Sec-Fetch-Dest": destination } : undefined;
+    const request = new Request(`https://example.com${path}`, { headers });
 
-      expect(getRequestKind(request)).toBe(expected);
-    },
-  );
+    expect(getRequestKind(request)).toBe(expected);
+  });
 });
