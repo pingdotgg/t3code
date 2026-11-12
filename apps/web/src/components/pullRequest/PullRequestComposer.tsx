@@ -45,7 +45,8 @@ export function PullRequestComposer({
   const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const reviewRef = useRef<HTMLTextAreaElement>(null);
-  const pendingComments = usePendingReviewComments(environmentId, reference, detail.reviewThreads);
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const pendingComments = usePendingReviewComments(reviewKey, detail.reviewThreads);
   const {
     busy: draftBusy,
     canDiscard,
@@ -53,7 +54,6 @@ export function PullRequestComposer({
   } = usePendingReviewCommentActions(environmentId, reference);
   // A summary typed but not sent is review work too, and it outlives the popover. Selected as a
   // boolean rather than the text, so typing one does not re-render the composer per keystroke.
-  const reviewKey = usePullRequestReviewKey(environmentId, reference);
   const summaryStarted = usePullRequestReviewStore(
     (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
   );

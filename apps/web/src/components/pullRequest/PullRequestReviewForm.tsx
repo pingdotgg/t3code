@@ -96,8 +96,8 @@ export function PullRequestReviewForm({
   const { busy: draftBusy } = usePendingReviewCommentActions(environmentId, reference);
   const [uploading, setUploading] = useState(false);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
-  const comments = usePendingReviewComments(environmentId, reference, reviewThreads);
   const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const comments = usePendingReviewComments(reviewKey, reviewThreads);
   const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
   const remoteIdentity = pendingReviewIdentityFromThreads(reviewThreads, removedIds);
   const pendingReviewId =

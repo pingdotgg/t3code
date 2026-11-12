@@ -13,7 +13,6 @@ import type {
   PullRequestReviewThread,
 } from "@t3tools/contracts";
 import { create } from "zustand";
-import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 
 export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
 
@@ -156,11 +155,9 @@ export async function savePendingReviewComment(
 
 /** The comments a pull request's draft holds, stable across renders while it is empty. */
 export function usePendingReviewComments(
-  environmentId: EnvironmentId,
-  reference: PullRequestRef,
+  key: string,
   threads?: ReadonlyArray<PullRequestReviewThread>,
 ): ReadonlyArray<PendingReviewComment> {
-  const key = usePullRequestReviewKey(environmentId, reference);
   const local = usePullRequestReviewStore((store) => store.drafts[key] ?? EMPTY);
   const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[key]);
   return mergePendingReviewComments(local, threads ?? [], removedIds ?? []);

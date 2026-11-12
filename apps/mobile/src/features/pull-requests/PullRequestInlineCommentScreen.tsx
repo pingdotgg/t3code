@@ -13,6 +13,7 @@ import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { PullRequestSheetContent } from "./PullRequestSheetContent";
 import { setReviewDraftBusy, usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
+import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
@@ -41,6 +42,10 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const params = route.params;
   const navigation = useNavigation();
   const store = usePullRequestReviewDraft(params);
+  const ownerKey = pullRequestReviewKey(store.scope, store.scope.viewer);
+  const [draftOwner, setDraftOwner] = useState<string | null>(null);
+  if (draftOwner === null && store.ready) setDraftOwner(ownerKey);
+  const accountChanged = draftOwner !== null && draftOwner !== ownerKey;
   const [commentId] = useState(() => params.draftId ?? uuidv4());
   const saved = store.comments.find((draft) => draft.id === commentId);
   const [editedBody, setBody] = useState<string | null>(null);
@@ -72,6 +77,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       uploading ||
       store.busy ||
       !store.ready ||
+      accountChanged ||
       !body.trim() ||
       detail.isPending ||
       detail.error ||
@@ -159,7 +165,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   };
   const agent = usePullRequestThreads(params, detail.data, params.path);
   const addToComposer = async () => {
-    if (!detail.data || !body.trim()) return;
+    if (accountChanged || !detail.data || !body.trim()) return;
     const added = await agent.addToComposer({
       context: pendingCommentComposerContext(detail.data, {
         path: params.path,
@@ -176,6 +182,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
     !uploading &&
     !store.busy &&
     store.ready &&
+    !accountChanged &&
     Boolean(body.trim()) &&
     !detail.isPending &&
     detail.error === null &&
@@ -199,7 +206,9 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
             <Button
               tone="secondary"
               label="Add to composer"
-              disabled={!body.trim() || busy || uploading || agent.busy || !detail.data}
+              disabled={
+                accountChanged || !body.trim() || busy || uploading || agent.busy || !detail.data
+              }
               onPress={() => void addToComposer()}
             />
           ) : null}
@@ -239,7 +248,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           params={params}
           label="Inline review comment"
           placeholder="Write feedback on these lines…"
-          editable={store.ready && !busy && !store.busy}
+          editable={store.ready && !accountChanged && !busy && !store.busy}
           autoFocus
           value={body}
           onChangeText={setBody}
@@ -256,6 +265,11 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           showPath={false}
           defaultExpanded
         />
+      ) : null}
+      {accountChanged ? (
+        <Text className="text-sm text-danger-foreground">
+          The account changed. Close this editor and reopen it for the current account.
+        </Text>
       ) : null}
       {stale ? (
         <Text className="text-sm text-danger-foreground">
