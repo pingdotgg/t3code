@@ -3134,11 +3134,33 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
+        const { commitSha: headCommit } = yield* gitCore.resolveCommit({ cwd, revision: "HEAD" });
+        // A head that was ever published loses nothing when reset, even if a fetch already moved its upstream.
+        const gitLines = (args: ReadonlyArray<string>) =>
+          gitCore
+            .execute({
+              operation: "GitManager.preparePullRequestThread.publishedHead",
+              cwd,
+              args,
+              allowNonZeroExit: true,
+              timeoutMs: 5_000,
+            })
+            .pipe(
+              Effect.map((result) =>
+                result.exitCode === 0 ? result.stdout.split("\n").filter(Boolean) : [],
+              ),
+            );
+        const publishedHead =
+          (yield* gitLines(["for-each-ref", "--contains", headCommit, "refs/remotes"])).length >
+            0 ||
+          (yield* gitLines(["log", "--walk-reflogs", "--format=%H", "@{upstream}"])).includes(
+            headCommit,
+          );
         return yield* gitCore
           .refreshCheckedOutBranch({
             cwd,
             targetCommit: target.commitSha,
-            resetWhenHeadCommit: upstreamCommitBeforeFetch,
+            resetWhenHeadCommit: publishedHead ? headCommit : upstreamCommitBeforeFetch,
           })
           .pipe(Effect.map((result) => result.onTarget));
       });

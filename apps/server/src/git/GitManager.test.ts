@@ -5391,6 +5391,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     { localBranch: "ahead", expectedHead: "local", isOnPullRequestHead: false },
     { localBranch: "behind", expectedHead: "pull request", isOnPullRequestHead: true },
     { localBranch: "rewritten", expectedHead: "pull request", isOnPullRequestHead: true },
+    { localBranch: "rewritten-fetched", expectedHead: "pull request", isOnPullRequestHead: true },
     { localBranch: "wrong-ref", expectedHead: "pull request", isOnPullRequestHead: true },
     { localBranch: "stale-head", expectedHead: "local", isOnPullRequestHead: false },
     { localBranch: "checkout-race", expectedHead: "pull request", isOnPullRequestHead: true },
@@ -5412,7 +5413,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
           yield* runGit(repoDir, ["add", "mine.txt"]);
           yield* runGit(repoDir, ["commit", "-m", "My unpublished commit"]);
-        } else if (localBranch !== "rewritten") {
+        } else if (!localBranch.startsWith("rewritten")) {
           yield* runGit(repoDir, ["checkout", "-b", "author-push"]);
           NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
           yield* runGit(repoDir, ["add", "authored.txt"]);
@@ -5430,11 +5431,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             "origin",
             "author-rewrite:feature/pr-existing",
           ]);
-          yield* runGit(repoDir, [
-            "update-ref",
-            "refs/remotes/origin/feature/pr-existing",
-            staleHead,
-          ]);
+          if (localBranch === "rewritten") {
+            yield* runGit(repoDir, [
+              "update-ref",
+              "refs/remotes/origin/feature/pr-existing",
+              staleHead,
+            ]);
+          }
         }
         const localHead = (yield* runGit(repoDir, [
           "rev-parse",
