@@ -119,86 +119,89 @@ it.layer(NodeServices.layer)("Claude boundary saved history", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "recovers exact root receipts and legacy context while retaining ambiguous offers",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boundary-receipts-" });
-        const project = path.join(directory, "project");
-        yield* fs.makeDirectory(project);
-        const entry = (attachment: unknown, overrides: Record<string, unknown> = {}) => ({
-          type: "attachment",
-          sessionId: "native-session",
-          isSidechain: false,
-          attachment,
-          ...overrides,
-        });
-        const legacy = "From another agent (delivery legacy):\nOriginal saved update";
-        const legacyBatch = [
-          "From the user (delivery batch-first):\nFirst update\n\nSecond paragraph",
-          "From another agent (delivery batch-middle):\nMiddle update",
-          "From the user (delivery batch-last):\nLast update",
-        ];
-        const rows = [
-          entry({ type: "queued_command", source_uuid: "saved" }),
-          entry({ type: "queued_command", source_uuid: "saved" }),
-          entry({ type: "queued_command", source_uuid: "foreign" }, { sessionId: "other-session" }),
-          entry({ type: "queued_command", source_uuid: "child" }, { isSidechain: true }),
-          entry({ type: "hook_additional_context", content: [`New messages:\n${legacy}`] }),
-          entry({
-            type: "hook_additional_context",
-            content: [`New messages:\n${legacyBatch.join("\n\n")}`],
-          }),
-          entry({
-            type: "hook_additional_context",
-            content: ["New messages:\nFrom the user (delivery changed-legacy):\nChanged text"],
-          }),
-          entry({ type: "hook_additional_context", content: ["changed original text"] }),
-          { type: "queue-operation", operation: "enqueue", content: "queued-only" },
-          { type: "user", uuid: "unrelated-turn" },
-        ];
-        yield* fs.writeFileString(
-          path.join(project, "native-session.jsonl"),
-          `${rows.map((row) => encodeLine(row)).join("\n")}\n{"type":"attachment"`,
-        );
-        const saved = yield* readClaudeBoundaryReceipts({
+  it.effect("recovers exact root receipts while retaining ambiguous offers", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-boundary-receipts-" });
+      const project = path.join(directory, "project");
+      yield* fs.makeDirectory(project);
+      const entry = (attachment: unknown, overrides: Record<string, unknown> = {}) => ({
+        type: "attachment",
+        sessionId: "native-session",
+        isSidechain: false,
+        attachment,
+        ...overrides,
+      });
+      const legacy = "From another agent (delivery legacy):\nOriginal saved update";
+      const legacyBatch = [
+        "From the user (delivery batch-first):\nFirst update\n\nSecond paragraph",
+        "From another agent (delivery batch-middle):\nMiddle update",
+        "From the user (delivery batch-last):\nLast update",
+      ];
+      const rows = [
+        entry({ type: "queued_command", source_uuid: "saved" }),
+        entry({ type: "queued_command", source_uuid: "saved" }),
+        entry({ type: "queued_command", source_uuid: "foreign" }, { sessionId: "other-session" }),
+        entry({ type: "queued_command", source_uuid: "child" }, { isSidechain: true }),
+        entry({ type: "hook_additional_context", content: [`New messages:\n${legacy}`] }),
+        entry({
+          type: "hook_additional_context",
+          content: [`New messages:\n${legacyBatch.join("\n\n")}`],
+        }),
+        entry({
+          type: "hook_additional_context",
+          content: ["New messages:\nFrom the user (delivery changed-legacy):\nChanged text"],
+        }),
+        entry({ type: "hook_additional_context", content: ["changed original text"] }),
+        { type: "queue-operation", operation: "enqueue", content: "queued-only" },
+        { type: "user", uuid: "unrelated-turn" },
+      ];
+      yield* fs.writeFileString(
+        path.join(project, "native-session.jsonl"),
+        `${rows.map((row) => encodeLine(row)).join("\n")}\n{"type":"attachment"`,
+      );
+      const saved = yield* readClaudeBoundaryReceipts({
+        projectsDirectory: directory,
+        nativeThreadId: "native-session",
+        offers: [
+          { id: "saved" },
+          { id: "foreign" },
+          { id: "child" },
+          { id: "queued-only" },
+          { id: "missing" },
+          { id: "legacy" },
+        ],
+      });
+      const transcriptPath = path.join(project, "tail.jsonl");
+      const before = `${encodeLine(entry({ type: "queued_command", source_uuid: "before" }))}\n`;
+      const after = `${encodeLine(entry({ type: "queued_command", source_uuid: "after" }))}\n`;
+      yield* fs.writeFileString(transcriptPath, before);
+      const offset = Number((yield* fs.stat(transcriptPath)).size);
+      yield* fs.writeFileString(transcriptPath, before + after);
+      const readTail = (start: number) =>
+        readClaudeBoundaryReceipts({
           projectsDirectory: directory,
           nativeThreadId: "native-session",
-          offers: [
-            { id: "saved" },
-            { id: "foreign" },
-            { id: "child" },
-            { id: "queued-only" },
-            { id: "missing" },
-            { id: "legacy", legacyContext: legacy },
-            ...legacyBatch.map((legacyContext, index) => ({
-              id: ["batch-first", "batch-middle", "batch-last"][index]!,
-              legacyContext,
-            })),
-            {
-              id: "changed-legacy",
-              legacyContext: "From the user (delivery changed-legacy):\nOriginal text",
-            },
-            { id: "wrong-legacy", legacyContext: "Original saved update" },
-            { id: "partial-legacy", legacyContext: legacyBatch.slice(0, 2).join("\n\n") },
-          ],
-        });
-        assert.deepEqual(
-          [...saved],
-          ["saved", "legacy", "batch-first", "batch-middle", "batch-last"],
-        );
-        assert.deepEqual(
-          [
-            ...(yield* readClaudeBoundaryReceipts({
-              projectsDirectory: path.join(directory, "absent"),
-              nativeThreadId: "native-session",
-              offers: [{ id: "missing" }],
-            })),
-          ],
-          [],
-        );
-      }).pipe(Effect.scoped),
+          transcriptPath,
+          offset: start,
+          offers: [{ id: "before" }, { id: "after" }],
+        }).pipe(Effect.map((receipts) => [...receipts]));
+      assert.deepEqual(yield* readTail(offset), ["after"]);
+      assert.deepEqual(yield* readTail(offset - 1), ["before", "after"]);
+      yield* fs.writeFileString(transcriptPath, after);
+      assert.deepEqual(yield* readTail(offset + 1000), ["after"]);
+      assert.deepEqual([...saved], ["saved"]);
+      assert.deepEqual(
+        [
+          ...(yield* readClaudeBoundaryReceipts({
+            projectsDirectory: path.join(directory, "absent"),
+            nativeThreadId: "native-session",
+            offers: [{ id: "missing" }],
+          })),
+        ],
+        [],
+      );
+    }).pipe(Effect.scoped),
   );
 });

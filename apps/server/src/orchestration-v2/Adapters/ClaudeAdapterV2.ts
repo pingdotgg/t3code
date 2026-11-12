@@ -4814,6 +4814,8 @@ interface ClaudeLiveQueryContext {
 }
 
 interface ClaudeBoundaryBatch {
+  readonly transcriptPath: string;
+  readonly transcriptOffset: number;
   readonly context: ActiveClaudeTurnContext;
   readonly offers: ReadonlyArray<ProviderContinuationRequests.AgentMessageOffer>;
   readonly saved: Set<string>;
@@ -11097,7 +11099,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             );
             if (offers.length === 0) return;
+            const pendingBatches = live.boundaryBatches.filter((batch) =>
+              batch.offers.some(
+                (offer) => !batch.saved.has(offer.id) && !batch.withdrawn.has(offer.id),
+              ),
+            );
             const saved = yield* readClaudeBoundaryReceipts({
+              transcriptPath: pendingBatches[0]!.transcriptPath,
+              offset: Math.min(...pendingBatches.map((batch) => batch.transcriptOffset)),
               projectsDirectory: path.join(homePath, "projects"),
               nativeThreadId: live.nativeThreadId,
               offers,
@@ -12061,7 +12070,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         consumed: yield* Deferred.make<void>(),
                       });
                     }
+                    const transcriptPath = hookInput.transcript_path;
+                    const transcriptOffset = yield* fileSystem.stat(transcriptPath).pipe(
+                      Effect.map((info) => Number(info.size)),
+                      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(0)),
+                    );
                     const batch: ClaudeBoundaryBatch = {
+                      transcriptPath,
+                      transcriptOffset,
                       context,
                       offers,
                       saved: new Set(),

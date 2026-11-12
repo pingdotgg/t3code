@@ -1,9 +1,4 @@
-import {
-  CommandId,
-  ClaudeSettings,
-  type OrchestrationV2ConversationMessage,
-} from "@t3tools/contracts";
-import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { CommandId, ClaudeSettings } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,14 +15,6 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { readClaudeBoundaryReceipts } from "./Adapters/ClaudeSavedMessageReceipts.ts";
 
 const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
-
-function legacyContext(message: OrchestrationV2ConversationMessage, offerId: string) {
-  const author = message.createdBy === "user" ? "the user" : "another agent";
-  return `From ${author} (delivery ${offerId}):\n${projectComposerContextForProvider({
-    text: message.text,
-    records: message.context?.records ?? [],
-  })}`;
-}
 
 export const makeClaudeBoundaryReceiptRecovery = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -96,17 +83,7 @@ export const makeClaudeBoundaryReceiptRecovery = Effect.gen(function* () {
           const saved = yield* readClaudeBoundaryReceipts({
             projectsDirectory: path.join(home, "projects"),
             nativeThreadId,
-            offers: runs.map((run) => {
-              const message = projection.messages.find(
-                (candidate) => candidate.id === run.userMessageId,
-              );
-              return {
-                id: run.boundaryOffer!.id,
-                ...(message === undefined
-                  ? {}
-                  : { legacyContext: legacyContext(message, run.boundaryOffer!.id) }),
-              };
-            }),
+            offers: runs.map((run) => ({ id: run.boundaryOffer!.id })),
           });
           for (const run of runs) {
             const offer = run.boundaryOffer!;
