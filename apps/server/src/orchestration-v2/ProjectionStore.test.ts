@@ -5206,6 +5206,32 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("reads a thread's last executed run through the last executed run index", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const { projectId } = yield* assertProjectScopedShells("sql-shell-last-executed-index");
+      const { statements, tracer } = traceSqlStatements();
+      yield* projectionStore
+        .getShellSnapshot({ projectId, location: "active" })
+        .pipe(Effect.withTracer(tracer));
+
+      const threadQuery = statements.find((statement) =>
+        statement.includes("AS latest_run_stop_requested"),
+      );
+      assert.isDefined(threadQuery);
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${threadQuery}`,
+      )).map((row) => row.detail);
+      const lastExecutedIndex = plan.findIndex((detail) =>
+        detail.includes("orchestration_v2_projection_runs_last_executed_idx"),
+      );
+      assert.notStrictEqual(lastExecutedIndex, -1);
+      // The lookup that follows the search is the sort it no longer needs.
+      assert.notInclude(plan[lastExecutedIndex + 1] ?? "", "USE TEMP B-TREE");
+    }),
+  );
+
   it.effect("reads a run's turn-start items by thread and run, not by walking thread history", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
