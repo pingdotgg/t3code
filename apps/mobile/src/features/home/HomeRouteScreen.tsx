@@ -1,3 +1,4 @@
+import { MOBILE_APP_NAME } from "../../lib/mobileBranding";
 import { uuidv4 } from "../../lib/uuid";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { use } from "react";
@@ -8,7 +9,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { agentsBoardSelectionAtom } from "./agents-board-state";
-import { AgentsBoard, WorkspaceBoardTabs } from "./AgentsBoard";
+import { AgentsBoard } from "./AgentsBoard";
 import { Platform } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -172,7 +173,7 @@ export function HomeRouteScreen() {
     <AndroidHomeFabLayout onStartNewTask={startNewTask}>
       <>
         <WorkspaceListHeader
-          accessibilityLabel="T3 Code, Threads"
+          accessibilityLabel={`${MOBILE_APP_NAME}, Threads`}
           onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
           search={{
             value: searchQuery,
@@ -217,7 +218,6 @@ export function HomeRouteScreen() {
           />
         ) : (
           <HomeScreen
-            boardHeader={<WorkspaceBoardTabs />}
             catalogState={catalogState}
             environments={environments}
             onAddConnection={() => openSettings(navigation, "SettingsEnvironmentNew")}

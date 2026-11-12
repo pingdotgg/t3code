@@ -1,8 +1,10 @@
+import { MOBILE_APP_NAME } from "../../../lib/mobileBranding";
 import { useEffect, useState } from "react";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { BackHandler, Keyboard } from "react-native";
 
 import { AppBar } from "../../../components/ui/AppBar";
+import { WorkspaceBoardToggle } from "../../home/AgentsBoard";
 import { useWorkspaceConnectionState } from "../../../state/workspace";
 import { useHardwareKeyboardCommand } from "../../keyboard/hardwareKeyboardCommands";
 import { WorkspaceBrandTitle } from "./WorkspaceBrandTitle";
@@ -58,7 +60,7 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
 
   return (
     <AppBar
-      title="T3 Code"
+      title={MOBILE_APP_NAME}
       titleContent={
         <WorkspaceBrandTitle
           accessibilityLabel={props.accessibilityLabel}
@@ -85,6 +87,7 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
             ]
           : undefined
       }
+      trailing={searching ? undefined : <WorkspaceBoardToggle />}
     />
   );
 }

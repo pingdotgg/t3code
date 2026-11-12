@@ -1,6 +1,6 @@
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { LegendList } from "@legendapp/list/react-native";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -77,15 +77,17 @@ const BOARD_TABS = [
   { value: "threads", label: "Threads" },
 ] as const;
 
-export function WorkspaceBoardTabs() {
+/** Sits in the list's bar beside search, so it costs no list height. */
+export function WorkspaceBoardToggle(props: { readonly fill?: boolean }) {
   const [selection, setSelection] = useAtom(agentsBoardSelectionAtom);
   return (
-    <View className="px-4 py-3">
+    <View style={props.fill ? undefined : { width: 148 }}>
       <SegmentedControl
         options={BOARD_TABS}
         selected={selection.tab}
         onSelect={(tab) => setSelection({ ...selection, tab })}
         role="tab"
+        size="compact"
       />
     </View>
   );
@@ -165,8 +167,8 @@ export function AgentsBoard(props: {
   readonly environmentId: EnvironmentId | null;
   readonly projectRefs?: readonly { environmentId: EnvironmentId; projectId: string }[] | null;
   readonly topInset?: number;
-  /** False where the switch already lives in the navigation bar. */
-  readonly showTabs?: boolean;
+  /** For a list whose bar has no room for the Agents/Threads toggle. */
+  readonly listHeader?: ReactNode;
 }) {
   const syncedThreads = useThreadShells();
   // Parent moves show at once and roll back if the server rejects them.
@@ -646,7 +648,7 @@ export function AgentsBoard(props: {
         }}
         ListHeaderComponent={
           <View>
-            {props.showTabs === false ? null : <WorkspaceBoardTabs />}
+            {props.listHeader}
             {boardEmpty ?? (
               <>
                 <AgentStrip
@@ -809,11 +811,11 @@ function AgentStrip(props: {
         accessibilityState={{ selected: props.selectedProfileId === null }}
         onPress={() => props.onSelect(null)}
         className={cn(
-          "w-[72px] items-center gap-1.5 rounded-[16px] border px-1 py-2",
+          "min-h-11 w-16 items-center gap-1 rounded-[14px] border px-1 py-1",
           props.selectedProfileId === null ? "border-primary bg-secondary" : "border-transparent",
         )}
       >
-        <View className="h-9 w-9 items-center justify-center rounded-full bg-card">
+        <View className="h-8 w-8 items-center justify-center rounded-full bg-card">
           <SymbolView
             name="square.grid.2x2"
             size={16}
@@ -857,7 +859,7 @@ function AgentStrip(props: {
               accessibilityState={{ selected }}
               onPress={() => props.onSelect(profile.profileId)}
               className={cn(
-                "w-[72px] items-center gap-1.5 rounded-[16px] border px-1 py-2",
+                "min-h-11 w-16 items-center gap-1 rounded-[14px] border px-1 py-1",
                 selected ? "border-primary bg-secondary" : "border-transparent",
               )}
             >
@@ -866,7 +868,7 @@ function AgentStrip(props: {
                   icon={agent.icon}
                   iconId={profile.iconId}
                   color={agent.color}
-                  size={36}
+                  size={32}
                 />
                 {activity && (activity.working > 0 || activity.attention > 0) ? (
                   <View

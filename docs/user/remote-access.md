@@ -303,7 +303,8 @@ It shows one list for your network, merged
 from every machine this app is connected to. Machines that are not in that
 network are shown in their own group.
 
-Each machine has its own switch under **Taking part**. It is on by default.
+Each machine has its own switch, under **Taking part** on web and desktop and
+on the machine's own row on mobile. It is on by default.
 While it is off on either machine, agents start nothing over a link between
 them. A task already running on the other machine still finishes, and if that
 machine has it off, its result arrives once it is back on.
