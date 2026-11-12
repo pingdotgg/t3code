@@ -348,10 +348,10 @@ history on demand, so attaching a long thread costs nothing until the agent look
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
 A thread from a linked machine, picked, pasted or dropped, stays a reference that the agent reads
-on that machine. A pasted link to a thread on any other machine stays a link. Dropping a thread
-from any other environment attaches a saved transcript file. The source
+on that machine. Pasting or dropping a thread from any other environment attaches a saved
+transcript file, and a pasted one also stays a link to the thread. The source
 environment must be connected and up to date. The transcript includes the visible history and
-saved text context at the time of the drop; later messages and the contents of attached files
+saved text context at the time you attached it; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal
 file attachment limits apply.
 

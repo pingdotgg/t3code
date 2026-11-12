@@ -12,6 +12,7 @@ import {
   type ComposerContextRecord,
   type EnvironmentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   type ComposerFileAttachment,
@@ -19,6 +20,7 @@ import {
   type DraftId,
   composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
+  composerTargetKey,
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { type PendingUserInput } from "../../session-logic";
@@ -91,6 +93,11 @@ export function useComposerContextImport(input: {
   readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
+  /** Attaches a thread's transcript to a draft, as dropping it does. */
+  readonly importThreadTranscript: (
+    ref: ScopedThreadRef,
+    draftTarget: ChatComposerProps["composerDraftTarget"],
+  ) => void;
 }) {
   const {
     environmentId,
@@ -109,6 +116,7 @@ export function useComposerContextImport(input: {
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    importThreadTranscript,
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -127,10 +135,14 @@ export function useComposerContextImport(input: {
   const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
   });
-  const countReservedAttachments = () => {
+  const countReservedAttachments = (draftTarget = attachmentDraftTarget) => {
+    const targetKey = composerTargetKey(draftTarget);
     const questionRequest = pendingUserInputs[0];
     const otherQuestionKeys =
-      questionAttachmentTarget && questionRequest && activeThreadId
+      questionAttachmentTarget &&
+      targetKey === attachmentTargetKey &&
+      questionRequest &&
+      activeThreadId
         ? questionRequest.questions
             .map((question) =>
               questionAttachmentDraftId(
@@ -142,12 +154,12 @@ export function useComposerContextImport(input: {
             )
             .filter((key) => key !== questionAttachmentTarget)
         : [];
-    const draft = getComposerDraft(attachmentDraftTarget);
+    const draft = getComposerDraft(draftTarget);
     return (
       (draft?.images.length ?? 0) +
       (draft?.files.length ?? 0) +
-      countPreparingComposerImages(attachmentTargetKey) +
-      (pendingThreadImportsRef.current.get(attachmentTargetKey) ?? 0) +
+      countPreparingComposerImages(targetKey) +
+      (pendingThreadImportsRef.current.get(targetKey) ?? 0) +
       countQuestionAttachments(otherQuestionKeys)
     );
   };
@@ -279,17 +291,19 @@ export function useComposerContextImport(input: {
     // the transfer against its own draft so a send cannot snapshot a message whose chip has no
     // attachment behind it, and so bytes for an abandoned draft never enter the next one.
     const importTargetKey = attachmentTargetKey;
-    pendingDraftWork.begin(importTargetKey);
+    const contextId = toKindScopedComposerContextId(record.kind, localId);
+    pendingDraftWork.begin(importTargetKey, contextId);
     await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey).finally(() =>
-      pendingDraftWork.end(importTargetKey),
+      pendingDraftWork.end(importTargetKey, contextId),
     );
   };
   const importContextRecords = (
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
     threadDraftTarget = attachmentDraftTarget,
-  ): ReadonlyMap<string, string> => {
-    const rewritten = new Map<string, string>();
+  ): ReadonlyMap<string, string | null> => {
+    // A null id means the reference becomes a link to a thread the agent cannot read.
+    const rewritten = new Map<string, string | null>();
     const dependentAttachmentLocalIds = new Map<string, string>();
     const skippedDependentAttachmentIds = new Set<string>();
     // Resolve annotations before their dependent screenshot records even if a foreign
@@ -308,12 +322,13 @@ export function useComposerContextImport(input: {
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
       // A reminted annotation needs its screenshot under the new annotation id.
-      const existing = dependentAttachmentLocalIds.has(record.contextId)
+      const existingId = dependentAttachmentLocalIds.has(record.contextId)
         ? undefined
-        : composerContextImportLookupIds(record).flatMap((contextId) => {
-            const found = composerContextRecords.get(contextId);
-            return found ? [found] : [];
-          })[0];
+        : composerContextImportLookupIds(record).find((contextId) =>
+            composerContextRecords.has(contextId),
+          );
+      const existing =
+        existingId === undefined ? undefined : composerContextRecords.get(existingId);
       // Upload completion can change the server id since copy; the local bytes still match.
       if (
         sourceEnvironmentId !== null &&
@@ -322,8 +337,10 @@ export function useComposerContextImport(input: {
         existing.record.file !== null &&
         existing.record.file ===
           copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId)
-      )
+      ) {
+        rewritten.set(record.contextId, existingId ?? record.contextId);
         continue;
+      }
       const existingRecord =
         existing?.kind === "terminal"
           ? terminalContextRecord(existing.record)
@@ -350,6 +367,8 @@ export function useComposerContextImport(input: {
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
         }
+        // The draft may hold the record under its kind-scoped alias.
+        rewritten.set(record.contextId, existingId ?? record.contextId);
         continue;
       }
       const conflicts = existing !== undefined;
@@ -391,13 +410,21 @@ export function useComposerContextImport(input: {
           break;
         }
         case "thread": {
-          // The agent reads threads on its own server and the machines it links to; a pasted
-          // thread from any other machine is dropped.
+          // The agent reads threads on its own server and the machines it links to; any other
+          // machine this client is connected to sends its transcript, as a dropped one does.
           if (
             record.environmentId !== environmentId &&
             !linkedEnvironments.has(record.environmentId)
-          )
+          ) {
+            if (readPreparedConnection(record.environmentId)) {
+              importThreadTranscript(
+                { environmentId: record.environmentId, threadId: record.threadId },
+                threadDraftTarget,
+              );
+            }
+            rewritten.set(record.contextId, null);
             break;
+          }
           addComposerDraftThreadContexts(threadDraftTarget, [record], {
             appendReference: false,
           });
@@ -435,9 +462,8 @@ export function useComposerContextImport(input: {
   };
   const importContextFragment = (
     fragment: ComposerContextClipboardFragment,
-  ): ReadonlyMap<string, string> =>
+  ): ReadonlyMap<string, string | null> =>
     importContextRecords(fragment.records, fragment.source.environmentId);
-  const importContextFragmentStable = useStableCallback(importContextFragment);
 
   return {
     loadThreadTranscript,
@@ -445,6 +471,5 @@ export function useComposerContextImport(input: {
     countReservedAttachmentsStable,
     importContextRecords,
     importContextFragment,
-    importContextFragmentStable,
   };
 }

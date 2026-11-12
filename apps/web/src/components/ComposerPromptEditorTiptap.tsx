@@ -25,11 +25,7 @@ import {
 } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
-import type {
-  AssistantCitation,
-  ComposerContextClipboardFragment,
-  ServerProviderSkill,
-} from "@t3tools/contracts";
+import type { AssistantCitation, ServerProviderSkill } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -131,7 +127,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
-import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
@@ -160,9 +155,8 @@ export interface ComposerPromptEditorProps {
   buildContextClipboardFragment?:
     | ((contextIds: ReadonlyArray<string>) => string | null)
     | undefined;
-  importContextFragment?:
-    | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
-    | undefined;
+  /** Imports a paste's context records and returns its text with references rewritten. */
+  importPastedText?: ((clipboardData: DataTransfer) => string) | undefined;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
@@ -922,7 +916,7 @@ function ComposerPromptEditorTiptapInner(
     literalText = false,
     contextRecords,
     buildContextClipboardFragment,
-    importContextFragment,
+    importPastedText,
     skills,
     disabled,
     placeholder,
@@ -964,7 +958,7 @@ function ComposerPromptEditorTiptapInner(
     onVisibleSelectionChange,
     onCommandKeyDown,
     isPathQueryActive,
-    importContextFragment,
+    importPastedText,
   }));
 
   const { environmentId } = use(ComposerContextActionsContext);
@@ -1397,11 +1391,8 @@ function ComposerPromptEditorTiptapInner(
             );
             return true;
           }
-          const importFragment = readCallbacks().importContextFragment;
-          let text =
-            !literalText && importFragment
-              ? importPastedComposerText(clipboardData, importFragment)
-              : pastedText;
+          const importText = readCallbacks().importPastedText;
+          let text = !literalText && importText ? importText(clipboardData) : pastedText;
           const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
           const isChip = (token: (typeof tokens)[number] | undefined) =>
             token?.type === "mention" ||

@@ -59,7 +59,6 @@ import {
   memo,
   use,
   useEffect,
-  useEffectEvent,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -111,6 +110,7 @@ import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
+  heldContextIds,
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
@@ -1330,7 +1330,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     countReservedAttachmentsStable,
     importContextRecords,
     importContextFragment,
-    importContextFragmentStable,
   } = useComposerContextImport({
     environmentId,
     linkedEnvironments,
@@ -1348,6 +1347,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    importThreadTranscript: (ref, draftTarget) => {
+      const targetKey = composerTargetKey(draftTarget);
+      void importThreadTranscript(
+        ref,
+        draftTarget,
+        () =>
+          attachmentTargetKeyRef.current === targetKey ||
+          composerDraftTargetKeyRef.current === targetKey,
+      );
+    },
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared prompt ref in step with the committed draft prompt for imperative handlers
@@ -2483,6 +2492,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const importPastedText = (clipboardData: DataTransfer) =>
+    importPastedComposerText(
+      clipboardData,
+      importContextFragment,
+      heldContextIds(
+        composerContextRecords,
+        pendingDraftWork.importingContextIds(attachmentTargetKey),
+        retainedContextPayloads,
+      ),
+    );
+  const importPastedTextStable = useStableCallback(importPastedText);
+
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
@@ -2501,8 +2522,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       return false;
     }
-    if (options?.clipboardData) {
-      text = importPastedComposerText(options.clipboardData, importContextFragment);
+    if (options?.clipboardData && !isLiteralPendingAnswer) {
+      text = importPastedText(options.clipboardData);
     }
     const prompt = promptRef.current;
     const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
@@ -2710,10 +2731,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
-  const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
-  const importDroppedThread = useEffectEvent(
-    async (ref: ScopedThreadRef, isActive: () => boolean) => {
-      const targetKey = attachmentTargetKey;
+  // The editor shows the attachment draft; a stash restore can name the draft behind a question.
+  const attachThreadTranscript = useStableCallback(
+    async (draftTarget: ChatComposerProps["composerDraftTarget"], file: File) =>
+      composerTargetKey(draftTarget) === attachmentTargetKey
+        ? addComposerAttachments([file])
+        : addComposerDraftFiles(
+            draftTarget,
+            [
+              {
+                type: "file",
+                id: randomUUID(),
+                name: file.name,
+                mimeType: file.type,
+                sizeBytes: file.size,
+                file,
+              },
+            ],
+            { appendReference: true },
+          ).length > 0,
+  );
+  const importThreadTranscript = useStableCallback(
+    async (
+      ref: ScopedThreadRef,
+      draftTarget: ChatComposerProps["composerDraftTarget"],
+      isActive: () => boolean,
+    ) => {
+      const targetKey = composerTargetKey(draftTarget);
       pendingDraftWork.begin(targetKey);
       const loadingToast = toastManager.add({
         type: "loading",
@@ -2725,7 +2769,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         importComposerThreadAttachment({
           targetKey,
           pendingImports: pendingThreadImportsRef.current,
-          countReservedAttachments: countReservedAttachmentsStable,
+          countReservedAttachments: () => countReservedAttachmentsStable(draftTarget),
           load: async () => {
             const result = await loadThreadTranscript({
               environmentId: ref.environmentId,
@@ -2737,7 +2781,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             return threadContextAttachment(ref.environmentId, result.value);
           },
           isActive,
-          attach: attachDroppedThreadFile,
+          attach: (file) => attachThreadTranscript(draftTarget, file),
           onLimitReached: () => {
             if (activeThreadId) {
               setThreadError(
@@ -2752,7 +2796,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const error = squashAtomCommandFailure(importResult);
         toastManager.add({
           type: "error",
-          title: "Unable to read the dropped thread",
+          title: "Unable to read the attached thread",
           description:
             isEnvironmentRequestInvalidError(error) &&
             error.reason === "thread_transcript_too_large"
@@ -2770,8 +2814,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // The agent reads a linked machine's thread itself, like the `@` picker's; any other
       // machine's comes in as its transcript.
       if (ref.environmentId !== environmentId && !linkedEnvironments.has(ref.environmentId)) {
-        void importDroppedThread(
+        void importThreadTranscript(
           ref,
+          attachmentDraftTarget,
           () => isActive() && attachmentTargetKeyRef.current === attachmentTargetKey,
         );
         return [];
@@ -3489,7 +3534,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     cursor={composerCursor}
                     contextRecords={composerContextRecords}
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
-                    importContextFragment={importContextFragmentStable}
+                    importPastedText={importPastedTextStable}
                     skills={selectedProviderSkills}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
