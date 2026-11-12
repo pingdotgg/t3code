@@ -373,6 +373,28 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  // regression: #28142 Claude hub accounts that share an email merge into one Limits bar
+  it.effect("gives Claude accounts that share an email distinct identities", () =>
+    Effect.gen(function* () {
+      const shared = { provider: "claude", email: "same@example.com" };
+      const test = fixture({
+        accounts: [
+          { ...shared, id: "team.json", auth_index: "t" },
+          { ...shared, id: "max.json", auth_index: "m" },
+        ],
+        upstream: (request) => ({
+          status: 200,
+          body: request.url?.endsWith("/api/oauth/profile")
+            ? { organization: { uuid: `org-${request.auth_index}` } }
+            : { seven_day: { utilization: request.auth_index === "t" ? 45 : 4, resets_at: null } },
+        }),
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      const identities = result.map((account) => `${account.email}:${account.workspaceId}`);
+      expect(new Set(identities).size).toBe(2);
+    }),
+  );
+
   it.effect.each([
     {
       name: "spend budget",
