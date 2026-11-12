@@ -16,6 +16,7 @@ import android.text.Layout
 import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
+import android.text.method.Touch
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
 import android.view.DragEvent
@@ -156,9 +157,42 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
           }
         }
       )
+    var touchDownScrollX = 0
+    var touchDownScrollY = 0
+    var touchDownCaret = -1
     editor.setOnTouchListener { _, event ->
       contextGestures.onTouchEvent(event)
-      false
+      when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> {
+          touchDownScrollX = editor.scrollX
+          touchDownScrollY = editor.scrollY
+          touchDownCaret =
+            if (editor.isFocused && editor.selectionStart == editor.selectionEnd) {
+              editor.selectionStart
+            } else {
+              -1
+            }
+          false
+        }
+        MotionEvent.ACTION_UP -> {
+          if (touchDownCaret < 0 ||
+            editor.selectionStart != touchDownCaret ||
+            editor.selectionEnd != touchDownCaret ||
+            (editor.scrollX == touchDownScrollX && editor.scrollY == touchDownScrollY)
+          ) {
+            return@setOnTouchListener false
+          }
+          // Releasing a drag-scroll lets ArrowKeyMovementMethod pull the caret into view. End the
+          // drag and cancel the release instead, so the caret stays where the user left it.
+          Touch.onTouchEvent(editor, editor.text, event)
+          val cancel = MotionEvent.obtain(event)
+          cancel.action = MotionEvent.ACTION_CANCEL
+          editor.onTouchEvent(cancel)
+          cancel.recycle()
+          true
+        }
+        else -> false
+      }
     }
     editor.pasteTextListener = { text, start, end ->
       nativeEventCount += 1
