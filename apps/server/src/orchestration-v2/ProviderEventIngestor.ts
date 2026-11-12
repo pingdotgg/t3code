@@ -586,7 +586,7 @@ export const layer: Layer.Layer<
               });
               const completedTool = item.type === "dynamic_tool" && item.status === "completed";
               const reply = completedTool ? lessonCardFromToolItem(item)?.reply : undefined;
-              const outline = completedTool && !reply ? courseOutlineFromToolItem(item) : undefined;
+              const outline = completedTool ? courseOutlineFromToolItem(item) : undefined;
               const text = reply ?? outline;
               if (!text) return [updated];
               const createdAt = item.startedAt ?? item.updatedAt;

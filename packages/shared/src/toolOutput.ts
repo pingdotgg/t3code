@@ -42,7 +42,6 @@ const encoder = new TextEncoder();
 interface ResultReadBudget {
   remainingBytes: number;
   remainingNodes: number;
-  maxArrayLength: number;
   exceeded: boolean;
 }
 
@@ -97,7 +96,7 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     }
   }
   if (Array.isArray(value)) {
-    if (value.length > budget.maxArrayLength) {
+    if (value.length > MAX_CONTENT_BLOCKS) {
       budget.exceeded = true;
       return { failed: false };
     }
@@ -140,8 +139,7 @@ function boundedId(value: unknown): string | undefined {
 function readCourse(value: unknown): CourseOutlineData | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_COURSE_PARSED_BYTES,
-    remainingNodes: 50_000,
-    maxArrayLength: 2_000,
+    remainingNodes: MAX_ENVELOPE_NODES,
     exceeded: false,
   };
   const result = readResult(value, budget);
@@ -169,7 +167,6 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
     remainingNodes: MAX_ENVELOPE_NODES,
-    maxArrayLength: MAX_CONTENT_BLOCKS,
     exceeded: false,
   };
   const result = readResult(value, budget);
@@ -322,7 +319,6 @@ export function previewRecordingIdFromToolItem(item: {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
     remainingNodes: MAX_ENVELOPE_NODES,
-    maxArrayLength: MAX_CONTENT_BLOCKS,
     exceeded: false,
   };
   const result = readResult(item.output, budget);

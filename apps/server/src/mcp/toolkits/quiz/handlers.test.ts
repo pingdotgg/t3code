@@ -33,14 +33,15 @@ describe("quiz card reply visibility", () => {
     expect(shownTutorText(messages)).toBe(321);
   });
 
-  it("does not count promoted thinking summaries", () => {
+  it("does not count promoted thinking summaries or course outlines", () => {
     const thinking = at(
       36,
       "assistant",
       "t".repeat(300),
       "message:provider:claudeAgent:native-item:msg_011CgpYTQZCUAf5iyjZ9S6jP%3Athinking%3A1",
     );
-    expect(shownTutorText([at(26, "user", "answer"), thinking])).toBe(0);
+    const outline = at(40, "assistant", "o".repeat(400), "toolu_2:outline");
+    expect(shownTutorText([at(26, "user", "answer"), thinking, outline])).toBe(0);
   });
 
   it("does not count a verdict paragraph after a card answer", () => {
