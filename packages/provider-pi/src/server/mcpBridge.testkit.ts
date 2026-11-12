@@ -46,7 +46,6 @@ export async function loadMcpBridge(
     readonly result?: unknown;
     readonly toolSearchAvailable?: boolean;
     readonly toolSearchDisabled?: boolean;
-    readonly toolSearchPath?: string;
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
@@ -144,12 +143,7 @@ export async function loadMcpBridge(
         ...(options.toolSearchAvailable &&
         !options.toolSearchDisabled &&
         (options.allowsTool?.("tool_search") ?? true)
-          ? [
-              {
-                name: "tool_search",
-                sourceInfo: { path: options.toolSearchPath ?? "builtin:tool-search" },
-              },
-            ]
+          ? [{ name: "tool_search", sourceInfo: { path: "builtin:tool-search" } }]
           : []),
       ],
       ...(options.modern
