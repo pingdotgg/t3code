@@ -7743,6 +7743,113 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("keeps a usage limit recoverable after a later wake run that did no work", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("limit-wake");
+      const limited = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 4 }));
+      yield* store.apply({
+        id: EventId.make("event:limit-wake:error"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("limit-wake:error"),
+          threadId,
+          runId: limited.id,
+          nodeId: limited.rootNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "failed",
+          title: "Usage limit reached",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "error",
+          failure: {
+            class: "usage_limit",
+            message: "You've hit your session limit.",
+            resetAt,
+            code: "api_error_429",
+            retryable: true,
+          },
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-wake:limited-run"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...limited, status: "failed", completedAt: now },
+      });
+      const candidate = () =>
+        store
+          .getLimitRecoveryCandidates({ now, autoResume: true, snooze: true })
+          .pipe(Effect.map((rows) => rows.find((row) => row.id === threadId)));
+      assert.equal((yield* candidate())?.latestRunId, limited.id);
+
+      const wakeRunId = RunId.make("run:limit-wake:wake");
+      const wakeNodeId = NodeId.make("node:limit-wake:wake");
+      const wakeCompletedAt = DateTime.add(now, { seconds: 2 });
+      yield* store.apply({
+        id: EventId.make("event:limit-wake:wake-run"),
+        type: "run.created",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: wakeCompletedAt,
+        payload: {
+          ...limited,
+          id: wakeRunId,
+          ordinal: limited.ordinal + 1,
+          rootNodeId: wakeNodeId,
+          userMessageId: MessageId.make("message:limit-wake:wake"),
+          status: "completed",
+          requestedAt: DateTime.add(now, { seconds: 1 }),
+          startedAt: DateTime.add(now, { seconds: 1 }),
+          completedAt: wakeCompletedAt,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-wake:wake-notification"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: wakeCompletedAt,
+        payload: {
+          id: TurnItemId.make("limit-wake:wake-notification"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: wakeCompletedAt,
+          completedAt: wakeCompletedAt,
+          updatedAt: wakeCompletedAt,
+          type: "notification",
+          source: { kind: "subagent" },
+          outcome: "failed",
+          summary: "Background task failed",
+        },
+      });
+
+      const afterWake = yield* candidate();
+      assert.isDefined(afterWake);
+      assert.equal(afterWake?.usageLimitResetAt, resetAt);
+    }),
+  );
+
   it.effect("does not freshly arm limit recovery for a subagent of a put-away parent", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
