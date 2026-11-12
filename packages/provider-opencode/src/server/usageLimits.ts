@@ -1,7 +1,7 @@
 import * as NodeSqlite from "node:sqlite";
 
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -43,32 +43,44 @@ const UsageResponse = Schema.Struct({
 
 // Select before decoding so an OAuth or self-hosted connection cannot fall
 // through to another stored account. NULL-active rows predate the selection flag.
+class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialReadError>()(
+  "OpenCodeCredentialReadError",
+  { databasePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not read OpenCode credentials from ${this.databasePath}.`;
+  }
+}
+
 const readStoredApiKey = (databasePath: string, integrationId: "opencode" | "opencode-go") =>
-  Effect.try(() => {
-    const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
-    try {
-      database.exec("PRAGMA busy_timeout = 100");
-      const row = database
-        .prepare(
-          `SELECT value FROM credential
-           WHERE integration_id = ? AND active IS NOT 0
-           ORDER BY active DESC, time_created DESC, id DESC LIMIT 1`,
-        )
-        .get(integrationId);
-      const stored =
-        typeof row?.value === "string"
-          ? Option.getOrUndefined(decodeStoredKey(row.value))
-          : undefined;
-      const server = stored?.metadata?.server;
-      if (typeof server === "string") {
-        const url = new URL(server);
-        if (`${url.origin}${url.pathname.replace(/\/+$/, "")}` !== "https://opencode.ai/console")
-          return undefined;
+  Effect.try({
+    try: () => {
+      const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+      try {
+        database.exec("PRAGMA busy_timeout = 100");
+        const row = database
+          .prepare(
+            `SELECT value FROM credential
+             WHERE integration_id = ? AND active IS NOT 0
+             ORDER BY active DESC, time_created DESC, id DESC LIMIT 1`,
+          )
+          .get(integrationId);
+        const stored =
+          typeof row?.value === "string"
+            ? Option.getOrUndefined(decodeStoredKey(row.value))
+            : undefined;
+        const server = stored?.metadata?.server;
+        if (typeof server === "string") {
+          const url = new URL(server);
+          if (`${url.origin}${url.pathname.replace(/\/+$/, "")}` !== "https://opencode.ai/console")
+            return undefined;
+        }
+        return stored?.key.trim();
+      } finally {
+        database.close();
       }
-      return stored?.key.trim();
-    } finally {
-      database.close();
-    }
+    },
+    catch: (cause) => new OpenCodeCredentialReadError({ databasePath, cause }),
   }).pipe(Effect.orElseSucceed(() => undefined));
 
 /** External OpenCode servers own their credentials; never read the host's account for them. */
@@ -164,10 +176,10 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },
     ];
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     // Unkeyed hashes match across environments; random Go keys resist offline guessing.
-    const credentialFingerprint = yield* crypto
-      .digest("SHA-256", new TextEncoder().encode(`opencode-go\0${apiKey}`))
+    const credentialFingerprint = yield* digest
+      .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${apiKey}`))
       .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
       ...makeUsageLimits({ checkedAt, windows }),

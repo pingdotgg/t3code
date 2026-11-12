@@ -36,6 +36,8 @@ function matchesScalar(filter: ScheduledTaskWebhookFilter, text: string): boolea
  */
 function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown): boolean {
   if (Array.isArray(value) && /\[\]/.test(filter.path)) {
+    if (filter.op === "exists")
+      return value.some((element) => element !== null && element !== undefined);
     const texts = value.map(scalarText).filter((text): text is string => text !== undefined);
     if (filter.op === "notEquals") return texts.every((text) => text !== filter.value);
     return texts.some((text) => matchesScalar(filter, text));

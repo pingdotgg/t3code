@@ -1,7 +1,15 @@
 import "@t3tools/client-runtime/assembly-highlighting";
-import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
+import {
+  getFiletypeFromFileName,
+  setCustomExtension,
+} from "@pierre/diffs/utils/getFiletypeFromFileName";
 
 import { HIGHLIGHTS_LANGUAGE_IDS } from "./highlights.generated";
+
+// Highlights has no lexer for these dialects, so they use their base language's.
+setCustomExtension("luau", "lua");
+setCustomExtension("xsl", "xml");
+setCustomExtension("xslt", "xml");
 
 /** The native lexer ID for a @pierre/highlights language name, or 0 (plain text). */
 export function highlightLanguageId(language: string): number {
