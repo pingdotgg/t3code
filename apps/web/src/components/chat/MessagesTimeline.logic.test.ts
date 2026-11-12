@@ -3133,7 +3133,16 @@ describe("v2 run and attempt history", () => {
       "question",
       "live-activity-row",
     ]);
-    expect(rows([user, step, passed, final, asking, secret], "zen", running)).toContain("final");
+    const link: TimelineEntry = {
+      id: "link",
+      kind: "event",
+      createdAt: at(22),
+      projectedItem: { item: { type: "link_request", runId } } as never,
+    };
+    for (const request of [secret, link]) {
+      expect(rows([user, step, passed, final, asking, request], "zen", running)).toContain("final");
+      expect(liveAnswerPreview([user, step, passed, final, asking, request])).toBeNull();
+    }
     // Agents often run a command between the reply and the question; the reply still shows.
     expect(rows([user, step, passed, asking, question(true)], "zen", running)).toEqual([
       "user",

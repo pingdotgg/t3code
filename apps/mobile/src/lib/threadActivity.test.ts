@@ -1457,6 +1457,28 @@ describe("buildThreadFeed", () => {
       "question",
       "thinking:",
     ]);
+    // Secret and link requests ask the user too; their cards keep the reply above them.
+    const secret: OrchestrationV2TurnItem = {
+      ...base("secret", at(7), 6),
+      type: "secret_request",
+      label: "API key",
+      reason: "Needed to call the API",
+      secretStatus: "pending",
+    };
+    const link: OrchestrationV2TurnItem = {
+      ...base("link", at(7), 6),
+      type: "link_request",
+      reason: "Needed to run on the VPS",
+      linkStatus: "pending",
+    };
+    for (const request of [secret, link]) {
+      expect(rows([user, step, passed, final, asking, request], "zen", running)).toEqual([
+        "user",
+        "final",
+        request.id,
+        "thinking:",
+      ]);
+    }
     const later: OrchestrationV2TurnItem = {
       ...base("later", at(8), 7),
       type: "reasoning",
