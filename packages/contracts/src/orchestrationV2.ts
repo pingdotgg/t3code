@@ -1334,6 +1334,8 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
 );
 export type OrchestrationV2NotificationSource = typeof OrchestrationV2NotificationSource.Type;
 
+export const CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY = "Stop hook asked Claude to continue";
+
 export const OrchestrationV2Notification = Schema.Struct({
   source: OrchestrationV2NotificationSource,
   outcome: OrchestrationV2NotificationOutcome,

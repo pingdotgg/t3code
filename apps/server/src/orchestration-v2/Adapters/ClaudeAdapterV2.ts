@@ -91,6 +91,7 @@ import {
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import {
+  CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
   type ChatAttachment,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ClaudeSettings,
@@ -2051,6 +2052,8 @@ export function makeClaudeQueryOptions(input: {
         ? "bypassPermissions"
         : (input.permissionMode ?? "default")),
     includePartialMessages: true,
+    // Stop hooks that only return additionalContext continue the run with no other frame.
+    includeHookEvents: true,
     promptSuggestions: input.promptSuggestions === true,
     ...(compiledSelection.effort === undefined
       ? {}
@@ -2337,6 +2340,59 @@ function nextClaudeGoal(
     checks: (current.checks ?? 0) + 1,
     lastCheck: text.slice(prefix.length).trim(),
   };
+}
+
+const CLAUDE_STOP_HOOK_FEEDBACK_PREFIX = "Stop hook feedback:\n";
+
+const decodeClaudeStopHookOutput = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      continue: Schema.optionalKey(Schema.Boolean),
+      decision: Schema.optionalKey(Schema.String),
+      hookSpecificOutput: Schema.optionalKey(
+        Schema.Struct({
+          hookEventName: Schema.Literal("Stop"),
+          additionalContext: Schema.optionalKey(Schema.String),
+        }),
+      ),
+    }),
+  ),
+);
+
+/**
+ * The feedback a root Stop hook continued the run with, or undefined. A blocking hook
+ * arrives as a synthetic user frame; one that only returns additionalContext arrives as
+ * nothing but its `hook_response` (with `includeHookEvents`), so its stdout is read here.
+ */
+function claudeStopHookContinuation(
+  message: SDKMessage,
+): { readonly detail: string; readonly uuid: string | undefined } | undefined {
+  if (message.type === "user") {
+    if (message.parent_tool_use_id !== null || message.isSynthetic !== true) return undefined;
+    const content = message.message.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+    return text.startsWith(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX)
+      ? { detail: text.slice(CLAUDE_STOP_HOOK_FEEDBACK_PREFIX.length).trim(), uuid: message.uuid }
+      : undefined;
+  }
+  if (
+    message.type !== "system" ||
+    message.subtype !== "hook_response" ||
+    message.hook_event !== "Stop" ||
+    message.outcome !== "success"
+  ) {
+    return undefined;
+  }
+  const output = Option.getOrUndefined(decodeClaudeStopHookOutput(message.stdout));
+  // A block also sends the synthetic user frame, which reports it.
+  if (output === undefined || output.decision === "block" || output.continue === false) {
+    return undefined;
+  }
+  const detail = output.hookSpecificOutput?.additionalContext?.trim();
+  return detail === undefined || detail.length === 0 ? undefined : { detail, uuid: message.uuid };
 }
 
 /** The CLI confirms a goal change as a synthetic reply; the goal row shows that change instead. */
@@ -9940,6 +9996,54 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // without answering it. Not interrupt: the held CLI may never ack it.
             yield* liveQuery.query.close.pipe(Effect.ignore);
             return;
+          }
+          const stopHook =
+            message.type === "user" &&
+            nextClaudeGoal(goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null, message) !==
+              undefined
+              ? undefined
+              : claudeStopHookContinuation(message);
+          if (stopHook !== undefined) {
+            const now = yield* DateTime.now;
+            const nativeItemId =
+              stopHook.uuid ??
+              (yield* random
+                .uuidV4()
+                .pipe(
+                  Effect.mapError((cause) => queryRunnerError(cause, "allocateStopHookItemId")),
+                ));
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: stopHook.uuid === undefined ? "weak" : "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "notification",
+                status: "completed",
+                title: CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
+                detail: stopHook.detail,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
