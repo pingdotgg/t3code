@@ -44,4 +44,37 @@ describe("parseElicitationForm", () => {
       },
     );
   }
+
+  it("asks one question per OMP question and sends typed text to its __other field", () => {
+    const choice = (question: string) => ({
+      type: "string",
+      title: question,
+      oneOf: [
+        { const: "Yes", title: "Yes" },
+        { const: "No", title: "No" },
+      ],
+    });
+    const other = { type: "string", title: "Other (type your own)" };
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q0: choice("First?"),
+          q0__other: other,
+          q1: choice("Second?"),
+          q1__other: other,
+        },
+      },
+      "Answer 2 questions",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => question.id),
+      ["q0", "q1"],
+    );
+    assert.deepStrictEqual(form.content({ q0: "Yes", q1: "my own answer" }), {
+      q0: "Yes",
+      q1__other: "my own answer",
+    });
+  });
 });
