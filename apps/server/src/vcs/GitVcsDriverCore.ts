@@ -4815,11 +4815,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (!line.startsWith("core.sshcommand ")) return undefined;
       configuredCommand = line.slice("core.sshcommand ".length);
     }
-    const command = environment.GIT_SSH_COMMAND ?? configuredCommand ?? "ssh";
-    const program = SSH_COMMAND_PROGRAM.exec(command.trim());
+    const command = (environment.GIT_SSH_COMMAND ?? configuredCommand ?? "ssh").trim();
+    const program = SSH_COMMAND_PROGRAM.exec(command);
     const executable = program?.[1] ?? program?.[2] ?? program?.[3] ?? "";
-    return /(?:^|[\\/])ssh(?:\.exe)?$/i.test(executable)
-      ? `${command} -o LogLevel=DEBUG1`
+    // Right after the program, so a trailing `--` or host-like argument stays last.
+    return program && /(?:^|[\\/])ssh(?:\.exe)?$/i.test(executable)
+      ? `${program[0]} -o LogLevel=DEBUG1${command.slice(program[0].length)}`
       : undefined;
   });
 

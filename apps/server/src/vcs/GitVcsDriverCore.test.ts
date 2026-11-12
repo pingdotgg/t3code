@@ -1668,12 +1668,12 @@ it.effect("fetches with the core.sshCommand Git would use, not an earlier one", 
     yield* gitIn(["config", "include.path", path.join(cwd, "earlier-config")]);
     yield* (yield* FileSystem.FileSystem).writeFileString(
       path.join(cwd, ".git", "config"),
-      "[core]\n\tsshCommand = ssh -i repository-key\n",
+      "[core]\n\tsshCommand = ssh -i repository-key --\n",
       { flag: "a" },
     );
     assert.equal(
       (yield* gitIn(["config", "--get", "core.sshCommand"])).stdout.trim(),
-      "ssh -i repository-key",
+      "ssh -i repository-key --",
     );
     const {
       GIT_SSH_COMMAND: _command,
@@ -1685,7 +1685,7 @@ it.effect("fetches with the core.sshCommand Git would use, not an earlier one", 
     yield* driver
       .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
       .pipe(Effect.provideService(HostProcess.Environment, environment));
-    assert.deepEqual(sshCommands, ["ssh -i repository-key -o LogLevel=DEBUG1"]);
+    assert.deepEqual(sshCommands, ["ssh -o LogLevel=DEBUG1 -i repository-key --"]);
   }).pipe(
     Effect.provide(
       layerServerConfig.pipe(
