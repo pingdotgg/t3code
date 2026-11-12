@@ -49,6 +49,14 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
 const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
 const NO_SESSION_PERSISTENCE = "--no-session-persistence";
+
+// First-turn names skip Claude Code's preset prompt, project settings, and every CLAUDE.md.
+// User settings stay: they can hold the auth env (ANTHROPIC_BASE_URL, tokens).
+const LEAN_OPERATIONS = new Set(["generateThreadTitle", "generateBranchName"]);
+const LEAN_SYSTEM_PROMPT =
+  "You write short titles and git branch names. Return only the requested JSON.";
+const LEAN_ARGS = ["--system-prompt", LEAN_SYSTEM_PROMPT, "--setting-sources", "user"];
+const LEAN_ENV = { CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
 
@@ -211,6 +219,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
               )
           : cwd;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+      const lean = LEAN_OPERATIONS.has(operation);
+      const env = lean ? { ...claudeEnvironment, ...LEAN_ENV } : claudeEnvironment;
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
         [
@@ -240,11 +250,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ...(managedMcpConfig ? [] : ["--strict-mcp-config"]),
           "--permission-mode",
           "dontAsk",
+          ...(lean ? LEAN_ARGS : []),
         ],
-        { env: claudeEnvironment },
+        { env },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env,
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {

@@ -29,6 +29,7 @@ import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import * as TextGenerators from "./TextGenerators.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
@@ -687,6 +688,60 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       primaryState === "signed out, fallback failed"
         ? selection
         : threadDefault,
+    ]);
+  }),
+);
+
+it.effect("names a short prompt from its own text without calling a provider", () =>
+  Effect.gen(function* () {
+    const calls: string[] = [];
+    const runner: TextGenerationOperations.Runner = (request) => {
+      calls.push(request.operation);
+      return TextGenerationOperations.decodeJsonReply(
+        request,
+        "Test",
+        JSON.stringify({ title: "Generated title", branch: "generated-branch" }),
+      );
+    };
+    const service = yield* TextGeneration.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
+          ServerSettings.layerTest({}),
+          Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.succeed(runner) }),
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => undefined,
+          }),
+          ProviderInstallationGate.layer,
+        ),
+      ),
+    );
+    const base = {
+      cwd: "/tmp",
+      modelSelection: { instanceId: ProviderInstanceId.make("openrouter"), model: "some/model" },
+    };
+    const naming = { mode: "static" as const, prefix: "t3", instructions: "" };
+    expect(yield* service.generateThreadTitle({ ...base, message: "  Fix login bug " })).toEqual({
+      title: "Fix login bug",
+    });
+    expect(
+      yield* service.generateBranchName({ ...base, message: "Fix login bug", naming }),
+    ).toEqual({ branch: "t3/fix-login-bug" });
+    expect(calls).toEqual([]);
+
+    yield* service.generateThreadTitle({ ...base, message: "Fix the login bug today" });
+    yield* service.generateThreadTitle({ ...base, message: "hi", instructions: "Use French." });
+    yield* service.generateThreadTitle({ ...base, message: "https://example.com/pr/1" });
+    yield* service.generateBranchName({
+      ...base,
+      message: "Fix login bug",
+      naming: { ...naming, mode: "semantic" },
+    });
+    expect(calls).toEqual([
+      "generateThreadTitle",
+      "generateThreadTitle",
+      "generateThreadTitle",
+      "generateBranchName",
     ]);
   }),
 );

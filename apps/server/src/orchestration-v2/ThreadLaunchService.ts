@@ -19,6 +19,7 @@ import {
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  type ServerSettings as AppSettings,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -229,6 +230,12 @@ export class ThreadLaunchService extends Context.Service<
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
 
+const branchNamingOptions = (settings: AppSettings) => ({
+  mode: settings.branchNamingMode,
+  prefix: settings.branchNamePrefix,
+  instructions: settings.branchNameInstructions,
+});
+
 function failureDetail(error: unknown): string {
   if (isThreadLaunchError(error)) {
     const cause = error.cause;
@@ -434,6 +441,7 @@ const make = Effect.gen(function* () {
     let runReleased = false;
     // Stop background renames before forgetting worktrees; completed renames record them again.
     let branchRename: Fiber.Fiber<unknown> | null = null;
+    let awaitBranchRename = false;
     if (input.workspaceStrategy.type === "worktree") {
       yield* setupTracker.begin({
         threadId,
@@ -454,11 +462,7 @@ const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const initialMessage = input.initialMessage;
       const generateBranchNameFor = Effect.fn("ThreadLaunchService.generateBranchNameFor")(
-        function* (cwd: string, message: ThreadLaunchInitialMessage) {
-          const settings = resolveProjectSettings(
-            yield* serverSettings.getSettings,
-            input.projectId,
-          ).settings;
+        function* (cwd: string, message: ThreadLaunchInitialMessage, settings: AppSettings) {
           const modelSelection =
             settings.sourceControlWriterModelSelection === null
               ? settings.textGenerationModelSelection
@@ -469,11 +473,7 @@ const make = Effect.gen(function* () {
                 );
           return yield* textGeneration
             .generateBranchName({
-              naming: {
-                mode: settings.branchNamingMode,
-                prefix: settings.branchNamePrefix,
-                instructions: settings.branchNameInstructions,
-              },
+              naming: branchNamingOptions(settings),
               cwd,
               message: message.text,
               attachments: message.attachments,
@@ -653,7 +653,24 @@ const make = Effect.gen(function* () {
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;
-        branchRename = yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
+        const settings = resolveProjectSettings(
+          yield* serverSettings.getSettings.pipe(
+            Effect.mapError(mapError(input, "provision-worktree", threadId)),
+          ),
+          input.projectId,
+        ).settings;
+        const localBranch = TextGeneration.shortPromptBranchName({
+          message: initialMessage.text,
+          attachments: initialMessage.attachments,
+          naming: branchNamingOptions(settings),
+        });
+        // The agent waits for a local name, never for a model call.
+        awaitBranchRename = localBranch !== undefined;
+        branchRename = yield* (
+          localBranch === undefined
+            ? generateBranchNameFor(worktreeCwd, initialMessage, settings)
+            : Effect.succeed({ branch: localBranch, exactName: false })
+        ).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
             git
               .renameBranch({
@@ -821,8 +838,7 @@ const make = Effect.gen(function* () {
       } else {
         yield* setupTracker.stageStatus(threadId, "setup-script", "skipped");
       }
-      // The agent must start on the branch name the thread will show.
-      if (branchRename !== null) yield* Fiber.join(branchRename);
+      if (branchRename !== null && awaitBranchRename) yield* Fiber.join(branchRename);
       yield* setupTracker.markUncancellable(threadId);
       yield* setupTracker.stageStatus(threadId, "agent", "running");
       if (runId !== null) {

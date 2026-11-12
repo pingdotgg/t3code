@@ -1,7 +1,13 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ModelSelection, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  BranchNamingOptions,
+  ChatAttachment,
+  ModelSelection,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import {
   isProviderAvailable,
   isProviderTextGenerationCapable,
@@ -10,6 +16,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import { fallbackTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
+import { formatGeneratedBranchName } from "@t3tools/shared/git";
+import { sanitizeThreadTitle } from "@t3tools/provider-core/server/textGenerationUtils";
 import * as ServerSettings from "../serverSettings.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
@@ -66,6 +74,28 @@ const resolveInstance = (
           ),
     ),
   );
+
+interface ShortPromptInput {
+  readonly message: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+}
+
+// A prompt of a few words names itself; a model call would only add latency and cost.
+const shortPromptText = ({ message, attachments }: ShortPromptInput) => {
+  const text = message.trim();
+  if (text.length === 0 || (attachments?.length ?? 0) > 0 || text.includes("://")) return undefined;
+  return text.split(/\s+/).length <= 4 ? text : undefined;
+};
+
+/** The branch name for a short prompt, or undefined when naming it needs a model. */
+export const shortPromptBranchName = (
+  input: ShortPromptInput & { readonly naming?: BranchNamingOptions | undefined },
+) => {
+  // Semantic and custom modes ask the model for a prefix or the user's own format.
+  if (input.naming !== undefined && input.naming.mode !== "static") return undefined;
+  const text = shortPromptText(input);
+  return text === undefined ? undefined : formatGeneratedBranchName(text, input.naming);
+};
 
 // Review guides investigate the checkout read-only; the other drivers reject that request.
 const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent"]);
@@ -177,6 +207,8 @@ export const make = Effect.gen(function* () {
       );
     }),
     generateBranchName: Effect.fn("TextGeneration.generateBranchName")(function (input) {
+      const branch = shortPromptBranchName(input);
+      if (branch !== undefined) return Effect.succeed({ branch });
       return generate(
         "generateBranchName",
         input.modelSelection,
@@ -204,6 +236,14 @@ export const make = Effect.gen(function* () {
       );
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
+      const text =
+        input.previousTitle === undefined &&
+        input.forkSource === undefined &&
+        input.linkedContext === undefined &&
+        !input.instructions
+          ? shortPromptText(input)
+          : undefined;
+      if (text !== undefined) return Effect.succeed({ title: sanitizeThreadTitle(text) });
       return generate(
         "generateThreadTitle",
         input.modelSelection,
