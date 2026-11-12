@@ -4441,9 +4441,7 @@ export const make = Effect.gen(function* () {
         const useLogicalCommits =
           wantsCommit &&
           initialStatus.hasWorkingTreeChanges &&
-          (input.splitCommits ??
-            ((input.action === "commit_push" || input.action === "commit_push_pr") &&
-              input.commitMessage === undefined));
+          (input.splitCommits ?? input.commitMessage === undefined);
         const wantsPush =
           maintainStack ||
           input.action === "push" ||

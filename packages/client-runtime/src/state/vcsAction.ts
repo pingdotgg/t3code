@@ -477,7 +477,7 @@ export function createVcsActionManager<R, E>(
           action: input.action,
           ...(input.forceWithLease ? { forceWithLease: true } : {}),
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
-          ...(input.splitCommits ? { splitCommits: true } : {}),
+          ...(input.splitCommits !== undefined ? { splitCommits: input.splitCommits } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),

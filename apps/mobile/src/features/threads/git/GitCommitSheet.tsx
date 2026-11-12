@@ -187,6 +187,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     navigation.goBack();
     await gitActions.onRunSelectedThreadGitAction({
       action: "commit",
+      splitCommits: false,
       featureBranch,
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),

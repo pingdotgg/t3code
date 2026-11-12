@@ -134,6 +134,7 @@ interface PendingDefaultBranchAction {
 }
 
 interface RunGitActionWithToastInput {
+  splitCommits?: boolean;
   action: GitStackedAction;
   forceWithLease?: boolean;
   commitMessage?: string;
@@ -1239,6 +1240,7 @@ export default function GitActionsControl({
   );
 
   async function runGitActionWithToast({
+    splitCommits,
     action,
     forceWithLease = false,
     commitMessage,
@@ -1294,6 +1296,7 @@ export default function GitActionsControl({
     const actionId = randomUUID();
 
     const result = await runImmediateGitAction.run({
+      ...(splitCommits !== undefined ? { splitCommits } : {}),
       actionId,
       action,
       ...(forceWithLease ? { forceWithLease: true } : {}),
@@ -1363,6 +1366,7 @@ export default function GitActionsControl({
 
     void runGitActionWithToast({
       action: "commit",
+      splitCommits: false,
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
       featureBranch: true,
@@ -1530,6 +1534,7 @@ export default function GitActionsControl({
     setIsEditingFiles(false);
     void runGitActionWithToast({
       action: "commit",
+      splitCommits: false,
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
     });

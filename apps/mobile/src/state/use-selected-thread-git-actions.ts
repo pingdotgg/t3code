@@ -368,7 +368,7 @@ export function useSelectedThreadGitActions() {
           actionId,
           action: input.action,
           ...(input.forceWithLease ? { forceWithLease: true } : {}),
-          ...(input.splitCommits ? { splitCommits: true } : {}),
+          ...(input.splitCommits !== undefined ? { splitCommits: input.splitCommits } : {}),
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
