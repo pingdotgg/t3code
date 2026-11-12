@@ -218,6 +218,28 @@ describe("HtmlRenderDocument", () => {
     );
     await vi.waitFor(() => expect(fields).toEqual(afterReset));
   });
+
+  it("opens a clicked image with the other images of its block in the viewer", async () => {
+    const swatch = (color: string) =>
+      `data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="50"><rect width="80" height="50" fill="${color}"/></svg>`,
+      )}`;
+    const html = injectHtmlRenderBootstrap(
+      `<!doctype html><html><body><div>${["Red", "Green", "Blue"]
+        .map((name) => `<img alt="${name}" src="${swatch(name.toLowerCase())}">`)
+        .join("")}</div></body></html>`,
+    );
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    await using screen = await render(<HtmlRenderDocument src={src} title="Swatches" />);
+
+    await page.frameLocator(screen.getByTitle("Swatches")).getByAltText("Green").click();
+
+    const viewer = page.getByRole("dialog", { name: "Expanded image preview" });
+    await expect.element(viewer.getByAltText("Green")).toBeVisible();
+    await expect.element(viewer.getByRole("button", { name: "Next media" })).toBeVisible();
+    await expect.element(viewer.getByRole("button", { name: "Previous media" })).toBeVisible();
+  });
 });
 
 it("keeps the first and last selected card rings inside the fitted renderer frame", async () => {
