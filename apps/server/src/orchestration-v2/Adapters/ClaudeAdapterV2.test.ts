@@ -7258,6 +7258,68 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.notEqual(terminal.status, "completed");
+      assert.equal(terminal.failure?.class, "permission_error");
+      assert.include(terminal.failure?.message, "Bash: printf T3_DENIAL_PROBE_ok");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("completes a turn whose only denial the user declined in T3", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-host-declined"),
+          text: "Run git status.",
+          attachments: [],
+        }),
+      );
+      const decision = yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!(
+          "Bash",
+          { command: "git status" },
+          {
+            signal: new AbortController().signal,
+            toolUseID: "toolu_host_declined_bash",
+            requestId: "request-host-declined-bash",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      const request = yield* Queue.take(harness.runtimeRequestReceipts);
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "decline",
+      });
+      assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000698",
+          result: "You declined git status, so I stopped.",
+          permissionDenials: [
+            {
+              tool_name: "Bash",
+              tool_use_id: "toolu_host_declined_bash",
+              tool_input: { command: "git status" },
+            },
+          ],
+        }),
+      );
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

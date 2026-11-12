@@ -4374,6 +4374,34 @@ function claudeRewrittenVersion(
     : undefined;
 }
 
+// Auto mode's classifier and deny rules refuse tool calls inside the CLI, so
+// T3 never sees a request; the result's permission_denials is the only record.
+function cliPermissionDenialFailure(
+  message: SDKResultMessage,
+  hostDecidedToolUseIds: ReadonlySet<string>,
+): OrchestrationV2ProviderFailure | null {
+  const denied = message.permission_denials.filter(
+    (denial) => !hostDecidedToolUseIds.has(denial.tool_use_id),
+  );
+  if (denied.length === 0) {
+    return null;
+  }
+  return makeProviderFailure({
+    class: "permission_error",
+    code: "permission_denied",
+    retryable: false,
+    message: [
+      "Claude's permission settings blocked:",
+      ...denied.map((denial) =>
+        summarizeClaudeToolRequest(
+          denial.tool_name,
+          claudeNativeToolInputFromRecord(denial.tool_input),
+        ),
+      ),
+    ].join("\n"),
+  });
+}
+
 function providerFailureFromResult(
   message: SDKResultMessage,
   receivedAt: DateTime.Utc,
@@ -4691,6 +4719,8 @@ interface ActiveClaudeTurnContext {
   >;
   // Claude may settle a turn with a result that echoes only a steer's uuid.
   readonly steerUuids: Set<string>;
+  // Tool calls T3's canUseTool decided; the result's permission_denials also lists those.
+  readonly hostDecidedToolUseIds: Set<string>;
   // Claude can run another model than requested, such as when an organization disallows it.
   executedModel: string | undefined;
 }
@@ -10897,17 +10927,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failureHint,
                     usageLimited,
                   );
+            const resultStatus = interrupted
+              ? "interrupted"
+              : limitedCompaction !== null
+                ? "failed"
+                : terminalStatusFromResult(message, failureHint);
+            const permissionDenialFailure =
+              resultStatus === "completed"
+                ? cliPermissionDenialFailure(message, context.hostDecidedToolUseIds)
+                : null;
             const terminalFailure =
-              resultFailure?.class === "usage_limit"
+              permissionDenialFailure ??
+              (resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
-                : resultFailure;
+                : resultFailure);
             yield* finalizeActiveTurn({
               context,
-              status: interrupted
-                ? "interrupted"
-                : limitedCompaction !== null
-                  ? "failed"
-                  : terminalStatusFromResult(message, failureHint),
+              status: permissionDenialFailure === null ? resultStatus : "failed",
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
@@ -11146,6 +11182,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const nativeRequestId = callbackOptions.toolUseID;
+          context.hostDecidedToolUseIds.add(nativeRequestId);
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
           const startToolCall = toolName !== "Agent" && options?.startToolCall !== false;
@@ -12137,6 +12174,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               heldRootFrames: [],
               pendingSteers: new Map(),
               steerUuids: new Set(),
+              hostDecidedToolUseIds: new Set(),
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
