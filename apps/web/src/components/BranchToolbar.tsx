@@ -677,7 +677,7 @@ const RunContextSelector = memo(function RunContextSelector({
           ? resolveEnvModeLabel("worktree")
           : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isPanel = displayMode === "panel";
-  const isLocked = !isPanel && (envLocked || envModeLocked);
+  const isLocked = isPanel ? section === "workspace" && envModeLocked : envLocked || envModeLocked;
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
@@ -770,7 +770,7 @@ const RunContextSelector = memo(function RunContextSelector({
     Boolean(environmentActions);
 
   if (isLocked || !hasMenuContent) {
-    return (
+    const row = (
       <span
         className={cn(
           isPanel
@@ -783,6 +783,14 @@ const RunContextSelector = memo(function RunContextSelector({
       >
         {triggerContent}
       </span>
+    );
+    return isPanel ? (
+      <Tooltip>
+        <TooltipTrigger render={row} tabIndex={-1} />
+        <TooltipPopup>{workspacePath ?? workspaceLabel}</TooltipPopup>
+      </Tooltip>
+    ) : (
+      row
     );
   }
 
