@@ -19,6 +19,7 @@ const rates: RateTable = new Map([
         cacheCreationCostPerToken: 2.5e-5,
       },
       ultrafast: null,
+      contextTiers: [],
     },
   ],
 ]);
@@ -85,17 +86,68 @@ describe("UsageAggregator", () => {
     expect(bucket).not.toHaveProperty("ultrafastCostUsd");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("merges partial copies of a key by channel maximum in the first copy's bucket", () => {
+    const zeroTotals = {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    };
+    const partial = record({
+      dedupeKey: "msg_1:",
+      speed: "fast",
+      reportedCostUsd: 1,
+      totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 3, reasoningTokens: 5 },
+    });
+    const complete = record({
+      dedupeKey: "msg_1:",
+      model: "claude-fable-5[1m]",
+      timestampMs: Date.parse("2026-08-08T12:00:00Z"),
+      sessionId: "session-fork",
+      reportedCostUsd: 2,
+      totals: {
+        uncachedInputTokens: 2,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 40,
+        outputTokens: 264,
+        reasoningTokens: 135,
+      },
+    });
+    const zero = { ...partial, totals: zeroTotals, reportedCostUsd: null };
+    const merged = {
+      reportedCostUsd: 2,
+      totals: { ...complete.totals, uncachedInputTokens: 100, cachedInputTokens: 1200 },
+    };
+
+    for (const copies of [
+      [zero, partial, complete, complete],
+      [complete, partial, zero, zero],
+    ]) {
+      const aggregator = new UsageAggregator({
+        timeZone: "UTC",
+        sinceDay: "2026-08-01",
+        untilDay: "2026-08-31",
+        rates,
+      });
+      copies.forEach((copy, index) => aggregator.add(copy, `${index}.jsonl`));
+      const result = aggregator.finish();
+      const expected = aggregate([{ ...copies[0]!, ...merged }]).buckets[0];
+
+      expect(result.duplicatesDropped).toBe(3);
+      expect(result.buckets).toEqual([{ ...expected, sourcePath: "0.jsonl" }]);
+    }
+  });
+
+  it("does not count a key whose first copy fell outside the window", () => {
     const result = aggregate([
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
+      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-01T12:00:00Z") }),
+      record({ dedupeKey: "msg_1:", totals: { ...record().totals, outputTokens: 500 } }),
     ]);
 
-    expect(result.duplicatesDropped).toBe(2);
-    expect(result.buckets).toHaveLength(1);
-    expect(result.buckets[0]?.records).toBe(1);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.outOfWindow).toBe(1);
+    expect(result.buckets).toHaveLength(0);
   });
 
   it("buckets by the day in the requested time zone", () => {

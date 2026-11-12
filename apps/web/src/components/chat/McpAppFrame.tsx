@@ -12,6 +12,7 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   clampMcpAppHeight,
+  MCP_APP_COLOR_SCHEME_PARAM,
   MCP_APP_DEFAULT_HEIGHT,
   MCP_APP_MAX_HEIGHT,
   mcpAppAllowAttribute,
@@ -125,7 +126,12 @@ export function McpAppFrame(props: {
   // The frame keeps its first URL: a re-minted one would reload the app.
   const [src, setSrc] = useState<string | null>(null);
   const asset = useLongLivedAssetUrl(src === null ? props.environmentId : null, resource);
-  if (src === null && asset._tag === "Success") setSrc(asset.url);
+  if (src === null && asset._tag === "Success") {
+    // The app paints before `ui/initialize`, so it reads the initial scheme from its URL.
+    const url = new URL(asset.url);
+    url.searchParams.set(MCP_APP_COLOR_SCHEME_PARAM, theme.appearance);
+    setSrc(url.toString());
+  }
 
   const detail = useTurnItemDetail({
     environmentId: props.environmentId,

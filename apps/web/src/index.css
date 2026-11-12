@@ -1933,13 +1933,11 @@ code {
   list-style-type: disc;
 }
 
-/* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
-   ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   widest marker has multiple characters so it isn't clipped by list-style-position:
-   outside painting the marker past the padding box. Reset it here too so a
-   nested ol without its own widened marker doesn't inherit the outer one. */
+/* Outside markers paint past the padding box, so the gutter must fit `0. `,
+   measured per font in appearanceFonts. ChatMarkdown widens it inline for
+   multi-digit markers; setting it here stops a nested ol inheriting that. */
 :is(.chat-markdown, .composer-tiptap) ol {
-  --list-gutter: 1.25rem;
+  --list-gutter: max(1.25rem, var(--list-marker-sans, 0px));
   padding-inline-start: var(--list-gutter, 1.25rem);
   list-style-type: decimal;
 }
@@ -2010,6 +2008,10 @@ code {
 
 .chat-markdown ol ol ol {
   list-style-type: lower-roman;
+}
+
+.chat-markdown.user-message-markdown ol {
+  list-style-type: decimal;
 }
 
 .chat-markdown li + li {
@@ -2438,6 +2440,12 @@ code {
    widgets while the caret is on styled text. */
 .composer-tiptap {
   position: relative;
+}
+
+/* Tiptap's injected base CSS disables ligatures; match sent messages. */
+.composer-tiptap.ProseMirror {
+  font-variant-ligatures: normal;
+  font-feature-settings: normal;
 }
 
 .composer-tiptap p {

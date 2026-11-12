@@ -1,17 +1,51 @@
 # Server updates
 
 A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
-selected by systemd or launchd. It is the only runtime writer of durable service
+selected by systemd, launchd, or Task Scheduler. It is the only runtime writer of durable service
 state. Server children request updates over inherited IPC; they never rewrite
 their service definition or select their own replacement. Local service commands
-may replace the launcher and state while the service is stopped. Foreground CLI
-processes do not self-update.
+may replace the launcher and state, optionally deferring the restart. Foreground
+CLI processes do not self-update.
+
+Both writers serialize state and unit writes through
+[file leases](../../apps/server/src/cloud/serviceSelectionLock.ts). The installer
+takes the state lease before the unit lease; the launcher never holds both, so a
+unit failure cannot block a durable commit. Manager stop/start commands run outside
+both leases, since stopping a launcher that waits on a lease would deadlock. A
+running launcher refuses further updates once a local command changes its selection.
+A protocol-3 launcher takes no lease, so a local command can still race its updates.
 
 Exact-version installs keep restarts independent of npm cache eviction or a moving
 release tag. Installation and preflight happen in staging before publishing an
 immutable runtime. Preflight checks the launcher protocol because a target that
-needs new rollback guarantees cannot safely run under an older launcher. Upgrading
-that launcher requires a local service update.
+needs new rollback guarantees cannot safely run under an older launcher. A remote
+update replaces only the child, so upgrading the launcher requires a local service
+update with a restart. Every installed launcher is therefore one protocol behind
+after a bump, and a target that refuses the previous protocol stops remote updates
+for every existing service. Refuse it only when the child cannot work under it.
+Protocol 4 changed the launcher alone, so its runtime still runs under protocol 3.
+The server names its launcher's protocol to preflight, not its own, since the two differ
+after the first such update.
+
+After a commit or rollback the launcher points the unit at the selected runtime and
+reloads the manager, so the next service start runs that version's launcher; the
+protocol check is what makes that safe. Each start after a finished update retries this, because
+a previous reload may have failed, and leaves a unit naming a newer runtime or another
+T3 home alone. A protocol-3 launcher does none of this: its unit keeps naming the
+runtime that installed it. Until a deferred local upgrade restarts, systemd (before
+daemon-reload) and launchd (before bootstrap) can respawn the old launcher, which
+rejects the state the new installer wrote.
+
+Task Scheduler tracks only the console host it started, not the launcher. `schtasks /End`
+kills that host and nothing else; the launcher takes its closed console as SIGTERM. The task
+reads as stopped at once, and `/Run` then starts a second launcher beside the first, so a
+Windows launcher holds a lock file for as long as it runs. A replacement waits for that lock,
+and the CLI treats its release as the stop having finished.
+
+Task Scheduler also runs its own copy of the task, and registering one enables it. So every
+write of the task file registers it, including an install that defers its restart. The CLI
+disables the task under the unit lease, and a registration under that lease keeps a disabled
+task disabled, so the repeating trigger cannot restart a service the CLI is holding stopped.
 
 ## Commit boundary
 

@@ -10,6 +10,7 @@ import { Platform, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ui/ControlPill";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { useAppForeground } from "../../lib/appState";
 
 import { useThreadServerBrowserTabs } from "../../state/preview";
@@ -56,6 +57,7 @@ function BrowserPreviewScreen({
   readonly onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
   const { themeVariables } = useAppearancePreferences();
   const prepared = usePreparedConnection(environmentId);
   const httpBaseUrl = Option.isSome(prepared) ? prepared.value.httpBaseUrl : null;
@@ -90,7 +92,10 @@ function BrowserPreviewScreen({
   const live = (focused && foreground) || pictureInPicture.active;
 
   return (
-    <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
+    <View
+      className="flex-1 bg-sheet"
+      style={{ paddingTop: contentTopInset, paddingBottom: insets.bottom }}
+    >
       <SheetHeader
         title={tab ? browserTabTitle(tab) : "Browser"}
         onClose={onClose}

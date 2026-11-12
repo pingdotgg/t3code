@@ -57,30 +57,32 @@ function codeFenceFor(code: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
-function outsideCodeFences(markdown: string, tidy: (prose: string) => string): string {
-  // A fence closes only at its own opening run, so split yields [prose, fence, run] triples.
-  return markdown
-    .split(/((`{3,})[\s\S]*?(?:\2|$))/)
-    .map((part, index) => (index % 3 === 0 ? tidy(part) : index % 3 === 1 ? part : ""))
-    .join("");
-}
-
-function resolveCodeBlockLanguage(pre: Element): string | null {
-  const declared =
-    pre.closest("[data-language]")?.getAttribute("data-language") ??
-    /(?:^|\s)language-(\S+)/.exec(pre.querySelector("code")?.className ?? "")?.[1] ??
-    null;
-  return declared && declared !== "text" ? declared : null;
-}
-
 export function serializeCodeBlockToMarkdown(source: string, language: string | null): string {
   const code = source.replace(/\n$/, "");
   const fence = codeFenceFor(code);
   return `${fence}${language ?? ""}\n${code}\n${fence}\n\n`;
 }
 
+// Brackets copied code so tidyMarkdown leaves its whitespace alone. Code is
+// copied as shown, without fences; DOM text from rendered markdown carries no NUL.
+const CODE_BOUNDARY = "\u0000";
+
+function verbatimBlock(code: string): string {
+  return `${CODE_BOUNDARY}${code}${CODE_BOUNDARY}\n\n`;
+}
+
+// Odd parts are code and keep their markers, so outer passes still skip them.
+function outsideCode(markdown: string, tidy: (prose: string) => string): string {
+  return markdown
+    .split(CODE_BOUNDARY)
+    .map((part, index) =>
+      index % 2 === 1 ? `${CODE_BOUNDARY}${part}${CODE_BOUNDARY}` : tidy(part),
+    )
+    .join("");
+}
+
 function serializeCodeBlock(pre: Element): string {
-  return serializeCodeBlockToMarkdown(pre.textContent ?? "", resolveCodeBlockLanguage(pre));
+  return verbatimBlock((pre.textContent ?? "").replace(/\n$/, ""));
 }
 
 function serializeTableCell(cell: Element): string {
@@ -128,11 +130,11 @@ function serializeListItem(
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
-  let content = outsideCodeFences(serializeChildren(item, inTableCell), (prose) =>
+  let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
     prose.replace(/\n{3,}/g, "\n\n"),
   ).trim();
   if (!item.querySelector(":scope > p")) {
-    content = outsideCodeFences(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
+    content = outsideCode(content, (prose) => prose.replace(/\n{2,}/g, "\n"));
   }
   // Continuations align after the bullet; task boxes belong to the item text.
   const continuationIndent = " ".repeat(bullet.length);
@@ -144,14 +146,21 @@ function serializeListItem(
 }
 
 function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
-  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10) || 1;
+  const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
   const items = [...list.children].filter((child) => child.tagName === "LI");
   if (items.length === 0) return "";
-  return `${items.map((item, index) => serializeListItem(item, ordered, start + index, inTableCell)).join("\n")}\n\n`;
+  let next = Number.isNaN(start) ? 1 : start;
+  return `${items
+    .map((item) => {
+      const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
+      if (ordered && !Number.isNaN(value)) next = value;
+      return serializeListItem(item, ordered, next++, inTableCell);
+    })
+    .join("\n")}\n\n`;
 }
 
 function serializeBlockquote(quote: Element, inTableCell: boolean): string {
-  const content = outsideCodeFences(serializeChildren(quote, inTableCell), (prose) =>
+  const content = outsideCode(serializeChildren(quote, inTableCell), (prose) =>
     prose.replace(/\n{3,}/g, "\n\n"),
   ).trim();
   if (!content) return "";
@@ -213,6 +222,10 @@ function serializeNode(node: Node, inTableCell = false): string {
   }
   const markdownCopy = element.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) {
+    // A diagram copies as its fenced source, which is code too.
+    if (element.hasAttribute("data-markdown-mermaid")) {
+      return verbatimBlock(escapeTablePipes(markdownCopy.trimEnd(), inTableCell));
+    }
     return element.hasAttribute("data-markdown-math")
       ? markdownCopy
       : escapeTablePipes(markdownCopy, inTableCell);
@@ -324,9 +337,19 @@ function soleCodeBlock(container: Node): Element | null {
 }
 
 function tidyMarkdown(markdown: string): string {
-  return outsideCodeFences(markdown, (prose) =>
-    prose.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n"),
-  ).trim();
+  // Odd parts are code, kept verbatim, so a selection that starts or ends inside
+  // code keeps that code's leading and trailing whitespace.
+  const parts = markdown.split(CODE_BOUNDARY);
+  const last = parts.length - 1;
+  return parts
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      let prose = part.replace(/[ \t]+(?=\n)/g, "").replace(/\n{3,}/g, "\n\n");
+      if (index === 0) prose = prose.trimStart();
+      if (index === last) prose = prose.trimEnd();
+      return prose;
+    })
+    .join("");
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
@@ -336,7 +359,8 @@ export function serializeRenderedMarkdownFragment(container: Node): string {
 }
 
 export function serializeTableElementToMarkdown(table: Element): string {
-  return serializeTable(table).trim();
+  // Raw HTML can put a pre in a cell; with no tidy pass here, drop its markers.
+  return serializeTable(table).replaceAll(CODE_BOUNDARY, "").trim();
 }
 
 // The wrapper MarkdownMath puts on every formula it renders. The sanitizer drops

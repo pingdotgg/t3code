@@ -22,7 +22,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { expandHomePath } from "../os-jank.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { resolveCliAuthConfig } from "./config.ts";
 
 class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
@@ -56,7 +56,7 @@ class ThreadToolFailedError extends Schema.TaggedError<ThreadToolFailedError>()(
   }
 }
 
-class DiscoveryProjectNotFoundError extends Schema.TaggedError<DiscoveryProjectNotFoundError>()(
+export class DiscoveryProjectNotFoundError extends Schema.TaggedError<DiscoveryProjectNotFoundError>()(
   "DiscoveryProjectNotFoundError",
   { identifier: Schema.String },
 ) {
@@ -154,7 +154,7 @@ export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function*
     quietLogs: options?.quietLogs === true,
   });
   return yield* Effect.gen(function* () {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
       return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
     }

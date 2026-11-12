@@ -73,6 +73,11 @@ import {
   SHELL_IDLE_SUBAGENTS,
   SHELL_SETTLED_THREADS,
   shellFleetEvents,
+  STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
+  STALE_TODO_LIVE_RUN_ID,
+  STALE_TODO_SUBAGENTS_PER_RUN,
+  STALE_TODO_THREAD_ID,
+  staleTodoListThreadBatches,
   THREAD_ID,
   threadCreated,
   turnEvents,
@@ -427,6 +432,33 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             fleetShellLegacy.rows,
             earlierThreads + SHELL_SETTLED_THREADS + SHELL_IDLE_SUBAGENTS,
           );
+
+          for (const events of staleTodoListThreadBatches(provider)) yield* sink.write({ events });
+          const staleTodoHttp = yield* get(
+            `/api/orchestration/threads/${STALE_TODO_THREAD_ID}/bounded?${CLIENT_BOUNDED_QUERY}`,
+          );
+          const staleTodo = (yield* decodeBoundedSnapshot(decoded(staleTodoHttp))).projection;
+          // Clients show the diff of the last finished turn from this record.
+          assert.include(
+            staleTodo.checkpoints.map((checkpoint) => checkpoint.id),
+            STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
+          );
+          // The caps below also pass when the running turn loses its own tasks.
+          assert.lengthOf(
+            staleTodo.subagents.filter((subagent) => subagent.runId === STALE_TODO_LIVE_RUN_ID),
+            STALE_TODO_SUBAGENTS_PER_RUN,
+          );
+          const staleTodoColdOpen = {
+            http: staleTodoHttp,
+            rows: staleTodo.visibleTurnItems.length,
+            records: {
+              nodes: staleTodo.nodes.length,
+              subagents: staleTodo.subagents.length,
+              plans: staleTodo.plans.length,
+              providerTurns: staleTodo.providerTurns.length,
+              checkpoints: staleTodo.checkpoints.length,
+            },
+          };
           return {
             provider,
             threadSnapshot,
@@ -444,6 +476,7 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             longTurnHistoryPage,
             fleetShellLegacy,
             fleetShell,
+            staleTodoColdOpen,
           } satisfies TransferBudgetRun;
         }).pipe(
           Effect.provide(Layer.fresh(layerServices).pipe(Layer.provideMerge(NodeServices.layer))),

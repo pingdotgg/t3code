@@ -44,6 +44,22 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       }),
   );
 
+  it.effect("streams iterable contents across write batches", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      const filePath = path.join(root, "cache.json");
+      yield* fs.writeFileString(filePath, "a much longer previous document");
+      const chunks = ["é".repeat(700_000), "🙂".repeat(400_000), "end"];
+
+      yield* writeFileStringAtomically({ filePath, contents: chunks.values() });
+
+      assert.strictEqual(yield* fs.readFileString(filePath), chunks.join(""));
+      assert.deepStrictEqual(yield* fs.readDirectory(root), ["cache.json"]);
+    }),
+  );
+
   it.effect("keeps a symlinked file linked and rewrites its destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

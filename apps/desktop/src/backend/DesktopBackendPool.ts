@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -15,6 +16,8 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -112,6 +115,9 @@ export const layer = Layer.effect(
     // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
+    const homeOwnerContext = yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | DesktopEnvironment.DesktopEnvironment
+    >();
 
     // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
@@ -174,12 +180,16 @@ export const layer = Layer.effect(
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
-        electronDialog
-          .showErrorBox(
-            "This T3 home is unavailable",
-            "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
-          )
-          .pipe(Effect.andThen(electronApp.quit)),
+        DesktopHomeOwner.readLiveHomeOwner().pipe(
+          Effect.flatMap((owner) =>
+            electronDialog.showErrorBox(
+              "This T3 home is unavailable",
+              DesktopHomeOwner.homeOwnedMessage(owner),
+            ),
+          ),
+          Effect.provideContext(homeOwnerContext),
+          Effect.andThen(electronApp.quit),
+        ),
     });
 
     const instancesRef = yield* SynchronizedRef.make<

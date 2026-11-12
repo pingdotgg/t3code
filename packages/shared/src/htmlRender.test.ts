@@ -21,6 +21,22 @@ describe("injectHtmlRenderBootstrap", () => {
     expect(injected).toContain('name="viewport"');
   });
 
+  it.each([
+    "<html><head data-condition='x > 0'>",
+    '<html><head data-condition="x > 0" data-label=\'it "works"\'>',
+    "<html data-condition='x > 0'>",
+    '<html data-condition="x > 0" data-label="it \'works\'">',
+  ])("keeps the bootstrap after the complete opening tag: %s", (opening) => {
+    const prefix = `<!doctype html>${opening}`;
+    const head = opening.startsWith("<html><head") ? "" : "<head>";
+    const content = `${head ? "" : "<title>Report</title></head>"}<body><p>Report</p></body></html>`;
+    const injected = injectHtmlRenderBootstrap(prefix + content);
+    expect(injected.startsWith(`${prefix}${head}<meta charset="utf-8">`)).toBe(true);
+    expect(injected.indexOf('<style id="t3-theme">')).toBeGreaterThan(prefix.length);
+    expect(injected).toContain("<script>");
+    expect(injected.endsWith(content)).toBe(true);
+  });
+
   it("wraps fragments without a head and keeps existing meta tags", () => {
     const fragment =
       '<meta charset="utf-8"><meta name="viewport" content="width=device-width"><p>hi</p>';
@@ -112,6 +128,11 @@ describe("readHtmlRenderImageRequest", () => {
       src: "https://example.com/a.png",
       name: "Image",
     });
+    const boundaryImage = readHtmlRenderImageRequest(
+      image({ src: "https://example.com/a.png", name: "a".repeat(199) + "😀" }),
+    );
+    expect(boundaryImage?.name.isWellFormed()).toBe(true);
+    expect(boundaryImage?.name).toBe("a".repeat(199));
     expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
     expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();

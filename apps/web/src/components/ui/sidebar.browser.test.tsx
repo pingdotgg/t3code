@@ -130,3 +130,33 @@ it("keeps the mobile sheet closed and leaves the saved desktop state alone", asy
     .toHaveAttribute("aria-pressed", "false");
   localStorage.removeItem(storageKey);
 });
+
+function MobileSheetMountedProbe() {
+  const { mobileSheetMounted } = useSidebar();
+  return <output aria-label="Sheet mounted">{String(mobileSheetMounted)}</output>;
+}
+
+it("keeps closed mobile sheet contents mounted and reports the sheet only while it shows", async () => {
+  await page.viewport(390, 844);
+  await using screen = await render(
+    <SidebarProvider>
+      <Sidebar>
+        <span>Sheet contents</span>
+      </Sidebar>
+      <SidebarTrigger />
+      <MobileSheetMountedProbe />
+    </SidebarProvider>,
+    { router: false /* no routes involved */ },
+  );
+  const sheetMounted = screen.getByLabelText("Sheet mounted");
+  // Window shortcuts registered by sidebar children only work while they stay mounted.
+  expect(document.querySelector('[data-mobile="true"]')?.textContent).toContain("Sheet contents");
+  await expect.element(sheetMounted).toHaveTextContent("false");
+
+  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await expect.element(sheetMounted).toHaveTextContent("true");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(sheetMounted).toHaveTextContent("false");
+  expect(document.querySelector('[data-mobile="true"]')?.textContent).toContain("Sheet contents");
+});

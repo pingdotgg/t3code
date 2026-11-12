@@ -51,7 +51,8 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
 function leadingExternalLinkTextLength(text: string): number {
   const protocol = /^(?:https?:\/\/)/i.exec(text)?.[0];
   if (protocol) return protocol.length;
-  return Math.min(text.length, 1);
+  // A whole code point, so a surrogate pair is not split across elements.
+  return Array.from(text.slice(0, 2))[0]?.length ?? 0;
 }
 
 // Keep short labels such as PR numbers intact in narrow table columns.

@@ -31,6 +31,11 @@ export const dispatchingQueuedMessageIdAtom = Atom.make<MessageId | null>(null).
   Atom.withLabel("mobile:thread-outbox:dispatching-message-id"),
 );
 
+/** Messages waiting out a retry backoff, which can repeat for as long as the failure lasts. */
+export const retryingQueuedMessageIdsAtom = Atom.make<Readonly<Partial<Record<MessageId, true>>>>(
+  {},
+).pipe(Atom.keepAlive, Atom.withLabel("mobile:thread-outbox:retrying-message-ids"));
+
 export function holdEditingQueuedMessage(messageId: MessageId): void {
   const current = appAtomRegistry.get(editingQueuedMessageIdsAtom);
   if (current[messageId]) {

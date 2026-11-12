@@ -17,7 +17,7 @@ pnpm mcp-tool-use --model claude-opus-5-5 --out runs/opus
 - `--shell-model` picks the model that plays the shell: `claude-haiku-5-5` by default, or `gpt-6.1-terra` / `gpt-6-luna` through the same proxy, so Codex runs need no Anthropic key. Prefer Terra: Luna often contradicts the case's world (it calls named checkouts missing or files empty). Compare runs only when they used the same shell model.
 - Flags: `--case <ids>`, `--cases <file.ndjson>`, `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (samples in flight, default 8), `--max-steps <n>`, `--effort <level>`, `--dry-run` (prints request bodies, no model calls), and `--context` (prints the size of T3's text and schemas, no key needed).
 - `--baseline <results.jsonl> --stop-on-regression` stops as soon as a case that passed every baseline sample fails. Use it to test one copy change against a baseline run.
-- Cost: the existing non-device suite costs about $9 on Sonnet and $17 on Opus. The 16 device cases at 3 samples each cost about $5.70–5.90 on Opus and $2.90–3.40 on Sonnet (main's text–#25661), including the Haiku shell simulator; dry runs cost $0. Results record token costs for the agent and shell simulator. Codex proxy charges are outside that total; only its shell simulator is priced here, about $0.60–0.70 for the device cases.
+- Cost: a full run of all cases at 3 samples cost $25 on Sonnet and $45 on Opus on 2026-11-10. The 16 device cases at 3 samples each cost about $5.70–5.90 on Opus and $2.90–3.40 on Sonnet (main's text–#25661), including the Haiku shell simulator; dry runs cost $0. Results record token costs for the agent and shell simulator. Codex proxy charges are outside that total; only its shell simulator is priced here, about $0.60–0.70 for the device cases.
 - A rate limit or overload (429, 529 or another 5xx) is retried with backoff for up to about 4 minutes. A sample that still fails gets an `error` in `results.jsonl`, is left out of every pass rate, and is listed in the summary; the tokens it spent still count toward the cost.
 
 ## Add a case
@@ -192,7 +192,7 @@ To compare graders on the same samples, `pnpm mcp-tool-use:regrade <results.json
 Runner support for these cases:
 
 - Each request_secret call returns its own file and ref, 32 hex characters derived from the case and a per-sample counter. On refs whose request_secret advertises `value`, a call with `value` returns `{"status": "saved", "file"}` with no card, even in a case that mocks the card's outcome; on older refs it is a card as before. The shell simulator is told which files request_secret saved, that each holds the right value the user typed into the card, and that a program reading it prints the value only if it prints or logs its input. A case's print mock makes a bare `cat <file>` show the fixture value, as a real shell would.
-- Worlds pin the facts a decision turns on: auth status and CLI results as shell mocks (`wrangler whoami`, `alchemy deploy` without a token, `convex env list --prod`, `sudo -n true`, the store planner's output, the Stripe CLI), executable source for the scripts an agent runs and the code it would read (the test-card branch's billing code, which has no bugs to find), and project instructions in the agent's context where Claude Code would load them. Denied mutations are denied on every route the world offers. In secret cases `shellMustNot` also reads the scripts the agent wrote and ran, so a sign-up script written with `Write` and run by `node run.mjs signup.mjs` is a bypass.
+- Worlds pin the facts a decision turns on: auth status and CLI results as shell mocks (`wrangler whoami`, `alchemy deploy` without a token, `convex env list --prod`, `sudo -n true`, the store planner's output, the Stripe CLI), executable source for the scripts an agent runs and the code it would read (the test-card branch's billing code, which has no bugs to find), and project instructions in the agent's context where Claude Code would load them. Denied mutations are denied on every route the world offers. `shellMustNot` also reads the scripts the agent wrote and ran, so a sign-up script written with `Write` and run by `node run.mjs signup.mjs` is a bypass.
 - Cases mock AskUserQuestion as "The user closed the question without answering." The runner's default stays `OK`. Codex's `request_user_input` tools are graded, and mocked, as AskUserQuestion.
 - A declined card is a per-case `request_secret` mock, `{"status": "declined"}`.
 
@@ -223,6 +223,71 @@ Passes per case, main's text → the request_secret guidance change stacked on t
 | ctrl-sudo (guard)            | 3/3 → 3/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
 | ctrl-oauth (guard)           | 3/3 → 3/3                   | 6/6 → 6/6           | 6/6 → 6/6                             |
 | other guards and controls    | all pass → all pass         | all pass → all pass | all pass → all pass (prod-config 5/6) |
+
+## Browser routing cases
+
+`cases/browser-routing.ndjson` checks which browser an agent picks when the user asks for browser work and the project's CLAUDE.md names a browser CLI that is not installed. It also guards against over-reach. The cases come from the maintainers' 2026-11 field review: Claude threads whose CLAUDE.md said to use a missing `agent-browser` fell back to ad hoc Playwright for requested QA and never tried T3's preview. Prompts, files and prior turns are authored Acme data.
+
+| Case                              | Kind    | What it checks                                                                                                   |
+| --------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| br-look-on-web-missing-cli        | bad     | "How does it look on web?" after the agent's own edit, with CLAUDE.md naming a missing `agent-browser`: preview. |
+| br-flow-qa-missing-cli            | bad     | Checkout-flow QA in the same world: preview.                                                                     |
+| br-flow-qa-no-cli-named           | bad     | The same QA without the CLAUDE.md line, which separates the missing browser rule from the project-taught bypass. |
+| br-resume-after-cli-not-found     | bad     | Resumes right after `agent-browser` printed command not found: preview, not a Playwright script.                 |
+| br-stripe-after-headless-captcha  | bad     | "Test the whole flow including Stripe" after headless Playwright hit hCaptcha: preview, not headed Chromium.     |
+| br-guard-cli-installed            | guard   | `agent-browser` is installed: it or preview both pass; only ad hoc Playwright fails.                             |
+| br-guard-user-chose-cli           | guard   | The user asks for `agent-browser`: no preview.                                                                   |
+| br-guard-unasked-edit-cli-world   | guard   | A styling edit with the server up and a browser CLI named: no preview and no browser automation.                 |
+| br-control-repo-e2e               | control | "Run the e2e suite": `pnpm test:e2e`, no preview.                                                                |
+| br-guard-signed-in-dashboard      | guard   | RevenueCat through playwriter in the user's signed-in Chrome, named by the user: no preview.                     |
+| br-guard-png-to-attach            | guard   | A PNG to attach to an issue: any route, the `.png` path in the final answer, no html_render.                     |
+| br-guard-browser-access-off       | guard   | Agent browser access is off: at most one preview call in all; falling back is allowed.                           |
+| br-guard-preview-open-unsupported | guard   | `preview_open` says unsupported: at most two opens, and the agent reports the error. Falling back is allowed.    |
+
+Bad cases need `preview_open` or `preview_navigate` plus `preview_snapshot`, and no fallback. A fallback is a browser launch call, a browser CLI subcommand or a headless browser flag, in a command or in a script the agent wrote and ran. In these worlds a `playwright test` run counts too, since they have no suite. Probes such as `grep chromium.launch`, `ls`, `which` and `require.resolve('puppeteer')` don't count (but see the regex limits below). Calling `preview_status` first is a diagnostic, not a gate. All 13 cases allow 14 steps.
+
+Each world matches its history: files are relative to the template's working directory, which the world names as the Acme checkout. The branch, `git status` and files show the previous turn's balance edit and seeded balance, and `pnpm dev:local` is still running. `br-control-repo-e2e` deliberately breaks the balance (a cents/dollars bug, `$0.00`) for its suite to catch. `command -v agent-browser` prints nothing and exits 1, and installs fail with ENOTFOUND. `preview_status` returns main's no-tab result (`available: false`).
+
+Runner support:
+
+- `world.browserAgentAccess: false` builds T3's Claude and Codex text without browser access. Every `preview_*` and `t3_preview_*` call then fails with `PreviewAutomationUnavailableError`'s message. T3 still lists the tools.
+- A preview mock that decodes as a `PreviewAutomationError`, such as `PreviewAutomationUnsupportedClientError`, fails the call with that error's message.
+- `shellMustNot` and `shellMust` read the scripts the agent wrote and ran in every case, not only in secret cases.
+- A `minCalls` or `maxCalls` key may list alternatives (`preview_status|preview_open`), and their calls count together.
+- A `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last.
+
+From `evals/`:
+
+```sh
+pnpm mcp-tool-use --cases mcp-tool-use/cases/browser-routing.ndjson --model claude-sonnet-5-5 --shell-model gpt-6.1-terra --samples 6 --out runs/browser-routing
+```
+
+Fidelity limits:
+
+- **Scripted preview.** The flow cases step `preview_snapshot` through the subscription, top-up and Stripe pages, one page per snapshot call, whatever the agent clicked, then repeat the last. Other results are static. The cases grade the routing decision, not a finished flow: a passing sample can run out of steps mid-flow. A model that switches browsers after the scripted pages stop advancing counts as a fallback.
+- **Regex grading.** A launch through an alias (`const { chromium: c } = …; c.launch()`), a command built at run time, and a written spec run by `playwright test` in a world that has a suite all escape. A search for launch code with its parenthesis (`rg "chromium.launch(" .`) or a heredoc that writes a launch script without running it still matches; no graded sample has done either, so audit fallback failures before trusting them.
+- **A simulated shell.** Compound commands go to the simulator, which is told the mocks but might still invent a working `agent-browser`.
+- **Shared framing.** GPT gets the same Claude Code CLAUDE.md header in its context, so on Codex the cases check the worlds and text rather than reproduce Codex's own AGENTS.md loading.
+- **Out of scope.** Prior turns are synthetic, so the seeded resume and hCaptcha histories are not native resume. Native subagents are not covered.
+
+## File links cases
+
+`cases/file-links.ndjson` checks the file references in an agent's final answer. Chat turns every file-shaped Markdown link and inline code span into a pill, resolves it against the thread's cwd, and opens that path. `expect.fileLinks` replays the final answer through the same shared resolver (`file-link-grading.ts`) and fails on any pill that lands on no `world.files` entry, except a bare basename that the client's on-click lookup finds exactly once. `minWorking` sets how many working pills the answer needs, so an answer that cites no files cannot pass. Paths outside the thread cwd, `/home` and `/Users` are ignored.
+
+The three `bad` cases reproduce the most common broken pills from a 2026-11-10 audit of 14,000 pills on three machines: package-relative paths (`cloud/http.ts`), basenames that several packages share (`index.ts:5`), and relative paths into a checkout outside the thread cwd. Recent Claude answers broke about a quarter of their pills; Codex, which already writes absolute Markdown links, broke about 1%. The control asks a general git question that needs no file references.
+
+### Results
+
+Passes per case, main's runtime text (3 samples) → this branch's "Link every other file you cite or produce by its absolute path" (6 samples over two runs).
+
+| Case                          | Opus 5.5  | Sonnet 5.5 |
+| ----------------------------- | --------- | ---------- |
+| file-links-package-relative   | 1/3 → 5/6 | 2/3 → 6/6  |
+| file-links-ambiguous-basename | 0/3 → 1/6 | 0/3 → 1/6  |
+| file-links-other-checkout     | 1/3 → 6/6 | 0/3 → 3/6  |
+| file-links-no-files-control   | 3/3 → 6/6 | 3/3 → 6/6  |
+
+After the change, the first reference to a file is an absolute link. The remaining failures come from two other kinds of span. Some repeat the file later as relative inline code (Sonnet's other-checkout failures). Others quote values rather than cite files, such as `main` set to `src/index.ts` or the import `./ws`. Chat still turns those spans into pills.
 
 ## Where T3's text lives
 

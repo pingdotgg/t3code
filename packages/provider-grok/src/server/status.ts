@@ -128,7 +128,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const GROK_EFFORT_RANK = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
+export function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   readonly options: ReadonlyArray<{
     value: string;
     label: string;

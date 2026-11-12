@@ -96,6 +96,23 @@ describe("GitHub change request URLs", () => {
   });
 });
 
+describe("GitHub CLI commands", () => {
+  it("recognizes shell pull request creates, including gh's `new` alias", () => {
+    for (const command of ["gh pr create --fill", "gh pr new --fill"]) {
+      expect(definition.changeRequestCreateCommand.test(command), command).toBe(true);
+    }
+    expect(definition.changeRequestCreateCommand.test("gh pr view 7")).toBe(false);
+  });
+});
+
+describe("GitHub repository pages", () => {
+  it("leaves the tree route on other hosts to them", () => {
+    expect(
+      definition.repositoryUrlFromPage?.(new URL("https://scm.example.test/o/r/tree/main")),
+    ).toBeNull();
+  });
+});
+
 describe("GitHub remotes", () => {
   const recognize = (url: string) => recognizeRemoteWith(definition, url);
 

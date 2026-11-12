@@ -127,6 +127,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       canvas,
       beginPath() {},
       clip() {},
+      getTransform: () => ({ a: 1, d: 1 }),
       rect() {},
       resetTransform() {},
       restore() {},
@@ -283,6 +284,24 @@ describe("GhosttyTerminalSurface visibility", () => {
       "\x1b[F",
     ]);
     expect(surface.hasSelection()).toBe(false);
+  });
+
+  it("skips middle-click selection paste when the desktop turned primary paste off", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("echo hi");
+    surface.selectAll();
+    const pasteFromClipboard = vi.spyOn(surface, "pasteFromClipboard");
+
+    let primaryPasteEnabled = false;
+    Object.assign(window, { desktopBridge: { getPrimaryPasteEnabled: () => primaryPasteEnabled } });
+    harness.pointer("pointerdown", 5, 4, {}, 1);
+    expect(pasteFromClipboard).not.toHaveBeenCalled();
+
+    primaryPasteEnabled = true;
+    harness.pointer("pointerdown", 5, 4, {}, 1);
+    expect(pasteFromClipboard).toHaveBeenCalledOnce();
   });
 
   it("leaves modified history keys with alternate-screen applications", async () => {

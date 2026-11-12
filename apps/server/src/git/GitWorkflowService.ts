@@ -37,7 +37,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
   {
-    readonly isRepository: (cwd: string) => Effect.Effect<boolean, GitManagerServiceError>;
+    readonly repositoryRoot: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
     readonly hasCommit: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -60,6 +60,8 @@ export class GitWorkflowService extends Context.Service<
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
+    readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
@@ -271,13 +273,13 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
-    isRepository: Effect.fn("GitWorkflowService.isRepository")(function (cwd) {
+    repositoryRoot: Effect.fn("GitWorkflowService.repositoryRoot")(function (cwd) {
       return registry.detect({ cwd }).pipe(
-        Effect.map((handle) => handle?.kind === "git"),
+        Effect.map((handle) => (handle?.kind === "git" ? handle.repository.rootPath : null)),
         Effect.mapError(
           (cause) =>
             new GitManagerError({
-              operation: "GitWorkflowService.isRepository",
+              operation: "GitWorkflowService.repositoryRoot",
               cwd,
               detail: "Failed to detect a VCS repository for this Git workflow.",
               cause,
@@ -370,6 +372,19 @@ export const make = Effect.gen(function* () {
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     invalidateStatus: gitManager.invalidateStatus,
+    headPath: Effect.fn("GitWorkflowService.headPath")(function (cwd) {
+      return git
+        .execute({
+          operation: "GitWorkflowService.headPath",
+          cwd,
+          args: ["rev-parse", "--path-format=absolute", "--git-path", "HEAD"],
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)),
+          Effect.orElseSucceed(() => null),
+        );
+    }),
     pullCurrentBranch: Effect.fn("GitWorkflowService.pullCurrentBranch")(function (cwd) {
       return ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),
