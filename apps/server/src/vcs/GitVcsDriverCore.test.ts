@@ -1600,49 +1600,75 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
   ),
 );
 
-it.effect("stops background fetches that keep timing out on a credential dialog", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fetchStarts = yield* Queue.unbounded<void>();
-      let fetchAttempts = 0;
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.gen(function* () {
-          if (ChildProcess.isStandardCommand(command) && command.args.includes("--no-auto-gc")) {
-            fetchAttempts++;
-            yield* Queue.offer(fetchStarts, undefined);
-            // A credential helper waiting on a dialog nobody answers.
-            return ChildProcessSpawner.makeHandle({
-              ...makeSuccessfulHandle(""),
-              exitCode: Effect.never,
-            });
-          }
-          return yield* delegate.spawn(command);
-        }),
-      );
-      const driver = yield* makeGitVcsDriverCore().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      const cwd = yield* makeTmpDir();
-      const { initialBranch } = yield* initRepoWithCommit(cwd);
-      yield* git(cwd, ["remote", "add", "origin", "https://example.invalid/private.git"]);
-      yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
-      yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
-
-      for (let poll = 0; poll < 5; poll++) {
-        const read = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkChild);
-        yield* Effect.raceFirst(
-          Fiber.join(read),
-          Queue.take(fetchStarts).pipe(Effect.andThen(TestClock.adjust("5 seconds"))),
+it.effect.each([
+  {
+    cause: "a credential helper waits",
+    // Without a helper the server asks for credentials, so the fetch was waiting on one.
+    probe: () =>
+      makeFailedHandle(
+        "fatal: could not read Username for 'https://example.invalid': terminal prompts disabled\n",
+      ),
+    fetchesAfterFivePolls: 3,
+  },
+  {
+    cause: "the remote is unreachable",
+    probe: () =>
+      ChildProcessSpawner.makeHandle({ ...makeSuccessfulHandle(""), exitCode: Effect.never }),
+    fetchesAfterFivePolls: 5,
+  },
+])(
+  "background fetches that time out because $cause stop only for credentials",
+  ({ probe, fetchesAfterFivePolls }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetchStarts = yield* Queue.unbounded<void>();
+        let fetchAttempts = 0;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command)) return yield* delegate.spawn(command);
+            if (command.args.includes("--no-auto-gc")) {
+              fetchAttempts++;
+              yield* Queue.offer(fetchStarts, undefined);
+              return ChildProcessSpawner.makeHandle({
+                ...makeSuccessfulHandle(""),
+                exitCode: Effect.never,
+              });
+            }
+            if (command.args.includes("ls-remote")) return probe();
+            return yield* delegate.spawn(command);
+          }),
         );
-        yield* Fiber.join(read);
-        // Past the fetch's own timeout and the longest cooldown.
-        yield* TestClock.adjust("16 minutes");
-      }
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["remote", "add", "origin", "https://example.invalid/private.git"]);
+        yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+        yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
+        const poll = Effect.gen(function* () {
+          const read = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkChild);
+          yield* Effect.raceFirst(
+            Fiber.join(read),
+            Queue.take(fetchStarts).pipe(Effect.andThen(TestClock.adjust("5 seconds"))),
+          );
+          yield* Fiber.join(read);
+          // Past the fetch's own timeout and the longest cooldown.
+          yield* TestClock.adjust("16 minutes");
+        });
 
-      assert.equal(fetchAttempts, 3);
-    }),
-  ).pipe(Effect.provide(layerTest)),
+        for (let polls = 0; polls < 5; polls++) yield* poll;
+        assert.equal(fetchAttempts, fetchesAfterFivePolls);
+
+        if (fetchesAfterFivePolls === 3) {
+          // Any successful fetch, even one that finds nothing new, resumes polling.
+          yield* git(cwd, ["fetch", "."]);
+          yield* poll;
+          assert.equal(fetchAttempts, 4);
+        }
+      }),
+    ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("does not fetch for status when the branch tracks a local branch", () =>
