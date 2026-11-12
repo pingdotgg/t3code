@@ -260,6 +260,8 @@ export function courseOutlineFromToolItem(item: {
   readonly output?: unknown;
 }): string | undefined {
   if (resolveT3McpToolId(item.toolName) !== "course_add") return undefined;
+  if (Predicate.isObject(item.output) && typeof item.output.courseOutline === "string")
+    return item.output.courseOutline;
   const course = readCourse(item.output);
   if (course === undefined) return undefined;
 
