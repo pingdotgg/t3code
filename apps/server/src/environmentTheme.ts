@@ -277,7 +277,8 @@ const make = Effect.gen(function* () {
 
     yield* publishSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const previous = yield* fs.readFileString(destination).pipe(Effect.option);
+        // The guarded reader does not block on a FIFO and does not follow a symlink.
+        const previous = Option.fromNullOr(readThemeFileGuarded(destination, MAX_THEME_FILE_BYTES));
         yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
           Effect.andThen(replace(contents)),
           Effect.mapError((cause) => fail("not-published", cause)),
