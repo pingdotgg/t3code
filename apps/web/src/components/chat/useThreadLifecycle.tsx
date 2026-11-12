@@ -655,8 +655,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     };
   const shortcuts = {
     "thread.settle": () => {
-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: activeThreadSettled ? "Can't un-settle thread" : "Can't settle thread",
+            description: "This connection to the machine doesn't allow changing threads.",
+          }),
+        );
+        return;
+      }
       if (activeThreadSettled) {
         void handleUnsettleActiveThread();
         return;

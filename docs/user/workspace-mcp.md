@@ -6,7 +6,7 @@ Workspace MCP lets a compatible external assistant list projects and threads, su
 
 Point your compatible MCP client at `http://127.0.0.1:<port>/mcp/workspace`, using the port of your running T3 server. Local loopback clients can connect without a token. Remote clients require an environment bearer token with orchestration access. Do not expose unauthenticated loopback access through a public proxy.
 
-This connection controls only the environment hosting it. To settle a completed task on desktop-pc, connect to desktop-pc’s workspace MCP. A connection to your MacBook cannot change desktop-pc’s threads. The desktop companion gateway is a separate option: it routes by environment and requires a lifecycle grant to settle threads.
+This connection controls only the environment hosting it. To settle a completed task on desktop-pc, connect to desktop-pc’s workspace MCP. A connection to your MacBook cannot change desktop-pc’s threads. The desktop companion gateway is a separate option: it routes by environment and needs a lifecycle grant to settle threads, which the desktop app gives on its own for full-access machines in your device network that you turned on.
 
 Project paths refer to the T3 environment machine, not the device running the assistant.
 
