@@ -9,6 +9,7 @@ import {
   type ChatAttachment,
   type ComposerContextRecord,
   type EnvironmentContextRecord,
+  type ResponseContextRecord,
   type EnvironmentId,
   type MessageId,
   type OrchestrationMessageContext,
@@ -40,8 +41,11 @@ import {
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
-import { buildMessageContext } from "../../lib/composerContextRecords";
-import { collectInlineContextIds } from "../../lib/composerContextReferences";
+import { buildMessageContext, isResponseContextRecord } from "../../lib/composerContextRecords";
+import {
+  collectInlineContextIds,
+  removeInlineContextReference,
+} from "../../lib/composerContextReferences";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -85,6 +89,7 @@ interface QueuedRunEditContent {
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly replyTo?: ResponseContextRecord | null;
 }
 
 const isDraftOwnedRecord = (record: ComposerContextRecord) =>
@@ -148,6 +153,7 @@ async function submitQueuedRunEdit(input: {
         previewAnnotations: content.previewAnnotations,
         threadContexts: content.threadContexts,
         environmentContexts: content.environmentContexts,
+        replyTo: content.replyTo ?? null,
         attachments: newAttachments.map((attachment, index) => ({
           attachment,
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,
@@ -239,12 +245,16 @@ export function useQueuedRunEdit(input: {
     if (activeThreadId === null) return;
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
     const target = queuedEditDraftTarget(routeThreadRef, request.runId);
-    const text = stripAttachmentOnlyBootstrapPrompt(request.text);
+    const sentText = stripAttachmentOnlyBootstrapPrompt(request.text);
     const context = serverProjection?.messages.find(
       (message) => message.id === request.messageId,
     )?.context;
-    const referenced = new Set(collectInlineContextIds(text));
+    const referenced = new Set(collectInlineContextIds(sentText));
     const records = (context?.records ?? []).filter((record) => referenced.has(record.contextId));
+    // A reply shows above the composer while its message is edited, not as a chip in the text.
+    // Only the reply the text still points at: a removed or replaced one stays behind as a record.
+    const reply = records.find(isResponseContextRecord);
+    const text = reply ? removeInlineContextReference(sentText, reply.contextId).prompt : sentText;
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
     store.setPrompt(target, text);
@@ -256,6 +266,7 @@ export function useQueuedRunEdit(input: {
       target,
       records.filter((record): record is EnvironmentContextRecord => record.kind === "environment"),
     );
+    if (reply) store.setReplyTo(target, reply);
     const threadRef = { environmentId, threadId: activeThreadId };
     queuedRunEdits.begin(
       editKey,
