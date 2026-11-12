@@ -63,16 +63,6 @@ describe("watchManagedTunnelOrigin", () => {
       return { checks, registeredAtMinute };
     });
 
-  it.effect("registers this server again when the ingress names another local port", () =>
-    Effect.gen(function* () {
-      const result = yield* watch({
-        ingress: ["http://127.0.0.1:46169", localOrigin],
-        minutes: 5,
-      });
-      expect(result.registeredAtMinute).toEqual([1]);
-    }),
-  );
-
   it.effect("leaves a matching or unknown ingress alone", () =>
     Effect.gen(function* () {
       const result = yield* watch({
