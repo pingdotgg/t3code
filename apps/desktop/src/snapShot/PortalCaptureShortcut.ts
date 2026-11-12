@@ -68,7 +68,6 @@ export class PortalCaptureShortcut {
   readonly ready: Promise<void>;
   private closed = false;
   private connection = 0;
-  private portalLost = false;
   private owner = "";
   private namespace = "";
   private session = "";
@@ -126,8 +125,6 @@ export class PortalCaptureShortcut {
   }
 
   private portalGone() {
-    this.connection++;
-    this.portalLost = true;
     this.rejectStopped(new Error("The desktop shortcut service restarted."));
     this.resetStopped();
     this.owner = "";
@@ -140,6 +137,8 @@ export class PortalCaptureShortcut {
       shortcutPending: true,
       shortcutMessage: "The desktop shortcut service restarted. Reconnecting…",
     });
+    // Register is sent to the well-known name, so it D-Bus-activates a portal that is not running.
+    void this.connect();
   }
 
   close = () => {
@@ -246,10 +245,6 @@ export class PortalCaptureShortcut {
       message.body[0] === PORTAL
     ) {
       if (this.owner && message.body[1] === this.owner) this.portalGone();
-      if (this.portalLost && message.body[2]) {
-        this.portalLost = false;
-        void this.connect();
-      }
       return;
     }
     if (!this.owner || message.sender !== this.owner) return;
