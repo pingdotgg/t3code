@@ -91,6 +91,9 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsEnvironmentSourceControl: [
     "git",
     "pull requests",
+    "merge requests",
+    "terminology",
+    "mr",
     "co-authors",
     "agent credits",
     "default branch",

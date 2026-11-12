@@ -1,3 +1,4 @@
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import {
   WS_METHODS,
   PullRequestRef,
@@ -72,7 +73,7 @@ const readTimeout = (environmentId: EnvironmentId) =>
       Effect.fail(
         new EnvironmentRpcUnavailableError({
           environmentId,
-          message: "The environment did not respond to the PR request.",
+          message: `The environment did not respond to the ${currentChangeRequestTerms().shortLabel} request.`,
         }),
       ),
   });

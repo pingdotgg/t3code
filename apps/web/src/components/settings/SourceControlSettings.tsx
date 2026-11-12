@@ -40,7 +40,9 @@ import { SourceControlTokenSettings } from "./SourceControlTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
+  SettingResetButton,
   SettingsPageContainer,
+  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
@@ -50,6 +52,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { isSourceControlProviderOffered } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { sourceControlIcon } from "~/sourceControlPresentation";
+import { useClientSettings, useUpdatePrimarySettings } from "~/hooks/useSettings";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -392,6 +395,37 @@ function EmptySourceControlDiscovery({
   );
 }
 
+function MergeRequestTerminologySetting() {
+  const enabled = useClientSettings((settings) => settings.mergeRequestTerminology);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsSection title="Terminology">
+      <SettingsRow
+        {...searchableSetting("merge-request-terminology")}
+        description="Use merge request wording throughout the app, regardless of source control host."
+        resetAction={
+          enabled ? (
+            <SettingResetButton
+              label="merge request terminology"
+              onClick={() => updateSettings({ mergeRequestTerminology: false })}
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            checked={enabled}
+            onCheckedChange={(checked) =>
+              updateSettings({ mergeRequestTerminology: Boolean(checked) })
+            }
+            aria-label="Use merge request terminology"
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
+
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
 
@@ -568,6 +602,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
+      <MergeRequestTerminologySetting />
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

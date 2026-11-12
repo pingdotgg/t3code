@@ -6,6 +6,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   sourceControlClients,
+  formatChangeRequestText,
+  currentChangeRequestTerms,
   type SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -1160,6 +1162,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
+    id: "merge-request-terminology",
+    title: "Use merge request terminology",
+    to: "/settings/source-control",
+    searchTerms: ["terminology wording merge request mr pull request pr gitlab"],
+  },
+  {
     id: "source-control-writing-style",
     title: "Commit and pull request writing",
     to: "/settings/source-control",
@@ -1352,7 +1360,9 @@ export const SETTINGS_SEARCH_ITEMS = [
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 
-const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
+const SEARCH_ITEMS_BY_ID: ReadonlyMap<string, SettingsSearchItem> = new Map(
+  SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const),
+);
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/diagnostics": "environment",
@@ -1478,12 +1488,24 @@ export function isSettingsSearchScopeAvailable(
   }
 }
 
-export function searchableSetting(id: SettingsSearchItemId): {
+export function formatSettingsSearchTitle(
+  item: Pick<SettingsSearchItem, "id" | "title">,
+  terms = currentChangeRequestTerms(),
+): string {
+  return item.id === "merge-request-terminology"
+    ? item.title
+    : formatChangeRequestText(item.title, terms);
+}
+
+export function searchableSetting(
+  id: SettingsSearchItemId,
+  terms = currentChangeRequestTerms(),
+): {
   readonly id: string;
   readonly title: string;
 } {
   const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: anchorId, title };
+  return { id: anchorId, title: formatSettingsSearchTitle({ id, title }, terms) };
 }
 
 export function filterAvailableSettingsSearchItems(
@@ -1531,17 +1553,30 @@ export function searchSettings(
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
   const queryTokens = normalizedQuery.split(" ");
+  const terms = currentChangeRequestTerms();
 
   return settingsForThisPlatform(items)
-    .flatMap((item, index) => {
+    .flatMap((originalItem, index) => {
+      const item = { ...originalItem, title: formatSettingsSearchTitle(originalItem, terms) };
       const title = normalizeSearchText(item.title);
       const fields = [
         title,
+        normalizeSearchText(originalItem.title),
+        normalizeSearchText(SEARCH_ITEMS_BY_ID.get(item.id)?.title ?? originalItem.title),
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
-        // The labels as displayed, so search also works in the active language.
+        normalizeSearchText(formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to], terms)),
+        ...(item.searchTerms ?? []).flatMap((term) => [
+          normalizeSearchText(term),
+          normalizeSearchText(formatChangeRequestText(term, terms)).replace(
+            /\b(?:pr|mr)(s?)\b/gu,
+            `${terms.shortLabel.toLowerCase()}$1`,
+          ),
+        ]),
         normalizeSearchText(translate(item.title)),
         normalizeSearchText(translate(SETTINGS_SECTION_LABELS[item.to])),
-        ...(item.searchTerms ?? []).map(normalizeSearchText),
+        normalizeSearchText(
+          formatChangeRequestText(translate(SETTINGS_SECTION_LABELS[item.to]), terms),
+        ),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
 

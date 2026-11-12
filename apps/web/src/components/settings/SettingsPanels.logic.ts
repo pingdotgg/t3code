@@ -1,3 +1,4 @@
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
@@ -163,7 +164,7 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
       ? ["Floating preview"]
       : []),
     ...(settings.pullRequestLinksOpenInApp !== DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp
-      ? ["Open pull requests in T3 Code"]
+      ? [`Open ${currentChangeRequestTerms().plural} in T3 Code`]
       : []),
   ];
 }

@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -30,6 +31,7 @@ const ROW_CLASS_NAME =
   "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none sm:text-xs";
 
 function BackButton({ onBack, focusable }: { onBack: () => void; focusable: boolean }) {
+  const requestTerms = useChangeRequestTerms();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -40,13 +42,13 @@ function BackButton({ onBack, focusable }: { onBack: () => void; focusable: bool
             {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
             className="-ml-1.5"
-            aria-label="Back to this thread's pull requests"
+            aria-label={`Back to this thread's ${requestTerms.plural}`}
           >
             <ArrowLeftIcon aria-hidden className="size-3.5" />
           </Button>
         }
       />
-      <TooltipPopup side="top">Back to pull requests</TooltipPopup>
+      <TooltipPopup side="top">Back to {requestTerms.plural}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -62,6 +64,7 @@ function NumberLink({
   openOnHostText: string;
   focusable: boolean;
 }) {
+  const requestTerms = useChangeRequestTerms();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -78,7 +81,7 @@ function NumberLink({
               "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
               toneClassName,
             )}
-            aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
+            aria-label={`Open ${requestTerms.singular} #${detail.number} on host`}
           >
             #{detail.number}
             <ExternalLinkIcon aria-hidden className="size-2.5" />

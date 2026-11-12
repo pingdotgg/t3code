@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -72,6 +73,7 @@ export function PullRequestThreadDialog({
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
+  const requestTerms = useChangeRequestTerms();
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
@@ -90,7 +92,10 @@ export function PullRequestThreadDialog({
           input: { cwd },
         }),
   );
-  const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
+  const sourceControlPresentation = getSourceControlPresentation(
+    gitStatus?.sourceControlProvider,
+    requestTerms,
+  );
   const terminology = sourceControlPresentation.terminology;
   const SourceControlIcon = sourceControlPresentation.Icon;
 

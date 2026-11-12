@@ -1,4 +1,4 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { PULL_REQUEST_TERMINOLOGY } from "@t3tools/client-runtime/source-control-clients";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -49,7 +49,7 @@ it.each([
           number: 2,
         }}
         hostLabel="GitHub"
-        terminology={sourceControlClients.get("github").changeRequest}
+        terminology={PULL_REQUEST_TERMINOLOGY}
         stack={{
           id: "stack",
           number: 1,

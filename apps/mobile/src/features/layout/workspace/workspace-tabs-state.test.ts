@@ -181,6 +181,14 @@ describe("workspace root navigation", () => {
 
 const mocks = vi.hoisted(() => ({ split: false, floating: false }));
 
+vi.mock("../../../state/change-request-terminology", () => ({
+  useChangeRequestTerms: () => ({
+    shortLabel: "PR",
+    shortLabelWithArticle: "a PR",
+    singular: "pull request",
+    plural: "pull requests",
+  }),
+}));
 vi.mock("../../settings/appearance/AppearancePreferencesProvider", () => ({
   useAndroidFloatingTabs: () => mocks.floating,
 }));

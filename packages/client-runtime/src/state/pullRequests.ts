@@ -1,3 +1,4 @@
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import {
   WS_METHODS,
   PullRequestActivity,
@@ -649,7 +650,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       ) {
         return yield* new PullRequestOperationError({
           operation: "runAction",
-          detail: "This pull request cannot be merged.",
+          detail: `This ${currentChangeRequestTerms().singular} cannot be merged.`,
         });
       }
       if (detail.capabilities.stackActions) {
@@ -657,7 +658,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         if (stack !== null) {
           return yield* new PullRequestOperationError({
             operation: "runAction",
-            detail: "Open this pull request to merge its stack.",
+            detail: `Open this ${currentChangeRequestTerms().singular} to merge its stack.`,
           });
         }
       }

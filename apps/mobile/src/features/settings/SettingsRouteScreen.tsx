@@ -4,7 +4,7 @@ import {
 } from "../layout/workspace/navigation-tab-order";
 import {
   NAVIGATION_TAB_ICONS,
-  WORKSPACE_TAB_LABELS,
+  useWorkspaceTabLabels,
   useNavigationTabOrder,
   useHiddenNavigationTabs,
 } from "../layout/workspace/navigation-tabs";
@@ -302,11 +302,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
           gt("Projects"),
           selectedProjectKey !== null ? { value: projectLabel } : undefined,
         ),
-        serverPage(
-          "SettingsEnvironmentSourceControl",
-          "arrow.triangle.branch",
-          gt("Source control"),
-        ),
+        page("SettingsEnvironmentSourceControl", "arrow.triangle.branch", gt("Source control")),
         serverPage("SettingsWorktrees", "square.on.square", gt("Worktrees")),
       ],
     },
@@ -322,6 +318,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
 }
 
 function useOverflowRows(): SettingsListRow[] {
+  const tabLabels = useWorkspaceTabLabels();
   const order = useNavigationTabOrder();
   const hidden = useHiddenNavigationTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -331,7 +328,7 @@ function useOverflowRows(): SettingsListRow[] {
   return tabs.map((tab) => ({
     id: tab,
     icon: NAVIGATION_TAB_ICONS[tab],
-    label: WORKSPACE_TAB_LABELS[tab],
+    label: tabLabels[tab],
     onPress: () => selectTab(tab),
   }));
 }

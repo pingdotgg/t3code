@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
+} from "@t3tools/client-runtime/source-control-clients";
 import { ProjectId, type PullRequestStack, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -8,7 +11,7 @@ import {
   singlePullRequestMergeAllowed,
 } from "./pullRequestStack";
 
-const GITHUB = sourceControlClients.get("github").changeRequest;
+const GITHUB = PULL_REQUEST_TERMINOLOGY;
 
 const stack: PullRequestStack = {
   id: "stack",
@@ -97,9 +100,9 @@ describe("mobile stack merge scope", () => {
     };
     expect(pullRequestStackMerge(unknown, 2, GITHUB).reason).toContain("latest revisions");
     expect(pullRequestStackMerge(stack, 99, GITHUB).reason).toContain("no longer in the stack");
-    expect(
-      pullRequestStackMerge(stack, 99, sourceControlClients.get("gitlab").changeRequest).reason,
-    ).toBe("This merge request is no longer in the stack. Refresh it.");
+    expect(pullRequestStackMerge(stack, 99, MERGE_REQUEST_TERMINOLOGY).reason).toBe(
+      "This merge request is no longer in the stack. Refresh it.",
+    );
   });
   it("waits for successful discovery before allowing a single PR merge on modern servers", () => {
     expect(

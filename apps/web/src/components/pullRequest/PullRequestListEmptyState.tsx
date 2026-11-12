@@ -1,3 +1,5 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { PlusIcon, SearchIcon } from "lucide-react";
 
@@ -68,6 +70,7 @@ export function PullRequestListEmptyState({
   onLoadMore: () => void;
   onRefresh: () => void;
 }) {
+  const terms = useChangeRequestTerms();
   if (!hasProjects) {
     return (
       <Empty>
@@ -75,7 +78,7 @@ export function PullRequestListEmptyState({
         <EmptyHeader>
           <EmptyTitle>No projects in this workspace</EmptyTitle>
           <EmptyDescription>
-            Add a project, and the pull requests from its repository appear here.
+            Add a project, and the {terms.plural} from its repository appear here.
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -127,17 +130,17 @@ export function PullRequestListEmptyState({
     <Empty>
       <BranchMark joined={false} />
       <EmptyHeader>
-        <EmptyTitle>{filtered ? "Nothing under these filters" : "No pull requests"}</EmptyTitle>
+        <EmptyTitle>{filtered ? "Nothing under these filters" : `No ${terms.plural}`}</EmptyTitle>
         <EmptyDescription>
           {filtered
             ? "Widen the state, involvement or project filter to see more."
-            : "Pull requests from every project in this workspace appear here."}
+            : `${capitalizeTerm(terms.plural)} from every project in this workspace appear here.`}
         </EmptyDescription>
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
         {canLoadMore ? (
           <Button size="sm" variant="outline" disabled={loadingMore} onClick={onLoadMore}>
-            {loadingMore ? "Loading..." : "Load more pull requests"}
+            {loadingMore ? "Loading..." : `Load more ${terms.plural}`}
           </Button>
         ) : null}
         <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>

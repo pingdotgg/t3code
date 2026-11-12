@@ -3,7 +3,7 @@ import {
   type ComposerModelMentionOccurrence,
 } from "@t3tools/client-runtime/composer-model-mentions";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { currentChangeRequestTerms } from "@t3tools/client-runtime/source-control-clients";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
@@ -131,9 +131,7 @@ export function pullRequestComposerContext(
     baseBranch: pullRequest.baseBranch.slice(0, 2048),
   };
   const path = filePath?.trim().slice(0, 2048).trim();
-  const { singular } = (
-    sourceControlClients.findByChangeRequestUrl(metadata.url) ?? sourceControlClients.get(undefined)
-  ).changeRequest;
+  const { singular, shortLabel } = currentChangeRequestTerms();
   return {
     version: 1,
     kind: "review-comment",
@@ -142,7 +140,7 @@ export function pullRequestComposerContext(
       ? sanitizeComposerContextLabel(path.split("/").at(-1) ?? path, "file")
       : `#${metadata.number}`,
     sectionId: `pull-request:${metadata.number}`,
-    sectionTitle: `PR #${metadata.number}`,
+    sectionTitle: `${shortLabel} #${metadata.number}`,
     filePath: path || `PR #${metadata.number}`,
     startIndex: 0,
     endIndex: 0,

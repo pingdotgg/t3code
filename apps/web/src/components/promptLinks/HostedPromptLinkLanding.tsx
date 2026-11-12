@@ -1,4 +1,8 @@
 import {
+  type ChangeRequestTerminology,
+  capitalizeTerm,
+} from "@t3tools/client-runtime/source-control-clients";
+import {
   type LinkedPrompt,
   parseNewThreadLink,
   parseThreadLinkPrompt,
@@ -11,6 +15,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { DESKTOP_DOWNLOAD_URL } from "~/branding";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { useEnvironments } from "~/state/environments";
 
@@ -36,6 +41,7 @@ const PROMPT_HEADER = {
 
 function summarize(
   appPath: string,
+  terminology: ChangeRequestTerminology,
 ): { ok: true; value: LinkSummary } | { ok: false; error: string } {
   const url = new URL(appPath, window.location.origin);
   if (url.pathname !== "/new") {
@@ -63,7 +69,7 @@ function summarize(
       value: {
         ...PROMPT_HEADER,
         prompt: link.value.prompt,
-        details: [`Pull request ${owner}/${name}#${number}`],
+        details: [`${capitalizeTerm(terminology.singular)} ${owner}/${name}#${number}`],
       },
     };
   }
@@ -120,7 +126,8 @@ function HostedPromptLinkLanding({
   readonly openInAppRemembered: boolean;
   readonly onChoose: (choice: "app" | "browser", remember: boolean) => void;
 }) {
-  const summary = summarize(appPath);
+  const terminology = useChangeRequestTerms();
+  const summary = summarize(appPath, terminology);
   const [remember, setRemember] = useState(false);
   const deepLink = promptLinkDeepLink(appPath);
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);

@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -17,8 +18,8 @@ import type {
 import { useRef, useState } from "react";
 import {
   capitalizeTerm,
-  sourceControlClients,
   type ChangeRequestTerminology,
+  currentChangeRequestTerms,
 } from "@t3tools/client-runtime/source-control-clients";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
@@ -189,6 +190,7 @@ export function usePullRequestActionRunner({
 export function usePullRequestCloseBatch(
   onClosed: (entry: EnvironmentPullRequestEntry, reply: PullRequestSummary | undefined) => void,
 ) {
+  const requestTerms = useChangeRequestTerms();
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const pending = useRef(new Set<string>());
   const [closingKeys, setClosingKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -218,7 +220,7 @@ export function usePullRequestCloseBatch(
         setClosingKeys(new Set(pending.current));
         if (result._tag === "Failure") {
           failures.push(
-            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(sourceControlClients.get(entry.provider).changeRequest.singular).close)}`,
+            `#${entry.number}: ${readableFailure(squashAtomCommandFailure(result), actionFailureHints(currentChangeRequestTerms().singular).close)}`,
           );
           return;
         }
@@ -231,8 +233,8 @@ export function usePullRequestCloseBatch(
       type: failures.length > 0 ? "error" : "success",
       title:
         failures.length > 0
-          ? `Closed ${closed} of ${batch.length} pull requests`
-          : `Closed ${closed} pull request${closed === 1 ? "" : "s"}`,
+          ? `Closed ${closed} of ${batch.length} ${requestTerms.plural}`
+          : `Closed ${closed} ${requestTerms.singular}${closed === 1 ? "" : "s"}`,
       ...(failures.length > 0 ? { description: failures.slice(0, 3).join("\n") } : {}),
     });
   };
@@ -278,10 +280,7 @@ export function usePullRequestHandoffs({
   // Serialize all handoffs because they check out the same pull request.
   const [handoff, setHandoff] = useState<string | null>(null);
   // Prompt links hand over a URL alone, so the URL is what names the host.
-  const terminology = (
-    (detail && sourceControlClients.findByChangeRequestUrl(detail.url)) ||
-    sourceControlClients.get(undefined)
-  ).changeRequest;
+  const terminology = currentChangeRequestTerms();
 
   // Questions must not change checkouts or create worktrees.
   const openThreadWithTask = async (

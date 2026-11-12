@@ -21,6 +21,10 @@ import {
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
+  changeRequestTerms,
+  setMergeRequestTerms,
+} from "@t3tools/client-runtime/source-control-clients";
+import {
   isAtomCommandInterrupted,
   runAtomCommand,
   squashAtomCommandFailure,
@@ -96,6 +100,7 @@ function getClientSettingsSnapshot(): ClientSettings {
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
+  setMergeRequestTerms(settings.mergeRequestTerminology);
   emitClientSettingsChange();
 }
 
@@ -329,6 +334,11 @@ export function useClientSettings<T = ClientSettings>(
     selector ?? (selectWholeClientSettings as (settings: ClientSettings) => T),
     Equal.equals,
   );
+}
+
+/** "Pull request" or "merge request", re-rendering when the user flips the setting. */
+export function useChangeRequestTerms() {
+  return changeRequestTerms(useClientSettings((settings) => settings.mergeRequestTerminology));
 }
 
 export function mergeEnvironmentSettings(
@@ -776,6 +786,7 @@ export function updateClientSettings(patch: ClientSettingsPatch): Promise<void> 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  setMergeRequestTerms(DEFAULT_CLIENT_SETTINGS.mergeRequestTerminology);
   clientSettingsHydrationStatus = "pending";
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
@@ -789,6 +800,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
 export function __setClientSettingsForTests(settings: ClientSettings): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = settings;
+  setMergeRequestTerms(settings.mergeRequestTerminology);
   clientSettingsHydrationStatus = "ready";
   clientSettingsHydrationPromise = null;
 }

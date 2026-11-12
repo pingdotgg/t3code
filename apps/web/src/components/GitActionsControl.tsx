@@ -1,4 +1,5 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
@@ -1068,8 +1069,11 @@ export default function GitActionsControl({
     reportFailure: false,
   });
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
-  const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
-  const changeRequestTerminology = sourceControlPresentation.terminology;
+  const changeRequestTerminology = useChangeRequestTerms();
+  const sourceControlPresentation = getSourceControlPresentation(
+    gitStatus?.sourceControlProvider,
+    changeRequestTerminology,
+  );
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
@@ -1177,12 +1181,14 @@ export default function GitActionsControl({
     gitStatusForActions,
     isGitActionRunning,
     hasPrimaryRemote,
+    changeRequestTerminology,
   );
   const quickAction = resolveQuickAction(
     gitStatusForActions,
     isGitActionRunning,
     isDefaultRef,
     hasPrimaryRemote,
+    changeRequestTerminology,
   );
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."

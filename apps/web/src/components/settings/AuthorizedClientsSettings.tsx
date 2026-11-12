@@ -1,4 +1,6 @@
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import { PlugIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { type ReactNode, memo, useId, useState } from "react";
 import {
@@ -590,6 +592,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   onRevokeOtherClients,
   delegatableScopes,
 }: AuthorizedClientsHeaderActionProps) {
+  const terms = useChangeRequestTerms();
   const pairingDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "remoteClients");
   const createPairingCredential = useAtomCommand(authEnvironment.createPairingCredential, {
     reportFailure: false,
@@ -763,7 +766,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                       <span className="min-w-0">
                         <span className="block text-xs font-medium text-foreground">{title}</span>
                         <span className="block text-xs leading-snug text-muted-foreground">
-                          {description}
+                          {formatChangeRequestText(description, terms)}
                         </span>
                       </span>
                     </label>

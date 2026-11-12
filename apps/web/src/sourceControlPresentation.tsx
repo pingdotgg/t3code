@@ -1,6 +1,9 @@
 import type { ElementType } from "react";
 import type { SourceControlProviderInfo } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  currentChangeRequestTerms,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import type {
   ChangeRequestTerminology,
   SourceControlDefinition,
@@ -38,23 +41,28 @@ export interface SourceControlPresentation {
 function presentDefinition(
   definition: SourceControlDefinition,
   providerName: string,
+  terminology: ChangeRequestTerminology,
 ): SourceControlPresentation {
   return {
     definition,
     providerName,
-    terminology: definition.changeRequest,
+    terminology,
     Icon: sourceControlIcon(definition),
   };
 }
 
 export function getSourceControlPresentation(
   provider: SourceControlProviderInfo | null | undefined,
+  terminology = currentChangeRequestTerms(),
 ): SourceControlPresentation {
   const definition = sourceControlClients.get(provider?.kind);
-  return presentDefinition(definition, provider?.name || definition.label);
+  return presentDefinition(definition, provider?.name || definition.label, terminology);
 }
 
-export function getSourceControlPresentationForKind(kind: string): SourceControlPresentation {
+export function getSourceControlPresentationForKind(
+  kind: string,
+  terminology = currentChangeRequestTerms(),
+): SourceControlPresentation {
   const definition = sourceControlClients.get(kind);
-  return presentDefinition(definition, definition.label);
+  return presentDefinition(definition, definition.label, terminology);
 }

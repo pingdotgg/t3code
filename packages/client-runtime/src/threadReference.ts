@@ -6,6 +6,7 @@ import type {
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
+import { currentChangeRequestTerms } from "./sourceControlClients.ts";
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
 
 export interface ThreadReferenceCopyTarget {
@@ -56,14 +57,15 @@ export function resolveThreadReferenceCopyTarget(input: {
     input.openPanelPullRequestUrl ??
     resolveThreadCurrentPullRequestLink(input.pullRequests ?? [])?.url ??
     input.linkedPullRequestUrl;
-  return pullRequestUrl
-    ? {
-        kind: "pull-request",
-        value: pullRequestUrl,
-        description: pullRequestUrl,
-        clipboardTarget: "pull request link",
-        successTitle: "PR link copied",
-        failureTitle: "Failed to copy PR link",
-      }
-    : threadChipCopyTarget(input.threadRef, input.title, input.hostedAppUrl);
+  if (!pullRequestUrl)
+    return threadChipCopyTarget(input.threadRef, input.title, input.hostedAppUrl);
+  const { shortLabel, singular } = currentChangeRequestTerms();
+  return {
+    kind: "pull-request",
+    value: pullRequestUrl,
+    description: pullRequestUrl,
+    clipboardTarget: `${singular} link`,
+    successTitle: `${shortLabel} link copied`,
+    failureTitle: `Failed to copy ${shortLabel} link`,
+  };
 }

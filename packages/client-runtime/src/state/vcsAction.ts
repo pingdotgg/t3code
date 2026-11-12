@@ -26,6 +26,7 @@ import {
   type AtomCommand,
   type AtomCommandResult,
 } from "./runtime.ts";
+import { formatChangeRequestText, mergeRequestTermsEnabled } from "../sourceControlClients.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
@@ -252,9 +253,34 @@ export function normalizeVcsActionProgressEvent(
   if (event.actionId !== transportActionId || event.cwd !== target.cwd) {
     return null;
   }
+  if (event.kind === "action_finished") {
+    const { toast, pr } = event.result;
+    return {
+      ...event,
+      actionId,
+      result: {
+        ...event.result,
+        toast: {
+          ...toast,
+          // Push summaries can contain user-authored branch names.
+          title:
+            pr.status === "created" || pr.status === "opened_existing"
+              ? formatChangeRequestText(toast.title)
+              : toast.title,
+          cta:
+            toast.cta.kind === "none"
+              ? toast.cta
+              : { ...toast.cta, label: formatChangeRequestText(toast.cta.label) },
+        },
+      },
+    };
+  }
   return {
     ...event,
     actionId,
+    ...(event.kind === "phase_started" && event.phase === "pr"
+      ? { label: formatChangeRequestText(event.label) }
+      : {}),
   };
 }
 
@@ -474,6 +500,7 @@ export function createVcsActionManager<R, E>(
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+          ...(mergeRequestTermsEnabled() ? { mergeRequestTerminology: true } : {}),
         };
         const clearOwnedState = Effect.sync(() => {
           const current = registry.get(stateAtom);

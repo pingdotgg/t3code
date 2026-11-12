@@ -26,6 +26,7 @@ import type { ComposerThreadTarget } from "~/composerDraftStore";
 import { useProjects, useQuietThreadShell } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 
 import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import {
@@ -51,6 +52,7 @@ function ThreadDetailsPrLinkRow({
   onStopWatching?: (() => void) | undefined;
   composerTarget?: ComposerThreadTarget | undefined;
 }) {
+  const terminology = useChangeRequestTerms();
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
   const project =
@@ -68,7 +70,7 @@ function ThreadDetailsPrLinkRow({
       pr={pr}
       number={link.number}
       reference={link}
-      status={prStatusIndicator(pr, linked?.sourceControlProvider)}
+      status={prStatusIndicator(pr, terminology)}
       project={project}
       label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
       openAriaLabel={link.url}
@@ -160,24 +162,17 @@ export function ThreadDetailsThreadPrRows({
   threadRef,
   project,
   branchPr = null,
-  branchSourceControlProvider,
   onActed,
   composerTarget,
 }: {
   threadRef: ScopedThreadRef;
   project: EnvironmentProject | null;
   branchPr?: VcsStatusResult["pr"];
-  branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   onActed?: () => void;
   composerTarget?: ComposerThreadTarget | undefined;
 }) {
   const thread = useQuietThreadShell(threadRef);
-  const displayed = useThreadDisplayedPullRequest(
-    threadRef.environmentId,
-    thread,
-    branchPr,
-    branchSourceControlProvider,
-  );
+  const displayed = useThreadDisplayedPullRequest(threadRef.environmentId, thread, branchPr);
   const openPrLink = useOpenPrLink(threadRef);
   const { currentLink, pr, number, url } = displayed;
   const projects = useProjects();

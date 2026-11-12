@@ -52,12 +52,6 @@ export const definition = defineSourceControl({
   label: "GitCafe",
   pickerLabel: "GitCafe",
   icon,
-  changeRequest: {
-    shortLabel: "PR",
-    shortLabelWithArticle: "a PR",
-    singular: "pull request",
-    plural: "pull requests",
-  },
   repositoryPathHint: "owner/repo",
   publicHost: "git.cafe",
   publishDescription: "git.cafe",

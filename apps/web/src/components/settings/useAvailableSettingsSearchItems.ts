@@ -1,4 +1,5 @@
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 
 import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -13,10 +14,12 @@ import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import {
   filterAvailableSettingsSearchItems,
+  formatSettingsSearchTitle,
   getThreadAutoSettlementSearchAvailability,
 } from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems() {
+  const terms = useChangeRequestTerms();
   const { environments } = useEnvironments();
   // Explicit booleans keep flags out of the filter cache so environment updates do not rebuild the list.
   const hasEnvironment =
@@ -73,5 +76,5 @@ export function useAvailableSettingsSearchItems() {
     hasFastWorktreeCheckoutEnvironment,
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
-  });
+  }).map((item) => ({ ...item, title: formatSettingsSearchTitle(item, terms) }));
 }

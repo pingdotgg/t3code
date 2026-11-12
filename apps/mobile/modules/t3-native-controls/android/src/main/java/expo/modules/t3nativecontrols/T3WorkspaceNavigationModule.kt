@@ -72,6 +72,12 @@ class T3WorkspaceNavigationModule : Module() {
       Prop("selectedTab") { view: T3WorkspaceNavigationView, value: String ->
         view.selectedTab = value
       }
+      Prop("pullRequestsTitle") { view: T3WorkspaceNavigationView, value: String ->
+        view.pullRequestsTitle = value
+      }
+      Prop("pullRequestsExpandedTitle") { view: T3WorkspaceNavigationView, value: String ->
+        view.pullRequestsExpandedTitle = value
+      }
       Prop("floating") { view: T3WorkspaceNavigationView, value: Boolean ->
         view.floating = value
         view.clipToPadding = !value
@@ -128,6 +134,8 @@ class T3WorkspaceNavigationView(
   private val onOverlayChange by EventDispatcher()
   var tabs by mutableStateOf(listOf("threads", "pullRequests", "usage", "settings"))
   var selectedTab by mutableStateOf("threads")
+  var pullRequestsTitle by mutableStateOf("Pulls")
+  var pullRequestsExpandedTitle by mutableStateOf("Pull Requests")
   var rail by mutableStateOf(false)
   var floating by mutableStateOf(false)
   var dark by mutableStateOf(false)
@@ -414,13 +422,13 @@ class T3WorkspaceNavigationView(
 
   private fun tabTitle(tab: String) = when (tab) {
     "threads" -> "Chats"
-    "pullRequests" -> "Pulls"
+    "pullRequests" -> pullRequestsTitle
     "usage" -> "Usage"
     else -> "Settings"
   }
 
   private fun expandedTabTitle(tab: String) =
-    if (tab == "pullRequests") "Pull Requests" else tabTitle(tab)
+    if (tab == "pullRequests") pullRequestsExpandedTitle else tabTitle(tab)
 
   @Composable
   private fun tabIconPainter(tab: String) = painterResource(

@@ -4,16 +4,21 @@ import {
   makeProviderSettingsSchema,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/client-runtime/source-control-clients";
+import {
+  setMergeRequestTerms,
+  UNKNOWN_SOURCE_CONTROL_CLIENT,
+} from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 
 import {
   filterAvailableSettingsSearchItems,
+  formatSettingsSearchTitle,
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
   searchSettings,
+  searchableSetting,
   SETTINGS_NAV_GROUPS,
   SETTINGS_SEARCH_ITEMS,
   sourceControlHostSearchItems,
@@ -73,6 +78,41 @@ describe("searchSettings", () => {
         scope: "environment-defaults",
       });
     }
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        const availableItems = SETTINGS_SEARCH_ITEMS.map((item) => ({
+          ...item,
+          title: formatSettingsSearchTitle(item),
+        }));
+        for (const query of [
+          "keep threads with a pr",
+          ...(enabled ? ["keep threads with an mr"] : []),
+        ]) {
+          expect(searchSettings(query, availableItems)).toContainEqual(
+            expect.objectContaining({
+              id: "keep-threads-with-pull-requests",
+              title: enabled ? "Keep threads with an MR" : "Keep threads with a PR",
+            }),
+          );
+        }
+        for (const query of ["pull requests", ...(enabled ? ["merge requests"] : [])]) {
+          expect(
+            searchSettings(query).map((item) => item.id),
+            query,
+          ).toContain("diff-layout");
+          expect(
+            searchSettings(query, [
+              { id: "requests", title: "Pull requests", to: "/settings/general" },
+            ]),
+          ).toMatchObject([
+            { id: "requests", title: enabled ? "Merge requests" : "Pull requests" },
+          ]);
+        }
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {
@@ -93,6 +133,20 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        expect(searchableSetting("merge-request-terminology").title).toBe(
+          "Use merge request terminology",
+        );
+        expect(
+          searchSettings("terminology").find((item) => item.id === "merge-request-terminology")
+            ?.title,
+        ).toBe("Use merge request terminology");
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it("matches query words across fields and ranks the strongest result first", () => {
@@ -104,6 +158,24 @@ describe("searchSettings", () => {
         .slice(0, 2)
         .map((item) => item.id),
     ).toEqual(["network-access", "connections-environment"]);
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        const queries = [
+          "pull request review guide",
+          "pr review guide",
+          ...(enabled ? ["merge request review guide", "mr review guide"] : []),
+        ];
+        for (const query of queries) {
+          expect(
+            searchSettings(query).map((item) => item.id),
+            query,
+          ).toContain("review-guides");
+        }
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it("hides desktop-only settings from browser search", () => {

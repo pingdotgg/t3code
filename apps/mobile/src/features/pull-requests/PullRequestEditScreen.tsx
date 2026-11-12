@@ -1,8 +1,6 @@
+import { useChangeRequestTerms } from "../../state/change-request-terminology";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestComment } from "@t3tools/contracts";
@@ -42,7 +40,7 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
   const updateComment = useAtomCommand(composerPullRequests.updateComment, {
     reportFailure: false,
   });
-  const singular = sourceControlClients.get(pr?.provider).changeRequest.singular;
+  const singular = useChangeRequestTerms().singular;
   const original =
     params.field === "comment"
       ? params.comment.body

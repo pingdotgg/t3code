@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "~/hooks/useSettings";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
@@ -55,13 +56,14 @@ function BoringSidebarRow() {
 }
 
 function BoringSidebarMultilineRow() {
+  const requestTerms = useChangeRequestTerms();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
       className="px-0 py-2 sm:px-0"
-      description="Show folder threads on two lines: the title, then the branch, pull request, and agent."
+      description={`Show folder threads on two lines: the title, then the branch, ${requestTerms.singular}, and agent.`}
       control={
         <Switch
           checked={settings.boringSidebarMultilineRows}

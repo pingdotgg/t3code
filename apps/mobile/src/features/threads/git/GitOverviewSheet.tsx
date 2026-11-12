@@ -1,3 +1,4 @@
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import * as Dialog from "../../../components/ui/Dialog";
 import { cn } from "../../../lib/cn";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
@@ -8,7 +9,6 @@ import {
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   CommonActions,
   StackActions,
@@ -96,7 +96,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentStatusSummary = statusSummary(gitStatus.data);
+  const terminology = useChangeRequestTerms();
+  const currentStatusSummary = statusSummary(gitStatus.data, terminology);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
@@ -104,7 +105,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
+  const menuItems = isRepo
+    ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote, terminology)
+    : [];
 
   const sheetMenuItems = menuItems.map((item) => ({
     item: {
@@ -119,12 +122,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             gitStatus: gitStatus.data,
             isBusy: busy,
             hasOriginRemote: hasPrimaryRemote,
+            terminology,
           }),
   }));
 
-  const { shortLabel, singular } = sourceControlClients.get(
-    gitStatus.data?.sourceControlProvider?.kind,
-  ).changeRequest;
+  const { shortLabel, singular } = terminology;
 
   const openExistingPr = async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;

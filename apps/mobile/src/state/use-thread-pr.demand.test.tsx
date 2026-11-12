@@ -62,6 +62,10 @@ vi.mock("./server", async () => {
   const config = Atom.make({ environment: { capabilities: { threadPullRequests: true } } });
   return { serverEnvironment: { configValueAtom: () => config } };
 });
+vi.mock("./preferences", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
+});
 
 import { ThreadPrDemandProvider } from "./thread-pr-demand";
 import { useThreadPr } from "./use-thread-pr";

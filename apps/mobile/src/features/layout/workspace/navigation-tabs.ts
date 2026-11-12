@@ -11,12 +11,18 @@ import {
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { mobilePreferencesAtom } from "../../../state/preferences";
 import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
+import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
+import { useChangeRequestTerms } from "../../../state/change-request-terminology";
 import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
 
-export const WORKSPACE_TAB_LABELS = {
-  ...NAVIGATION_TAB_LABELS,
-  ...(Platform.OS === "ios" ? { threads: "Chats", pullRequests: "PRs" } : {}),
-};
+export function useWorkspaceTabLabels() {
+  const terms = useChangeRequestTerms();
+  return {
+    ...NAVIGATION_TAB_LABELS,
+    threads: Platform.OS === "ios" ? "Chats" : NAVIGATION_TAB_LABELS.threads,
+    pullRequests: Platform.OS === "ios" ? `${terms.shortLabel}s` : capitalizeTerm(terms.plural),
+  };
+}
 
 export const NAVIGATION_TAB_ICONS = {
   threads: "text.bubble",

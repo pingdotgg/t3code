@@ -2,8 +2,10 @@ import {
   getClientSettings,
   updateClientSettings,
   useClientSettings,
+  useChangeRequestTerms,
 } from "../../hooks/useSettings";
 import { MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator } from "../ui/menu";
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import {
   isDefaultThreadDetailsVisibility,
   resolveThreadDetailsVisibility,
@@ -14,6 +16,7 @@ import {
 
 /** Menu body that shows and hides thread details items. The card's context menu and Settings share it. */
 export function ThreadDetailsItemsMenuItems() {
+  const terms = useChangeRequestTerms();
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
   return (
     <>
@@ -29,7 +32,7 @@ export function ThreadDetailsItemsMenuItems() {
               })
             }
           >
-            {item.label}
+            {formatChangeRequestText(item.label, terms)}
           </MenuCheckboxItem>
         ))}
       </MenuGroup>

@@ -28,6 +28,7 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
+import { setMergeRequestTerms } from "../sourceControlClients.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { AtomCommandResult } from "./runtime.ts";
@@ -249,6 +250,95 @@ describe("vcsActionState", () => {
       ...event,
       actionId,
     });
+
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        for (const label of [
+          "Preparing PR...",
+          "Generating PR content...",
+          "Preparing MR...",
+          "Generating MR content...",
+        ]) {
+          const prEvent = progress({
+            ...event,
+            actionId: transportActionId,
+            phase: "pr",
+            label,
+          });
+          expect(
+            normalizeVcsActionProgressEvent(target, transportActionId, actionId, prEvent),
+          ).toEqual({
+            ...prEvent,
+            actionId,
+            label: label.replace(/PR|MR/gu, enabled ? "MR" : "PR"),
+          });
+        }
+        for (const sourceTerm of ["PR", "MR"]) {
+          const url = `https://git.example.test/${sourceTerm}/pull/12`;
+          const terminalResult: GitRunStackedActionResult = {
+            ...result,
+            commit: { ...result.commit, subject: `Fix ${sourceTerm} rendering` },
+            pr: { status: "opened_existing", url, title: `Fix ${sourceTerm} rendering` },
+            toast: {
+              title: `Opened ${sourceTerm} #12`,
+              description: `Fix ${sourceTerm} rendering`,
+              cta: { kind: "open_pr", label: `View ${sourceTerm}`, url },
+            },
+          };
+          expect(
+            normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
+              cwd,
+              action,
+              actionId: transportActionId,
+              kind: "action_finished",
+              result: terminalResult,
+            }),
+          ).toEqual({
+            cwd,
+            action,
+            actionId,
+            kind: "action_finished",
+            result: {
+              ...terminalResult,
+              toast: {
+                ...terminalResult.toast,
+                title: enabled ? "Opened MR #12" : "Opened PR #12",
+                cta: { kind: "open_pr", label: enabled ? "View MR" : "View PR", url },
+              },
+            },
+          });
+          expect(
+            normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
+              cwd,
+              action,
+              actionId: transportActionId,
+              kind: "action_finished",
+              result: {
+                ...result,
+                toast: {
+                  title: `Pushed to feature/${sourceTerm}`,
+                  cta: {
+                    kind: "run_action",
+                    label: `Create ${sourceTerm}`,
+                    action: { kind: "create_pr" },
+                  },
+                },
+              },
+            }),
+          ).toMatchObject({
+            result: {
+              toast: {
+                title: `Pushed to feature/${sourceTerm}`,
+                cta: { label: enabled ? "Create MR" : "Create PR" },
+              },
+            },
+          });
+        }
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it.effect("consumes progress through the terminal event and returns its result", () =>

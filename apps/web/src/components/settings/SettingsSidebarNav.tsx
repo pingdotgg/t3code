@@ -38,6 +38,8 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
 
 import { cn } from "../../lib/utils";
+import { useChangeRequestTerms } from "~/hooks/useSettings";
+import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -130,6 +132,7 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const terms = useChangeRequestTerms();
   const gt = useGT();
   const m = useMessages();
   const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
@@ -356,7 +359,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           {m(item.title)}
                         </span>
                         <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
-                          {m(SETTINGS_SECTION_LABELS[item.to])}
+                          {formatChangeRequestText(m(SETTINGS_SECTION_LABELS[item.to]), terms)}
                         </span>
                       </span>
                     </SidebarMenuButton>
@@ -413,7 +416,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                       !compactSearchOpen && "max-md:sr-only",
                                     )}
                                   >
-                                    {m(SETTINGS_SECTION_LABELS[to])}
+                                    {formatChangeRequestText(m(SETTINGS_SECTION_LABELS[to]), terms)}
                                   </span>
                                 </SidebarMenuButton>
                               </SidebarMenuItem>
