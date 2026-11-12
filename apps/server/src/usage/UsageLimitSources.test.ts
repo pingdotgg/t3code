@@ -226,6 +226,7 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
       Layer.succeed(SecretResolver.SecretResolver, {
         read: (references) => Effect.succeed(references.map(() => "key")),
         invalidate: () => Effect.void,
+        label: (provider) => Effect.succeed(provider),
       }),
       ServerSettings.layerTest({
         usageLimitSources: {
@@ -313,6 +314,7 @@ it.effect("drops a queue read that lands after Thread accounts was switched off"
       Layer.succeed(SecretResolver.SecretResolver, {
         read: (references) => Effect.succeed(references.map(() => undefined)),
         invalidate: () => Effect.void,
+        label: (provider) => Effect.succeed(provider),
       }),
       ServerSettings.layerTest({
         usageLimitSources: {
