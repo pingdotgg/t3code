@@ -9,18 +9,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  deriveResumableRunId,
-  deriveThreadStructureRuntime,
-} from "@t3tools/client-runtime/state/thread-execution";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import {
-  type ChatAttachment,
-  type EnvironmentId,
-  MessageId,
-  type RunId,
-  type ThreadId,
-} from "@t3tools/contracts";
+import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -41,7 +31,6 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { uuidv4 } from "../../lib/uuid";
 import { useAssetUrl } from "../../state/assets";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -55,7 +44,6 @@ import {
   buildCancelQueuedRunCommand,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
-import { resumeThread } from "./resume-thread";
 
 const REMOVE_ACTION_WIDTH = 76;
 const THUMBNAIL_LIMIT = 3;
@@ -149,23 +137,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
-  const continueRun = useAtomCommand(threadEnvironment.startTurn, {
-    label: "continue thread",
-    reportFailure: false,
-  });
-  const setRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
-    label: "set thread runtime mode",
-    reportFailure: false,
-  });
-  const setInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
-    label: "set thread interaction mode",
-    reportFailure: false,
-  });
   const resumeHeldQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
     label: "resume queue",
     reportFailure: false,
   });
-  const quietThread = useAtomValue(environmentThreadDetails.quietThreadAtom(target));
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
@@ -251,41 +226,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               if (busyRef.current) return;
               busyRef.current = true;
               setResuming(true);
-              const resumableRunId = quietThread
-                ? deriveResumableRunId(
-                    quietThread.projection,
-                    deriveThreadStructureRuntime(quietThread.projection),
-                  )
-                : null;
-              // Only a usage-limited run holds queue.resume; a stopped run's queue resumes as is.
-              const limitedRunId =
-                quietThread?.projection.runs.find((run) => run.id === resumableRunId)?.status ===
-                "failed"
-                  ? resumableRunId
-                  : null;
-              const result = quietThread
-                ? await resumeThread({
-                    thread: {
-                      environmentId: target.environmentId,
-                      id: target.threadId,
-                      runtimeMode: quietThread.projection.thread.runtimeMode,
-                      interactionMode: quietThread.projection.thread.interactionMode,
-                    },
-                    resumableRunId: limitedRunId,
-                    queueHeld: true,
-                    runtimeMode: quietThread.projection.thread.runtimeMode,
-                    interactionMode: quietThread.projection.thread.interactionMode,
-                    modelSelection: null,
-                    messageId: MessageId.make(uuidv4()),
-                    createdAt: new Date().toISOString(),
-                    setRuntimeMode,
-                    setInteractionMode,
-                    startTurn: continueRun,
-                    resumeQueue: resumeHeldQueue,
-                  })
-                : await resumeHeldQueue({ ...target, input: { threadId: target.threadId } });
+              const result = await resumeHeldQueue({
+                ...target,
+                input: { threadId: target.threadId },
+              });
               busyRef.current = false;
               setResuming(false);
+              // A usage limit holds the queue until the composer's Resume thread continues the run.
               if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
                 const error = squashAtomCommandFailure(result);
                 Dialog.alert(
