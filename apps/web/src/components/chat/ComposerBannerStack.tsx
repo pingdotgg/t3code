@@ -6,7 +6,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 import { observeResize } from "~/lib/observeResize";
-import { cn } from "~/lib/utils";
 
 /**
  * Where a notice sits in the stack. The machine comes first, then what needs you; the
@@ -225,57 +224,45 @@ function NoticeCard({
       textSize={item.textSize ?? "compact"}
       detached={detached}
       density="comfortable"
-      // Body-size titles take an icon as large as the dismiss button's.
-      className={
-        item.textSize === "body" ? "[--composer-banner-icon-column:--spacing(3.5)]" : undefined
-      }
       data-chat-composer-collapsed-controls="true"
     >
       <ComposerBanner.Row layout="wrap-actions">
-        {/* Narrow cards stack the title and dismiss over the buttons, and drop the description. */}
-        <ComposerBanner.Icon
-          className={cn(
-            "h-lh @min-[480px]:h-7 @min-[480px]:sm:h-6",
-            item.textSize === "body" && "[&>svg]:size-3.5",
-          )}
-        >
-          {item.icon}
-        </ComposerBanner.Icon>
-        <span className="flex min-w-0 flex-col items-start gap-2 @min-[480px]:flex-row @min-[480px]:flex-wrap @min-[480px]:items-center @min-[480px]:gap-x-2 @min-[480px]:gap-y-1.5">
-          <ComposerBanner.Content className="w-full max-w-full @max-[480px]:**:data-notice-details:hidden @min-[480px]:min-h-7 @min-[480px]:w-auto @min-[480px]:grow-999 @min-[480px]:whitespace-nowrap @min-[480px]:sm:min-h-6">
-            {item.description ? (
-              <>
-                <span className="min-w-0 text-foreground @min-[480px]:truncate">{item.title}</span>
-                <NoticeText
-                  detailsLabel={
-                    typeof item.title === "string"
-                      ? `Show details: ${item.title}`
-                      : "Show notice details"
-                  }
-                  details={item.descriptionDetails}
-                  detailsHeading={<span className="block text-foreground">{item.title}</span>}
-                  className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[480px]:sr-only"
-                >
-                  {item.description}
-                </NoticeText>
-              </>
-            ) : (
+        <ComposerBanner.Icon className="h-lh @min-[480px]:h-auto">{item.icon}</ComposerBanner.Icon>
+        <ComposerBanner.Content className="flex-1 @max-[480px]:**:data-notice-details:hidden @min-[480px]:whitespace-nowrap">
+          {item.description ? (
+            <>
+              <span className="min-w-0 text-foreground @min-[480px]:truncate">{item.title}</span>
               <NoticeText
                 detailsLabel={
                   typeof item.title === "string"
-                    ? `Show full title: ${item.title}`
-                    : "Show title details"
+                    ? `Show details: ${item.title}`
+                    : "Show notice details"
                 }
-                className="min-w-0 text-foreground @min-[480px]:truncate"
+                details={item.descriptionDetails}
+                detailsHeading={<span className="block text-foreground">{item.title}</span>}
+                className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[480px]:sr-only"
               >
-                {item.title}
+                {item.description}
               </NoticeText>
-            )}
-          </ComposerBanner.Content>
-          {item.actions ? (
-            <span className="flex flex-wrap items-center gap-1.5">{item.actions}</span>
-          ) : null}
-        </span>
+            </>
+          ) : (
+            <NoticeText
+              detailsLabel={
+                typeof item.title === "string"
+                  ? `Show full title: ${item.title}`
+                  : "Show title details"
+              }
+              className="min-w-0 text-foreground @min-[480px]:truncate"
+            >
+              {item.title}
+            </NoticeText>
+          )}
+        </ComposerBanner.Content>
+        {item.actions ? (
+          <span className="order-last flex basis-full flex-wrap items-center justify-end gap-2 @min-[480px]:order-none @min-[480px]:basis-auto @min-[480px]:gap-1.5">
+            {item.actions}
+          </span>
+        ) : null}
         {overflow || item.onDismiss ? (
           <ComposerBanner.Actions className="h-lh flex-nowrap @min-[480px]:h-auto">
             {overflow}

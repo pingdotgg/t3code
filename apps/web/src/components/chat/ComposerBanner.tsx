@@ -133,8 +133,9 @@ function Row({
       "group/banner-row grid min-h-4 w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-2 text-start",
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-xl [&:is(button)]:hover:bg-foreground/5 [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
-      // Buttons wrap below the title, so the icon and the end controls hold the first line.
-      layout === "wrap-actions" && "items-start",
+      // Narrow notices follow the request card: a header row over a right-aligned footer of buttons.
+      layout === "wrap-actions" &&
+        "flex flex-wrap items-start gap-y-2 @min-[480px]:flex-nowrap @min-[480px]:items-center",
       layout === "approval" && "items-start gap-x-2 gap-y-3",
       className,
     ),
