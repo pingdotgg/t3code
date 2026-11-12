@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -187,7 +188,10 @@ describe("ManagedTunnelLimits", () => {
         Effect.promise(() => PGlite.create()),
         (client) => Effect.promise(() => client.close()),
       );
-      const migrationsDir = new URL("../../migrations/postgres/", import.meta.url).pathname;
+      const path = yield* Path.Path;
+      const migrationsDir = yield* path.fromFileUrl(
+        new URL("../../migrations/postgres/", import.meta.url),
+      );
       const migrations = (yield* fs.readDirectory(migrationsDir)).toSorted();
       const applyMigrations = (names: ReadonlyArray<string>) =>
         Effect.forEach(names, (name) =>
