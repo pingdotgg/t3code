@@ -44,18 +44,39 @@ tasks.register('extractAndroidTestJars') {
 }
 
 def moduleRoot = file('../..')
+// Count decoder entry without replacing the production executor, parser, or lifecycle.
+def instrumentedView = layout.buildDirectory.file('token-fixture/T3ReviewDiffView.kt')
+tasks.register('instrumentTokenFixture') {
+  def original = file("${moduleRoot}/android/src/main/java/expo/modules/t3reviewdiff/T3ReviewDiffView.kt")
+  inputs.file original
+  outputs.file instrumentedView
+  doLast {
+    def source = original.text
+    def decode = '      val decodedTokens = parseTokensObject(value)'
+    def publish = '        canvasView.tokensByRowId = decodedTokens'
+    assert source.count(decode) == 1
+    assert source.count(publish) == 1
+    source = source.replace(decode, '      TokenDecodeProbe.enter()\n' + decode)
+    source = source.replace(publish, publish + '\n        TokenDecodeProbe.publish()')
+    def destination = instrumentedView.get().asFile
+    destination.parentFile.mkdirs()
+    destination.text = source
+  }
+}
+
 def sources = files(
+  instrumentedView,
   fileTree('stubs') { include '**/*.kt' },
   fileTree('src/test/kotlin') { include '**/*.kt' },
   fileTree("${moduleRoot}/android/src/test/java") { include '**/*.kt' },
   fileTree("${moduleRoot}/android/src/main/java/expo/modules/t3reviewdiff") {
     include '**/*.kt'
-    exclude '**/T3ReviewDiffModule.kt'
+    exclude '**/T3ReviewDiffModule.kt', '**/T3ReviewDiffView.kt'
   },
 )
 
 tasks.register('compileRegression', JavaExec) {
-  dependsOn 'extractAndroidTestJars'
+  dependsOn 'extractAndroidTestJars', 'instrumentTokenFixture'
   classpath = configurations.compiler
   mainClass = 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler'
   inputs.files sources, configurations.testCompileClasspath

@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -125,7 +126,7 @@ function extractIconHref(source: string): string | null {
   return null;
 }
 
-const optionOnNotFound = <A, R>(
+export const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
@@ -304,7 +305,10 @@ export const make = Effect.gen(function* () {
       timeToLive: Exit.match({
         onSuccess: (value: string | null) =>
           value === null ? FAVICON_NEGATIVE_CACHE_TTL : FAVICON_POSITIVE_CACHE_TTL,
-        onFailure: () => Duration.zero,
+        onFailure: (cause) =>
+          Option.exists(Cause.findErrorOption(cause), isMissingWorkspaceRoot)
+            ? FAVICON_NEGATIVE_CACHE_TTL
+            : Duration.zero,
       }),
     },
   );

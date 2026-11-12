@@ -11,9 +11,9 @@ export interface AgentActivityAlert {
   readonly body: string;
 }
 
-export const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
+const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
 
-export function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean {
+function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean {
   const timestamp = Option.getOrNull(DateTime.make(updatedAt));
   return (
     timestamp !== null && nowMs - timestamp.epochMilliseconds <= TERMINAL_NOTIFICATION_FRESHNESS_MS
@@ -45,7 +45,7 @@ function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
 
-export function alertAllowedForPhase(
+function alertAllowedForPhase(
   preferences: RelayAgentAwarenessPreferences | null,
   phase: string,
 ): boolean {
@@ -78,7 +78,7 @@ export function attentionTransitionRows(input: TransitionInput) {
   );
 }
 
-export function newlyTerminalRows(
+function newlyTerminalRows(
   previousAggregate: RelayAgentActivityAggregateState | null,
   nextAggregate: RelayAgentActivityAggregateState,
   includeUnobserved = false,

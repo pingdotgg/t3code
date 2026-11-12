@@ -63,10 +63,7 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
 
 export function resolveRelayTracingConfig() {
   // The relay exporter is created during module initialization, so this must be synchronous.
-  if (
-    typeof window !== "undefined" &&
-    window.desktopBridge?.getRelayTelemetryEnabled?.() === false
-  ) {
+  if (typeof window !== "undefined" && window.desktopBridge?.getRelayTelemetryEnabled() === false) {
     return null;
   }
   const { relayTracing } = resolveCloudPublicConfig();
