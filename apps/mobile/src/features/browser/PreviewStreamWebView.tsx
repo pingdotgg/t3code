@@ -9,6 +9,7 @@ import {
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   type PreviewStreamInput,
+  type PreviewStreamSelectMenu,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
 import {
@@ -19,11 +20,13 @@ import {
   useState,
   type Ref,
 } from "react";
-import { Platform, Pressable, TextInput, View } from "react-native";
+import { FlatList, Platform, Pressable, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
 import { AppText } from "../../components/ui/AppText";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { Sheet } from "../../components/ui/Sheet";
 import { PdfPreview } from "../../components/PdfPreview";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
@@ -256,6 +259,7 @@ function PreviewStreamDocumentView({
       ),
     );
   };
+  const [selectMenu, setSelectMenu] = useState<PreviewStreamSelectMenu | null>(null);
   const command = (input: PreviewStreamInput) =>
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
@@ -282,6 +286,7 @@ function PreviewStreamDocumentView({
     onStreamingChange?.(false);
     setControl(null);
     setFileChooser(null);
+    setSelectMenu(null);
     onControl?.(null);
     setError(message);
     setStatus("error");
@@ -369,6 +374,7 @@ function PreviewStreamDocumentView({
             switch (message.type) {
               case "control": {
                 setControl(message);
+                if (message.controller !== "you") setSelectMenu(null);
                 const previousDialog = dialogRef.current;
                 dialogRef.current = message.dialog;
                 setPromptText((draft) => previewPromptText(previousDialog, message.dialog, draft));
@@ -400,6 +406,9 @@ function PreviewStreamDocumentView({
                 return;
               case "fileChooser":
                 setFileChooser(message.chooser);
+                return;
+              case "selectMenu":
+                setSelectMenu(message.menu);
                 return;
               case "pictureInPicture":
                 onPictureInPicture?.(message, message.detail);
@@ -442,6 +451,37 @@ function PreviewStreamDocumentView({
             />
           </View>
         </View>
+      ) : null}
+      {!compact && selectMenu && control?.controller === "you" ? (
+        <Sheet
+          key={selectMenu.id}
+          title="Choose an option"
+          onClose={() =>
+            setSelectMenu((current) => (current?.id === selectMenu.id ? null : current))
+          }
+        >
+          <FlatList
+            data={selectMenu.options}
+            // The page answers by option index.
+            keyExtractor={(_, index) => String(index)}
+            className="flex-1"
+            nestedScrollEnabled
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerClassName="p-4"
+            renderItem={({ item, index }) => (
+              <ListChoiceRow
+                label={item.label}
+                selected={index === selectMenu.selectedIndex}
+                separated={index > 0}
+                disabled={item.disabled}
+                onPress={() => {
+                  setSelectMenu(null);
+                  command({ type: "selectMenu", id: selectMenu.id, index });
+                }}
+              />
+            )}
+          />
+        </Sheet>
       ) : null}
       {!compact && control?.dialog ? (
         <View className="absolute inset-x-3 top-16 gap-3 rounded-xl border border-secondary-border bg-secondary p-4">

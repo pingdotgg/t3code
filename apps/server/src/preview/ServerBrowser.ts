@@ -154,6 +154,75 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
   return !nonText.includes(element.type) && !element.disabled && !element.readOnly;
 }`;
+// Larger selects keep the real press: their options would not fit the 8 MB viewer socket bound.
+const SELECT_MENU_OPTION_LIMIT = 10_000;
+const SELECT_MENU_LABEL_LIMIT = 150;
+/**
+ * Guards the dropdown select at a viewport point so the trusted press that follows runs page
+ * handlers, then is cancelled after them; `pressed` records whether the page cancelled it first.
+ * Returns null where the native popup should open, including selects in frames.
+ */
+const GUARD_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
+  let element = document.elementFromPoint(x, y);
+  while (element && element.shadowRoot) {
+    const inner = element.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === element) break;
+    element = inner;
+  }
+  if (element && element.tagName === "OPTION") element = element.closest("select");
+  if (!element || element.tagName !== "SELECT") return null;
+  if (element.multiple || element.size > 1 || element.matches(":disabled")) return null;
+  // A customizable select draws its picker in the page, where the stream already shows it.
+  if (
+    getComputedStyle(element).appearance === "base-select" &&
+    getComputedStyle(element, "::picker(select)").appearance === "base-select"
+  )
+    return null;
+  if (element.options.length > optionLimit) return null;
+  const state = { select: element, pressed: false };
+  const guard = (event) => {
+    if (!event.composedPath().includes(element)) return;
+    state.pressed = !event.defaultPrevented;
+    event.preventDefault();
+    if (state.pressed) element.focus({ preventScroll: true });
+  };
+  addEventListener("mousedown", guard);
+  state.stop = () => removeEventListener("mousedown", guard);
+  return state;
+}`;
+/** Describes a pressed select in viewport CSS px and keeps the offered options. */
+const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
+  const select = this.select;
+  // Page handlers ran in between: they may have added options or removed the select.
+  if (!this.pressed || !select.isConnected || !select.ownerDocument.defaultView) return null;
+  if (select.options.length > optionLimit) return null;
+  const { left, top, width, height } = select.getBoundingClientRect();
+  const view = select.ownerDocument.defaultView;
+  const shown = (element) => !element.hidden && view.getComputedStyle(element).display !== "none";
+  this.offered = Array.from(select.options).filter(
+    (option) => shown(option) && (option.parentElement.tagName !== "OPTGROUP" || shown(option.parentElement)),
+  );
+  return {
+    options: this.offered.map((option) => ({
+      label: option.label.slice(0, labelLimit),
+      disabled: option.matches(":disabled"),
+    })),
+    selectedIndex: this.offered.indexOf(select.options[select.selectedIndex]),
+    x: left,
+    y: top,
+    width,
+    height,
+  };
+}`;
+const CHOOSE_SELECT_OPTION_SCRIPT = `function (index) {
+  const { select, offered } = this;
+  const option = offered && offered[index];
+  if (!option || !option.isConnected || !select.ownerDocument.defaultView || option.closest("select") !== select) return;
+  if (option.matches(":disabled") || select.matches(":disabled") || option.selected) return;
+  option.selected = true;
+  select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
@@ -234,6 +303,17 @@ export type ServerBrowserViewerOutput =
       readonly accept: string;
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
+  | {
+      readonly _tag: "selectMenu";
+      readonly id: string;
+      readonly options: ReadonlyArray<{ readonly label: string; readonly disabled: boolean }>;
+      readonly selectedIndex: number;
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    }
+  | { readonly _tag: "selectMenuClosed"; readonly id: string }
   | { readonly _tag: "popup"; readonly tabId: string }
   | {
       readonly _tag: "download";
@@ -294,6 +374,14 @@ interface ViewerState {
   readonly canOperate: boolean;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
+  /** Handle for the guarded select under a held left press; its release offers the menu. */
+  selectPress: string | null;
+  /** Handle for the select and options this viewer was last offered; only that offer answers. */
+  selectMenu: {
+    readonly id: string;
+    readonly objectId: string;
+    readonly session: CDPSession;
+  } | null;
   readonly push: (output: ServerBrowserViewerOutput) => void;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
@@ -1023,6 +1111,10 @@ const make = Effect.gen(function* () {
     page.on("load", () => {
       tab.loading = false;
       void reportLoaded(tab);
+    });
+    // frameNavigated is cross-document only; a select's handle dies with its document.
+    cdp.on("Page.frameNavigated", ({ frame }) => {
+      if (!frame.parentId) for (const viewer of tab.viewers) withdrawSelectMenu(viewer);
     });
     page.on("framenavigated", (frame) => {
       const open = tab.fileChooser;
@@ -2628,7 +2720,54 @@ const make = Effect.gen(function* () {
         .catch(constVoid);
     }
     viewer.pressedButtons.clear();
+    const press = viewer.selectPress;
+    viewer.selectPress = null;
+    if (press) releaseSelectHandle(viewer, session, press);
+    withdrawSelectMenu(viewer);
     viewer.requestedSize = null;
+  };
+
+  const releaseSelectHandle = (viewer: ViewerState, session: CDPSession, objectId: string) => {
+    if (objectId === viewer.selectPress || objectId === viewer.selectMenu?.objectId) return;
+    void session.send("Runtime.releaseObject", { objectId }).catch(constVoid);
+  };
+
+  const withdrawSelectMenu = (viewer: ViewerState) => {
+    const offer = viewer.selectMenu;
+    if (!offer) return;
+    viewer.selectMenu = null;
+    viewer.push({ _tag: "selectMenuClosed", id: offer.id });
+    releaseSelectHandle(viewer, offer.session, offer.objectId);
+  };
+
+  // Chromium draws a select's popup outside the page, where the screencast never sees it, and on
+  // a desktop host it is a native menu CDP cannot dismiss, so the press must not open it.
+  const guardSelectPress = async (session: CDPSession, x: number, y: number) => {
+    const { result } = await session.send("Runtime.evaluate", {
+      expression: `(${GUARD_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${SELECT_MENU_OPTION_LIMIT})`,
+    });
+    return result.objectId ?? null;
+  };
+
+  // Offered after the release, so options a page adds or replaces on mousedown or click count.
+  const offerSelectMenu = async (session: CDPSession, viewer: ViewerState, objectId: string) => {
+    const described = await session
+      .send("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: OFFER_SELECT_MENU_SCRIPT,
+        arguments: [{ value: SELECT_MENU_LABEL_LIMIT }, { value: SELECT_MENU_OPTION_LIMIT }],
+        returnByValue: true,
+      })
+      .catch(() => null);
+    const menu = described?.result.value as Omit<
+      Extract<ServerBrowserViewerOutput, { _tag: "selectMenu" }>,
+      "_tag" | "id"
+    > | null;
+    if (!menu) return;
+    const previous = viewer.selectMenu;
+    viewer.selectMenu = { id: NodeCrypto.randomUUID(), objectId, session };
+    if (previous) releaseSelectHandle(viewer, previous.session, previous.objectId);
+    viewer.push({ _tag: "selectMenu", id: viewer.selectMenu.id, ...menu });
   };
 
   const dispatchViewerInput = async (
@@ -2643,24 +2782,55 @@ const make = Effect.gen(function* () {
     switch (message.type) {
       case "mouse": {
         const action = message.action;
+        const left = message.button === "left";
+        if (left && action === "down") {
+          const stale = viewer.selectPress;
+          viewer.selectPress = null;
+          if (stale) releaseSelectHandle(viewer, session, stale);
+          if (!tab.dialog) {
+            viewer.selectPress = await guardSelectPress(
+              session,
+              num(message.x),
+              num(message.y),
+            ).catch(() => null);
+          }
+        }
+        const guarded = left && action === "down" ? viewer.selectPress : null;
         const type =
           action === "down" ? "mousePressed" : action === "up" ? "mouseReleased" : "mouseMoved";
         const button = ["none", "left", "middle", "right"].includes(String(message.button))
           ? (message.button as "none" | "left" | "middle" | "right")
           : "none";
-        await session.send("Input.dispatchMouseEvent", {
-          type,
-          x: num(message.x),
-          y: num(message.y),
-          button,
-          buttons: num(message.buttons),
-          clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
-          modifiers,
-        });
+        try {
+          await session.send("Input.dispatchMouseEvent", {
+            type,
+            x: num(message.x),
+            y: num(message.y),
+            button,
+            buttons: num(message.buttons),
+            clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
+            modifiers,
+          });
+        } finally {
+          if (guarded) {
+            await session
+              .send("Runtime.callFunctionOn", {
+                objectId: guarded,
+                functionDeclaration: "function () { this.stop(); }",
+              })
+              .catch(constVoid);
+          }
+        }
         if (button !== "none") {
           if (action === "down")
             viewer.pressedButtons.set(button, { x: num(message.x), y: num(message.y) });
           else if (action === "up") viewer.pressedButtons.delete(button);
+        }
+        const press = left && action === "up" ? viewer.selectPress : null;
+        if (press) {
+          viewer.selectPress = null;
+          await offerSelectMenu(session, viewer, press);
+          releaseSelectHandle(viewer, session, press);
         }
         return;
       }
@@ -2762,6 +2932,21 @@ const make = Effect.gen(function* () {
         }
         tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
+      case "selectMenu": {
+        const offer = viewer.selectMenu;
+        if (!offer || message.id !== offer.id || typeof message.index !== "number") return;
+        viewer.selectMenu = null;
+        await session
+          .send("Runtime.callFunctionOn", {
+            objectId: offer.objectId,
+            functionDeclaration: CHOOSE_SELECT_OPTION_SCRIPT,
+            arguments: [{ value: message.index }],
+            userGesture: true,
+          })
+          .catch(constVoid);
+        releaseSelectHandle(viewer, session, offer.objectId);
+        return;
+      }
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);
@@ -2826,13 +3011,25 @@ const make = Effect.gen(function* () {
       canOperate: input.canOperate,
       pressedKeys: new Map(),
       pressedButtons: new Map(),
+      selectPress: null,
+      selectMenu: null,
       push: (next) => {
         // Dropped frames must still release Chromium.
         if (Queue.offerUnsafe(output, next)) return;
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
-        else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
+        else if (
+          [
+            "gone",
+            "reconnect",
+            "control",
+            "viewport",
+            "fileChooser",
+            "selectMenu",
+            "selectMenuClosed",
+          ].includes(next._tag)
+        ) {
           const dropped = runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];
