@@ -7435,7 +7435,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
       )`;
     };
-    // The newest run not held or removed before it started, matching latestUnheldRun.
+    // The newest run not held or outlived before it started, matching latestUnheldRun.
     const presentedShellRunId = (threadId: Statement.Fragment) => sql`(
       SELECT candidate.run_id
       FROM orchestration_v2_projection_runs candidate
@@ -7447,6 +7447,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND NOT (
           candidate.status = 'cancelled'
           AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
+          AND candidate.completed_at IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs earlier
+            WHERE earlier.thread_id = candidate.thread_id
+              AND earlier.ordinal < candidate.ordinal
+              AND earlier.status <> 'queued'
+              AND (
+                earlier.completed_at IS NULL
+                OR julianday(earlier.completed_at) >= julianday(candidate.completed_at)
+              )
+          )
         )
         AND NOT ${isSilentShellRun("candidate")}
       ORDER BY candidate.ordinal DESC, candidate.run_id DESC
