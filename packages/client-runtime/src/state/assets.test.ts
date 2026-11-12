@@ -286,20 +286,23 @@ describe("desktop-local media fallback", () => {
       [remote, yield* supervisor(remote)],
       [local, yield* supervisor(local)],
     ]);
+    type Registry = EnvironmentRegistry.EnvironmentRegistry["Service"];
+    const run: Registry["run"] = (environmentId, effect) =>
+      Effect.provideService(
+        effect,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisors.get(environmentId)!,
+      );
+    const followStream: Registry["followStream"] = (environmentId, stream) =>
+      Stream.provideService(
+        stream,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisors.get(environmentId)!,
+      );
     const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
-      run: (environmentId, effect) =>
-        Effect.provideService(
-          effect,
-          EnvironmentSupervisor.EnvironmentSupervisor,
-          supervisors.get(environmentId)!,
-        ),
-      followStream: (environmentId, stream) =>
-        Stream.provideService(
-          stream,
-          EnvironmentSupervisor.EnvironmentSupervisor,
-          supervisors.get(environmentId)!,
-        ),
-    } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      run,
+      followStream,
+    } as unknown as Registry);
     const registry = AtomRegistry.make();
     yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
     const atoms = createAssetEnvironmentAtoms(
