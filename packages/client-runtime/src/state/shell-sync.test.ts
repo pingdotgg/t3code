@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
@@ -1151,8 +1152,22 @@ describe("environment shell cold start", () => {
   };
   const RECENT_ORIGIN = { ...CURRENT_ORIGIN, snapshotAt: NOW - HOUR };
 
+  // A server that names its shell flags in the descriptor, and the matching live config.
+  const FAMILY_DESCRIPTOR = {
+    serverVersion: "1.0.0",
+    capabilities: { shellThreadFamilies: true, shellOlderSettled: true },
+  } as ExecutionEnvironmentDescriptor;
+  const FAMILY_CONFIG = {
+    shellThreadFamilies: true,
+    shellOlderSettled: true,
+    environment: { serverVersion: "1.0.0" },
+  };
+  const FAMILY_FLAGS = { omitIdleSubagents: true, omitOlderSettled: true };
+
   const makeColdStart = Effect.fn("test.makeColdStartShell")(function* (
     origin: Persistence.ShellCacheOrigin | undefined,
+    // Set for a connection that is prepared but has no session yet.
+    early?: { readonly serverResumes: boolean },
   ) {
     yield* TestClock.setTime(NOW);
     const subscriptions = yield* Queue.unbounded<{
@@ -1164,6 +1179,7 @@ describe("environment shell cold start", () => {
       readonly origin: Persistence.ShellCacheOrigin | undefined;
     }>();
     const httpLoads = yield* Ref.make(0);
+    const loadOptions = yield* Queue.unbounded<ShellSnapshotLoader.ShellSnapshotOptions>();
     const client = {
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: unknown) =>
         Stream.unwrap(
@@ -1174,12 +1190,18 @@ describe("environment shell cold start", () => {
           }),
         ),
     } as unknown as WsRpcProtocolClient;
-    const activeSession = yield* SubscriptionRef.make(Option.some(session(client)));
+    const activeSession = yield* SubscriptionRef.make(
+      early === undefined ? Option.some(session(client)) : Option.none<RpcSession.RpcSession>(),
+    );
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
       target: TARGET,
       state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
       session: activeSession,
-      prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+      prepared: yield* SubscriptionRef.make(
+        Option.some(
+          early === undefined ? PREPARED : { ...PREPARED, descriptor: FAMILY_DESCRIPTOR },
+        ),
+      ),
       connect: Effect.void,
       disconnect: Effect.void,
       retryNow: Effect.void,
@@ -1205,10 +1227,19 @@ describe("environment shell cold start", () => {
       clear: () => Effect.void,
     });
     const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
-      load: () =>
-        Ref.updateAndGet(httpLoads, (count) => count + 1).pipe(
+      load: (_prepared, options = {}) =>
+        Queue.offer(loadOptions, options).pipe(
+          Effect.andThen(Ref.updateAndGet(httpLoads, (count) => count + 1)),
           Effect.map((count) =>
-            Option.some({ ...v2ShellSnapshot, snapshotSequence: HTTP_SEQUENCE + count - 1 }),
+            Option.some<ShellSnapshotLoader.ShellHttpAnswer>(
+              early?.serverResumes === true && options.resumeFrom !== undefined
+                ? { resumable: true }
+                : {
+                    ...v2ShellSnapshot,
+                    snapshotSequence: HTTP_SEQUENCE + count - 1,
+                    projectIdentities: `identities-${count}`,
+                  },
+            ),
           ),
         ),
     });
@@ -1218,9 +1249,16 @@ describe("environment shell cold start", () => {
       Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
     );
     return {
+      shellState,
       subscriptions,
       saved,
       httpLoads,
+      loadOptions,
+      connect: (config: object) =>
+        SubscriptionRef.set(
+          activeSession,
+          Option.some({ ...session(client), initialConfig: Effect.succeed(config as never) }),
+        ),
       reconnect: SubscriptionRef.set(activeSession, Option.some(session(client))),
       liveAt: (sequence: number) =>
         SubscriptionRef.changes(shellState).pipe(
@@ -1282,6 +1320,85 @@ describe("environment shell cold start", () => {
         });
       }
     }),
+  );
+
+  it.effect.each([
+    {
+      label: "no rows to resume",
+      origin: undefined,
+      serverResumes: false,
+      config: FAMILY_CONFIG,
+      loads: [FAMILY_FLAGS],
+      subscribes: { afterSequence: HTTP_SEQUENCE, knownProjectIdentities: "identities-1" },
+    },
+    {
+      label: "rows the server can replay from",
+      origin: { ...RECENT_ORIGIN, ...FAMILY_FLAGS },
+      serverResumes: true,
+      config: FAMILY_CONFIG,
+      loads: [{ ...FAMILY_FLAGS, resumeFrom: CACHED_SEQUENCE }],
+      subscribes: { afterSequence: CACHED_SEQUENCE, httpSnapshotFallback: true },
+    },
+    {
+      label: "rows the server cannot replay from",
+      origin: { ...RECENT_ORIGIN, ...FAMILY_FLAGS },
+      serverResumes: false,
+      config: FAMILY_CONFIG,
+      loads: [{ ...FAMILY_FLAGS, resumeFrom: CACHED_SEQUENCE }],
+      subscribes: { afterSequence: HTTP_SEQUENCE, knownProjectIdentities: "identities-1" },
+    },
+    {
+      // The rows loaded with the descriptor's omissions are replaced, never kept.
+      label: "a live config with other omissions",
+      origin: undefined,
+      serverResumes: false,
+      config: { environment: { serverVersion: "1.0.0" } },
+      loads: [FAMILY_FLAGS, { omitIdleSubagents: false, omitOlderSettled: false }],
+      subscribes: { afterSequence: HTTP_SEQUENCE + 1, knownProjectIdentities: "identities-2" },
+    },
+  ])(
+    "asks for the shell once the connection is prepared, with $label",
+    ({ origin, serverResumes, config, loads, subscribes }) =>
+      Effect.gen(function* () {
+        const h = yield* makeColdStart(origin, { serverResumes });
+        expect(yield* Queue.take(h.loadOptions)).toEqual(loads[0]);
+        if (!serverResumes) {
+          // The rows are on screen before a socket exists, and are not live yet.
+          const early = yield* SubscriptionRef.changes(h.shellState).pipe(
+            Stream.filter((state) =>
+              Option.exists(
+                state.snapshot,
+                (snapshot) => snapshot.snapshotSequence === HTTP_SEQUENCE,
+              ),
+            ),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          expect(early.status).not.toBe("live");
+          expect(early.generation).toBeGreaterThan(0);
+        }
+        expect(yield* Queue.size(h.subscriptions)).toBe(0);
+
+        yield* h.connect(config);
+        const first = yield* Queue.take(h.subscriptions);
+        expect(first.input).toMatchObject(subscribes);
+        for (const key of ["httpSnapshotFallback", "knownProjectIdentities"] as const) {
+          if (!(key in subscribes)) expect(first.input).not.toHaveProperty(key);
+        }
+        expect(yield* Queue.clear(h.loadOptions)).toEqual(loads.slice(1));
+        expect(yield* Ref.get(h.httpLoads)).toBe(loads.length);
+
+        yield* Queue.offer(first.events, { kind: "synchronized" });
+        yield* h.liveAt(subscribes.afterSequence);
+        if (loads.length > 1) {
+          yield* TestClock.adjust("500 millis");
+          const saves = yield* Queue.takeAll(h.saved);
+          expect(saves.at(-1)).toMatchObject({
+            snapshot: { snapshotSequence: subscribes.afterSequence },
+            origin: { ...CURRENT_ORIGIN, snapshotAt: NOW },
+          });
+        }
+      }),
   );
 
   it.effect("reloads over HTTP when the server answers a resume with snapshot-required", () =>

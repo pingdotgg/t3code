@@ -52,7 +52,10 @@ The v2 checks pin these invariants:
 - The initial shell contains active navigation rows only. Archived rows use the dedicated archive
   query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project
-  and thread snapshot.
+  and thread snapshot. A cursor at the head sequence always resumes, even below the pruned
+  boundary, so a client that just loaded the HTTP snapshot never downloads it again over the
+  socket. That client also names the snapshot's project identities, and a server whose
+  identities did not change since resends only the roots that resolved to no identity.
 - Auto, steer, and restart sends resolve delivery from authoritative state inside the
   server's per-thread dispatch lock. Model selection and identified-checkpoint rollback also
   dispatch without first fetching a full thread projection when the server advertises support.

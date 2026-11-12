@@ -31,7 +31,11 @@ import {
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
+import {
+  canResumeShellFrom,
+  loadSubscriberShellSnapshot,
+  projectIdentitiesDigest,
+} from "./ShellStream.ts";
 import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
@@ -94,7 +98,33 @@ export const layer = HttpApiBuilder.group(
           options,
         });
         const projects = yield* enrichProjectShells(snapshot.projects);
-        return { ...snapshot, projects };
+        return { ...snapshot, projects, projectIdentities: projectIdentitiesDigest(projects) };
+      },
+    );
+
+    // A client that holds rows names their cursor; a small answer tells it to keep them.
+    const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")(
+      function* (query: {
+        readonly omitIdleSubagents?: string;
+        readonly omitOlderSettled?: string;
+        readonly resumeFrom?: string;
+      }) {
+        const resumeFrom = query.resumeFrom === undefined ? Number.NaN : Number(query.resumeFrom);
+        if (
+          Number.isSafeInteger(resumeFrom) &&
+          resumeFrom >= 0 &&
+          (yield* canResumeShellFrom(
+            applicationEvents,
+            resumeFrom,
+            yield* applicationEvents.latestApplicationSequence,
+          ))
+        ) {
+          return { resumable: true as const };
+        }
+        return yield* loadShellSnapshot({
+          omitIdleSubagents: query.omitIdleSubagents === "1",
+          omitOlderSettled: query.omitOlderSettled === "1",
+        });
       },
     );
 
@@ -166,10 +196,7 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* loadShellSnapshot({
-            omitIdleSubagents: args.query.omitIdleSubagents === "1",
-            omitOlderSettled: args.query.omitOlderSettled === "1",
-          }).pipe(
+          return yield* answerShellSnapshot(args.query).pipe(
             traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),
