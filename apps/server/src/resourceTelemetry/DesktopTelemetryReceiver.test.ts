@@ -11,7 +11,8 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { describe, expect } from "vite-plus/test";
+import * as Undici from "undici";
+import { describe, expect, vi } from "vite-plus/test";
 
 import {
   makeApplyDesktopShellEnvironmentSnapshot,
@@ -19,6 +20,36 @@ import {
 } from "./DesktopTelemetryReceiver.ts";
 
 describe("DesktopTelemetryReceiver", () => {
+  it.effect("moves server fetch onto the shell proxy once the snapshot arrives", () =>
+    Effect.gen(function* () {
+      const original = Undici.getGlobalDispatcher();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          vi.unstubAllEnvs();
+          Undici.setGlobalDispatcher(original);
+        }),
+      );
+      for (const name of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) {
+        vi.stubEnv(name, undefined);
+      }
+      const applySnapshot = makeApplyDesktopShellEnvironmentSnapshot(process.env, "darwin");
+      const snapshot = (environment: Record<string, string | null>) =>
+        ({
+          version: 1,
+          type: "shellEnvironment",
+          platform: "darwin",
+          discovered: true,
+          environment,
+        }) as const;
+
+      yield* applySnapshot(snapshot({ HTTPS_PROXY: "http://127.0.0.1:9" }));
+      expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.EnvHttpProxyAgent);
+
+      yield* applySnapshot(snapshot({ HTTPS_PROXY: null }));
+      expect(Undici.getGlobalDispatcher()).not.toBeInstanceOf(Undici.EnvHttpProxyAgent);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live(
     "preserves system and bundled roots when the first snapshot withdraws overlapping extras",
     () =>

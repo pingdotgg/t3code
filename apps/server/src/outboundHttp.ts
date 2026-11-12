@@ -10,15 +10,31 @@ const requireUndici = NodeModule.createRequire(import.meta.url);
 export const builtinFetchUsesHttp2 = (bundledUndiciVersion: string | undefined) =>
   Number.parseInt(bundledUndiciVersion ?? "", 10) >= 8;
 
-/** Preserves the EnvHttpProxyAgent installed by --use-env-proxy / NODE_USE_ENV_PROXY. */
-export function installHttp1FetchDispatcher(): void {
+const hasProxyEnvironment = () =>
+  ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].some((name) => process.env[name]);
+
+/** The user's NO_PROXY plus loopback: local providers and T3's own MCP endpoint must bypass the proxy. */
+const noProxyWithLoopback = () =>
+  [process.env.no_proxy ?? process.env.NO_PROXY, "localhost", "127.0.0.1", "[::1]"]
+    .filter(Boolean)
+    .join(",");
+
+const proxyEnvironmentKey = () =>
+  JSON.stringify(
+    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"].map(
+      (name) => process.env[name],
+    ),
+  );
+let installedProxyEnvironmentKey: string | undefined;
+
+function setHttp1FetchDispatcher(usesEnvProxy: boolean): void {
   const undici = requireUndici("undici") as typeof Undici;
-  // Node's agent comes from its internal undici copy, so `instanceof` against the npm class is false.
-  const usesEnvProxy = undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent";
+  installedProxyEnvironmentKey = proxyEnvironmentKey();
   undici.setGlobalDispatcher(
     usesEnvProxy
       ? new undici.EnvHttpProxyAgent({
           allowH2: false,
+          noProxy: noProxyWithLoopback(),
           // ProxyAgent's connector forces h2 and ignores allowH2; replace it for HTTPS proxies.
           clientFactory: (origin) => new undici.Pool(origin, { allowH2: false }),
         })
@@ -26,9 +42,34 @@ export function installHttp1FetchDispatcher(): void {
   );
 }
 
-/** Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936). */
-export function keepOutboundFetchOnHttp1(): void {
-  if (builtinFetchUsesHttp2(process.versions.undici)) installHttp1FetchDispatcher();
+/** Uses EnvHttpProxyAgent when a proxy variable is set or --use-env-proxy / NODE_USE_ENV_PROXY installed one. */
+export function installHttp1FetchDispatcher(): void {
+  const undici = requireUndici("undici") as typeof Undici;
+  // Node's agent comes from its internal undici copy, so `instanceof` against the npm class is false.
+  setHttp1FetchDispatcher(
+    hasProxyEnvironment() || undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent",
+  );
+}
+
+/**
+ * Avoids uncaught idle-timeout errors on h2 streams (https://github.com/nodejs/undici/issues/5936),
+ * and makes built-in fetch honour HTTPS_PROXY and friends without NODE_USE_ENV_PROXY=1.
+ */
+export function configureOutboundFetch(): void {
+  if (builtinFetchUsesHttp2(process.versions.undici) || hasProxyEnvironment()) {
+    installHttp1FetchDispatcher();
+  } else {
+    installedProxyEnvironmentKey = proxyEnvironmentKey();
+  }
+}
+
+/**
+ * The desktop shell environment arrives after startup, so proxy variables can appear or vanish then.
+ * Rebuilds the dispatcher from the current environment only when they changed.
+ */
+export function refreshOutboundFetchDispatcher(): void {
+  if (proxyEnvironmentKey() === installedProxyEnvironmentKey) return;
+  setHttp1FetchDispatcher(hasProxyEnvironment());
 }
 
 // @types/node does not declare setTypeOfService yet.
