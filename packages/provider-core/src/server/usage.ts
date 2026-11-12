@@ -18,6 +18,8 @@ export interface UsageRecord {
   readonly rateModel?: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  /** The part of `totals.cacheCreationTokens` written with a 1-hour TTL. */
+  readonly cacheCreation1hTokens?: number;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
   readonly unresolvedServiceTierTurnId?: string;
