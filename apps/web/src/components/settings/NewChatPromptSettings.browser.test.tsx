@@ -99,6 +99,13 @@ it("applies the prompt and enable policy locks independently across selected env
   });
 
   mocks.update.mockClear();
+  await userEvent.click(screen.getByRole("switch", { name: "Enable new chat prompt" }));
+  expect(mocks.update).toHaveBeenCalledExactlyOnceWith({
+    newChatPromptEnabled: true,
+    newChatPrompt: "Saved instructions updated",
+  });
+
+  mocks.update.mockClear();
   mocks.settings.mockReturnValue({
     ...DEFAULT_UNIFIED_SETTINGS,
     newChatPrompt: "Organization instructions",

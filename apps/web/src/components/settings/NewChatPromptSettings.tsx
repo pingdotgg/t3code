@@ -18,6 +18,8 @@ export function NewChatPromptSettings() {
   const { targets, connectedEnvironments } = useSettingsScope();
   const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
   const edited = useRef(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const draft = useRef<{ scopeKey: string; value: string } | null>(null);
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["newChatPrompt"]);
   const enabledMixed = useScopedSettingsMixed(["newChatPromptEnabled"]);
@@ -46,9 +48,17 @@ export function NewChatPromptSettings() {
           <ScopedSwitch
             settingKeys={["newChatPromptEnabled"]}
             checked={settings.newChatPromptEnabled}
-            onCheckedChange={(checked) =>
-              updateSettings({ newChatPromptEnabled: Boolean(checked) })
-            }
+            onCheckedChange={(checked) => {
+              const pending = draft.current;
+              updateSettings({
+                newChatPromptEnabled: Boolean(checked),
+                ...(promptPolicy === undefined &&
+                pending?.scopeKey === scopeKey &&
+                inputRef.current?.value.trim() === pending.value
+                  ? { newChatPrompt: pending.value }
+                  : {}),
+              });
+            }}
             aria-label="Enable new chat prompt"
           />
         }
@@ -69,6 +79,7 @@ export function NewChatPromptSettings() {
         <div className="mt-3 max-w-2xl pb-3.5">
           <Textarea
             key={`${scopeKey}:${mixed}:${settings.newChatPrompt}`}
+            ref={inputRef}
             aria-label="New chat prompt"
             aria-describedby={promptPolicy === undefined ? undefined : policyDescriptionId}
             readOnly={promptPolicy !== undefined}
@@ -80,8 +91,9 @@ export function NewChatPromptSettings() {
                 ? "Mixed. Enter instructions for all selected targets."
                 : "Instructions to append to the first message…"
             }
-            onChange={() => {
+            onChange={(event) => {
               edited.current = true;
+              draft.current = { scopeKey, value: event.target.value.trim() };
             }}
             onBlur={(event) => {
               const value = event.target.value.trim();
