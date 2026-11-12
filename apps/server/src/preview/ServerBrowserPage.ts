@@ -29,7 +29,7 @@ const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_SCREENSHOT_WIDTH = 1280;
-// Leave room for a snapshot retry before the broker's 15-second deadline.
+// Two attempts must fit in a snapshot's 10-second deadline.
 const SCREENSHOT_TIMEOUT_MS = 3_000;
 const WAIT_POLL_MS = 100;
 export const DIAGNOSTIC_BUFFER_LIMIT = 200;
@@ -479,10 +479,11 @@ export const captureViewport = async (
     timer = setTimeout(
       () =>
         reject(
-          new ServerBrowserOperationError(
-            "PreviewAutomationExecutionError",
-            "The browser is not producing screenshot frames. For a desktop tab, show or restore the T3 Code window and try again.",
-          ),
+          new ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message:
+              "The browser is not producing screenshot frames. For a desktop tab, show or restore the T3 Code window and try again.",
+          }),
         ),
       SCREENSHOT_TIMEOUT_MS,
     );
