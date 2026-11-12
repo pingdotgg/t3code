@@ -88,3 +88,37 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("lists commands that Claude Code mods register in a session.start hook", () =>
+  Effect.gen(function* () {
+    // Claude Code registers a mod's commands only when its session.start hook runs.
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      const hooksRun = options?.settings?.disableAllHooks !== true;
+      return {
+        initializationResult: async () => ({
+          account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+          commands: [
+            { name: "review", description: "Review changes", argumentHint: "" },
+            ...(hooksRun
+              ? [{ name: "handoffs", description: "List handoffs", argumentHint: "" }]
+              : []),
+          ],
+          models: [],
+        }),
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped();
+    const snapshot = yield* probeClaudeWorkspaceSnapshot(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { skills: [], slashCommands: [] } as unknown as ServerProvider,
+      cwd,
+      { PATH: (yield* HostProcess.Environment).PATH, HOME: cwd, CLAUDE_CONFIG_DIR: cwd },
+    );
+    assert.include(
+      snapshot.slashCommands.map((command) => command.name),
+      "handoffs",
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
