@@ -35,21 +35,6 @@ const isAppLaunchUrl = (url: URL) =>
 // Zed embeds [user@]host in the path; reject passwords and ports there.
 const ZED_SSH_PATHNAME = /^\/(?:[^/@:]+@)?[^/@:]+\/.*$/;
 
-function isValidWslRemotePath(pathname: string): boolean {
-  const match = /^\/wsl\+[A-Za-z0-9._-]+\/(.*)$/.exec(pathname);
-  if (!match || pathname.includes("\\") || /%(?:2f|5c)/i.test(pathname)) {
-    return false;
-  }
-  try {
-    return match[1]!.split("/").every((segment) => {
-      const decoded = decodeURIComponent(segment);
-      return decoded !== "." && decoded !== ".." && !/[\u0000-\u001f\u007f\\]/.test(decoded);
-    });
-  } catch {
-    return false;
-  }
-}
-
 const isRemoteEditorUrl = (url: URL) =>
   REMOTE_EDITOR_PROTOCOLS.has(url.protocol) &&
   url.username.length === 0 &&
@@ -61,11 +46,8 @@ const isRemoteEditorUrl = (url: URL) =>
         url.pathname === "/ssh/environment" &&
         (url.searchParams.get("h") ?? "").length > 0
       : url.host === "vscode-remote" &&
-        ((url.pathname.startsWith("/ssh-remote+") && url.pathname.length > "/ssh-remote+".length) ||
-          ((url.protocol === "vscode:" || url.protocol === "vscode-insiders:") &&
-            url.search.length === 0 &&
-            url.hash.length === 0 &&
-            isValidWslRemotePath(url.pathname))));
+        url.pathname.startsWith("/ssh-remote+") &&
+        url.pathname.length > "/ssh-remote+".length);
 
 export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   if (typeof rawUrl !== "string") {

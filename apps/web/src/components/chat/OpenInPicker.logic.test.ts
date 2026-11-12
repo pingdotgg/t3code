@@ -3,22 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { shouldShowOpenInPicker } from "./OpenInPicker.logic";
 
-const primary = EnvironmentId.make("primary");
-const secondary = EnvironmentId.make("secondary");
-
 describe("shouldShowOpenInPicker", () => {
-  it("shows the picker for a desktop-managed WSL environment", () => {
-    expect(
-      shouldShowOpenInPicker({
-        activeProjectName: "project",
-        activeThreadEnvironmentId: secondary,
-        primaryEnvironmentId: primary,
-        hostEnvironmentId: null,
-        remoteOpenMode: "wsl-links",
-      }),
-    ).toBe(true);
-  });
-
   it("shows both local environments when the primary has a separate WSL home", () => {
     const primaryEnvironmentId = EnvironmentId.make("wsl");
     const hostEnvironmentId = EnvironmentId.make("host");
@@ -34,8 +19,22 @@ describe("shouldShowOpenInPicker", () => {
           primaryEnvironmentId,
           hostEnvironmentId,
           remoteOpenMode: "local-exec",
+          isDesktopWslBackend: false,
         }),
       ).toBe(visible);
     }
+  });
+
+  it("shows a desktop-managed WSL backend that runs editors itself", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "Project",
+        activeThreadEnvironmentId: EnvironmentId.make("wsl-secondary"),
+        primaryEnvironmentId: EnvironmentId.make("primary"),
+        hostEnvironmentId: null,
+        remoteOpenMode: "local-exec",
+        isDesktopWslBackend: true,
+      }),
+    ).toBe(true);
   });
 });

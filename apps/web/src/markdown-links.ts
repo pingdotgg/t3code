@@ -14,7 +14,6 @@ import { isTerminalLinkActivation } from "./terminal-links";
 
 export interface MarkdownFileLinkMeta {
   filePath: string;
-  sourcePath?: string;
   workspaceLookupPath: string | null;
   targetPath: string;
   displayPath: string;
@@ -86,7 +85,6 @@ export function resolveMarkdownFileLinkMeta(
   const source = href ? parseMarkdownFileLink(href) : null;
   return {
     ...buildFileLinkMetaFromTarget(targetPath, cwd),
-    ...(source ? { sourcePath: source.path } : {}),
     ...(source?.endLine !== undefined ? { endLine: source.endLine } : {}),
     workspaceLookupPath:
       source !== null &&

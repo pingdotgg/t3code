@@ -18,7 +18,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -143,26 +142,16 @@ export const make = Effect.gen(function* () {
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const isServerInternalPath = yield* makeIsServerInternalPath;
 
-  const metadataForPath = Effect.fnUntraced(function* (
-    requestedPath: string,
-    resolveRealPath: boolean,
-  ) {
+  const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
     // Chips ask as soon as an agent's message renders, and touching a network
     // path makes Windows sign in to its host with the user's NTLM credentials.
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
-    const resolved = resolveRealPath
-      ? yield* Effect.tryPromise({
-          try: () => NodeFSP.realpath(expandedPath),
-          catch: () => undefined,
-        }).pipe(Effect.option)
-      : Option.some(expandedPath);
-    if (Option.isNone(resolved)) return null;
-    const stat = yield* fileSystem.stat(resolved.value).pipe(Effect.option);
+    const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
+    // Server state files answer like missing paths, as readFile refuses them.
     if (stat._tag === "None" || (yield* isServerInternalPath(expandedPath))) return null;
-    const realPath = resolveRealPath ? { realPath: resolved.value } : {};
-    if (stat.value.type === "Directory") return { kind: "directory", ...realPath } as const;
-    if (stat.value.type !== "File") return { kind: "other", ...realPath } as const;
+    if (stat.value.type === "Directory") return { kind: "directory" } as const;
+    if (stat.value.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
     if (path.extname(expandedPath) === "" && stat.value.size > 0) {
       mimeType = yield* Effect.tryPromise({
@@ -185,7 +174,6 @@ export const make = Effect.gen(function* () {
     }
     return {
       kind: "file",
-      ...realPath,
       byteLength: Number(stat.value.size),
       ...(mimeType === undefined ? {} : { mimeType }),
     } satisfies FilesystemEntryMetadata;
@@ -195,11 +183,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceFileSystem.getMetadata",
   )(function* (input) {
     const paths = [...new Set(input.paths)];
-    const entries = yield* Effect.forEach(
-      paths,
-      (entry) => metadataForPath(entry, input.resolveRealPath === true),
-      { concurrency: 8 },
-    );
+    const entries = yield* Effect.forEach(paths, metadataForPath, { concurrency: 8 });
     const byPath = new Map(paths.map((value, index) => [value, entries[index] ?? null]));
     return { entries: input.paths.map((value) => byPath.get(value) ?? null) };
   });

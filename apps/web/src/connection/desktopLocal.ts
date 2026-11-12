@@ -26,7 +26,11 @@ export function desktopLocalBackendId(target: ConnectionTarget): string | null {
     : null;
 }
 
-export type DesktopBootstrapsRead =
+export function isDesktopWslTarget(target: ConnectionTarget | undefined): boolean {
+  return target !== undefined && (desktopLocalBackendId(target)?.startsWith("wsl:") ?? false);
+}
+
+export type DesktopSecondaryBootstrapsRead =
   | {
       readonly _tag: "Success";
       readonly bootstraps: ReadonlyArray<DesktopEnvironmentBootstrap>;
@@ -37,10 +41,8 @@ export type DesktopBootstrapsRead =
     };
 
 export interface DesktopSecondaryBootstrapsReader {
-  readonly readResult: () => DesktopBootstrapsRead;
+  readonly readResult: () => DesktopSecondaryBootstrapsRead;
   readonly readSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
-  readonly readAllResult: () => DesktopBootstrapsRead;
-  readonly readAllSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
 }
 
 /** Empty reads clear the snapshot; failed reads retain platform registrations. */
@@ -48,21 +50,21 @@ export function createDesktopSecondaryBootstrapsReader(
   resolveBridge: () => Pick<DesktopBridge, "getLocalEnvironmentBootstraps"> | undefined,
 ): DesktopSecondaryBootstrapsReader {
   let snapshot: ReadonlyArray<DesktopEnvironmentBootstrap> = [];
-  let allSnapshot: ReadonlyArray<DesktopEnvironmentBootstrap> = [];
 
-  const readAllResult = (): DesktopBootstrapsRead => {
+  const readResult = (): DesktopSecondaryBootstrapsRead => {
     const bridge = resolveBridge();
     if (bridge === undefined) {
-      if (allSnapshot.length > 0) allSnapshot = [];
       if (snapshot.length > 0) snapshot = [];
-      return { _tag: "Success", bootstraps: allSnapshot };
+      return { _tag: "Success", bootstraps: snapshot };
     }
     try {
-      const next = bridge.getLocalEnvironmentBootstraps();
+      const next = bridge
+        .getLocalEnvironmentBootstraps()
+        .filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
       if (
-        next.length !== allSnapshot.length ||
+        next.length !== snapshot.length ||
         next.some((entry, index) => {
-          const previous = allSnapshot[index];
+          const previous = snapshot[index];
           return (
             previous === undefined ||
             entry.id !== previous.id ||
@@ -74,48 +76,31 @@ export function createDesktopSecondaryBootstrapsReader(
           );
         })
       ) {
-        allSnapshot = next;
+        snapshot = next;
       }
-      const nextSecondary = allSnapshot.filter(
-        (entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID,
-      );
-      if (
-        nextSecondary.length !== snapshot.length ||
-        nextSecondary.some((entry, index) => entry !== snapshot[index])
-      ) {
-        snapshot = nextSecondary;
-      }
-      return { _tag: "Success", bootstraps: allSnapshot };
+      return { _tag: "Success", bootstraps: snapshot };
     } catch (cause) {
       return { _tag: "Failure", cause };
     }
   };
 
-  const readResult = (): DesktopBootstrapsRead => {
-    const result = readAllResult();
-    return result._tag === "Success" ? { _tag: "Success", bootstraps: snapshot } : result;
-  };
-
   return {
     readResult,
-    readAllResult,
     readSnapshot: () => {
       const result = readResult();
       return result._tag === "Success" ? result.bootstraps : snapshot;
     },
-    readAllSnapshot: () => {
-      const result = readAllResult();
-      return result._tag === "Success" ? result.bootstraps : allSnapshot;
-    },
   };
 }
 
-const desktopBootstrapsReader = createDesktopSecondaryBootstrapsReader(() => window.desktopBridge);
+const desktopSecondaryBootstrapsReader = createDesktopSecondaryBootstrapsReader(
+  () => window.desktopBridge,
+);
 
-export function readDesktopSecondaryBootstrapsResult(): DesktopBootstrapsRead {
-  return desktopBootstrapsReader.readResult();
+export function readDesktopSecondaryBootstrapsResult(): DesktopSecondaryBootstrapsRead {
+  return desktopSecondaryBootstrapsReader.readResult();
 }
 
-export function readDesktopLocalBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
-  return desktopBootstrapsReader.readAllSnapshot();
+export function readDesktopSecondaryBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
+  return desktopSecondaryBootstrapsReader.readSnapshot();
 }

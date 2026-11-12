@@ -1,8 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import type { DesktopEnvironmentBootstrap } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-import { readDesktopLocalBootstraps } from "./desktopLocal";
+import { readDesktopSecondaryBootstraps } from "./desktopLocal";
 
 const DESKTOP_LOCAL_BOOTSTRAP_POLL_MS = 2_000;
 
@@ -12,19 +12,15 @@ const DESKTOP_LOCAL_BOOTSTRAP_POLL_MS = 2_000;
  * a successful empty read clears it. The reader returns the same array while
  * nothing changed, so an unchanged poll notifies no one.
  */
-export const desktopLocalBootstrapsAtom = Atom.make((get) => {
+const desktopLocalBootstrapsAtom = Atom.make((get) => {
   const interval = setInterval(
-    () => get.setSelf(readDesktopLocalBootstraps()),
+    () => get.setSelf(readDesktopSecondaryBootstraps()),
     DESKTOP_LOCAL_BOOTSTRAP_POLL_MS,
   );
   get.addFinalizer(() => clearInterval(interval));
-  return readDesktopLocalBootstraps();
+  return readDesktopSecondaryBootstraps();
 }).pipe(Atom.withLabel("desktop-local-bootstraps"));
 
-const desktopSecondaryBootstrapsAtom = Atom.make((get) =>
-  get(desktopLocalBootstrapsAtom).filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID),
-).pipe(Atom.withLabel("desktop-secondary-bootstraps"));
-
-export function useDesktopLocalBootstraps() {
-  return useAtomValue(desktopSecondaryBootstrapsAtom);
+export function useDesktopLocalBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
+  return useAtomValue(desktopLocalBootstrapsAtom);
 }

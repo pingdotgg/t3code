@@ -172,13 +172,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           "//attacker.test/s/a.ts",
           "/\\attacker.test\\s",
         ];
-        const realpath = vi.mocked(NodeFSP.realpath).mockClear();
-        expect((yield* service.getMetadata({ paths, resolveRealPath: true })).entries).toEqual([
-          null,
-          null,
-          null,
-        ]);
-        expect(realpath).not.toHaveBeenCalled();
+        expect((yield* service.getMetadata({ paths })).entries).toEqual([null, null, null]);
         expect(statted).toEqual([]);
       }),
     );
@@ -395,13 +389,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           });
 
           expect(result.contents).toBe("beside the target\n");
-          const metadata = yield* workspaceFileSystem.getMetadata({
-            paths: [`${root}/link/../parent.md`],
-            resolveRealPath: true,
-          });
-          expect(metadata.entries[0]?.realPath).toBe(
-            yield* fs.realPath(path.join(root, "target", "parent.md")),
-          );
         }),
     );
 

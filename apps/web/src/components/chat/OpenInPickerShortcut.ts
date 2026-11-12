@@ -1,5 +1,4 @@
 import {
-  buildWslOpenUrl,
   buildRemoteOpenUrl,
   type EditorId,
   type EnvironmentId,
@@ -11,12 +10,7 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 import { announce } from "../../lib/announce";
-import {
-  openRemoteEditorUrl,
-  useRemoteCapableEditors,
-  useRemoteOpenState,
-  useWslCapableEditors,
-} from "../../remoteOpen";
+import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -62,15 +56,10 @@ export function useOpenFavoriteEditorShortcut({
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const remoteCapableEditors = useRemoteCapableEditors();
-  const wslEditors = useWslCapableEditors();
   // Matches the picker: remote editors run on the viewing machine.
-  const effectiveEditors =
-    remote.mode === "local-exec"
-      ? availableEditors
-      : remote.mode === "wsl-links"
-        ? wslEditors
-        : remoteCapableEditors;
-  const [preferredEditor] = usePreferredEditor(effectiveEditors);
+  const [preferredEditor] = usePreferredEditor(
+    remote.mode === "local-exec" ? availableEditors : remoteCapableEditors,
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled
   useEffect(() => {
@@ -86,18 +75,6 @@ export function useOpenFavoriteEditorShortcut({
 
       event.preventDefault();
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
-      if (remote.mode === "wsl-links") {
-        const url = buildWslOpenUrl({
-          editor: preferredEditor,
-          distro: remote.distro,
-          absolutePath: openInCwd,
-        });
-        if (url === undefined) return;
-        void openRemoteEditorUrl(url).then((opened) => {
-          if (opened) announce(`Opened in ${label}`);
-        });
-        return;
-      }
       if (remote.mode === "remote-links") {
         const url = buildRemoteOpenUrl({
           editor: preferredEditor,

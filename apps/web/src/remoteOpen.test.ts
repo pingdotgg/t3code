@@ -1,10 +1,9 @@
 import {
-  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { buildRemoteOpenUrl, buildWslOpenUrl, EnvironmentId } from "@t3tools/contracts";
+import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { remoteFallbackEditors, resolveRemoteOpenState } from "./remoteOpen";
@@ -63,34 +62,6 @@ describe("resolveRemoteOpenState", () => {
         hostEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
-  });
-
-  it("uses the resolved distro for desktop-managed WSL environments", () => {
-    expect(
-      resolveRemoteOpenState({
-        target: primaryTarget("http://172.29.112.1:14369"),
-        sshTarget: null,
-        isDesktopRenderer: true,
-        remoteOpenTargets: undefined,
-        wslDistro: "Ubuntu",
-        hostEnvironmentId: null,
-      }),
-    ).toEqual({ mode: "wsl-links", distro: "Ubuntu" });
-
-    expect(
-      resolveRemoteOpenState({
-        target: new BearerConnectionTarget({
-          environmentId,
-          label: "WSL (Debian)",
-          connectionId: "local:wsl:default",
-        }),
-        sshTarget: null,
-        isDesktopRenderer: true,
-        remoteOpenTargets: undefined,
-        wslDistro: "Debian",
-        hostEnvironmentId: null,
-      }),
-    ).toEqual({ mode: "wsl-links", distro: "Debian" });
   });
 
   it("keeps exec behavior for the environment that owns the desktop's T3 home", () => {
@@ -313,59 +284,5 @@ describe("buildRemoteOpenUrl", () => {
         `${editor}, isFile=${isFile}`,
       ).toBe(expected);
     }
-  });
-});
-
-describe("buildWslOpenUrl", () => {
-  it("uses the Linux workspace path and VS Code's WSL remote authority", () => {
-    expect(
-      buildWslOpenUrl({
-        editor: "vscode",
-        distro: "Ubuntu-22.04",
-        absolutePath: "/home/theo/My Project",
-      }),
-    ).toBe("vscode://vscode-remote/wsl+Ubuntu-22.04/home/theo/My%20Project");
-    expect(
-      buildWslOpenUrl({
-        editor: "vscode-insiders",
-        distro: "Ubuntu",
-        absolutePath: "/home/theo/file name.md",
-        isFile: true,
-      }),
-    ).toBe("vscode-insiders://vscode-remote/wsl+Ubuntu/home/theo/file%20name.md:1:1");
-    expect(
-      buildWslOpenUrl({
-        editor: "vscode",
-        distro: "Ubuntu",
-        absolutePath: "/work/file.ts",
-        isFile: true,
-        line: 12,
-        column: 3,
-      }),
-    ).toBe("vscode://vscode-remote/wsl+Ubuntu/work/file.ts:12:3");
-  });
-
-  it("rejects unsupported editors, invalid distros, and Windows paths", () => {
-    expect(
-      buildWslOpenUrl({
-        editor: "cursor",
-        distro: "Ubuntu",
-        absolutePath: "/home/theo/project",
-      }),
-    ).toBeUndefined();
-    expect(
-      buildWslOpenUrl({
-        editor: "vscode",
-        distro: "Ubuntu/..",
-        absolutePath: "/home/theo/project",
-      }),
-    ).toBeUndefined();
-    expect(
-      buildWslOpenUrl({
-        editor: "vscode",
-        distro: "Ubuntu",
-        absolutePath: "C:\\Users\\theo\\project",
-      }),
-    ).toBeUndefined();
   });
 });
