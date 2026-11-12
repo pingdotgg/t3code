@@ -22,7 +22,9 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as HttpServer from "effect/http/HttpServer";
 import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -32,14 +34,20 @@ import * as TestClock from "effect/testing/TestClock";
 import type { BrowserContext, Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
 
+import { issueAssetUrl } from "../assets/AssetAccess.ts";
+import * as AssetSigner from "../assets/AssetSigner.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
   presentAsChrome: async () => {},
@@ -505,6 +513,13 @@ const dependencies = Layer.mergeAll(
     turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
   PreviewAgentActivity.layer,
+  WorkspacePaths.layer,
+  AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
+  Layer.mock(HttpServer.HttpServer)({
+    address: NetAddress.inetAddressFromIpStringUnsafe("0.0.0.0", 3773),
+  }),
+  Layer.mock(Orchestrator.OrchestratorV2)({}),
+  Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -1429,6 +1444,116 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       );
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([
+  { listen: "0.0.0.0", origin: "http://127.0.0.1:3773" },
+  { listen: "100.64.0.5", origin: "http://100.64.0.5:3773" },
+])(
+  "a server tab loads this server's file links from where it listens ($listen)",
+  ({ listen, origin }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* Manager.PreviewManager;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const events = yield* manager.subscribeEvents;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-server-browser-ws-",
+        });
+        yield* fs.writeFileString(path.join(workspaceRoot, "report.html"), "<h1>report</h1>");
+        const { relativeUrl } = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: scope.thread.threadId,
+            path: "report.html",
+          },
+          workspaceRoot,
+        });
+        // The client resolves the link on its own public origin, as behind tailscale serve.
+        const publicUrl = `https://unreachable.invalid${relativeUrl}`;
+        yield* manager.open({ threadId: scope.thread.threadId, runtime: "server", url: publicUrl });
+        let settled;
+        do settled = yield* PubSub.take(events);
+        while (settled.type !== "navigated" || settled.snapshot.navStatus._tag === "Loading");
+        expect(settled.snapshot.navStatus).toMatchObject({ _tag: "Success", url: publicUrl });
+
+        const session = contexts[0]!.sessions[0]!;
+        const send = session.send.getMockImplementation()!;
+        const continued = yield* Queue.unbounded<unknown>();
+        session.send.mockImplementation(async (method, input) => {
+          if (method === "Fetch.continueRequest") Queue.offerUnsafe(continued, input);
+          return send(method, input);
+        });
+        const pause = (requestId: string, url: string) =>
+          session.emit("Fetch.requestPaused", {
+            requestId,
+            frameId: "main",
+            resourceType: "Document",
+            request: { url, method: "GET" },
+          });
+        const [, token] = relativeUrl.split("/").slice(2);
+        for (const [requestId, url, expected] of [
+          ["signed", publicUrl, { requestId: "signed", url: `${origin}${relativeUrl}` }],
+          ["forged", publicUrl.replace(token!, `${token}x`), { requestId: "forged" }],
+          ["listening", `${origin}${relativeUrl}`, { requestId: "listening" }],
+        ] as const) {
+          pause(requestId, url);
+          expect(yield* Queue.take(continued)).toEqual(expected);
+        }
+
+        // A popup's first request predates interception and has failed by adoption;
+        // only this server's file links load again.
+        const failedPopup = (unreachableUrl: string) => {
+          const popup = makeContext(undefined, "chrome-error://chromewebdata/");
+          const newCDPSession = popup.newCDPSession;
+          popup.newCDPSession = async (target) => {
+            const popupSession = await newCDPSession(target);
+            const popupSend = popupSession.send.getMockImplementation()!;
+            popupSession.send.mockImplementation(async (method, input) =>
+              method === "Page.getFrameTree"
+                ? { frameTree: { frame: { id: "main", unreachableUrl } } }
+                : popupSend(method, input),
+            );
+            return popupSession;
+          };
+          return popup.page;
+        };
+        const childUrl = publicUrl.replace("report.html", "child.html");
+        const browser = yield* ServerBrowser.ServerBrowser;
+        const popups = [
+          failedPopup(childUrl),
+          failedPopup(publicUrl.replace(token!, `${token}x`)),
+          failedPopup("https://accounts.example.com/sign-in"),
+          makeContext(undefined, childUrl).page,
+        ];
+        for (const popup of popups) {
+          contexts[0]!.page.emit("popup", popup);
+          let opened;
+          do opened = yield* PubSub.take(events);
+          while (opened.type !== "opened");
+          yield* browser.attachViewer(viewerInput(opened.snapshot.tabId, false));
+        }
+        expect(popups.map((popup) => popup.goto.mock.calls.map(([url]) => url))).toEqual([
+          [childUrl],
+          [],
+          [],
+          [],
+        ]);
+        expect(popups.map((popup) => popup.reload.mock.calls.length)).toEqual([0, 0, 0, 0]);
+      }),
+    ).pipe(
+      Effect.provide(
+        ServerBrowser.layer.pipe(
+          Layer.provideMerge(
+            Layer.mock(HttpServer.HttpServer)({
+              address: NetAddress.inetAddressFromIpStringUnsafe(listen, 3773),
+            }),
+          ),
+          Layer.provideMerge(dependencies),
+        ),
+      ),
+    ),
 );
 
 it.live(

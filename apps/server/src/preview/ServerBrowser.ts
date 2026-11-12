@@ -61,6 +61,8 @@ import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
+import * as HttpServer from "effect/http/HttpServer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -74,11 +76,14 @@ import type {
   Page,
 } from "playwright-core";
 
+import * as AssetAccess from "../assets/AssetAccess.ts";
+import type * as AssetSigner from "../assets/AssetSigner.ts";
 import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
+import { loopbackUrlHostForAddress } from "../startupAccess.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as PreviewManager from "./Manager.ts";
@@ -87,7 +92,11 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
-import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
+import {
+  type AssetRequestRedirect,
+  installAssetNavigation,
+  isPdfAssetUrl,
+} from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
 const RENDER_SCALE = 2;
@@ -504,6 +513,27 @@ const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const runSyncExit = Effect.runSyncExitWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
+  const runAssetPromise = Effect.runPromiseWith(yield* Effect.context<AssetSigner.AssetSigner>());
+  const { address } = yield* HttpServer.HttpServer;
+  const listenOrigin =
+    typeof address === "string" || !("port" in address)
+      ? null
+      : `http://${
+          NetAddress.isUnspecified(address.address)
+            ? loopbackUrlHostForAddress(address)
+            : NetAddress.formatUrlHost(address.address)
+        }:${address.port}`;
+  // Clients resolve this server's file links on their own origin, which this machine may not
+  // reach. Headless tabs load them from where the server listens; the page keeps the client's URL.
+  const loadAssetsFromListenOrigin: AssetRequestRedirect | null =
+    listenOrigin === null
+      ? null
+      : async (url) => {
+          const reachable = await runAssetPromise(
+            AssetAccess.rebaseSignedAssetUrl(url, listenOrigin),
+          );
+          return reachable === url ? undefined : reachable;
+        };
   // sudo resets the environment, so the command has to name this server's home.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND, [
     "--base-dir",
@@ -913,7 +943,7 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    await installPdfDocumentNavigation(cdp);
+    await installAssetNavigation(cdp, desktop ? null : loadAssetsFromListenOrigin);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -1099,16 +1129,28 @@ const make = Effect.gen(function* () {
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
+    // A popup's first request predates interception, so one on this server's file links can
+    // show an error page; it loads again now that interception is attached.
+    const failedUrl = adopted
+      ? (await cdp.send("Page.getFrameTree")).frameTree.frame.unreachableUrl
+      : undefined;
+    const failedAssetUrl =
+      failedUrl !== undefined && (await loadAssetsFromListenOrigin?.(failedUrl)) !== undefined
+        ? failedUrl
+        : undefined;
     // Existing desktop and popup PDFs can start loading before interception attaches.
-    if (
-      snapshot.navStatus._tag === "Loading" &&
+    const initialUrl =
+      failedAssetUrl ??
+      (snapshot.navStatus._tag === "Loading" &&
       ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
-    ) {
+        ? snapshot.navStatus.url
+        : undefined);
+    if (initialUrl !== undefined) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === initialUrl
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(initialUrl, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });

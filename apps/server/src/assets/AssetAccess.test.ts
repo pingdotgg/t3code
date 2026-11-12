@@ -33,7 +33,13 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueAssetUrl,
+  readMcpAppHtml,
+  rebaseSignedAssetUrl,
+  resolveAsset,
+} from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -185,6 +191,31 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     );
   });
+
+  it.effect("moves only this server's signed asset links to another origin", () =>
+    Effect.gen(function* () {
+      const { relativeUrl } = yield* issueAssetUrl({
+        resource: {
+          _tag: "tool-output-image",
+          threadId: screenshotItem.threadId,
+          itemId: screenshotItem.id,
+          index: 0,
+        },
+      });
+      const loopback = "http://127.0.0.1:3773";
+      expect(
+        yield* rebaseSignedAssetUrl(`https://box.example${relativeUrl}?v=1#page=2`, loopback),
+      ).toBe(`${loopback}${relativeUrl}?v=1#page=2`);
+      const [, token] = relativeUrl.split("/").slice(2);
+      for (const url of [
+        `https://box.example${relativeUrl.replace(token!, `${token}x`)}`,
+        `https://box.example${ASSET_ROUTE_PREFIX}/unsigned/report.html`,
+        `ftp://box.example${relativeUrl}`,
+      ]) {
+        expect(yield* rebaseSignedAssetUrl(url, loopback)).toBe(url);
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect("serves an image a tool returned inline from the stored item", () =>
     Effect.gen(function* () {
