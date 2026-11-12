@@ -183,6 +183,8 @@ describe("CodexAdapterV2 runtime policy", () => {
               },
             });
             assert.equal(params.effort, reasoningEffort);
+            // Some Responses providers reject `detailed`; `auto` is the most detailed a model supports.
+            assert.equal(params.summary, "auto");
             assert.equal(params.additionalContext !== undefined, hasT3Mcp === true);
           }
         }
