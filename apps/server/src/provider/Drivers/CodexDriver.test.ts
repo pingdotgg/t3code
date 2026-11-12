@@ -522,7 +522,22 @@ it.layer(layerTest)("CodexDriver", (it) => {
           enabled: false,
           environment: [],
           config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: home },
-        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, npmView));
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, npmView),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  request.url === "https://releases.openai.com/codex/channels/latest"
+                    ? Response.json({ tag_name: "rust-v0.163.0", assets: [] })
+                    : new Response(null, { status: 404 }),
+                ),
+              ),
+            ),
+          ),
+        );
         const capabilities = yield* instance.snapshot.resolveMaintenance();
         expect(capabilities.update?.lockKey).toBe("codex-native");
 
@@ -532,7 +547,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
             ProviderLatestVersions.make(),
           ),
         );
-        expect(latestVersion).not.toBe("0.164.0");
+        expect(latestVersion).toBe("0.163.0");
         expect(
           createProviderVersionAdvisory({
             driver: CodexDriver.driverKind,
