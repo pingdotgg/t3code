@@ -34,6 +34,7 @@ const layerRejectedBeforeSession = Layer.succeed(
     getSession: () => Effect.die("getSession must not be reached"),
     clearCookies: () => Effect.die("clearCookies must not be reached"),
     clearCache: () => Effect.die("clearCache must not be reached"),
+    persistSessionCookies: Effect.die("persistSessionCookies must not be reached"),
   }),
 );
 

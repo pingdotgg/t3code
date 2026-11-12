@@ -1,5 +1,6 @@
-import type { Session, WebContents } from "electron";
+import type { Cookie, Session, WebContents } from "electron";
 import { BrowserWindow, session } from "electron";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -59,6 +60,9 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
 const TEAMS_URL_PATTERNS = ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"];
 
 const MAX_PROMPT_URL_LENGTH = 300;
+
+// Chromium's cap on cookie lifetimes.
+const PERSISTED_SESSION_COOKIE_LIFETIME_SECONDS = 400 * 24 * 60 * 60;
 
 const truncateForPrompt = (text: string): string =>
   text.length > MAX_PROMPT_URL_LENGTH ? `${text.slice(0, MAX_PROMPT_URL_LENGTH)}…` : text;
@@ -122,6 +126,18 @@ export class BrowserSessionCacheClearError extends Schema.TaggedError<BrowserSes
   }
 }
 
+export class BrowserSessionCookiePersistError extends Schema.TaggedError<BrowserSessionCookiePersistError>()(
+  "BrowserSessionCookiePersistError",
+  {
+    partition: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to keep session cookies for desktop preview browser partition ${this.partition}.`;
+  }
+}
+
 export const BrowserSessionGetSessionError = Schema.Union([
   BrowserSessionPartitionDerivationError,
   BrowserSessionCreationError,
@@ -157,6 +173,8 @@ export class BrowserSession extends Context.Service<
     readonly clearCache: (
       partitions?: ReadonlyArray<string>,
     ) => Effect.Effect<void, BrowserSessionCacheClearError>;
+    /** Chromium never writes session cookies to disk; give them an expiry so sign-ins survive a restart. */
+    readonly persistSessionCookies: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/preview/BrowserSession") {}
 
@@ -178,6 +196,24 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
         (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`,
       ),
   );
+
+const persistSessionCookie = (
+  cookies: Session["cookies"],
+  cookie: Cookie,
+  expirationDate: number,
+) =>
+  cookies.set({
+    url: `${cookie.secure ? "https" : "http"}://${(cookie.domain ?? "").replace(/^\./, "")}${cookie.path ?? "/"}`,
+    name: cookie.name,
+    value: cookie.value,
+    // Electron widens any supplied domain; omit it for host-only cookies.
+    ...(cookie.hostOnly || cookie.domain === undefined ? {} : { domain: cookie.domain }),
+    path: cookie.path ?? "/",
+    secure: cookie.secure ?? false,
+    httpOnly: cookie.httpOnly ?? false,
+    sameSite: cookie.sameSite,
+    expirationDate,
+  });
 
 // Webview guests have no window; use their embedding page.
 const previewHostWindow = (guest: WebContents | null): BrowserWindow | undefined => {
@@ -416,6 +452,35 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         { concurrency: "unbounded", discard: true },
       );
     }),
+    persistSessionCookies: Effect.gen(function* () {
+      const sessions = yield* SynchronizedRef.get(sessionsRef);
+      const expirationDate =
+        (yield* Clock.currentTimeMillis) / 1000 + PERSISTED_SESSION_COOKIE_LIFETIME_SECONDS;
+      yield* Effect.forEach(
+        [...sessions].filter(([partition]) => partition.startsWith(PREVIEW_PARTITION_PREFIX)),
+        ([partition, browserSession]) =>
+          Effect.tryPromise({
+            try: async () => {
+              const cookies = await browserSession.cookies.get({});
+              const sessionCookies = cookies.filter((cookie) => cookie.session === true);
+              if (sessionCookies.length === 0) return;
+              await Promise.allSettled(
+                sessionCookies.map((cookie) =>
+                  persistSessionCookie(browserSession.cookies, cookie, expirationDate),
+                ),
+              );
+              await browserSession.cookies.flushStore();
+            },
+            catch: (cause) => new BrowserSessionCookiePersistError({ partition, cause }),
+          }).pipe(
+            Effect.catchTags({
+              BrowserSessionCookiePersistError: (error) =>
+                Effect.logWarning(error.message, { cause: error.cause }),
+            }),
+          ),
+        { concurrency: "unbounded", discard: true },
+      );
+    }).pipe(Effect.withSpan("BrowserSession.persistSessionCookies")),
   });
 }).pipe(Effect.withSpan("BrowserSession.make"));
 

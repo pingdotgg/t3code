@@ -206,6 +206,7 @@ const layerBrowserSession = Layer.succeed(
     getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
     clearCookies: () => Effect.void,
     clearCache: () => Effect.void,
+    persistSessionCookies: Effect.void,
   }),
 );
 
