@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -101,7 +102,7 @@ function makeHarness(bundle: ContributorBundle | null = null) {
     load: () => Effect.succeed(bundle === null ? Option.none() : Option.some(bundle)),
   });
   const layerAgentTeam = AgentTeam.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerThreadManagement, layerServerSettings)),
+    Layer.provide(Layer.mergeAll(layerThreadManagement, layerServerSettings, NodeCrypto.layer)),
   );
   const layerTeamTemplate = TeamTemplate.layer.pipe(
     Layer.provide(

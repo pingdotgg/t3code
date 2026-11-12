@@ -2,8 +2,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeThreadRef, type ScopedProjectRef } from "@t3tools/client-runtime/environment";
-import type { AgentTeamSeatStatus, OrchestrationV2ReadAgentTeamResult } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type {
+  AgentTeamSeatStatus,
+  OrchestrationV2ReadAgentTeamResult,
+  ScopedProjectRef,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { UsersIcon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -65,10 +69,7 @@ function ProjectAgentTeamSettingsInner({ projectRef }: { projectRef: ScopedProje
   const seats = snapshot?.seats ?? [];
 
   return (
-    <SettingsSection
-      title="Agent team"
-      description="Durable specialist seats installed from a team template."
-    >
+    <SettingsSection title="Agent team">
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading agent team…</p>
       ) : error !== null ? (

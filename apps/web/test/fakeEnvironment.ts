@@ -221,6 +221,7 @@ export interface FakeThread {
   readonly title: string;
   /** Defaults to GPT-5.4 on Codex. */
   readonly modelSelection?: ModelSelection;
+  readonly nextTurnModelSelection?: ModelSelection | null;
   /** The first is the thread's active provider thread. */
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -263,6 +264,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     title: thread.title,
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
+    nextTurnModelSelection: thread.nextTurnModelSelection ?? null,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",
@@ -331,6 +333,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
       settledAt: shell.settledAt,
       lastVisitedAt: AT,
       deletedAt: null,
+      nextTurnModelSelection: shell.nextTurnModelSelection ?? null,
     },
     runs: [...thread.runs],
     attempts: [],
@@ -383,7 +386,26 @@ const handlers: Record<string, (input: never) => unknown> = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
     Effect.suspend(() => {
       dispatched.push(command);
-      return acceptCommands ? Effect.succeed({ sequence: sequence + 1 }) : Effect.never;
+      if (
+        acceptCommands &&
+        command.type === "thread.model-selection.set" &&
+        "threadId" in command &&
+        "modelSelection" in command
+      ) {
+        threads = threads.map((thread) => {
+          if (thread.id !== command.threadId) return thread;
+          const current = thread.modelSelection ?? MODEL;
+          if (command.modelSelection.instanceId === current.instanceId) {
+            return {
+              ...thread,
+              modelSelection: command.modelSelection,
+              nextTurnModelSelection: null,
+            };
+          }
+          return { ...thread, nextTurnModelSelection: command.modelSelection };
+        });
+      }
+      return acceptCommands ? Effect.succeed({ sequence: (sequence += 1) }) : Effect.never;
     }),
   [WS_METHODS.subscribeTerminalMetadata]: () =>
     subscribe<TerminalMetadataStreamEvent>([{ type: "snapshot", terminals: [] }], (queue) => {

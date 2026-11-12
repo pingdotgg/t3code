@@ -126,6 +126,10 @@ vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ...(await original()),
   ProjectActionsSettings: (() => null) as never,
 }));
+vi.mock(import("./ProjectAgentTeamSettings"), async (original) => ({
+  ...(await original()),
+  ProjectAgentTeamSettings: (() => null) as never,
+}));
 
 vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
   ...(await original()),

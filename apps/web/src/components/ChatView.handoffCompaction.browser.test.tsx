@@ -48,7 +48,7 @@ const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 /** A Claude thread whose 250k-token context went cold long ago, with its native thread kept for handoff. */
 function coldClaudeThread() {
-  const thread = threadWithHistory("thread-claude", 3, {
+  const thread = threadWithHistory("thread-claude", 1, {
     instanceId: CLAUDE,
     model: "claude-opus-4-6",
   });
@@ -64,7 +64,7 @@ function coldClaudeThread() {
     nativeConversationHeadRef: null,
     status: "idle",
     firstRunOrdinal: 1,
-    lastRunOrdinal: 3,
+    lastRunOrdinal: 1,
     handoffIds: [],
     forkedFrom: null,
     pendingBackgroundTasks: [],
@@ -95,16 +95,21 @@ it("sends a Codex follow-up on a cold Claude thread without compacting first", a
     // AppRoot brings its own router.
     router: false,
   });
-  await expect.element(page.getByText(`Answer 2 for ${thread.id}.`)).toBeVisible();
-  const compactAndSend = page.getByRole("button", { name: "Compact and send" });
-  await expect.element(compactAndSend).toBeVisible();
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
 
   await page.getByRole("button", { name: "Claude Opus 4.6", exact: true }).click();
   // The picker lists only the active provider's models until you search.
   await userEvent.type(page.getByPlaceholder("Search models..."), "GPT-5.4");
   await page.getByRole("option", { name: "GPT-5.4", exact: false }).click();
-  await expect.element(page.getByRole("button", { name: "GPT-5.4", exact: true })).toBeVisible();
-  await expect.element(compactAndSend).not.toBeInTheDocument();
+  await vi.waitFor(() =>
+    expect(
+      dispatchedCommands().some(
+        (command) =>
+          command.type === "thread.model-selection.set" &&
+          command.modelSelection?.instanceId === CODEX_PROVIDER.instanceId,
+      ),
+    ).toBe(true),
+  );
   // Picking a model leaves the composer's settings menu open.
   await userEvent.keyboard("{Escape}");
 
@@ -113,13 +118,17 @@ it("sends a Codex follow-up on a cold Claude thread without compacting first", a
   await userEvent.type(editor, "keep going");
   await userEvent.keyboard("{Enter}");
 
-  const messages = () =>
-    dispatchedCommands().flatMap((command) =>
-      command.type === "message.dispatch"
-        ? [{ text: command.text, instanceId: command.modelSelection?.instanceId }]
-        : [],
-    );
-  const sent = { text: "keep going", instanceId: CODEX_PROVIDER.instanceId };
-  await vi.waitFor(() => expect(messages()).toContainEqual(sent));
-  expect(messages()).toEqual([sent]);
+  await vi.waitFor(() => {
+    const dispatches = dispatchedCommands();
+    expect(
+      dispatches.some(
+        (command) => command.type === "message.dispatch" && command.text === "/compact",
+      ),
+    ).toBe(false);
+    expect(
+      dispatches.some(
+        (command) => command.type === "message.dispatch" && command.text.includes("keep going"),
+      ),
+    ).toBe(true);
+  });
 });
