@@ -70,6 +70,9 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
+      ...(window.share === undefined && existing?.share !== undefined
+        ? { share: existing.share }
+        : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
@@ -106,7 +109,10 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
         a.providerIds.length === b.providerIds.length &&
         a.providerIds.every((id, index) => id === b.providerIds?.[index]))) &&
     a.resetsAt === b.resetsAt &&
-    a.windowDurationMins === b.windowDurationMins
+    a.windowDurationMins === b.windowDurationMins &&
+    a.share?.ofWindowId === b.share?.ofWindowId &&
+    a.share?.usedPercent === b.share?.usedPercent &&
+    a.share?.allowancePercent === b.share?.allowancePercent
   );
 }
 

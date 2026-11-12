@@ -715,6 +715,28 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
+/** "Up to 50% of your weekly limit" for a window that draws from part of another. */
+export function usageShareSummary(
+  share: ServerProviderUsageWindow["share"],
+  windows: ReadonlyArray<{ readonly id: string; readonly label: string }>,
+): string | null {
+  const parent = share && windows.find((window) => window.id === share.ofWindowId);
+  return share && parent
+    ? `Up to ${Math.round(share.allowancePercent)}% of your ${parent.label.toLowerCase()} limit`
+    : null;
+}
+
+/** What narrower windows, such as Fable's share of Weekly, used of this window. */
+export function sharedUsage(
+  window: ServerProviderUsageWindow,
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+): { readonly percent: number; readonly labels: ReadonlyArray<string> } | null {
+  const sharing = windows.filter((other) => other.share?.ofWindowId === window.id);
+  const used = sharing.reduce((sum, other) => sum + (other.share?.usedPercent ?? 0), 0);
+  const percent = Math.min(Math.round(used), 100 - remainingPercent(window));
+  return percent > 0 ? { percent, labels: sharing.map((other) => other.label) } : null;
+}
+
 export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }

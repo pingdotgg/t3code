@@ -37,6 +37,27 @@ const respond = (status: number, body: unknown) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status }))),
   );
 const refuseRequests = HttpClient.make(() => Effect.die("must not send a request"));
+const usageBody = {
+  cedar_ember: {
+    eligible: true,
+    next_grant_id: "grant_a",
+    grants: [
+      grant({}),
+      grant({ id: "fable_a", clears: ["seven_day_overage_included"], gives_back_weekly: true }),
+    ],
+  },
+  limits: [
+    { kind: "session", percent: 20, scope: null },
+    { kind: "weekly_all", percent: 38, scope: null },
+    { kind: "weekly_scoped", percent: 16, scope: { model: { id: null, display_name: "Fable" } } },
+  ],
+  weekly_scoped_shares: [
+    { limit_index: 2, used_percent_of_weekly: 8, allowance_percent_of_weekly: 50 },
+    { limit_index: 1, used_percent_of_weekly: 38, allowance_percent_of_weekly: 100 },
+    { limit_index: 9, used_percent_of_weekly: 1, allowance_percent_of_weekly: 10 },
+  ],
+};
+const fableShare = { ofWindowId: "seven_day", usedPercent: 8, allowancePercent: 50 };
 
 describe("claudeResetCreditsToContract", () => {
   it("counts live grants and pins the next usable one", () => {
@@ -147,7 +168,7 @@ describe("claudeResetCreditsToContract", () => {
   });
 });
 
-effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
+effectIt.layer(NodeServices.layer)("readClaudeAccountUsage", (it) => {
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
@@ -158,20 +179,22 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         expect(request.headers.authorization).toBe("Bearer oauth-token");
         expect(request.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
         expect(request.headers["user-agent"]).toBe("claude-cli/2.1.0 (external, cli)");
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
-            }),
-          ),
-        );
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(usageBody)));
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const usage = yield* ClaudeResetCredits.readClaudeAccountUsage(
+        configDir,
+        "2.1.0",
+        "Fable",
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(usage?.resetCredits).toMatchObject({ nextCreditId: "grant_a" });
+      expect([...(usage?.sharesByWindowId ?? [])]).toEqual([["seven_day_fable", fableShare]]);
+      expect(usage?.resetCredits?.options?.map((option) => option.description)).toEqual([
+        "Refills your Fable allowance and gives back the 8% of your weekly limit Fable used. It doesn't reset the rest of your weekly limit.",
+        "Refills your 5-hour and weekly limits.",
+      ]);
     }),
   );
 
@@ -184,20 +207,20 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         configDir,
       );
       let requests = 0;
-      let body: unknown = {
-        cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
-      };
+      let body: unknown = usageBody;
       const client = HttpClient.make((request) => {
         requests += 1;
         return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
       });
       const read = (version = "2.1.0") =>
-        ClaudeResetCredits.readClaudeResetCredits(configDir, version, undefined, cacheFile).pipe(
+        ClaudeResetCredits.readClaudeAccountUsage(configDir, version, undefined, cacheFile).pipe(
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HttpClient.HttpClient, client),
         );
       yield* read();
-      expect(yield* read()).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+      const cached = yield* read();
+      expect(cached?.resetCredits).toMatchObject({ nextCreditId: "grant_a" });
+      expect(cached?.sharesByWindowId.get("seven_day_fable")).toEqual(fableShare);
       expect(requests).toBe(1);
       yield* read("2.2.0");
       yield* read("2.2.0");
@@ -219,11 +242,11 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
   it.effect("reads nothing from keychain logins or failed requests", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const darwin = yield* ClaudeResetCredits.readClaudeAccountUsage(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const limited = yield* ClaudeResetCredits.readClaudeAccountUsage(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );

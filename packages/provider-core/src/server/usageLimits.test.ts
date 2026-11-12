@@ -58,18 +58,20 @@ describe("applyUsageLimitsUpdate", () => {
     ).toEqual(["opencode/b"]);
   });
 
-  it("upserts by id and keeps the reset a percent-only update omits", () => {
+  it("upserts by id and keeps the reset and share a percent-only update omits", () => {
+    const share = { ofWindowId: "seven_day", usedPercent: 8, allowancePercent: 50 };
+    const previous = { checkedAt, windows: [{ ...session, share }, weekly] };
     const next = applyUsageLimitsUpdate({
-      previous: published,
+      previous,
       checkedAt: "2026-09-03T12:00:05.000Z",
       update: {
         windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 55 }],
       },
     });
-    expect(next).not.toBe(published);
+    expect(next).not.toBe(previous);
     expect(next).toEqual({
       checkedAt: "2026-09-03T12:00:05.000Z",
-      windows: [{ ...session, usedPercent: 55 }, weekly],
+      windows: [{ ...session, usedPercent: 55, share }, weekly],
     });
   });
 
