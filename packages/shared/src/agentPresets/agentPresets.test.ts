@@ -13,6 +13,8 @@ import {
   addPresetSkills,
   agentPresetFilesFromArchive,
   decodeAgentPresets,
+  defaultAgentSkills,
+  DEFAULT_AGENT_SKILL_NAMES,
   exportAgentPresets,
   presetSkillConflicts,
   type AgentPresetSkill,
@@ -230,6 +232,46 @@ describe("addPresetSkills", () => {
     });
     expect(result.skillIds).toEqual(["s1"]);
     expect(result.agentSkills).toHaveLength(1);
+  });
+});
+
+describe("defaultAgentSkills", () => {
+  const root = import.meta.dirname;
+  const presets = decodeAgentPresets({
+    ...readTree(root, "presets"),
+    ...readTree(root, "skills"),
+  });
+  const now = "2026-11-12T00:00:00.000Z";
+  const empty = {
+    agentSkills: [],
+    agentSkillDeletedAt: {},
+    mcpGatewayProfiles: [],
+    mcpGatewayProfileDeletedAt: {},
+  };
+
+  it("seeds a new library with stable ids that a preset install then reuses", () => {
+    const seeded = defaultAgentSkills(empty, presets, now);
+    expect(seeded.map((skill) => [skill.skillId, skill.name])).toEqual(
+      DEFAULT_AGENT_SKILL_NAMES.map((name) => [`t3-default-${name}`, name]),
+    );
+    const captain = presets.find((preset) => preset.id === "captain")!;
+    const added = addPresetSkills(seeded, captain.skills, { now, makeId: () => "new" });
+    expect(added.agentSkills.filter((skill) => skill.skillId.startsWith("t3-default-"))).toEqual(
+      seeded,
+    );
+    expect(added.agentSkills.filter((skill) => skill.name === "t3-agents")).toHaveLength(1);
+  });
+
+  it.each([
+    [
+      "an edited default",
+      { agentSkills: [{ ...defaultAgentSkills(empty, presets, now)[0]!, content: "mine" }] },
+    ],
+    ["a deleted default", { agentSkillDeletedAt: { "t3-default-t3-agents": now } }],
+    ["an agent", { mcpGatewayProfiles: [{}] }],
+    ["a deleted agent", { mcpGatewayProfileDeletedAt: { agent: now } }],
+  ])("leaves a library holding %s alone", (_label, library) => {
+    expect(defaultAgentSkills({ ...empty, ...library }, presets, now)).toEqual([]);
   });
 });
 

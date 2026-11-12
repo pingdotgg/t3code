@@ -91,7 +91,7 @@ function main() {
   const oldSlug = oldModule.split("/").at(-1);
   for (const file of walk(projectDir)) {
     if (
-      !/\.(go|mod|templ|md|yaml|yml|json|toml|sh)$/.test(file) &&
+      !/\.(go|mod|templ|md|yaml|yml|json|toml|sh|[cm]?[jt]sx?)$/.test(file) &&
       !["Makefile", ".env.example"].includes(NodePath.basename(file))
     )
       continue;

@@ -17,6 +17,7 @@ import {
   runAgentLibrarySync,
   type AgentLibrarySyncIo,
 } from "@t3tools/client-runtime/operations/agentLibrary";
+import { defaultAgentSkills, isNewAgentLibrary } from "@t3tools/shared/agentPresets";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -145,5 +146,36 @@ export function AgentLibrarySync() {
       () => batch.settle(false),
     );
   }, [environments, io]);
+  useSeedDefaultAgentSkills();
   return null;
+}
+
+// Preset text stays out of the main bundle until a new library needs it.
+const loadAgentPresets = () => import("../components/agents/agentPresetBundle");
+
+/**
+ * Gives a brand-new user the shipped default skills, once every known machine's library has
+ * loaded. Cached libraries of offline machines count, so an existing user is never seeded.
+ */
+function useSeedDefaultAgentSkills() {
+  const { environments } = useEnvironments();
+  const { available, skillResourcesAvailable, updateSettings } = useAgentLibrary();
+  const decided = useRef(false);
+  const loaded = environments.every((environment) => environment.serverConfig);
+  const library = mergeAgentLibraries(
+    agentLibrarySources(environments).map((source) => source.library),
+  );
+  const fresh = isNewAgentLibrary(library);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- seeds the servers' agent library once their settings have streamed in
+  useEffect(() => {
+    if (decided.current || !loaded || !available || !skillResourcesAvailable) return;
+    decided.current = true;
+    if (!fresh) return;
+    void loadAgentPresets()
+      .then(({ agentPresets }) => {
+        const agentSkills = defaultAgentSkills(library, agentPresets, new Date().toISOString());
+        return agentSkills.length > 0 && updateSettings({ agentSkills });
+      })
+      .catch(() => undefined);
+  });
 }

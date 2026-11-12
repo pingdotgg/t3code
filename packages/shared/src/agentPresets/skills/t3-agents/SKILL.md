@@ -28,4 +28,4 @@ When a Captain launched you: end each turn with a short summary. Put any questio
 
 ## Tools
 
-Prefer native tools and the provider's built-in capabilities; honor the user's explicit tool choice. The `native-first-tools` skill has the details.
+Prefer native tools and the provider's built-in capabilities, such as native computer use and image generation, over a configured fallback. Honor the user's explicit tool choice.

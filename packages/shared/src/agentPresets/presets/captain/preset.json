@@ -20,8 +20,8 @@
     "retro",
     "grill-me",
     "grilling",
-    "native-first-tools",
-    "captain-event-loop"
+    "captain-event-loop",
+    "t3-agents"
   ],
   "setupNotes": [
     "Requires Claude Code with access to claude-opus-5-5.",
