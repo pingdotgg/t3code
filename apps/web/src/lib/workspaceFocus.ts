@@ -74,6 +74,16 @@ function isInScrollView(target: HTMLElement) {
 }
 
 /**
+ * Whether focus can go back to an element without surprising the user: it is still in a
+ * visible workspace area (a closing drawer drops its area) and in view, so no list scrolls.
+ */
+export function canReturnFocusTo(element: HTMLElement) {
+  return (
+    workspaceArea(element) !== null && isWorkspaceElementVisible(element) && isInScrollView(element)
+  );
+}
+
+/**
  * Brings a restored control into view, innermost scrolling list first.
  * scrollIntoView would also scroll overflow-hidden layout containers out of place.
  */
@@ -133,7 +143,7 @@ export function createWorkspaceFocusController(doc: Document) {
     // panel focuses it, but F6 visits that area on its own, so it moves past it here.
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
-        '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
+        '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][aria-current="page"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
     ).find(nested ? usable : belongs);
     const fallback = Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
