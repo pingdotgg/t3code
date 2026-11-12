@@ -4034,14 +4034,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
     );
 
-    const prepareTurn = Effect.fnUntraced(function* (
-      sessionId: string,
-      state: ThreadState,
-      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    const addMcp = Effect.fnUntraced(function* (
+      threadId: ProviderAdapter.ProviderAdapterV2TurnInput["threadId"],
+      directory: string,
+      state: Pick<ThreadState, "mcp">,
     ) {
-      const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-      const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
-      const name = yield* mcpServerNameFor(turnInput.threadId);
+      const mcpSession = yield* mcpSessions.read(threadId);
+      const name = yield* mcpServerNameFor(threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
         mcpSession === undefined || connection.external
@@ -4082,6 +4081,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         if (mcpAvailable) state.mcp = wanted;
       }
+      return { mcpAvailable, mcpSession };
+    });
+
+    const prepareTurn = Effect.fnUntraced(function* (
+      sessionId: string,
+      state: ThreadState,
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    ) {
+      const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
+      const { mcpAvailable, mcpSession } = yield* addMcp(turnInput.threadId, directory, state);
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
@@ -4443,13 +4452,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             threadInput.threadId,
           );
           const title = threadInput.title?.trim() || undefined;
+          // OpenCode 2.0 builds a session's tool catalog at creation, so T3's MCP goes first.
+          const added: Pick<ThreadState, "mcp"> = { mcp: undefined };
+          yield* addMcp(threadInput.threadId, directory, added);
           // A session created with a title is never titled by OpenCode's own model.
-          const created = yield* client.session.create({
-            location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
-            model,
-            permissions,
-            ...(title === undefined ? {} : { title }),
-          });
+          const created = yield* client.session
+            .create({
+              location: Location.PublicRef.make({ directory: AbsolutePath.make(directory) }),
+              model,
+              permissions,
+              ...(title === undefined ? {} : { title }),
+            })
+            .pipe(
+              Effect.tapError(() => (added.mcp === undefined ? Effect.void : removeMcp(added.mcp))),
+            );
           const createdAt = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
             ...(threadInput.existingProviderThread ?? {
@@ -4481,6 +4497,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             },
             directory,
           );
+          state.mcp = added.mcp;
           state.policy = policy;
           return state.providerThread;
         },
