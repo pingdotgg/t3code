@@ -437,7 +437,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     ),
   ).pipe(Effect.forkScoped);
 
-  yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
+  // Probes spawn provider CLIs; starting them during server startup slows the first client load.
+  yield* (host.awaitServerReady ?? Effect.void).pipe(
+    Effect.andThen(applySnapshot(initialSettings, { forceRefresh: true })),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );
