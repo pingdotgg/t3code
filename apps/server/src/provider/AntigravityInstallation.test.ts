@@ -185,7 +185,10 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
-    Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
+    Effect.provideService(HostProcess.Environment, {
+      PATH: options.path ?? "",
+      T3CODE_CLI_FALLBACK_DIRS: "",
+    }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
