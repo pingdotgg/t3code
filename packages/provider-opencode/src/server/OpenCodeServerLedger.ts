@@ -16,11 +16,12 @@ const ProcessIdentity = Schema.Struct({ pid: Schema.Int, startTime: Schema.Strin
 type ProcessIdentity = typeof ProcessIdentity.Type;
 
 const OpenCodeServerEntry = Schema.Struct({
-  version: Schema.Literal(2),
+  version: Schema.Literal(1),
   pgid: Schema.Int,
   pid: Schema.Int,
   startTime: Schema.String,
-  args: Schema.Array(Schema.String),
+  command: Schema.String,
+  args: Schema.optionalKey(Schema.Array(Schema.String)),
   port: Schema.Int,
   stateDir: Schema.String,
   owner: ProcessIdentity,
@@ -198,7 +199,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         leader !== undefined && !leader.zombie && leader.pgid === pgid
           ? [leader]
           : (yield* observeGroup(pgid)).filter((candidate) => !candidate.zombie);
-      const member = members.find((candidate) => runsServe(candidate, server.args));
+      const member = members.find((candidate) => runsServe(candidate, server.args)) ?? members[0];
       if (owner === undefined || member === undefined) {
         if (groupExists(pgid)) {
           yield* Effect.logWarning(
@@ -210,10 +211,11 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       }
       const entryPath = path.join(directory, `${pgid}.json`);
       const entry: OpenCodeServerEntry = {
-        version: 2,
+        version: 1,
         pgid,
         pid: member.pid,
         startTime: member.startTime,
+        command: member.command,
         args: server.args,
         port: server.port,
         stateDir: input.stateDir,
@@ -242,8 +244,8 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   );
 
   // Signals only a group whose recorded member still has the same pid, start
-  // time, and group and still runs the serve arguments, so a recycled pid is
-  // never touched.
+  // time, and group and still has the same command line or serve arguments, so
+  // a recycled pid is never touched.
   const stopOrphan = Effect.fn("OpenCodeServerLedger.stopOrphan")(function* (
     entry: OpenCodeServerEntry,
   ) {
@@ -253,7 +255,8 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       observed.zombie ||
       observed.startTime !== entry.startTime ||
       observed.pgid !== entry.pgid ||
-      !runsServe(observed, entry.args)
+      (observed.command !== entry.command &&
+        (entry.args === undefined || !runsServe(observed, entry.args)))
     ) {
       return;
     }

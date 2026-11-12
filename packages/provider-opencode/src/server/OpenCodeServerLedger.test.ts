@@ -176,6 +176,38 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
     }).pipe(provideHost),
   );
 
+  it.live("stops a group recorded by an older server without serve arguments", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const orphan = yield* spawnGroup(SERVE_ARGS);
+      yield* recordFromDeadServer(stateDir, orphan);
+      const entryPath = path.join(stateDir, "opencode-servers", `${orphan.pid}.json`);
+      const { args: _args, ...legacy } = JSON.parse(yield* fs.readFileString(entryPath));
+      yield* fs.writeFileString(entryPath, JSON.stringify(legacy));
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(groupExists(orphan.pid)).toBe(false);
+    }).pipe(provideHost),
+  );
+
+  it.live("stops a group whose wrapper appends its own options", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const orphan = yield* spawnGroup([...SERVE_ARGS, "--log-level=ERROR"]);
+      yield* recordFromDeadServer(stateDir, orphan);
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(groupExists(orphan.pid)).toBe(false);
+    }).pipe(provideHost),
+  );
+
   it.live("leaves a recycled pid alone when its start time does not match", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -204,7 +236,7 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
       const entry = yield* fs.readFileString(entryPath);
-      yield* fs.writeFileString(entryPath, entry.replace("--port=4096", "--port=4097"));
+      yield* fs.writeFileString(entryPath, entry.replaceAll("--port=4096", "--port=4097"));
 
       const restarted = yield* OpenCodeServerLedger.make({ stateDir });
       yield* restarted.reapOrphans;
