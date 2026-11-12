@@ -144,8 +144,8 @@ function hiddenChildAncestorIds(
 }
 
 /**
- * Live subagents, the parents of other children (side chats, forks), and the subagents above
- * them, so each of those keeps its chain to the root.
+ * The subagents `isLive` accepts, the parents of other children (side chats, forks), and the
+ * subagents above them, so each of those keeps its chain to the root.
  */
 function liveSubagentChainIds<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineage">>(
   rows: ReadonlyArray<T>,
