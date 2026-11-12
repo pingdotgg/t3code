@@ -82,8 +82,8 @@ describe("Bitbucket media", () => {
   it.each([
     ["https://bitbucket.org/acme/app/downloads/shot.png", "downloads/shot.png"],
     ["https://www.bitbucket.org/acme/app/downloads/shot.png", "downloads/shot.png"],
-    ["https://bitbucket.org/acme/app/raw/abc123/docs/shot.png", "src/abc123/docs/shot.png"],
-    ["https://bitbucket.org/acme/app/src/main/docs/shot.png?raw=1", "src/main/docs/shot.png"],
+    ["https://bitbucket.org/acme/app/raw/abc1234/docs/shot.png", "src/abc1234/docs/shot.png"],
+    ["https://bitbucket.org/acme/app/src/abc1234/docs/shot.png?raw=1", "src/abc1234/docs/shot.png"],
     [
       "https://api.bitbucket.org/2.0/repositories/acme/app/downloads/shot.png",
       "downloads/shot.png",
@@ -105,6 +105,7 @@ describe("Bitbucket media", () => {
     "https://bitbucket.org/acme/app/pull-requests/1",
     "https://bitbucket.org/acme/app/src/main/",
     "https://bitbucket.org/acme/app/src/main",
+    "https://bitbucket.org/acme/app/raw/feature/x/docs/shot.png",
     "https://api.bitbucket.org/2.0/repositories/acme/app/raw/main/shot.png",
     "https://api.bitbucket.org/2.0/users/acme/app/downloads/shot.png",
   ])("leaves non-media and untrusted URLs alone: %s", (source) => {

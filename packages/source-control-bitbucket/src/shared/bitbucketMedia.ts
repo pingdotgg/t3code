@@ -39,7 +39,11 @@ export function bitbucketMediaUrl(url: URL): SourceControlMediaUrl | null {
     return null;
   }
 
-  const file = route === "src" || (!api && route === "raw");
+  // A web ref may be a branch whose name contains "/", which the API's src route can't resolve;
+  // only a commit hash maps unambiguously, so other web links stay with the browser.
+  const file = api
+    ? route === "src"
+    : (route === "src" || route === "raw") && /^[0-9a-f]{7,40}$/iu.test(path[0] ?? "");
   const download = route === "downloads" && path.length === 1;
 
   if ((!file || path.length < 2) && !download) {
