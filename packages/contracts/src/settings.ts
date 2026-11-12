@@ -54,6 +54,7 @@ import {
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
   CloudSpeechModelId,
+  FixedCloudSpeechProvider,
   SpeechAcceleration,
   SpeechCorrectionCue,
   SpeechCustomWords,
@@ -385,7 +386,7 @@ export const VoiceTranscriptionDestination = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("cloud"),
     environmentId: EnvironmentId,
-    provider: Schema.Literals(["openai", "xai"]),
+    provider: FixedCloudSpeechProvider,
   }),
   Schema.Struct({
     kind: Schema.Literal("cloud"),
@@ -1347,6 +1348,7 @@ const CloudSpeechCredential = SettingsSecretValue.pipe(
 export const CloudSpeechCredentials = Schema.Struct({
   openai: CloudSpeechCredential,
   xai: CloudSpeechCredential,
+  groq: CloudSpeechCredential,
   openrouter: CloudSpeechCredential,
 });
 
@@ -1378,7 +1380,7 @@ export const ServerSettings = Schema.Struct({
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
-    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
+    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", groq: "", openrouter: "" })),
   ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
@@ -1831,6 +1833,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
       xai: Schema.optionalKey(SettingsSecretValue),
+      groq: Schema.optionalKey(SettingsSecretValue),
       openrouter: Schema.optionalKey(SettingsSecretValue),
     }),
   ),

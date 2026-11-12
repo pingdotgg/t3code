@@ -8,22 +8,31 @@ export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
 );
 
-export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter"]);
+/** Providers with one server-chosen model, so a grant names only the provider. */
+export const FixedCloudSpeechProvider = Schema.Literals(["openai", "xai", "groq"]);
+export type FixedCloudSpeechProvider = typeof FixedCloudSpeechProvider.Type;
+export const CloudSpeechProvider = Schema.Literals([
+  ...FixedCloudSpeechProvider.literals,
+  "openrouter",
+]);
 export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
 export const CLOUD_SPEECH_LABELS = {
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",
+  groq: "Groq Whisper",
   openrouter: "OpenRouter",
-} as const;
+} as const satisfies Record<CloudSpeechProvider, string>;
 export const CLOUD_SPEECH_PROVIDER_NAMES = {
   openai: "OpenAI",
   xai: "xAI",
+  groq: "Groq",
   openrouter: "OpenRouter",
-} as const;
-/** Servers that predate OpenRouter report only the first two providers. */
+} as const satisfies Record<CloudSpeechProvider, string>;
+/** Servers that predate a provider omit its key, so clients can tell "unsupported" from "unset". */
 export const CloudSpeechKeys = Schema.Struct({
   openai: Schema.Boolean,
   xai: Schema.Boolean,
+  groq: Schema.optionalKey(Schema.Boolean),
   openrouter: Schema.optionalKey(Schema.Boolean),
 });
 export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;

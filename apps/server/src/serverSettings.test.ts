@@ -1753,7 +1753,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const hub = UsageLimitSourceId.make("hub");
         const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
-          cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
+          cloudSpeechCredentials: {
+            openai: usageReference,
+            xai: "literal-fixture",
+            groq: usageReference,
+          },
           textGenerators: {
             [router]: {
               kind: "openaiCompatible",
@@ -1810,6 +1814,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.deepEqual(legacy.cloudSpeechCredentials, {
           openai: SECRET_REDACTED,
           xai: SECRET_REDACTED,
+          groq: SECRET_REDACTED,
           openrouter: "",
         });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
@@ -1840,6 +1845,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.deepEqual(echoed.cloudSpeechCredentials, {
           openai: usageReference,
           xai: "literal-fixture",
+          groq: usageReference,
           openrouter: "",
         });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
@@ -1881,7 +1887,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           bitbucket: { accessToken: personal("Bitbucket/token") },
           github: { tokens: { "github.com": personal("GitHub/token"), "ghe.acme.test": work } },
         },
-        cloudSpeechCredentials: { openai: personal("Voice/key"), xai: work },
+        cloudSpeechCredentials: {
+          openai: personal("Voice/key"),
+          xai: work,
+          groq: personal("Groq/key"),
+        },
         usageLimitSources: {
           [hub]: {
             kind: "cliproxy",
@@ -1926,7 +1936,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "ghe.acme.test": work,
       });
       assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
-      assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
+      assert.deepEqual(removed.cloudSpeechCredentials, {
+        openai: "",
+        xai: work,
+        groq: "",
+        openrouter: "",
+      });
       assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
       assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
@@ -1938,6 +1953,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       assert.deepEqual(strictSecretReferencePaths(ServerSettings.ast), [
         "cloudSpeechCredentials.openai",
         "cloudSpeechCredentials.xai",
+        "cloudSpeechCredentials.groq",
         "cloudSpeechCredentials.openrouter",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
