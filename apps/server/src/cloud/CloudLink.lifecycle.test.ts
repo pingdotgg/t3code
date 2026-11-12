@@ -634,6 +634,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
       cloudUserId: "user-123",
     },
     {
+      name: "replaces a revoked link after a partial drop removed its user id",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-456",
+      partialDrop: true,
+    },
+    {
       name: "rejects switching an active link to another account",
       revoked: false,
       startup: false,
@@ -645,10 +652,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
       startup: true,
       cloudUserId: "user-456",
     },
-  ])("$name", ({ revoked, startup, cloudUserId }) => {
+  ])("$name", ({ revoked, startup, cloudUserId, partialDrop }) => {
     const { store, values } = makeMemorySecretStore([
       [RELAY_URL_SECRET, "https://relay.example.test"],
-      [CLOUD_LINKED_USER_ID, "user-123"],
+      ...(partialDrop ? [] : [[CLOUD_LINKED_USER_ID, "user-123"] as const]),
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
       ...(revoked ? [[CLOUD_LINK_REVOKED, "true"] as const] : []),
       [CLOUD_CLI_DESIRED_LINK_SECRET, startup ? "publish_only" : "managed"],
@@ -658,7 +665,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      expect((yield* link.linkState()).linkRevoked).toBe(revoked);
+      expect((yield* link.linkState()).linkRevoked).toBe(revoked && !partialDrop);
       const relink = Effect.gen(function* () {
         if (startup) {
           yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773");
