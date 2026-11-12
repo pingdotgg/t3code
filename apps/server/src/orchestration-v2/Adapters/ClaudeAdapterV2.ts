@@ -1635,6 +1635,7 @@ export const layerQueryRunner: Layer.Layer<
                   }),
                 catch: (cause) => queryRunnerError(cause, "renameSession"),
               }).pipe(
+                Effect.asVoid,
                 Effect.tap(() =>
                   logProtocolEvent({
                     direction: "outgoing",
@@ -12208,8 +12209,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             // Only the spawn applies the `title` option; on resume the session's stored title wins
             // (sdk.d.ts). Send the CLI's rename so `claude --resume` follows the thread title.
+            // Control requests have no deadline and turn startup awaits this, so bound it: a
+            // timed-out rename is skipped and retried next turn.
             if (appliedSessionTitles.get(nativeThreadId) !== turnInput.appThread.title) {
               yield* querySession.query.renameSession(turnInput.appThread.title).pipe(
+                Effect.timeout("10 seconds"),
                 Effect.tap(() =>
                   Effect.sync(() =>
                     appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title),
