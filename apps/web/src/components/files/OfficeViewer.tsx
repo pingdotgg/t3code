@@ -253,10 +253,12 @@ function ExtendedOfficeViewer(props: {
         >
           <Tooltip>
             <TooltipTrigger render={<span tabIndex={0} />}>
-              {sheet.rowCount.toLocaleString()} rows
+              {sheet.rowCount.toLocaleString()} row{sheet.rowCount === 1 ? "" : "s"}
             </TooltipTrigger>
             <TooltipPopup>
-              <span className="block">{sheet.columns.toLocaleString()} columns</span>
+              <span className="block">
+                {sheet.columns.toLocaleString()} column{sheet.columns === 1 ? "" : "s"}
+              </span>
               {fileSize !== undefined ? (
                 <span className="block">
                   {fileSize === 0 ? "0 bytes" : formatAttachmentSize(fileSize)}

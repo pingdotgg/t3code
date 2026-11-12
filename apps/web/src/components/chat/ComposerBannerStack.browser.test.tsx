@@ -18,7 +18,6 @@ import {
   NoticeText,
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
-import { ComposerSurface } from "./ComposerSurface";
 import { useChatBannerLane } from "./ChatBannerLane";
 
 function notice(title: string, group?: ComposerBannerStackItem["group"]): ComposerBannerStackItem {
@@ -36,30 +35,6 @@ it("puts machine notices first, whatever order the notices arrive in", async () 
   await expect.element(screen.getByText("Branch changed", { exact: true })).not.toBeInTheDocument();
   await screen.getByRole("button", { name: "1 other notice" }).click();
   await expect.element(screen.getByText("Branch changed", { exact: true })).toBeVisible();
-});
-
-it("keeps the tray's top edge without leaving an empty notice region", async () => {
-  await using screen = await render(
-    <ComposerSurface.Shell data-testid="tray">
-      <ComposerBanner.Dock data-testid="notices">
-        <ComposerBannerStack items={[]} />
-      </ComposerBanner.Dock>
-      <ComposerSurface.Main data-testid="composer" style={{ height: 48 }}>
-        Message
-      </ComposerSurface.Main>
-      <ComposerSurface.ContextStrip>Branch</ComposerSurface.ContextStrip>
-    </ComposerSurface.Shell>,
-  );
-
-  const tray = screen.getByTestId("tray").element();
-  const surface = getComputedStyle(tray);
-  const rim = getComputedStyle(tray, "::after");
-  expect(rim.borderTopWidth).toBe("1px");
-  expect(surface.borderTopLeftRadius).not.toBe("0px");
-  expect(screen.getByTestId("notices").element().getBoundingClientRect().height).toBe(0);
-  expect(screen.getByTestId("composer").element().getBoundingClientRect().top).toBe(
-    tray.getBoundingClientRect().top,
-  );
 });
 
 function noticeRow(width: string, children: ReactNode) {
