@@ -139,10 +139,13 @@ describe("claudeResetCreditsToContract", () => {
     ).toEqual([
       ["session_a", "5-hour reset", 1, ["five_hour"], undefined],
       ["weekly_a", "Weekly reset", 3, ["seven_day"], undefined],
-      ["model_weekly", "Weekly reset", 1, ["seven_day_fable"], "Fable"],
+      ["model_weekly", "Fable weekly reset", 1, ["seven_day_fable"], "Fable"],
       ["fable_a", "Fable reset", 2, ["seven_day_fable"], "Fable"],
       ["full_a", "Full reset", 1, ["seven_day"], undefined],
     ]);
+    expect(credits?.options?.find((option) => option.creditId === "model_weekly")).toMatchObject({
+      description: "Refills your Fable weekly allowance.",
+    });
     expect(credits).toMatchObject({ availableCount: 8, nextCreditId: "weekly_a" });
   });
 

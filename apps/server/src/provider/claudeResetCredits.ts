@@ -229,6 +229,12 @@ export function claudeResetCreditsToContract(
         return {
           creditId: target.id,
           ...RESET_KINDS[kind],
+          ...(modelOnly && kind !== "fable"
+            ? {
+                label: `${scope ?? "Model"} weekly reset`,
+                description: `Refills your ${scope ?? "model"} weekly allowance.`,
+              }
+            : {}),
           availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
           ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
           clearsWindowIds: cleared.map((bucket) => claudeUsageWindowId(bucket, overageIncluded)),
