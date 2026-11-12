@@ -210,6 +210,60 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
   );
 });
 
+it("keeps the latest batch of finished agents in view after a later turn launches none", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const agent = (id: string, runId: string, title: string) => ({
+    id: NodeId.make(id),
+    threadId: projection.thread.id,
+    runId,
+    parentNodeId: NodeId.make("parent"),
+    origin: "provider_native",
+    createdBy: "agent",
+    driver: "claudeAgent",
+    providerInstanceId: projection.thread.providerInstanceId,
+    providerThreadId: null,
+    childThreadId: ThreadId.make(`${id}-thread`),
+    nativeTaskRef: null,
+    prompt: title,
+    title,
+    model: null,
+    status: "completed",
+    result: null,
+    startedAt: projection.thread.updatedAt,
+    completedAt: projection.thread.updatedAt,
+    updatedAt: projection.thread.updatedAt,
+  });
+  state.projection = {
+    ...projection,
+    runs: [1, 2, 3].map((ordinal) => ({
+      id: `run-${ordinal}`,
+      ordinal,
+      status: "completed",
+      startedAt: projection.thread.updatedAt,
+    })),
+    subagents: [
+      agent("older", "run-1", "Older batch agent"),
+      agent("latest", "run-2", "Latest batch agent"),
+    ],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("local")}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+
+  await expect
+    .element(screen.getByRole("button", { name: /Latest batch agent/ }))
+    .toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("button", { name: /Older batch agent/ }))
+    .not.toBeInTheDocument();
+});
+
 it("shows a lineage thread's full title in its tooltip", async () => {
   setup();
   const longTitle = "Compare the lineage tooltip against a title that the row truncates";
