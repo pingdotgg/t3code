@@ -12,6 +12,7 @@ import { primaryServerProvidersAtom } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import { timelineGapDevApi } from "./chat/TimelineGapRecorder";
 import { Button } from "./ui/button";
 import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "./ui/dialog";
 import { toastManager } from "./ui/toast";
@@ -93,6 +94,7 @@ export function DevReplayHost() {
     window.t3dev = {
       replayScenarios: () => listScenarios(),
       replay: (scenario) => replayFromConsole(scenario),
+      ...timelineGapDevApi,
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat) return;
