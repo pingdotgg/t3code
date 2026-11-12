@@ -771,6 +771,72 @@ describe("large text preview recovery", () => {
     expect(screen.container.textContent).toContain("C19");
   });
 
+  it("keeps row heights while scrolling across a tall column", async () => {
+    const header = Array.from({ length: 13 }, (_, i) => "C" + i);
+    const row = [...header.slice(0, 12).map(() => "x"), "folder/".repeat(40)];
+    await using screen = await render(
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <VirtualTablePreview
+          name="paths.csv"
+          count={3}
+          columns={13}
+          header={header}
+          getRows={() => [header, row, row]}
+        />
+      </div>,
+    );
+    const scroller = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+    const firstRow = () =>
+      screen.container.querySelector<HTMLElement>('[data-preview-row="1"]')!.offsetHeight;
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("C0"));
+    const height = firstRow();
+    // One line is 29px; the off-screen path column must already set the height.
+    expect(height).toBeGreaterThan(29);
+    await act(() => {
+      scroller().scrollLeft = scroller().scrollWidth;
+      scroller().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("C12"));
+    expect(firstRow()).toBe(height);
+  });
+
+  it("keeps the horizontal scroll position when the table is resized", async () => {
+    const header = Array.from({ length: 13 }, (_, i) => "C" + i);
+    const view = (width: number) => (
+      <div style={{ display: "flex", height: 400, width }}>
+        <VirtualTablePreview
+          name="wide.csv"
+          count={2}
+          columns={13}
+          header={header}
+          getRows={() => [header, header]}
+        />
+      </div>
+    );
+    await using screen = await render(view(600));
+    const scroller = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("C0"));
+    const before = scroller();
+    const outer = before.parentElement!;
+    await act(() => {
+      before.scrollLeft = 300;
+      before.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    // The table's own observer was created first, so it has handled the resize when this one fires.
+    const resized = new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        if (outer.clientWidth !== 500) return;
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(outer);
+    });
+    await screen.rerender(view(500));
+    await act(() => resized);
+    expect(scroller()).toBe(before);
+    expect(before.scrollLeft).toBe(300);
+  });
+
   it("reveals and highlights requested source lines again for a new request", async () => {
     const view = (line: number, request: number, loaded = true) => (
       <div style={{ display: "flex", height: 400, width: 600 }}>
