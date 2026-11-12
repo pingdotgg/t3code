@@ -129,7 +129,6 @@ export function BranchToolbarBranchSelector({
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, {
     reportFailure: false,
   });
-  const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -450,45 +449,21 @@ export function BranchToolbarBranchSelector({
     )
       return;
 
-    setIsBranchMenuOpen(false);
-    onComposerFocusRequest?.();
-
-    if (!selectionTarget.reuseExistingWorktree) {
-      runBranchAction(() => checkoutRef(refName, selectionTarget));
+    // A claim on this thread's own checkout can predate an outside checkout (an agent's
+    // `git switch`), so switch anyway: Git does nothing when the branch is already there.
+    if (
+      selectionTarget.reuseExistingWorktree &&
+      (selectionTarget.nextWorktreePath !== latest.worktreePath || !canWriteSourceControl)
+    ) {
+      setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
+      setIsBranchMenuOpen(false);
+      onComposerFocusRequest?.();
       return;
     }
 
-    // The listed worktreePath can predate a checkout made outside T3 (an agent's `git switch`).
-    startBranchActionTransition(async () => {
-      const refsResult = await readRefs({
-        environmentId,
-        input: { cwd: branchCwd, query: refName.name, limit: 10 },
-      });
-      const currentRef =
-        refsResult._tag === "Success"
-          ? refsResult.value.refs.find((ref) => ref.name === refName.name && !ref.isRemote)
-          : undefined;
-      const confirmedTarget = resolveBranchSelectionTarget({
-        activeProjectCwd,
-        activeProjectCheckoutRoot,
-        activeWorktreePath: latest.worktreePath,
-        refName: { isDefault: refName.isDefault, worktreePath: currentRef?.worktreePath ?? null },
-      });
-      if (confirmedTarget.reuseExistingWorktree) {
-        setThreadBranch(refName.name, confirmedTarget.nextWorktreePath);
-        return;
-      }
-      const current = readLatestThreadState();
-      if (
-        isWorktreeChangeBlocked({
-          runtime: current.runtime,
-          currentWorktreePath: current.worktreePath,
-          nextWorktreePath: confirmedTarget.nextWorktreePath,
-        })
-      )
-        return;
-      runBranchAction(() => checkoutRef(refName, confirmedTarget));
-    });
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+    runBranchAction(() => checkoutRef(refName, selectionTarget));
   };
 
   const checkoutRef = async (
