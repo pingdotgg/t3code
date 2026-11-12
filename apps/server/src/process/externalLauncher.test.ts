@@ -351,6 +351,12 @@ it.effect.skipIf(windowsHost)(
         yield* fileSystem.chmod(filePath, 0o755);
       }
 
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+      const mediaDir = path.join(workspace, "workspace [draft]", "author's $media");
+      yield* fileSystem.makeDirectory(mediaDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(mediaDir, "clip|draft.mp4"), "");
+      const unc = `\\\\wsl.localhost\\Ubuntu-24.04${workspace.replaceAll("/", "\\")}`;
+
       let spawned: ChildProcess.StandardCommand | undefined;
       const result = yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
@@ -358,7 +364,8 @@ it.effect.skipIf(windowsHost)(
         const editors = yield* launcher.resolveAvailableEditors();
         yield* launcher.launchEditor({
           editor: "file-manager",
-          cwd: "/home/t3/workspace [draft]/author's $media/clip|draft.mp4",
+          // Windows resolves `..` lexically, so the launch gets the normalized path.
+          cwd: `${mediaDir}/../${path.basename(mediaDir)}/clip|draft.mp4`,
           reveal: true,
         });
         return { kind, editors };
@@ -387,8 +394,73 @@ it.effect.skipIf(windowsHost)(
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
+        `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none' -and (Test-Path -LiteralPath '${unc}\\workspace [draft]\\author''s $media' -PathType Container)) { Invoke-Item -LiteralPath '${unc}\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + '${unc}\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '"') }`,
       );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "refuses to reveal a missing, relative, or Windows-ambiguous path",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      for (const name of ["explorer.exe", "powershell.exe"]) {
+        const filePath = path.join(binDir, name);
+        yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+        yield* fileSystem.chmod(filePath, 0o755);
+      }
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+      const payload = path.join(workspace, "payload.bat");
+      yield* fileSystem.writeFileString(payload, "");
+      // Windows resolves `link/..` lexically to the payload's folder; the kernel would follow the link.
+      yield* fileSystem.makeDirectory(path.join(workspace, "real", "sub"), { recursive: true });
+      yield* fileSystem.symlink(path.join(workspace, "real", "sub"), path.join(workspace, "link"));
+      // Windows reads each of these folder names as payload.bat itself.
+      const lookalikes = ["x\\..\\payload.bat", "payload.bat.", "payload.bat ", "payload.bat:x"];
+      for (const folder of ["real/payload.bat", ...lookalikes]) {
+        yield* fileSystem.makeDirectory(path.join(workspace, folder), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(workspace, folder, "leaf"), "");
+      }
+      const cases = [
+        { cwd: path.join(workspace, "deleted.csv"), reason: "missing" },
+        { cwd: "relative/leaf", reason: "relative" },
+        { cwd: `${payload}/x"y`, reason: "missing" },
+        { cwd: `${workspace}/link/../payload.bat/leaf`, reason: "missing" },
+        ...lookalikes.map((folder) => ({
+          cwd: path.join(workspace, folder, "leaf"),
+          reason: "windows-name",
+        })),
+      ];
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      const errors = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* Effect.forEach(cases, ({ cwd }) =>
+          launcher.launchEditor({ editor: "file-manager", cwd, reveal: true }).pipe(Effect.flip),
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: {
+              PATH: binDir,
+              WSL_DISTRO_NAME: "Ubuntu-24.04",
+              WSL_INTEROP: "/run/WSL/1_interop",
+            },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        errors.map((error) =>
+          error._tag === "ExternalLauncherRevealTargetError" ? error.reason : error._tag,
+        ),
+        cases.map(({ reason }) => reason),
+      );
+      assert.deepEqual(spawned, []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -405,7 +477,10 @@ for (const wsl of [false, true]) {
           yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
           yield* fileSystem.chmod(filePath, 0o755);
         }
-        const target = "/workspace/media/a 'quoted' \"clip\" #100% ? é\\name.mp4";
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-reveal-" });
+        yield* fileSystem.makeDirectory(path.join(workspace, "media"));
+        const target = path.join(workspace, "media", "a 'quoted' \"clip\" #100% ? é\\name.mp4");
+        yield* fileSystem.writeFileString(target, "");
         const spawnedCommands: ChildProcess.StandardCommand[] = [];
         yield* Effect.gen(function* () {
           const launcher = yield* ExternalLauncher.ExternalLauncher;
@@ -441,7 +516,7 @@ for (const wsl of [false, true]) {
           "/org/freedesktop/FileManager1",
           "--method",
           "org.freedesktop.FileManager1.ShowItems",
-          "[\"file:///workspace/media/a%20'quoted'%20%22clip%22%20%23100%25%20%3F%20%C3%A9%5Cname.mp4\"]",
+          `["file://${workspace}/media/a%20'quoted'%20%22clip%22%20%23100%25%20%3F%20%C3%A9%5Cname.mp4"]`,
           "",
         ]);
         assert.deepEqual(

@@ -1,5 +1,6 @@
 import {
   EDITORS,
+  ExternalLauncherRevealTargetError,
   type ContextMenuItem,
   type EditorId,
   type EnvironmentId,
@@ -14,9 +15,13 @@ import { readLocalApi } from "./localApi";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
+import * as Schema from "effect/Schema";
+
+const isRevealTargetError = Schema.is(ExternalLauncherRevealTargetError);
 
 export type FileContextMenuAction =
   | "reveal-in-folder"
@@ -124,6 +129,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },
     });
     if (result._tag !== "Failure") return;
+    const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",
       title:
@@ -132,7 +138,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           : reveal
             ? "Unable to reveal file"
             : `Could not open in ${EDITOR_LABEL_BY_ID.get(editor) ?? editor}`,
-      description: absolutePath,
+      description: isRevealTargetError(error) ? error.message : absolutePath,
     });
   };
 
