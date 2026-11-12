@@ -115,6 +115,11 @@ function shellIdentity(
 }
 
 /** Null for a server whose descriptor does not name its shell flags; only its config does. */
+function sameConnection(left: PreparedConnection, right: PreparedConnection): boolean {
+  const keys = Object.keys({ ...left, ...right }) as Array<keyof PreparedConnection>;
+  return keys.every((key) => key === "httpAuthorization" || left[key] === right[key]);
+}
+
 function descriptorShellIdentity(
   descriptor: ExecutionEnvironmentDescriptor | undefined,
 ): ShellOriginIdentity | null {
@@ -549,8 +554,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     SynchronizedRef.modifyEffect(
       earlyLoad,
       Effect.fnUntraced(function* (current) {
-        if (current !== null && current.prepared === prepared) {
-          const next = claim ? { ...current, claimed: true } : current;
+        // A rotated credential replaces the prepared connection of a session that stays up.
+        if (current !== null && prepared !== null && sameConnection(current.prepared, prepared)) {
+          const next = { ...current, prepared, claimed: current.claimed || claim };
           return [current.claimed ? null : current, next] as const;
         }
         if (current !== null) yield* Fiber.interrupt(current.fiber);

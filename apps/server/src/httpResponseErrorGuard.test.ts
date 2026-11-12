@@ -156,6 +156,44 @@ describe("keepIdleConnections", () => {
     await closed.promise;
     agent.destroy();
   });
+
+  it("keeps a connection until every response on it has finished", async () => {
+    const server = HttpResponseErrorGuard.keepIdleConnections(NodeHttp.createServer());
+    const closed = Promise.withResolvers<void>();
+    let first: NodeHttp.ServerResponse | undefined;
+    server.on("request", (request, response) => {
+      if (request.url === "/first") {
+        first = response;
+        return;
+      }
+      // Both pipelined requests are in flight when the server shuts down.
+      server.close(() => closed.resolve());
+      first?.once("finish", () => setImmediate(() => response.end("second-body")));
+      first?.end("first-body");
+    });
+    const port = await listen(server);
+
+    const received = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      const client = NodeNet.connect(port, "127.0.0.1", () => {
+        client.write(
+          ["/first", "/second"]
+            .map((path) => `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n`)
+            .join(""),
+        );
+      });
+      sockets.push(client);
+      client.on("data", (chunk: Buffer) => {
+        data += chunk.toString();
+      });
+      client.on("end", () => resolve(data));
+      client.on("error", reject);
+    });
+
+    expect(received).toContain("first-body");
+    expect(received).toContain("second-body");
+    await closed.promise;
+  });
 });
 
 describe("rejectRequestsUntilServing", () => {

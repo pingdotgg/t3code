@@ -32,7 +32,7 @@ import {
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import {
-  canResumeShellFrom,
+  loadShellUnlessResumable,
   loadSubscriberShellSnapshot,
   projectIdentitiesDigest,
 } from "./ShellStream.ts";
@@ -103,30 +103,21 @@ export const layer = HttpApiBuilder.group(
     );
 
     // A client that holds rows names their cursor; a small answer tells it to keep them.
-    const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")(
-      function* (query: {
-        readonly omitIdleSubagents?: string;
-        readonly omitOlderSettled?: string;
-        readonly resumeFrom?: string;
-      }) {
-        const resumeFrom = query.resumeFrom === undefined ? Number.NaN : Number(query.resumeFrom);
-        if (
-          Number.isSafeInteger(resumeFrom) &&
-          resumeFrom >= 0 &&
-          (yield* canResumeShellFrom(
-            applicationEvents,
-            resumeFrom,
-            yield* applicationEvents.latestApplicationSequence,
-          ))
-        ) {
-          return { resumable: true as const };
-        }
-        return yield* loadShellSnapshot({
+    const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")((query: {
+      readonly omitIdleSubagents?: string;
+      readonly omitOlderSettled?: string;
+      readonly resumeFrom?: string;
+    }) => {
+      const resumeFrom = query.resumeFrom === undefined ? Number.NaN : Number(query.resumeFrom);
+      return loadShellUnlessResumable({
+        events: applicationEvents,
+        resumeFrom: Number.isSafeInteger(resumeFrom) && resumeFrom >= 0 ? resumeFrom : undefined,
+        loadSnapshot: loadShellSnapshot({
           omitIdleSubagents: query.omitIdleSubagents === "1",
           omitOlderSettled: query.omitOlderSettled === "1",
-        });
-      },
-    );
+        }),
+      });
+    });
 
     const loadThreadSnapshot = Effect.fn("http.orchestration.loadThreadSnapshot")(function* (
       threadId: Parameters<typeof threadManagement.getThreadSnapshot>[0],

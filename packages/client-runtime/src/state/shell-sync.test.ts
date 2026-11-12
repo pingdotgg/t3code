@@ -1193,15 +1193,14 @@ describe("environment shell cold start", () => {
     const activeSession = yield* SubscriptionRef.make(
       early === undefined ? Option.some(session(client)) : Option.none<RpcSession.RpcSession>(),
     );
+    const prepared = yield* SubscriptionRef.make(
+      Option.some(early === undefined ? PREPARED : { ...PREPARED, descriptor: FAMILY_DESCRIPTOR }),
+    );
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
       target: TARGET,
       state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
       session: activeSession,
-      prepared: yield* SubscriptionRef.make(
-        Option.some(
-          early === undefined ? PREPARED : { ...PREPARED, descriptor: FAMILY_DESCRIPTOR },
-        ),
-      ),
+      prepared,
       connect: Effect.void,
       disconnect: Effect.void,
       retryNow: Effect.void,
@@ -1260,6 +1259,14 @@ describe("environment shell cold start", () => {
           Option.some({ ...session(client), initialConfig: Effect.succeed(config as never) }),
         ),
       reconnect: SubscriptionRef.set(activeSession, Option.some(session(client))),
+      // The registry swaps a rotated bearer into the prepared connection of a live session.
+      rotateCredential: SubscriptionRef.update(
+        prepared,
+        Option.map((current) => ({
+          ...current,
+          httpAuthorization: { _tag: "Bearer" as const, token: "rotated" },
+        })),
+      ),
       liveAt: (sequence: number) =>
         SubscriptionRef.changes(shellState).pipe(
           Stream.filter(
@@ -1398,6 +1405,17 @@ describe("environment shell cold start", () => {
             origin: { ...CURRENT_ORIGIN, snapshotAt: NOW },
           });
         }
+
+        // A rotated credential keeps the session, so its events still apply and nothing reloads.
+        yield* h.rotateCredential;
+        yield* Queue.offer(first.events, {
+          kind: "thread.removed",
+          sequence: subscribes.afterSequence + 1,
+          location: "active",
+          threadId: ThreadId.make("no-such-thread"),
+        });
+        yield* h.liveAt(subscribes.afterSequence + 1);
+        expect(yield* Ref.get(h.httpLoads)).toBe(loads.length);
       }),
   );
 
