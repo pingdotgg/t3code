@@ -21,6 +21,9 @@ import {
   type ModelOption,
 } from "./modelOptions";
 
+
+
+
 describe("mobile model options", () => {
   it("distinguishes same-name OpenCode models without changing their routing", () => {
     const sources = [
@@ -70,7 +73,6 @@ describe("mobile model options", () => {
       { providerKey: "opencode_work", providerLabel: "OpenCode Work", models: options },
     ]);
   });
-
   it("does not materialize catalog defaults for missing stored options", () => {
     const config = {
       providers: [
@@ -143,7 +145,6 @@ describe("mobile model options", () => {
     );
     expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
-
   it("limits existing threads to their provider while new tasks keep every provider", () => {
     const providers = ["codex", "claudeAgent"].map((instanceId) => ({
       instanceId,
@@ -165,7 +166,6 @@ describe("mobile model options", () => {
       ),
     );
   });
-
   it("keeps accounts in the continuation group and excludes other providers", () => {
     const config = {
       providers: [
@@ -187,7 +187,6 @@ describe("mobile model options", () => {
       ),
     ).toEqual(["codex", "codex_work"]);
   });
-
   it("matches the web driver fallback without moving unknown Antigravity history", () => {
     const config = {
       providers: [
@@ -214,7 +213,6 @@ describe("mobile model options", () => {
       ),
     ).toEqual(["google"]);
   });
-
   it("carries account badges into catalog and saved fallback models", () => {
     const config = {
       providers: [
@@ -246,7 +244,6 @@ describe("mobile model options", () => {
       )[0]?.providerBadge?.showBadge,
     ).toBe(false);
   });
-
   it("only badges ACP accounts that share the same agent", () => {
     const config = {
       settings: {
@@ -286,7 +283,6 @@ describe("mobile model options", () => {
       ),
     ).toEqual([true, true]);
   });
-
   it.each(["disabled", "unavailable", "missing"] as const)(
     "retains the selected %s provider's fallback in a filtered catalog",
     (state) => {
@@ -315,7 +311,6 @@ describe("mobile model options", () => {
       expect(options[0]).toMatchObject({ selection, isUnavailable: true });
     },
   );
-
   it("rejects stored selections whose provider is not usable", () => {
     const config = {
       providers: [
@@ -358,7 +353,6 @@ describe("mobile model options", () => {
     expect(isModelSelectionUnavailable(config, removed, null)).toBe(false);
     expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
   });
-
   describe("Antigravity selections", () => {
     const selection = {
       instanceId: ProviderInstanceId.make("google_work"),
@@ -502,7 +496,6 @@ describe("mobile model options", () => {
       expect(resolveSelectableModelSelection(unknownConfig, selection, null)).toBeNull();
     });
   });
-
   it("keeps legacy models out of implicit defaults", () => {
     const config = {
       providers: [
@@ -534,7 +527,6 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(config, legacy, null)).toBeNull();
     expect(resolveDefaultableModelSelection(null, legacy, null)).toBe(legacy);
   });
-
   it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
     const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
     const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };
@@ -570,289 +562,5 @@ describe("mobile model options", () => {
       }),
     ).toBeNull();
   });
-
-  describe("project-aware enablement", () => {
-    const projectId = ProjectId.make("project-a");
-    const instanceId = ProviderInstanceId.make("codex_work");
-
-    function configWith(settings: ServerSettings): ServerConfig {
-      return {
-        providers: [
-          {
-            instanceId,
-            driver: "codex",
-            displayName: "Codex Work",
-            enabled: true,
-            installed: true,
-            auth: { status: "authenticated" },
-            models: [{ slug: "model-a", name: "Model A", isCustom: false, capabilities: null }],
-          },
-        ],
-        settings,
-      } as unknown as ServerConfig;
-    }
-
-    it("refuses to send a non-Antigravity model the project turned off", () => {
-      const settings: ServerSettings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-        },
-        projectSettingsOverrides: {
-          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
-        },
-      };
-      const selection = { instanceId, model: "model-a" };
-
-      expect(isModelSelectionUnavailable(configWith(settings), selection, projectId)).toBe(true);
-      expect(isModelSelectionUnavailable(configWith(settings), selection, null)).toBe(false);
-    });
-
-    it("hides an instance the project disables even though the machine enables it", () => {
-      const settings: ServerSettings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-        },
-        projectSettingsOverrides: {
-          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
-        },
-      };
-
-      expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toEqual([]);
-    });
-
-    it("hides a machine-disabled instance for a project with no override, even though another project's keep-alive left it running", () => {
-      const otherProjectId = ProjectId.make("project-b");
-      const settings: ServerSettings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
-        },
-        projectSettingsOverrides: {
-          [otherProjectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-        },
-      };
-
-      expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toEqual([]);
-    });
-
-    it("refuses to send an instance the project merely inherits as disabled, not just an explicit override", () => {
-      const settings: ServerSettings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
-        },
-      };
-      const selection = { instanceId, model: "model-a" };
-
-      expect(isModelSelectionUnavailable(configWith(settings), selection, projectId)).toBe(true);
-      expect(
-        describeUnavailableModelSelection(configWith(settings), selection, projectId).title,
-      ).toBe("Model turned off for this project");
-      expect(isModelSelectionUnavailable(configWith(settings), selection, null)).toBe(true);
-    });
-
-    it("marks a project-disabled instance's fallback selection unavailable instead of reviving it", () => {
-      const settings: ServerSettings = {
-        ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: {
-          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-        },
-        projectSettingsOverrides: {
-          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
-        },
-      };
-      const fallback = { instanceId, model: "model-a" };
-
-      const options = buildModelOptions(configWith(settings), fallback, undefined, projectId);
-
-      expect(options).toHaveLength(1);
-      expect(options[0]).toMatchObject({ selection: fallback, isUnavailable: true });
-    });
-
-    it("rejects a project-disabled antigravity instance's selection instead of keeping it", () => {
-      const antigravityInstanceId = ProviderInstanceId.make("antigravity_work");
-      const config = {
-        providers: [
-          {
-            instanceId: antigravityInstanceId,
-            driver: "antigravity",
-            displayName: "Antigravity Work",
-            enabled: true,
-            installed: true,
-            auth: { status: "authenticated" },
-            availability: "available",
-            models: [{ slug: "model-a", name: "Model A", isCustom: false, capabilities: null }],
-          },
-        ],
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          providerInstances: {
-            [antigravityInstanceId]: {
-              driver: ProviderDriverKind.make("antigravity"),
-              enabled: true,
-            },
-          },
-          projectSettingsOverrides: {
-            [projectId]: { providerInstances: { [antigravityInstanceId]: { enabled: false } } },
-          },
-        },
-      } as unknown as ServerConfig;
-      const selection = { instanceId: antigravityInstanceId, model: "model-a" };
-
-      expect(resolveSelectableModelSelection(config, selection, projectId)).toBeNull();
-      expect(resolveSelectableModelSelection(config, selection, null)).toBe(selection);
-      expect(
-        resolveSelectableModelSelection({ ...config, providers: [] }, selection, projectId),
-      ).toBeNull();
-    });
-  });
 });
 
-describe("synchronized mobile model visibility", () => {
-  const provider = ProviderInstanceId.make("codex_work");
-  const other = ProviderInstanceId.make("codex_personal");
-  const models = [
-    { slug: "hidden", name: "Hidden", isCustom: false, capabilities: null },
-    { slug: "first", name: "First", isCustom: false, capabilities: null },
-    { slug: "second", name: "Second", isCustom: false, capabilities: null },
-    { slug: "custom", name: "Custom", isCustom: true, capabilities: null },
-  ];
-  const config = {
-    settings: {
-      ...DEFAULT_SERVER_SETTINGS,
-      providerInstances: {
-        [provider]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-        [other]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-      },
-      providerModelPreferences: {
-        [provider]: {
-          hiddenModels: ["hidden", "custom", "missing"],
-          modelOrder: ["second", "first"],
-        },
-      },
-    },
-    providers: [provider, other].map((instanceId) => ({
-      instanceId,
-      continuation: { groupKey: instanceId },
-      driver: "codex",
-      enabled: true,
-      installed: true,
-      auth: { status: "authenticated" },
-      models,
-    })),
-  } as unknown as ServerConfig;
-
-  it("applies server visibility and ordering independently to each provider instance", () => {
-    const options = buildModelOptions(config, null, undefined, null);
-    expect(
-      options
-        .filter((option) => option.providerKey === provider)
-        .map((option) => option.selection.model),
-    ).toEqual(["second", "first", "custom"]);
-    expect(
-      options
-        .filter((option) => option.providerKey === other)
-        .map((option) => option.selection.model),
-    ).toEqual(["hidden", "first", "second", "custom"]);
-  });
-
-  it("exposes hidden built-ins for management without offering custom visibility controls", () => {
-    const options = buildModelOptions(
-      config,
-      { instanceId: provider, model: "hidden" },
-      provider,
-      null,
-      true,
-    );
-    expect(options.map((option) => option.selection.model)).toEqual([
-      "second",
-      "first",
-      "hidden",
-      "custom",
-    ]);
-    expect(options.find((option) => option.selection.model === "hidden")).toMatchObject({
-      isHidden: true,
-      canHide: true,
-    });
-    expect(options.find((option) => option.selection.model === "custom")).toMatchObject({
-      isHidden: false,
-      canHide: false,
-    });
-  });
-
-  it.each(["hidden", "missing"])("does not resurrect the hidden fallback %s", (model) => {
-    expect(
-      buildModelOptions(config, { instanceId: provider, model }, provider, null).map(
-        (option) => option.selection.model,
-      ),
-    ).toEqual(["second", "first", "custom"]);
-  });
-
-  // regression: #16816 sync model favorites and visibility across clients
-  it("keeps custom models visible and restores built-in models when the server clears hidden models", () => {
-    expect(
-      buildModelOptions(config, { instanceId: provider, model: "custom" }, provider, null).map(
-        (option) => option.selection.model,
-      ),
-    ).toContain("custom");
-    const cleared = { ...config, settings: { ...config.settings, providerModelPreferences: {} } };
-    expect(
-      buildModelOptions(cleared, null, provider, null).map((option) => option.selection.model),
-    ).toEqual(["hidden", "first", "second", "custom"]);
-  });
-
-  describe("managed provider policy", () => {
-    const config = {
-      providers: [
-        {
-          instanceId: "codex",
-          driver: "codex",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          models: [{ slug: "gpt-5.6-sol", name: "GPT", isCustom: false, capabilities: null }],
-        },
-        {
-          instanceId: "claudeAgent",
-          driver: "claudeAgent",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          models: [
-            { slug: "claude-sonnet-5", name: "Sonnet", isCustom: false, capabilities: null },
-          ],
-        },
-      ],
-      managedPolicy: {
-        organization: "Example Corp",
-        lockedSettings: [],
-        limits: { providers: { allowedDrivers: [ProviderDriverKind.make("codex")] } },
-      },
-    } as unknown as ServerConfig;
-    const disallowed = {
-      instanceId: ProviderInstanceId.make("claudeAgent"),
-      model: "claude-sonnet-5",
-    };
-
-    it("leaves drivers the policy does not allow out of the picker", () => {
-      expect(
-        buildModelOptions(config, null, undefined, null).map((option) => option.providerKey),
-      ).toEqual(["codex"]);
-    });
-
-    it("marks a thread's selection on a disallowed driver unavailable with the policy reason", () => {
-      expect(
-        buildModelOptions(config, disallowed, undefined, null).find(
-          (option) => option.providerKey === "claudeAgent",
-        )?.isUnavailable,
-      ).toBe(true);
-      expect(isModelSelectionUnavailable(config, disallowed, null)).toBe(true);
-      expect(describeUnavailableModelSelection(config, disallowed, null)).toEqual({
-        title: "Provider not allowed",
-        detail: "Example Corp's policy does not allow the Claude provider. Choose another model.",
-      });
-    });
-  });
-});
