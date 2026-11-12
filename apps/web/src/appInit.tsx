@@ -136,7 +136,7 @@ function readOpenThreadRef(router: AppRouter): ScopedThreadRef | null {
 
 /**
  * Names the open thread and its project in the window title, or the app when none is open.
- * Screen readers read it on Alt+Tab, so it can also say what the thread is doing.
+ * Screen readers read it on Alt+Tab, so it can lead with the thread and what it's doing.
  */
 function startDocumentTitle(router: AppRouter): void {
   const readOnGuestPage = () => router.state.matches.some((match) => match.routeId === "/guest");
@@ -167,10 +167,11 @@ function startDocumentTitle(router: AppRouter): void {
       }),
       projectTitle: project?.title ?? null,
       threadTitle: thread?.title ?? null,
-      threadStatus:
-        thread !== null && getClientSettings().windowTitleThreadStatus
-          ? resolveWindowTitleThreadStatus(thread)
-          : null,
+      ...(getClientSettings().screenReaderWindowTitle && {
+        screenReader: {
+          threadStatus: thread === null ? null : resolveWindowTitleThreadStatus(thread),
+        },
+      }),
       desktop: isElectron,
     });
     // Projects change whenever any project does; most changes leave the title alone.

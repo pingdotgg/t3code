@@ -60,7 +60,8 @@ export function resolveWindowTitle(input: {
   readonly appDisplayName: string;
   readonly projectTitle: string | null;
   readonly threadTitle: string | null;
-  readonly threadStatus?: string | null;
+  /** The screen reader title: status, then thread, then project, since a screen reader reads from the start. */
+  readonly screenReader?: { readonly threadStatus: string | null };
   readonly desktop: boolean;
 }): string {
   const threadTitle = input.threadTitle?.trim() ?? "";
@@ -69,8 +70,13 @@ export function resolveWindowTitle(input: {
   }
 
   const projectTitle = input.projectTitle?.trim() ?? "";
-  const names = projectTitle === "" ? threadTitle : `${projectTitle} / ${threadTitle}`;
-  // Status leads so a screen reader says it first on Alt+Tab.
-  const context = input.threadStatus ? `${input.threadStatus}: ${names}` : names;
-  return input.desktop ? context : `${context} - ${input.appDisplayName}`;
+  const status = input.screenReader?.threadStatus;
+  const context =
+    projectTitle === ""
+      ? threadTitle
+      : input.screenReader
+        ? `${threadTitle} - ${projectTitle}`
+        : `${projectTitle} / ${threadTitle}`;
+  const title = status ? `${status}: ${context}` : context;
+  return input.desktop ? title : `${title} - ${input.appDisplayName}`;
 }

@@ -541,8 +541,8 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.screenReaderAnnouncements !== DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements
       ? ["Screen reader announcements"]
       : []),
-    ...(settings.windowTitleThreadStatus !== DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus
-      ? ["Thread status in window title"]
+    ...(settings.screenReaderWindowTitle !== DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle
+      ? ["Screen reader window title"]
       : []),
     ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
       ? ["Response streaming"]
@@ -661,7 +661,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
       screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
-      windowTitleThreadStatus: DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus,
+      screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -1297,7 +1297,7 @@ export function ChatSettingsPanel() {
 
       <SettingsSection id="screen-reader" title="Screen reader">
         <ScreenReaderAnnouncementsRow />
-        <WindowTitleThreadStatusRow />
+        <ScreenReaderWindowTitleRow />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -1411,20 +1411,20 @@ function ScreenReaderAnnouncementsRow() {
   );
 }
 
-function WindowTitleThreadStatusRow() {
+function ScreenReaderWindowTitleRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
-      {...searchableSetting("window-title-thread-status")}
-      description="Start the window title with Working, Needs approval, or Needs your input, which screen readers read first when you switch apps. Taskbars, shared screens, and time trackers see it too."
+      {...searchableSetting("screen-reader-window-title")}
+      description="Start the window title with the thread's status, like Needs approval, and its name, so screen readers read them first when you switch apps. Taskbars, shared screens, and time trackers see it too."
       resetAction={
-        settings.windowTitleThreadStatus !== DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus ? (
+        settings.screenReaderWindowTitle !== DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle ? (
           <SettingResetButton
-            label="thread status in window title"
+            label="screen reader window title"
             onClick={() =>
               updateSettings({
-                windowTitleThreadStatus: DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus,
+                screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
               })
             }
           />
@@ -1432,9 +1432,9 @@ function WindowTitleThreadStatusRow() {
       }
       control={
         <Switch
-          checked={settings.windowTitleThreadStatus}
-          onCheckedChange={(checked) => updateSettings({ windowTitleThreadStatus: checked })}
-          aria-label="Thread status in window title"
+          checked={settings.screenReaderWindowTitle}
+          onCheckedChange={(checked) => updateSettings({ screenReaderWindowTitle: checked })}
+          aria-label="Screen reader window title"
         />
       }
     />
