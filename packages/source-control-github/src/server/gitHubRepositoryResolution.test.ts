@@ -163,6 +163,10 @@ describe("gitHubApiHostForRemote", () => {
   it("reads an SSH alias through github.com and a real host as itself", () => {
     assert.strictEqual(gitHubApiHostForRemote("git@github:acme/web.git"), "github.com");
     assert.strictEqual(
+      gitHubApiHostForRemote("ssh://git@ssh.github.com:443/acme/web.git"),
+      "github.com",
+    );
+    assert.strictEqual(
       gitHubApiHostForRemote("git@github.example.com:a/b.git"),
       "github.example.com",
     );

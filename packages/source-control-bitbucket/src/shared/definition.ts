@@ -27,6 +27,7 @@ const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/commits\/([0-9a-f]+)\/?$/iu;
 const REPOSITORY_PAGE_PATH = /^\/([^/]+\/[^/]+)\/src\/[^/]/u;
 
 const KIND = SourceControlProviderKind.make("bitbucket");
+const BITBUCKET_SSH_HOSTS = ["ssh.bitbucket.org", "altssh.bitbucket.org"];
 
 function isBitbucketHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -130,6 +131,11 @@ export const definition = defineSourceControl({
           name: hostname === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
           baseUrl: `https://${host}`,
         }
+      : null,
+  // Bitbucket's SSH hosts serve bitbucket.org's repositories.
+  repositoryKeyFromRemote: (key) =>
+    BITBUCKET_SSH_HOSTS.some((host) => key.startsWith(`${host}/`))
+      ? `bitbucket.org${key.slice(key.indexOf("/"))}`
       : null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
