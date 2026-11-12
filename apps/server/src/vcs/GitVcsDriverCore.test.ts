@@ -410,6 +410,22 @@ it.effect.each(["root", "nested", "worktree"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reports a bare repository's root as a repository on HEAD's branch", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const source = yield* makeTmpDir();
+    const root = yield* makeTmpDir();
+    const { initialBranch } = yield* initRepoWithCommit(source);
+    yield* git(root, ["clone", "--bare", source, ".bare"]);
+    yield* writeTextFile(root, ".git", "gitdir: ./.bare\n");
+
+    const status = yield* driver.statusDetailsLocal(root);
+    assert.isTrue(status.isRepo);
+    assert.equal(status.branch, initialBranch);
+    assert.isFalse(status.hasWorkingTreeChanges);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["origin", "github"] as const)(
   "recognizes %s as the primary remote after a driver mutation",
   (remoteName) =>

@@ -530,6 +530,14 @@ function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
 
 // `--short` and `--abbrev-ref` print `heads/<name>` when a tag shares the branch's name, so
 // branch reads take the full ref and strip the prefix themselves.
+function isDefaultBranchName(refName: string | null, defaultBranch: string | null): boolean {
+  return (
+    refName !== null &&
+    (refName === defaultBranch ||
+      (defaultBranch === null && (refName === "main" || refName === "master")))
+  );
+}
+
 function branchNameFromHeadRef(value: string): string | null {
   const ref = value.trim();
   return ref.startsWith("refs/heads/") && ref.length > "refs/heads/".length
@@ -2274,6 +2282,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       if (isNonRepositoryGitStderr(statusResult.stderr)) {
         return NON_REPOSITORY_STATUS_DETAILS;
       }
+      // A bare repository's root has a HEAD and branches but no work tree to report on.
+      if (statusResult.stderr.toLowerCase().includes("must be run in a work tree")) {
+        const branch = branchNameFromHeadRef(
+          yield* runGitStdout(
+            "GitVcsDriver.statusDetails.bareBranch",
+            cwd,
+            ["symbolic-ref", "--quiet", "HEAD"],
+            true,
+          ),
+        );
+        return {
+          ...NON_REPOSITORY_STATUS_DETAILS,
+          isRepo: true,
+          hasOriginRemote: hasPrimaryRemote,
+          isDefaultBranch: isDefaultBranchName(branch, defaultBranch),
+          branch,
+        };
+      }
       return yield* new GitCommandError({
         ...gitCommandContext({
           operation: "GitVcsDriver.statusDetails.status",
@@ -2335,10 +2361,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    const isDefaultBranch =
-      refName !== null &&
-      (refName === defaultBranch ||
-        (defaultBranch === null && (refName === "main" || refName === "master")));
+    const isDefaultBranch = isDefaultBranchName(refName, defaultBranch);
     const needsFallbackAhead = includeDivergence && !upstreamRef && refName !== null;
     const needsAheadOfDefault = includeDivergence && refName !== null && !isDefaultBranch;
     const [baseAheadCount, branchChanges] = yield* Effect.all(
