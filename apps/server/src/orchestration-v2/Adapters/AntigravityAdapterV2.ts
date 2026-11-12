@@ -13,8 +13,6 @@ import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
-import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -87,10 +85,6 @@ export interface AntigravityAdapterV2Options {
   readonly supportsNativeGoals?: Effect.Effect<boolean>;
   readonly onSessionStarted?: (
     started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
-    cwd: string,
-  ) => Effect.Effect<void>;
-  readonly onAvailableCommands?: (
-    commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
     cwd: string,
   ) => Effect.Effect<void>;
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
@@ -185,18 +179,6 @@ export function makeAntigravityAcpAdapterFlavor(
               }),
             ),
           ),
-        // Commands can include workspace skills, so they belong to this runtime's cwd; onSessionEvent has none.
-        getEvents: () =>
-          runtime
-            .getEvents()
-            .pipe(
-              Stream.tap((event) =>
-                event._tag === "AvailableCommandsUpdated"
-                  ? (options.onAvailableCommands?.(event.availableCommands, input.cwd) ??
-                    Effect.void)
-                  : Effect.void,
-              ),
-            ),
         prompt: (payload, promptOptions) =>
           Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
         handleSessionUpdate: (handler) => {

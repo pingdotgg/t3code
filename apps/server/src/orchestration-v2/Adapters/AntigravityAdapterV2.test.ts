@@ -193,15 +193,16 @@ describe("AntigravityAdapterV2 compaction", () => {
           supportsNativeGoals: Ref.get(goalSupport).pipe(
             Effect.tap(() => Deferred.succeed(startupMilestone, undefined)),
           ),
-          onAvailableCommands: (commands, cwd) =>
-            Ref.set(workspaceCommands, {
-              names: commands.map((command) => command.name),
-              cwd,
-            }),
-          onSessionEvent: (event) =>
+          onSessionEvent: (event, cwd) =>
             event._tag === "AvailableCommandsUpdated"
               ? Deferred.await(consumeStartupCommands).pipe(
                   Effect.andThen(Ref.set(goalSupport, nativeGoals)),
+                  Effect.andThen(
+                    Ref.set(workspaceCommands, {
+                      names: event.availableCommands.map((command) => command.name),
+                      cwd,
+                    }),
+                  ),
                 )
               : Effect.void,
         });
