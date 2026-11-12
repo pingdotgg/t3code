@@ -712,6 +712,10 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   if (commandPaths.some(isNixStoreCommandPath)) {
     return manual;
   }
+  // MacPorts installs into a root-owned prefix with npm's layout and disables the CLIs' updaters.
+  if (context.platform === "darwin" && (yield* isMacPortsOwned(context))) {
+    return manual;
+  }
 
   const nativeUpdate = definition.nativeUpdate;
   const nativeEnv = nativeUpdate?.env;
@@ -914,6 +918,25 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
     .readFileString(context.realCommandPath)
     .pipe(Effect.orElseSucceed(() => ""));
   return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
+});
+
+// Only a `port` in the command's own prefix can own it; this also covers GUI servers without it on PATH.
+const isMacPortsOwned = Effect.fn("isMacPortsOwned")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const commandPaths = [...new Set([context.resolvedCommandPath, context.realCommandPath])];
+  for (const portPath of new Set(
+    commandPaths.map((commandPath) =>
+      path.join(path.dirname(path.dirname(commandPath)), "bin", "port"),
+    ),
+  )) {
+    if (!(yield* fileSystem.exists(portPath).pipe(Effect.orElseSucceed(() => false)))) continue;
+    const output = yield* runProbe(portPath, ["provides", ...commandPaths], context.env);
+    if (output?.includes(" is provided by: ")) return true;
+  }
+  return false;
 });
 
 // Volta bin links only identify its shim; the package image proves ownership.
