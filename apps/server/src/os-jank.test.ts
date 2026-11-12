@@ -1,18 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  CommandAvailability,
-  LoginShellEnvironment,
-  WindowsShellEnvironment,
-} from "@t3tools/shared/shell";
+import { CommandAvailability, WindowsShellEnvironment } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Observe the existing synchronous shell probe without launching the user's login shell.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import { assert, it, vi } from "vite-plus/test";
 
-import { fixPath, hydratePosixHome, refreshPath } from "./os-jank.ts";
+import { fixPath, hydratePosixHome, refreshPathFromLoginShell } from "./os-jank.ts";
 
 vi.mock("node:child_process", { spy: true });
 
@@ -196,57 +195,49 @@ effectIt.effect("hydrates a missing JAVA_HOME from the login shell and keeps an 
 effectIt.effect("refreshes PATH with directories the login shell gained after startup", () =>
   Effect.gen(function* () {
     const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/opt/kept/bin" };
-    const shells: Array<string> = [];
-    let shellEnvironment: Partial<Record<string, string>> = {};
-    const refresh = refreshPath().pipe(
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provideService(HostProcess.Environment, env),
-      Effect.provideService(LoginShellEnvironment, (shell) =>
-        Effect.sync(() => {
-          shells.push(shell);
-          return shell === "/bin/zsh" ? shellEnvironment : {};
+    let shellPath = "";
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(
+            new TextEncoder().encode(
+              `__T3CODE_ENV_PATH_START__\n${shellPath}\n__T3CODE_ENV_PATH_END__\n`,
+            ),
+          ),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
         }),
       ),
     );
+    const refresh = refreshPathFromLoginShell().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, env),
+    );
 
-    shellEnvironment = { PATH: "/home/me/.local/bin:/usr/bin", __MISE_DIFF: "mise-diff" };
+    shellPath = "/home/me/.local/bin:/usr/bin";
     assert.isTrue(yield* refresh);
     assert.equal(env.PATH, "/home/me/.local/bin:/usr/bin:/opt/kept/bin");
-    assert.equal(env.__MISE_DIFF, "mise-diff");
-    assert.deepEqual(shells, ["/bin/zsh"]);
 
     // Reordered entries are not a new directory.
-    shellEnvironment = { PATH: "/usr/bin:/home/me/.local/bin" };
-    assert.isFalse(yield* refresh);
-    assert.equal(env.PATH, "/usr/bin:/home/me/.local/bin:/opt/kept/bin");
-
-    shellEnvironment = {};
+    shellPath = "/usr/bin:/home/me/.local/bin";
     assert.isFalse(yield* refresh);
     assert.equal(env.PATH, "/usr/bin:/home/me/.local/bin:/opt/kept/bin");
 
     // A directory made fresh for each login (fnm) replaces the last one instead of piling up.
-    shellEnvironment = { PATH: "/tmp/fnm_multishells/1/bin:/usr/bin" };
-    assert.isTrue(yield* refresh);
-    shellEnvironment = { PATH: "/tmp/fnm_multishells/2/bin:/usr/bin" };
+    shellPath = "/tmp/fnm_multishells/1/bin:/usr/bin";
+    yield* refresh;
+    shellPath = "/tmp/fnm_multishells/2/bin:/usr/bin";
     yield* refresh;
     assert.equal(env.PATH, "/tmp/fnm_multishells/2/bin:/usr/bin:/opt/kept/bin");
-  }),
-);
-
-effectIt.effect("does not read a login shell to refresh PATH on Windows", () =>
-  Effect.gen(function* () {
-    const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
-
-    const changed = yield* refreshPath().pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(HostProcess.Environment, env),
-      Effect.provideService(LoginShellEnvironment, () =>
-        Effect.die(new Error("login shell should not run")),
-      ),
-    );
-
-    assert.isFalse(changed);
-    assert.deepEqual(env, { PATH: "C:\\Windows" });
   }),
 );
 

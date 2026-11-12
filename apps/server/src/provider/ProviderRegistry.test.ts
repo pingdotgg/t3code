@@ -41,7 +41,6 @@ import {
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { LoginShellEnvironment } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -2642,17 +2641,23 @@ it.layer(
                   prefix: "t3-provider-registry-missing-cli-",
                 }),
               ),
-              Layer.provide(NodeServices.layer),
+              Layer.provide(
+                Layer.merge(
+                  NodeServices.layer,
+                  layerMockSpawner(() => {
+                    shellReads += 1;
+                    return {
+                      stdout: `__T3CODE_ENV_PATH_START__\n${shellPath}\n__T3CODE_ENV_PATH_END__\n`,
+                      stderr: "",
+                      code: 0,
+                    };
+                  }),
+                ),
+              ),
             ),
           ).pipe(
             Effect.provideService(HostProcess.Platform, "darwin"),
             Effect.provideService(HostProcess.Environment, environment),
-            Effect.provideService(LoginShellEnvironment, () =>
-              Effect.sync(() => {
-                shellReads += 1;
-                return { PATH: shellPath };
-              }),
-            ),
             Scope.provide(scope),
           );
           const probeMissing = (checkedAt: string) =>

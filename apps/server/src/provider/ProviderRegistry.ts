@@ -24,12 +24,13 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
-import { refreshPath } from "../os-jank.ts";
+import { refreshPathFromLoginShell } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -388,6 +389,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
@@ -850,7 +852,10 @@ export const layer = Layer.effect(
     // rebuilt to see a PATH directory added since. One shell read serves every provider.
     const recoverMissingClis = yield* Effect.cachedWithTTL(
       Effect.gen(function* () {
-        if (!(yield* refreshPath())) return;
+        const gained = yield* refreshPathFromLoginShell().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        if (!gained) return;
         const live = yield* Ref.get(liveSubsRef);
         const missing = (yield* Ref.get(providersRef))
           .filter((provider) => isCliMissing(provider) && live.has(provider.instanceId))

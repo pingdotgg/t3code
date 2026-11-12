@@ -3,7 +3,6 @@ import {
   buildEnvironmentCaptureCommand,
   extractEnvironmentValues,
   listLoginShellCandidates,
-  LoginShellEnvironment,
   mergePathEntries,
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
@@ -156,43 +155,6 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   );
 });
 
-// Per environment: the PATH before the first refresh, and the shell PATH last read. Each refresh
-// rebuilds PATH from that baseline, so shells adding a fresh directory per login (fnm) cannot grow it.
-const refreshState = new WeakMap<
-  NodeJS.ProcessEnv,
-  { readonly baseline: string | undefined; shellPath: string | undefined }
->();
-
-/**
- * Re-reads the login shell PATH after startup and reports whether it gained a directory.
- * Runs even when the desktop app prepared the startup environment, which goes stale the same way.
- */
-export const refreshPath = Effect.fn("refreshPath")(function* () {
-  const platform = yield* HostProcess.Platform;
-  // Windows resolves PATH through PowerShell probes that cost seconds.
-  if (platform !== "darwin" && platform !== "linux") return false;
-
-  const env = yield* HostProcess.Environment;
-  const readShellEnvironment = yield* LoginShellEnvironment;
-  let state = refreshState.get(env);
-  if (!state) {
-    state = { baseline: env.PATH, shellPath: undefined };
-    refreshState.set(env, state);
-  }
-  for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
-    const shellEnvironment = yield* readShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES);
-    const shellPath = shellEnvironment.PATH;
-    if (!shellPath) continue;
-    const known = new Set((state.shellPath ?? state.baseline ?? "").split(":"));
-    state.shellPath = shellPath;
-    if (state.baseline === undefined) delete env.PATH;
-    else env.PATH = state.baseline;
-    applyLoginShellEnvironment(env, platform, shellEnvironment);
-    return shellPath.split(":").some((entry) => entry !== "" && !known.has(entry));
-  }
-  return false;
-});
-
 const readLoginShellOutput = Effect.fn("readLoginShellOutput")(
   function* (shell: string) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -224,15 +186,22 @@ const readLoginShellOutput = Effect.fn("readLoginShellOutput")(
   Effect.timeoutOption(LOGIN_SHELL_TIMEOUT),
 );
 
+// Per environment: the PATH before the first refresh, and the shell PATH last read. Each refresh
+// rebuilds PATH from that baseline, so shells adding a fresh directory per login (fnm) cannot grow it.
+const refreshState = new WeakMap<
+  NodeJS.ProcessEnv,
+  { readonly baseline: string | undefined; shellPath: string | undefined }
+>();
+
 // Runs even when the desktop prepared the environment: that capture was taken
 // once at launch. Only the user's own shell counts; a fallback shell's PATH is
-// not their environment. Failure leaves PATH alone.
+// not their environment. Failure leaves PATH alone. Reports whether PATH gained a directory.
 export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(function* () {
   const platform = yield* HostProcess.Platform;
-  if (platform !== "darwin" && platform !== "linux") return;
+  if (platform !== "darwin" && platform !== "linux") return false;
   const env = yield* HostProcess.Environment;
   const [shell] = listLoginShellCandidates(platform, env.SHELL);
-  if (!shell) return;
+  if (!shell) return false;
 
   const output = yield* readLoginShellOutput(shell).pipe(
     Effect.catchCause((cause) =>
@@ -245,14 +214,25 @@ export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(
     yield* Effect.logWarning(
       `Timed out reading PATH from login shell ${shell} after ${Duration.format(LOGIN_SHELL_TIMEOUT)}; PATH is unchanged.`,
     );
-    return;
+    return false;
   }
   const shellEnvironment = extractEnvironmentValues(output.value, LOGIN_SHELL_ENV_NAMES);
-  if (shellEnvironment.PATH) {
-    applyLoginShellEnvironment(env, platform, shellEnvironment);
-  } else {
+  const shellPath = shellEnvironment.PATH;
+  if (!shellPath) {
     yield* Effect.logWarning(`Login shell ${shell} printed no PATH; PATH is unchanged.`);
+    return false;
   }
+  let state = refreshState.get(env);
+  if (!state) {
+    state = { baseline: env.PATH, shellPath: undefined };
+    refreshState.set(env, state);
+  }
+  const known = new Set((state.shellPath ?? state.baseline ?? "").split(":"));
+  state.shellPath = shellPath;
+  if (state.baseline === undefined) delete env.PATH;
+  else env.PATH = state.baseline;
+  applyLoginShellEnvironment(env, platform, shellEnvironment);
+  return shellPath.split(":").some((entry) => entry !== "" && !known.has(entry));
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {
