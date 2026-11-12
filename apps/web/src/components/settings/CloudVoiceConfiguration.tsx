@@ -371,13 +371,13 @@ export function CloudVoiceConfiguration({
               <Button size="sm" variant="outline" onClick={refresh}>
                 <T>Retry loading API key</T>
               </Button>
-            ) : routed &&
+            ) : (routed || provider === "meta") &&
               AsyncResult.isSuccess(presence) &&
               presence.value &&
               saved === undefined ? (
               <p>
                 <T>
-                  Update <Var>{environment.label}</Var> to use OpenRouter dictation.
+                  Update <Var>{environment.label}</Var> to use <Var>{name}</Var> dictation.
                 </T>
               </p>
             ) : saved === undefined ? (
