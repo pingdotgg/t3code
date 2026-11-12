@@ -272,8 +272,8 @@ export interface ProjectionCheckpointCaptureContext {
   /** Side chats share their parent's worktree and never snapshot it. */
   readonly sideChat: boolean;
   /**
-   * This run's work items, and other threads' in the same checkout since its baseline. Paths are as
-   * providers reported them: absolute, or relative to the cwd.
+   * This run's work items, and whether other threads in the same checkout worked since its baseline.
+   * Paths are as providers reported them: absolute, or relative to the cwd.
    */
   readonly workspaceActivity: WorkspaceActivity;
 }
@@ -5571,23 +5571,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ranCommands: false,
           editedPaths: [],
           otherThreadsWorked: false,
-          otherThreadsEditedPaths: [],
         } satisfies WorkspaceActivity;
       }
       const scope = yield* decodeCheckpointScopePayload(scopeRow.payload_json);
       const requestedAt = yield* encodePayloadTimestamp(run.requestedAt);
-      const rows = yield* sql<{
-        readonly own: number;
-        readonly type: string;
-        readonly path: string | null;
-      }>`
+      // Commands, tools and subagents can write any file, so only a run without them is narrowed.
+      const ownRows = yield* sql<{ readonly type: string; readonly path: string | null }>`
         WITH items AS (
-          SELECT 1 AS own, type, payload_json FROM orchestration_v2_projection_turn_items
+          SELECT type, payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId} AND run_id = ${run.id}
-            AND type IN ('file_change', 'command_execution', 'dynamic_tool')
-          UNION ALL
-          SELECT 0 AS own, type, payload_json FROM orchestration_v2_projection_turn_items
-          WHERE type IN ('file_change', 'command_execution', 'dynamic_tool')
+            AND type IN ('file_change', 'command_execution', 'dynamic_tool', 'subagent')
+        )
+        SELECT items.type, json_extract(items.payload_json, '$.fileName') AS path FROM items
+        UNION
+        SELECT items.type, json_extract(change.value, '$.path') FROM items, json_each(items.payload_json, '$.changes') AS change
+        UNION
+        SELECT items.type, json_extract(change.value, '$.oldPath') FROM items, json_each(items.payload_json, '$.changes') AS change`;
+      const otherRows = yield* sql<{ readonly worked: number }>`
+        SELECT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_turn_items
+          WHERE type IN ('file_change', 'command_execution', 'dynamic_tool', 'subagent')
             AND thread_id IN (
               SELECT thread_id FROM orchestration_v2_projection_checkpoint_scopes
               WHERE thread_id <> ${threadId} AND json_extract(payload_json, '$.cwd') = ${scope.cwd})
@@ -5595,22 +5598,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               (SELECT captured_at FROM orchestration_v2_projection_checkpoints
                 WHERE scope_id = ${scopeId} AND ordinal_within_scope = ${run.ordinal - 1}),
               ${requestedAt})
-        )
-        SELECT items.own, items.type, json_extract(items.payload_json, '$.fileName') AS path FROM items
-        UNION
-        SELECT items.own, items.type, json_extract(change.value, '$.path') FROM items, json_each(items.payload_json, '$.changes') AS change
-        UNION
-        SELECT items.own, items.type, json_extract(change.value, '$.oldPath') FROM items, json_each(items.payload_json, '$.changes') AS change`;
-      const pathsWhere = (own: number) =>
-        rows.flatMap((row) =>
-          row.own === own && row.type === "file_change" && row.path !== null ? [row.path] : [],
-        );
+        ) AS worked`;
       return {
-        ranCommands: rows.some((row) => row.own === 1 && row.type !== "file_change"),
-        editedPaths: pathsWhere(1),
-        otherThreadsWorked: rows.some((row) => row.own === 0),
-        otherThreadsEditedPaths: pathsWhere(0),
-      };
+        ranCommands: ownRows.some((row) => row.type !== "file_change"),
+        editedPaths: ownRows.flatMap((row) =>
+          row.type === "file_change" && row.path !== null ? [row.path] : [],
+        ),
+        otherThreadsWorked: otherRows[0]?.worked === 1,
+      } satisfies WorkspaceActivity;
     });
 
     const getCheckpointCaptureContext: ProjectionStoreV2Shape["getCheckpointCaptureContext"] = (

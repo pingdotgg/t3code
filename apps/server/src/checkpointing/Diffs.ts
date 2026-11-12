@@ -49,7 +49,6 @@ export interface WorkspaceActivity {
   readonly ranCommands: boolean;
   readonly editedPaths: ReadonlyArray<string>;
   readonly otherThreadsWorked: boolean;
-  readonly otherThreadsEditedPaths: ReadonlyArray<string>;
 }
 
 // Diff paths are repository-relative; providers report paths absolute or relative to the cwd.
@@ -71,15 +70,13 @@ export function isOtherThreadsChange(
   cwd: string,
   activity: WorkspaceActivity,
 ): boolean {
-  const named = (paths: ReadonlyArray<string>) =>
-    paths.some(
+  return (
+    activity.otherThreadsWorked &&
+    !activity.ranCommands &&
+    !activity.editedPaths.some(
       (path) =>
         namesDiffPath(cwd, path, file.path) ||
         (file.previousPath !== undefined && namesDiffPath(cwd, path, file.previousPath)),
-    );
-  return (
-    activity.otherThreadsWorked &&
-    !named(activity.editedPaths) &&
-    (!activity.ranCommands || named(activity.otherThreadsEditedPaths))
+    )
   );
 }

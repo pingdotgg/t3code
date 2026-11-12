@@ -1133,7 +1133,24 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       name: "ran a command",
       own: [{ type: "command_execution", input: "make" }],
       otherEditedEarlier: false,
-      files: ["a.txt", "c.txt"],
+      files: ["a.txt", "b.txt", "c.txt"],
+    },
+    {
+      name: "delegated to a subagent",
+      own: [
+        {
+          type: "subagent",
+          subagentId: NodeId.make("node:shared-checkout-subagent"),
+          origin: "provider_native",
+          driver,
+          providerInstanceId,
+          childThreadId: null,
+          prompt: "edit",
+          result: null,
+        },
+      ],
+      otherEditedEarlier: false,
+      files: ["a.txt", "b.txt", "c.txt"],
     },
     {
       name: "edited nothing alone",
@@ -1221,7 +1238,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           at: DateTime.Utc,
           body:
             | { readonly type: "file_change"; readonly fileName: string }
-            | { readonly type: "command_execution"; readonly input: string },
+            | { readonly type: "command_execution"; readonly input: string }
+            | Extract<(typeof own)[number], { readonly type: "subagent" }>,
         ): OrchestrationV2DomainEvent => ({
           id: EventId.make(`event:${threadId}:item:${index}`),
           type: "turn-item.updated",
