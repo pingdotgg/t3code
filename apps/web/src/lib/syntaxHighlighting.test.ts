@@ -1,8 +1,18 @@
 import { getFiletypeFromFileName } from "@pierre/diffs";
-import { expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "./syntaxHighlighting";
 import { DIFF_THEME_NAMES } from "./diffRendering";
+
+describe("dialect file types", () => {
+  it.each([
+    ["src/init.luau", "lua"],
+    ["styles/page.xsl", "xml"],
+    ["styles/page.xslt", "xml"],
+  ])("%s highlights as %s", (path, language) => {
+    expect(getFiletypeFromFileName(path)).toBe(language);
+  });
+});
 
 it.each([
   "asm",

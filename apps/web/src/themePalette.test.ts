@@ -61,6 +61,17 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
+  it("gives non-Latin theme names distinct stable ids", () => {
+    const file = {
+      version: THEME_FILE_VERSION,
+      appearance: "dark",
+      colors: { canvas: "#101820" },
+    };
+    const night = parseThemeFile({ ...file, name: "夜" });
+    expect(parseThemeFile({ ...file, name: "朝" }).id).not.toBe(night.id);
+    expect(parseThemeFile({ ...file, name: " 夜 " }).id).toBe(night.id);
+  });
+
   it("keeps built-in and standard search pairs readable and distinct from inline code", () => {
     const toOklab = converter("oklab");
     const distance = (first: string, second: string) => {

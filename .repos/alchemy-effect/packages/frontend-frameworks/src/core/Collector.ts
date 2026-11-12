@@ -1,9 +1,9 @@
+import * as NodePath from "node:path";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import type { PlatformError } from "effect/PlatformError";
-import * as NodePath from "node:path";
 
 /**
  * Module names in a BuildOutput are always POSIX-separated — they become
@@ -20,9 +20,7 @@ import {
   type OutputFile,
 } from "./BuildOutput.ts";
 
-export class CollectorError extends Data.TaggedError<"CollectorError">(
-  "CollectorError",
-)<{
+export class CollectorError extends Data.TaggedError<"CollectorError">("CollectorError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
@@ -46,8 +44,7 @@ type RscManifestId = keyof typeof RSC_MANIFEST;
 const isRscManifestId = (id: string): id is RscManifestId => id in RSC_MANIFEST;
 
 /** Files re-read from disk as text (everything else is read as binary). */
-export const DEFAULT_TEXT_FILE_REGEX =
-  /\.(m?js|cjs|json|txt|html|sql|map|css)$/;
+export const DEFAULT_TEXT_FILE_REGEX = /\.(m?js|cjs|json|txt|html|sql|map|css)$/;
 
 /** The entry-chunk information {@link CollectorOptions.selectEntry} receives. */
 export interface ServerEntryChunk {
@@ -95,13 +92,10 @@ export interface CollectorOptions {
  * user entry ({@link DeployTargetEntry}), the chunk built from it must become
  * `serverModules[0]` even if the framework normally pins its own entry module.
  */
-export const selectEntryByFacade = (
-  entryPath: string,
-): ((chunk: ServerEntryChunk) => boolean) => {
+export const selectEntryByFacade = (entryPath: string): ((chunk: ServerEntryChunk) => boolean) => {
   const posixPath = NodePath.resolve(entryPath).replaceAll("\\", "/");
   return (chunk) =>
-    chunk.facadeModuleId !== null &&
-    chunk.facadeModuleId.replaceAll("\\", "/").endsWith(posixPath);
+    chunk.facadeModuleId !== null && chunk.facadeModuleId.replaceAll("\\", "/").endsWith(posixPath);
 };
 
 export interface CollectOptions {
@@ -128,9 +122,7 @@ export interface BuildOutputCollector {
    */
   readonly plugin: Vite.Plugin;
   /** Assemble the {@link BuildOutput} after `builder.buildApp()` resolves. */
-  readonly collect: (
-    options?: CollectOptions,
-  ) => Effect.Effect<BuildOutput, CollectorError>;
+  readonly collect: (options?: CollectOptions) => Effect.Effect<BuildOutput, CollectorError>;
 }
 
 /**
@@ -153,17 +145,11 @@ export const makeBuildOutputCollector = (
     let clientDirectory: string | undefined;
     let serverEntry: string | undefined;
     let serverEntryPriority = 0;
-    const serverModules = new Map<
-      string,
-      Effect.Effect<OutputFile, CollectorError>
-    >();
+    const serverModules = new Map<string, Effect.Effect<OutputFile, CollectorError>>();
     const serverOutputs = new Map<string, { root: string; outDir: string }>();
     const externalDirectories = new Set<string>();
 
-    const readFile = (
-      path: string,
-      name: string,
-    ): Effect.Effect<OutputFile, CollectorError> =>
+    const readFile = (path: string, name: string): Effect.Effect<OutputFile, CollectorError> =>
       fs.readFileString(path).pipe(
         Effect.flatMap((content) => toOutputFile(name, content)),
         Effect.mapError(
@@ -188,10 +174,7 @@ export const makeBuildOutputCollector = (
         }
         // Vite module ids are POSIX-separated even on Windows, so normalize
         // the root the same way before the prefix comparison.
-        const root = NodePath.resolve(this.environment.config.root).replaceAll(
-          "\\",
-          "/",
-        );
+        const root = NodePath.resolve(this.environment.config.root).replaceAll("\\", "/");
         for (const id of this.getModuleIds()) {
           const posixId = id.replaceAll("\\", "/");
           if (
@@ -203,10 +186,7 @@ export const makeBuildOutputCollector = (
           }
           externalDirectories.add(NodePath.dirname(id));
         }
-        const outDir = NodePath.resolve(
-          root,
-          this.environment.config.build.outDir,
-        );
+        const outDir = NodePath.resolve(root, this.environment.config.build.outDir);
         if (environment === clientEnvironment) {
           clientDirectory = outDir;
           return;
@@ -214,6 +194,8 @@ export const makeBuildOutputCollector = (
         serverOutputs.set(environment, { root, outDir });
         const prefix = NodePath.relative(distDirectory ?? root, outDir);
         for (const file of Object.values(bundle)) {
+          // Vite's build metadata (`.vite/manifest.json`), not a Worker module.
+          if (file.fileName.startsWith(".vite/")) continue;
           const name = toModuleName(prefix, file.fileName);
           const content = file.type === "chunk" ? file.code : file.source;
           serverModules.set(name, toOutputFile(name, content));
@@ -257,10 +239,7 @@ export const makeBuildOutputCollector = (
       },
     } satisfies Vite.Plugin;
 
-    const collectInMemory = (): Effect.Effect<
-      Array<OutputFile> | undefined,
-      CollectorError
-    > => {
+    const collectInMemory = (): Effect.Effect<Array<OutputFile> | undefined, CollectorError> => {
       if (!serverEntry && !serverModules.size) return Effect.undefined;
       return Effect.all(Array.from(serverModules.values()), {
         concurrency: "unbounded",
@@ -285,18 +264,14 @@ export const makeBuildOutputCollector = (
           }
         }
         if (serverEntry && !modules.has(serverEntry)) {
-          return yield* Effect.fail(
-            new CollectorError({
-              message: `Server entry "${serverEntry}" not found on disk`,
-            }),
-          );
+          return yield* new CollectorError({
+            message: `Server entry "${serverEntry}" not found on disk`,
+          });
         }
         return sortServerModules(Array.from(modules.values()), serverEntry);
       });
 
-    const collect = (
-      options?: CollectOptions,
-    ): Effect.Effect<BuildOutput, CollectorError> =>
+    const collect = (options?: CollectOptions): Effect.Effect<BuildOutput, CollectorError> =>
       Effect.all(
         [
           options?.fromDisk ? collectFromDisk(options) : collectInMemory(),
@@ -351,9 +326,7 @@ export const readServerModulesFromDisk = (
 ): Effect.Effect<Array<OutputFile>, CollectorError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const isTextFile =
-      options.isTextFile ??
-      ((name: string) => DEFAULT_TEXT_FILE_REGEX.test(name));
+    const isTextFile = options.isTextFile ?? ((name: string) => DEFAULT_TEXT_FILE_REGEX.test(name));
     const readError = (error: unknown) =>
       new CollectorError({
         message: "Failed to read server modules from disk",
@@ -391,10 +364,7 @@ export const collectExternalWorkspaces = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const findUp = yield* cachedFunction(
-      (
-        dir: string,
-        filenames: Array<string>,
-      ): Effect.Effect<string | undefined, PlatformError> =>
+      (dir: string, filenames: Array<string>): Effect.Effect<string | undefined, PlatformError> =>
         Effect.filter(
           filenames.map((filename) => NodePath.join(dir, filename)),
           fs.exists,
@@ -417,11 +387,7 @@ export const collectExternalWorkspaces = (
     ).pipe(
       Effect.map(
         (paths) =>
-          new Set(
-            paths
-              .filter((file) => file !== undefined)
-              .map((file) => NodePath.dirname(file)),
-          ),
+          new Set(paths.filter((file) => file !== undefined).map((file) => NodePath.dirname(file))),
       ),
       Effect.mapError(
         (error) =>
