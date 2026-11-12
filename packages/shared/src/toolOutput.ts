@@ -25,6 +25,8 @@ const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
 const encoder = new TextEncoder();
+// OpenCode 2 Code Mode reports T3 tools a script calls as this one tool, carrying the script's result.
+const OPENCODE_CODE_MODE_TOOL_NAME = "execute";
 
 interface ResultReadBudget {
   remainingBytes: number;
@@ -191,7 +193,12 @@ export function htmlRenderFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
 }): HtmlRenderReference | undefined {
-  if (resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
+  if (
+    resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME &&
+    item.toolName !== OPENCODE_CODE_MODE_TOOL_NAME
+  ) {
+    return undefined;
+  }
   const output = compactDynamicToolOutput(item.output);
   return output?.isError ? undefined : output?.htmlRender;
 }
