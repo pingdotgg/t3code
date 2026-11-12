@@ -89,6 +89,8 @@ function isLiteralUrlLink(node: MarkdownNode): boolean {
   );
 }
 
+const CODE_HTML_TAG = /^<(\/)?(?:code|pre)(?=[\s>])/iu;
+
 let emojiByShortcode: ReadonlyMap<string, string> | undefined;
 
 function remarkEmojiShortcodes() {
@@ -104,7 +106,13 @@ function remarkEmojiShortcodes() {
         (shortcode, name: string) => emoji.get(name) ?? shortcode,
       );
     }
-    node.children?.forEach(visit);
+    // Inline `<code>:tada:</code>` parses as html, text, html siblings: keep what is between literal.
+    let codeDepth = 0;
+    for (const child of node.children ?? []) {
+      const tag = child.type === "html" ? CODE_HTML_TAG.exec(child.value ?? "") : null;
+      if (tag) codeDepth = Math.max(0, codeDepth + (tag[1] ? -1 : 1));
+      else if (codeDepth === 0) visit(child);
+    }
   };
   return (tree: MarkdownNode) => visit(tree);
 }

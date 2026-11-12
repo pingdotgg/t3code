@@ -80,12 +80,14 @@ describe("pullRequestMarkdownPlugins", () => {
       );
     const linked = (await withLinks.run(
       withLinks.parse(
-        "https://example.com/:tada:/ <https://example.com/:tada:/> [:tada: docs](https://example.com)",
+        "https://example.com/:tada:/ <https://example.com/:tada:/> [:tada: docs](https://example.com) <code>:tada:</code>",
       ),
     )) as Node;
     text.length = 0;
     visit(linked);
-    expect(text.join("")).toBe("https://example.com/:tada:/ https://example.com/:tada:/ 🎉 docs");
+    expect(text.join("")).toBe(
+      "https://example.com/:tada:/ https://example.com/:tada:/ 🎉 docs <code>:tada:</code>",
+    );
   });
 });
 
