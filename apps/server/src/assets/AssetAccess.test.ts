@@ -102,16 +102,23 @@ const oversizedScreenshotItem = {
   },
 };
 
+const storedScreenshotAttachmentId = "thread-1-00000000-0000-4000-8000-000000000041-png";
+const storedScreenshotItem = {
+  ...screenshotItem,
+  id: TurnItemId.make("tool-screenshot-stored"),
+  output: {
+    content: [{ type: "image", mimeType: "image/png", attachmentId: storedScreenshotAttachmentId }],
+  },
+};
+
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
       Effect.succeed(
-        itemId === screenshotItem.id
-          ? screenshotItem
-          : itemId === oversizedScreenshotItem.id
-            ? oversizedScreenshotItem
-            : null,
+        [screenshotItem, oversizedScreenshotItem, storedScreenshotItem].find(
+          (item) => item.id === itemId,
+        ) ?? null,
       ),
   }),
   layerConfig,
@@ -186,23 +193,35 @@ describe("AssetAccess", () => {
     );
   });
 
-  it.effect("serves an image a tool returned inline from the stored item", () =>
+  it.effect("serves an image a tool returned from the stored item or its attachment file", () =>
     Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fs.writeFile(
+        path.join(config.attachmentsDir, `${storedScreenshotAttachmentId}.png`),
+        screenshotPng,
+      );
       const resource = {
         _tag: "tool-output-image" as const,
         threadId: screenshotItem.threadId,
         itemId: screenshotItem.id,
         index: 0,
       };
-      const result = yield* issueAssetUrl({ resource });
-      expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
-      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-      const separator = suffix.indexOf("/");
-      expect(yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1))).toEqual({
-        kind: "bytes",
-        mimeType: "image/png",
-        bytes: Buffer.from(screenshotPng),
-      });
+      for (const itemId of [screenshotItem.id, storedScreenshotItem.id]) {
+        const result = yield* issueAssetUrl({ resource: { ...resource, itemId } });
+        expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        expect(
+          yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+        ).toEqual({
+          kind: "bytes",
+          mimeType: "image/png",
+          bytes: Buffer.from(screenshotPng),
+        });
+      }
       const missing = yield* issueAssetUrl({ resource: { ...resource, index: 1 } }).pipe(
         Effect.flip,
       );

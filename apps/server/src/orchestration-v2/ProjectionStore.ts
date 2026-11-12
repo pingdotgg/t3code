@@ -95,7 +95,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
-import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import {
+  threadHtmlRenderAttachmentIds,
+  threadToolOutputImageAttachmentIds,
+} from "../attachmentStore.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
 import {
   isThreadHistoryUserTurn,
@@ -5859,7 +5862,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       WHERE thread_id = ${threadId}
         AND type = 'dynamic_tool'
         AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
-          OR payload_json LIKE '%preview_recording_stop%')
+          OR payload_json LIKE '%preview_recording_stop%' OR payload_json LIKE '%attachmentId%')
     `,
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
@@ -5879,23 +5882,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND json_extract(message.value, '$.status') = 'pending'
     `,
       ]).pipe(
-        Effect.map(([messages, renders, answerFiles, guestFiles]) => [
-          ...new Set([
-            ...messages.map((row) => row.id),
-            ...guestFiles.map((row) => row.id),
-            ...answerFiles.map((row) => row.id),
-            ...threadHtmlRenderAttachmentIds(
-              threadId,
-              renders.map((row) => {
-                const item = parseEncodedPayload(row.payload_json);
-                return {
-                  toolName: typeof item.toolName === "string" ? item.toolName : null,
-                  output: item.output,
-                };
-              }),
-            ),
-          ]),
-        ]),
+        Effect.map(([messages, renders, answerFiles, guestFiles]) => {
+          const renderItems = renders.map((row) => {
+            const item = parseEncodedPayload(row.payload_json);
+            return {
+              toolName: typeof item.toolName === "string" ? item.toolName : null,
+              output: item.output,
+            };
+          });
+          return [
+            ...new Set([
+              ...messages.map((row) => row.id),
+              ...guestFiles.map((row) => row.id),
+              ...answerFiles.map((row) => row.id),
+              ...threadHtmlRenderAttachmentIds(threadId, renderItems),
+              ...threadToolOutputImageAttachmentIds(threadId, renderItems),
+            ]),
+          ];
+        }),
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
 

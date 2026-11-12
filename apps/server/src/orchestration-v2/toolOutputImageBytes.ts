@@ -1,9 +1,19 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
+import * as Result from "effect/Result";
 import {
   MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
   readToolOutputImage,
   toolOutputImageBlocks,
 } from "@t3tools/shared/toolOutput";
+
+import { chatAttachmentStableKey, createDeterministicAttachmentId } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
+import { inferImageExtension } from "../imageMime.ts";
 
 const IMAGE_MIME_KEYS = ["mimeType", "mime_type", "media_type", "type"] as const;
 const IMAGE_BODY_KEYS = new Set(["data", "blob", "base64"]);
@@ -112,3 +122,73 @@ export function stripUnservedToolOutputImageBytes(
   const output = strip(item.output, undefined, { output: item.output, served: undefined }, 0);
   return output === item.output ? item : { ...item, output };
 }
+
+function mapOutputBlocks(value: unknown, map: (block: unknown) => unknown): unknown {
+  if (Array.isArray(value)) return value.map(map);
+  if (Predicate.isObject(value) && Array.isArray(value.content)) {
+    return { ...value, content: value.content.map(map) };
+  }
+  return map(value);
+}
+
+/** Moves served image bytes to the attachment store so SQLite rows keep only a reference.
+ * Ids are deterministic per item, index, and bytes, so repeated updates reuse one file. */
+export const storeServedToolOutputImages = Effect.fn(
+  "ToolOutputImageBytes.storeServedToolOutputImages",
+)(function* (item: OrchestrationV2TurnItem) {
+  if (item.type !== "dynamic_tool") return item;
+  const blocks = toolOutputImageBlocks(item.output);
+  if (blocks.length === 0) return item;
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const replacements = new Map<unknown, unknown>();
+  yield* Effect.forEach(
+    blocks,
+    Effect.fnUntraced(function* (block, index) {
+      const image = readToolOutputImage(block);
+      if (image === null) return;
+      const reference = { type: "image", mimeType: image.mimeType };
+      // Provider output must not point at another thread's stored file.
+      if (image.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH) {
+        if (image.attachmentId !== undefined) replacements.set(block, reference);
+        return;
+      }
+      const decoded = Base64.decode(image.data);
+      if (Result.isFailure(decoded)) return;
+      const bytes = decoded.success;
+      const baseId = createDeterministicAttachmentId(
+        item.threadId,
+        chatAttachmentStableKey(item.id, index, bytes),
+      );
+      if (baseId === null) return;
+      const extension = inferImageExtension({ mimeType: image.mimeType });
+      const attachmentId = `${baseId}-${extension.slice(1)}`;
+      const filePath = path.join(config.attachmentsDir, `${attachmentId}${extension}`);
+      const stored = yield* fileSystem.exists(filePath).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? Effect.void
+            : fileSystem
+                .makeDirectory(config.attachmentsDir, { recursive: true })
+                .pipe(Effect.andThen(fileSystem.writeFile(filePath, bytes))),
+        ),
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.logWarning("Keeping tool output image inline; storing it failed.", {
+            threadId: item.threadId,
+            itemId: item.id,
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      if (stored) replacements.set(block, { ...reference, attachmentId });
+    }),
+    { concurrency: 1, discard: true },
+  );
+  if (replacements.size === 0) return item;
+  return {
+    ...item,
+    output: mapOutputBlocks(item.output, (block) => replacements.get(block) ?? block),
+  };
+});

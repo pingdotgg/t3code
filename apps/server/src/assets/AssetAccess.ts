@@ -243,6 +243,16 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
   const item = yield* orchestrator.getTurnItem(input);
   const image =
     item?.type === "dynamic_tool" ? toolOutputImages(item.output)[input.index] : undefined;
+  if (image?.attachmentId !== undefined) {
+    const config = yield* ServerConfig.ServerConfig;
+    const filePath = resolveAttachmentPathById({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId: image.attachmentId,
+    });
+    if (filePath === null) return null;
+    const fileSystem = yield* FileSystem.FileSystem;
+    return { mimeType: image.mimeType, bytes: yield* fileSystem.readFile(filePath) };
+  }
   return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
     ? null
     : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };

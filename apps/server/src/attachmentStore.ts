@@ -8,6 +8,7 @@ import {
   htmlRenderFromToolItem,
   mcpAppFromToolItem,
   previewRecordingIdFromToolItem,
+  toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 
 import {
@@ -145,6 +146,22 @@ export function threadHtmlRenderAttachmentIds(
       ? [attachmentId]
       : [];
   });
+}
+
+/** Like threadHtmlRenderAttachmentIds, for the tool output images the server stored. */
+export function threadToolOutputImageAttachmentIds(
+  threadId: string,
+  items: Iterable<{ readonly output?: unknown }>,
+) {
+  const segment = toSafeThreadAttachmentSegment(threadId);
+  if (segment === null) return [];
+  return Array.from(items).flatMap((item) =>
+    toolOutputImages(item.output).flatMap(({ attachmentId }) =>
+      attachmentId !== undefined && parseThreadSegmentFromAttachmentId(attachmentId) === segment
+        ? [attachmentId]
+        : [],
+    ),
+  );
 }
 
 export function attachmentRelativePath(attachment: ChatAttachment): string | null {

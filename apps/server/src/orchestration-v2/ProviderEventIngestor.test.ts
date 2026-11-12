@@ -37,6 +37,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -68,7 +69,7 @@ const layerTestEventSink = EventSink.layer.pipe(
 );
 
 const layerGit = GitVcsDriver.layer.pipe(
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "ingestor-git-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
@@ -1633,6 +1634,16 @@ layer("ProviderEventIngestorV2", (it) => {
         file: { type: "image/png", originalSize: 30_000, sizeBytes: 30_000 },
       });
       assert.equal(JSON.stringify(projectedScreenshot).includes(screenshotBase64), false);
+      const [stored] = toolOutputImages(
+        projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
+      );
+      assert.equal(stored?.mimeType, "image/png");
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const storedBytes = yield* fs.readFile(
+        `${config.attachmentsDir}/${stored?.attachmentId ?? "missing"}.png`,
+      );
+      assert.equal(Buffer.from(storedBytes).toString("base64"), screenshotBase64);
     }),
   );
 

@@ -241,6 +241,8 @@ export function toolOutputIndicatesFailure(text: string): boolean {
 export interface ToolOutputImage {
   readonly mimeType: string;
   readonly data?: string;
+  /** Set by the server once it moves the bytes to its attachment store. */
+  readonly attachmentId?: string;
 }
 
 /** Raster types only, so agent SVG/HTML cannot be served inline. */
@@ -254,7 +256,10 @@ export function readToolOutputImage(block: unknown): ToolOutputImage | null {
     return null;
   }
   const image = { mimeType: mimeType.toLowerCase() };
-  return typeof data === "string" ? { ...image, data } : image;
+  if (typeof data === "string") return { ...image, data };
+  return source === undefined && typeof block.attachmentId === "string"
+    ? { ...image, attachmentId: block.attachmentId }
+    : image;
 }
 
 function outputBlocks(value: unknown): ReadonlyArray<unknown> {
@@ -296,7 +301,9 @@ export function mcpToolResultOutput(result: {
 export function omitToolOutputImageData(value: unknown): unknown {
   const omit = (block: unknown) => {
     const image = readToolOutputImage(block);
-    return image?.data === undefined ? block : { type: "image", mimeType: image.mimeType };
+    return image?.data === undefined && image?.attachmentId === undefined
+      ? block
+      : { type: "image", mimeType: image.mimeType };
   };
   if (Array.isArray(value)) return value.map(omit);
   if (Predicate.isObject(value) && Array.isArray(value.content)) {
