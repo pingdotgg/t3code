@@ -204,6 +204,7 @@ export const layer = (ipcMain: DesktopIpcMain) =>
 
 // A pop-out browser window runs the app itself, so it is as trusted as the main window.
 // Preview guests are "webview" contents, and their pop-ups never load the app origin.
+// The hash is routing, not a secret: any app-origin page is already as trusted as the main window.
 const isPopoutWindow = (event: DesktopIpcInvokeEvent, appUrl: string): boolean => {
   const sender = event.sender;
   if (sender.getType?.() !== "window" || sender.mainFrame !== event.senderFrame) return false;

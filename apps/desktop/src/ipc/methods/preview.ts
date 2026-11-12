@@ -59,13 +59,14 @@ export const installPreviewEventForwarding = Effect.fn(
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
   );
   // Only the main window opens tabs; pop-out windows would open a duplicate.
+  // With the main window closed (macOS keeps pop-outs alive), open the link in place.
   yield* manager.subscribeOpenLinks((event) =>
     Effect.flatMap(electronWindow.main, (main) =>
-      Effect.sync(() => {
-        if (Option.isSome(main) && !main.value.isDestroyed()) {
-          main.value.webContents.send(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event);
-        }
-      }),
+      Option.isSome(main) && !main.value.isDestroyed()
+        ? Effect.sync(() =>
+            main.value.webContents.send(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
+          )
+        : manager.navigate(event.tabId, event.url).pipe(Effect.ignore),
     ),
   );
   yield* manager.subscribeFindResults((event) =>
