@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { act, createElement, createContext, useState, type ReactNode } from "react";
+import {
+  act,
+  createElement,
+  createContext,
+  useState,
+  type ComponentProps,
+  type Dispatch,
+  type ReactNode,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { WorkspaceRootScreen } from "./WorkspaceRootScreen.android";
 import {
@@ -11,7 +19,9 @@ import {
   workspaceSearchBottomClearance,
   workspaceDockBottomClearance,
   workspaceUsesColumns,
+  type WorkspaceTabsAction,
 } from "./workspace-tabs-state";
+import { workspaceTabNavigationState } from "./workspace-tab-navigation";
 
 describe("compact list clearance", () => {
   it.each([
@@ -192,6 +202,10 @@ vi.mock("react-native-safe-area-context", () => ({
   SafeAreaInsetsContext: createContext({ top: 0, right: 0, bottom: 24, left: 0 }),
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 24, left: 0 }),
 }));
+vi.mock("../../../state/preferences", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.initial()) };
+});
 vi.mock("../AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({
     layout: { usesSplitView: mocks.split },
@@ -271,3 +285,66 @@ it.each([
     }
   },
 );
+
+it("a linked chat or pull request is on its own tab from its first render, and keeps it after Back", async () => {
+  using _actEnvironment = setup(false, false);
+  const { WorkspaceTabsProvider, useWorkspaceTabs } =
+    await vi.importActual<typeof import("./WorkspaceTabsContext")>("./WorkspaceTabsContext");
+  let renders: { readonly shown: string; readonly dispatch: Dispatch<WorkspaceTabsAction> }[] = [];
+  function TabProbe(props: { readonly page: string }) {
+    const workspace = useWorkspaceTabs()!;
+    const tab = workspace.state.selectedTab;
+    renders.push({
+      shown: `${props.page} ${tab} ${workspace.isTabActive(tab)}`,
+      dispatch: workspace.dispatch,
+    });
+    return null;
+  }
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  let stack: { readonly routes: readonly { readonly name: string; readonly key: string }[] } = {
+    routes: [{ name: "Home", key: "home" }],
+  };
+  // Every render from this step on, so a page committed under the old tab fails.
+  const step = async (change: (dispatch?: Dispatch<WorkspaceTabsAction>) => void) => {
+    const dispatch = renders.at(-1)?.dispatch;
+    renders = [];
+    await act(async () => {
+      change(dispatch);
+      root.render(
+        createElement(
+          WorkspaceTabsProvider,
+          { routes: stack.routes } as ComponentProps<typeof WorkspaceTabsProvider>,
+          createElement(TabProbe, { page: stack.routes.at(-1)!.name }),
+        ),
+      );
+    });
+    return [...new Set(renders.map((render) => render.shown))];
+  };
+  // useSelectWorkspaceTab on iPhone: the tab's list replaces the stack, then the tab is selected.
+  const pressTab = (tab: "threads" | "pullRequests" | "usage") =>
+    step((dispatch) => {
+      stack = workspaceTabNavigationState(
+        stack,
+        tab,
+        {},
+        { columns: false, check: { thread: () => true, pullRequest: () => true } },
+      ) as typeof stack;
+      dispatch?.({ type: "select", tab });
+    });
+  let links = 0;
+  const show = (name: string) =>
+    step(() => {
+      stack = { routes: [stack.routes[0]!, { name, key: `${name}-${++links}` }] };
+    });
+  const back = () => step(() => (stack = { routes: stack.routes.slice(0, 1) }));
+
+  await step(() => undefined);
+  expect(await pressTab("usage")).toEqual(["Home usage true"]);
+  expect(await show("Thread")).toEqual(["Thread threads true"]);
+  expect(await back()).toEqual(["Home threads true"]);
+  expect(await pressTab("usage")).toEqual(["Home usage true"]);
+  expect(await show("PullRequest")).toEqual(["PullRequest pullRequests true"]);
+  expect(await pressTab("usage")).toEqual(["Home usage true"]);
+  expect(await show("SettingsUsageAccount")).toEqual(["SettingsUsageAccount usage true"]);
+});

@@ -1,6 +1,13 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { createContext, use, useState, type Dispatch, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useLayoutEffect,
+  useState,
+  type Dispatch,
+  type ReactNode,
+} from "react";
 
 import { mobilePreferencesAtom } from "../../../state/preferences";
 import {
@@ -11,6 +18,7 @@ import {
 import {
   initialWorkspaceTabsState,
   resolveWorkspaceTabOrder,
+  workspaceDetailTab,
   workspaceTabsReducer,
   type WorkspaceSearchTab,
   type WorkspaceTab,
@@ -75,15 +83,41 @@ function createWorkspaceTabsModel() {
 export function WorkspaceTabsProvider(props: {
   readonly children: ReactNode;
   readonly settingsOpen?: boolean;
+  /** The root stack's routes up to the focused one. */
+  readonly routes?: readonly { readonly name: string; readonly key: string }[];
 }) {
   const registry = use(RegistryContext);
   const [model] = useState(createWorkspaceTabsModel);
-  const state = useAtomValue(model.resolved);
+  const stored = useAtomValue(model.resolved);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const detailKey = props.routes?.[1]?.key;
+  const detailTab = workspaceDetailTab(props.routes ?? []);
+  // A link commits its page with no row handler; the tab must match in that render, or a
+  // retained native slot freezes the page under the old tab.
+  const linked =
+    detailTab &&
+    resolveWorkspaceTabsSelection(
+      workspaceTabsReducer(stored, { type: "select", tab: detailTab }),
+      preferences,
+    );
+  const state = linked && linked.selectedTab !== stored.selectedTab ? linked : stored;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persists a linked page's tab so it stays selected after Back.
+  useLayoutEffect(() => {
+    if (detailKey === undefined || !detailTab) return;
+    registry.set(
+      model.stored,
+      workspaceTabsReducer(registry.get(model.resolved), { type: "select", tab: detailTab }),
+    );
+  }, [detailKey, detailTab, model, registry]);
   const context = {
     state,
     dispatch: (action: WorkspaceTabsAction) =>
       registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action)),
-    isTabActive: (tab: WorkspaceTab) => registry.get(model.resolved).selectedTab === tab,
+    // Until the effect above persists this render's tab, the registry still holds `stored`.
+    isTabActive: (tab: WorkspaceTab) => {
+      const live = registry.get(model.resolved);
+      return (live === stored ? state : live).selectedTab === tab;
+    },
     bottomClearance: 0,
     settingsOpen: props.settingsOpen ?? false,
     getScrollOffset: model.getScrollOffset,

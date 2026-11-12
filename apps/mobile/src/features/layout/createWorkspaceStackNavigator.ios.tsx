@@ -642,15 +642,14 @@ function WorkspaceStackNavigator({
     UNSTABLE_router,
   });
   if (!nativeWorkspaceColumnsReady) return null;
-  const settingsOpen = settingsOpenIn(
-    state.routes.slice(0, state.index + 1).filter((route) => {
-      return !isPresentedRoute(descriptors[route.key]?.options);
-    }),
-  );
+  const cardRoutes = state.routes
+    .slice(0, state.index + 1)
+    .filter((route) => !isPresentedRoute(descriptors[route.key]?.options));
+  const settingsOpen = settingsOpenIn(cardRoutes);
   return (
     <NativeWorkspaceModeContext value={usesNativeWorkspaceColumns}>
       <NavigationContent>
-        <WorkspaceTabsProvider settingsOpen={settingsOpen}>
+        <WorkspaceTabsProvider settingsOpen={settingsOpen} routes={cardRoutes}>
           <WorkspaceStackView
             nativeColumns={usesNativeWorkspaceColumns}
             {...rest}
