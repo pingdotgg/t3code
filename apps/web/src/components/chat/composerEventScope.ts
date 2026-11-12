@@ -16,6 +16,8 @@ export function useComposerMenuProps() {
     ...composerFloatingLayerProps,
     finalFocus: composerRef
       ? () => {
+          // Focusing during a tap's user activation opens the on-screen keyboard.
+          if (window.matchMedia("(pointer: coarse)").matches) return false;
           const activeElement = document.activeElement;
           if (activeElement !== document.body && !isInsideComposerFloatingLayer(activeElement)) {
             return false;

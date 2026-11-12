@@ -95,6 +95,24 @@ it("returns focus to the editor after a pick", async () => {
   await vi.waitFor(() => expect(handle.focusAtEnd).toHaveBeenCalled());
 });
 
+it("leaves the editor unfocused after a pick on a coarse pointer", async () => {
+  const matchMedia = window.matchMedia.bind(window);
+  using _coarse = vi
+    .spyOn(window, "matchMedia")
+    .mockImplementation((query) =>
+      query === "(pointer: coarse)" ? { ...matchMedia(query), matches: true } : matchMedia(query),
+    );
+  const { handle, ui } = withComposer(<OverflowMenu />);
+  await using screen = await render(ui, { router: false }); // no routes involved
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  await userEvent.click(page.getByRole("menuitemradio", { name: "Supervised" }));
+  await expect.element(screen.getByRole("status")).toHaveTextContent("approval-required");
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Supervised" }))
+    .not.toBeInTheDocument();
+  expect(handle.focusAtEnd).not.toHaveBeenCalled();
+});
+
 it("opens on the checked permission when composer.mode marked the trigger", async () => {
   await using screen = await render(<OverflowMenu />, { router: false }); // no routes involved
   const trigger = screen.getByRole("button", { name: "More" });
