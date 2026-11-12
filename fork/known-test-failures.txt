@@ -13,3 +13,6 @@ rejects an embedded archive built for a different release version
 rejects an embedded archive without the Linux node-pty binary
 rejects an emitted WSL archive whose sidecar digest does not match
 stages the Linux CLI archive verbatim with its SHA-256 sidecar
+# Added 2026-11-11: fail on unmodified munim-v0.1.56.
+shows images the agent viewed outside their collapsed tool group
+keeps the real preload subscribed across a remount with a delayed subscribe reply
