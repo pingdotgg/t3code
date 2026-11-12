@@ -7126,6 +7126,34 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       }
 
       yield* projectionStore.apply({
+        id: EventId.make("event:clock:newer:editing"),
+        type: "run.updated",
+        threadId,
+        occurredAt: later,
+        payload: {
+          ...run,
+          id: RunId.make("run:clock:newer"),
+          ordinal: 2,
+          status: "queued",
+          queueEditing: true,
+          requestedAt: later,
+          startedAt: null,
+          completedAt: null,
+        },
+      });
+      const editingProjection = yield* projectionStore.getThreadProjection(threadId);
+      const editingSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (row) => row.id === threadId,
+      )!;
+      for (const editingShell of [
+        editingSqlShell,
+        ProjectionStore.threadShellFromProjection(editingProjection),
+      ]) {
+        assert.equal(editingShell.latestRunId, runId);
+        assert.equal(editingShell.status, "completed");
+      }
+
+      yield* projectionStore.apply({
         id: EventId.make("event:projection-shell-interruptible:held-first"),
         type: "run.updated",
         threadId,

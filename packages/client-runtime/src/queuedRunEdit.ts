@@ -1,8 +1,8 @@
 /**
- * A queued-message edit ends on save, cancel, or when its run leaves the queue.
- * The store owns one watcher per edit, so "run left the queue" is handled exactly
- * once, when the projection reports it, wherever the user is in the app. It also
- * owns the edit's save, because a save outlives the view that started it.
+ * A queued-message edit ends on save, cancel, or when its run leaves the queue,
+ * and holds the server's queue at its run while open. The store owns one watcher
+ * per edit, so leaving the queue is handled once wherever the user is, and owns
+ * the edit's save, because a save outlives the view that started it.
  */
 import type { RunId } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
@@ -76,6 +76,8 @@ interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;
   readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
+  /** Sets or releases the server's hold on the run. */
+  readonly hold: (held: boolean) => void;
   cancel: (() => void) | null;
 }
 
@@ -148,9 +150,10 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
 
   const stopWatch = (threadKey: string) => {
     const watch = watches.get(threadKey);
-    if (watch === undefined) return;
+    if (watch === undefined) return undefined;
     unsubscribe(watch);
     watches.delete(threadKey);
+    return watch;
   };
 
   return {
@@ -169,12 +172,16 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
       watch: {
         readonly runs: QueuedRunsAtom;
         readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
+        readonly hold: (held: boolean) => void;
       },
     ) {
-      stopWatch(threadKey);
+      const previous = stopWatch(threadKey);
+      // Reopening the same run keeps its hold; releasing first could let it start.
+      if (previous !== undefined && previous.runId !== edit.runId) previous.hold(false);
       write(threadKey, edit);
       const next: ExitWatch<E> = { ...watch, runId: edit.runId, cancel: null };
       watches.set(threadKey, next);
+      watch.hold(true);
       subscribe(threadKey, next);
     },
     update(threadKey: string, f: (edit: E) => E) {
@@ -182,7 +189,7 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
       if (edit !== null) write(threadKey, f(edit));
     },
     end(threadKey: string) {
-      stopWatch(threadKey);
+      stopWatch(threadKey)?.hold(false);
       write(threadKey, null);
     },
     /**

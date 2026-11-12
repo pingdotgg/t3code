@@ -21,13 +21,18 @@ function setup(initialRuns: ReadonlyArray<QueuedRunStatus> | null = queued()) {
     label: "test-queued-run-edits",
   });
   const exits: Array<{ threadKey: string; text: string }> = [];
-  const begin = () =>
+  const holds: Array<{ runId: RunId; held: boolean }> = [];
+  const begin = (runId = RUN) =>
     store.begin(
       "env:thread",
-      { runId: RUN, text: "draft" },
-      { runs, onRunLeftQueue: (threadKey, edit) => exits.push({ threadKey, text: edit.text }) },
+      { runId, text: "draft" },
+      {
+        runs,
+        onRunLeftQueue: (threadKey, edit) => exits.push({ threadKey, text: edit.text }),
+        hold: (held) => holds.push({ runId, held }),
+      },
     );
-  return { registry, runs, store, exits, begin };
+  return { registry, runs, store, exits, holds, begin };
 }
 
 describe("resolveQueuedEditExit", () => {
@@ -85,6 +90,22 @@ describe("makeQueuedRunEditStore", () => {
     expect(store.get("env:thread")).toBeNull();
   });
 
+  it("holds the run while editing and releases it on cancel or when another run is edited", () => {
+    const OTHER = RunId.make("run-2");
+    const { store, holds, begin } = setup([...queued(), { id: OTHER, status: "queued" }]);
+    begin();
+    begin();
+    begin(OTHER);
+    store.end("env:thread");
+    expect(holds).toEqual([
+      { runId: RUN, held: true },
+      { runId: RUN, held: true },
+      { runId: RUN, held: false },
+      { runId: OTHER, held: true },
+      { runId: OTHER, held: false },
+    ]);
+  });
+
   it("holds the exit during a save and replays it when the save fails", () => {
     const { registry, runs, store, exits, begin } = setup();
     begin();
@@ -105,7 +126,7 @@ describe("makeQueuedRunEditStore", () => {
   });
 
   it("allows one save at a time and ends the edit when it succeeds", () => {
-    const { registry, store, begin } = setup();
+    const { registry, store, holds, begin } = setup();
     begin();
     const finishSave = store.startSave("env:thread");
     expect(registry.get(store.savingAtom)).toEqual({ "env:thread": true });
@@ -113,6 +134,8 @@ describe("makeQueuedRunEditStore", () => {
     expect(finishSave?.(true)).toBe(true);
     expect(store.get("env:thread")).toBeNull();
     expect(registry.get(store.savingAtom)).toEqual({});
+    // The save itself releases the hold on the server.
+    expect(holds).toEqual([{ runId: RUN, held: true }]);
   });
 
   it("leaves an edit begun again during a save to that edit", () => {
@@ -189,7 +212,7 @@ describe("makeQueuedRunEditStore", () => {
       label: "test-queued-run-edits",
     });
     const begin = () =>
-      store.begin("env:thread", { runId: RUN }, { runs, onRunLeftQueue: () => {} });
+      store.begin("env:thread", { runId: RUN }, { runs, onRunLeftQueue: () => {}, hold: () => {} });
 
     begin();
     expect(mounted).toBe(1);
@@ -241,7 +264,11 @@ describe("makeQueuedRunsAtom", () => {
       label: "test-queued-run-edits",
     });
     const exits: Array<string> = [];
-    store.begin("env:thread", { runId: RUN }, { runs, onRunLeftQueue: (key) => exits.push(key) });
+    store.begin(
+      "env:thread",
+      { runId: RUN },
+      { runs, onRunLeftQueue: (key) => exits.push(key), hold: () => {} },
+    );
     return {
       registry,
       snapshot,

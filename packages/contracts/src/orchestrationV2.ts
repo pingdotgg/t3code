@@ -708,6 +708,8 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  /** An open edit stops the queue at this run until it is saved or cancelled. */
+  queueEditing: Schema.optional(Schema.Boolean),
   steerWhenReadyRunId: Schema.optional(RunId),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -3360,6 +3362,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.edit.hold"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    held: Schema.Boolean,
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.edit"),

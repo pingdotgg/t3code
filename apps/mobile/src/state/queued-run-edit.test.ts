@@ -127,7 +127,7 @@ describe("beginQueuedRunEdit", () => {
       const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>(
         [{ id: original.runId, status: "queued" }],
       );
-      beginQueuedRunEdit(threadKey, original, runs);
+      beginQueuedRunEdit(threadKey, original, runs, () => {});
       const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, original.runId));
       expect(draft.text).toBe(prefix.trimEnd());
       expect(
@@ -146,7 +146,7 @@ describe("beginQueuedRunEdit", () => {
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([]), runs);
+    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
 
@@ -163,7 +163,7 @@ describe("beginQueuedRunEdit", () => {
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([image("removed")]), runs);
+    beginQueuedRunEdit(threadKey, edit([image("removed")]), runs, () => {});
     removeQueuedRunEditAttachment(threadKey, "removed");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -184,7 +184,7 @@ describe("beginQueuedRunEdit", () => {
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([]), runs);
+    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
     setComposerDraftText(queuedEditDraftKey(threadKey, runId), "revised");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -205,7 +205,7 @@ describe("beginQueuedRunEdit", () => {
       { id: runId, status: "queued" },
     ]);
     setComposerDraftText(threadKey, "other work");
-    beginQueuedRunEdit(threadKey, edit([]), runs);
+    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
     setComposerDraftText(queuedEditDraftKey(threadKey, runId), "changed");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -223,7 +223,7 @@ describe("beginQueuedRunEdit", () => {
     const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>([
       { id: runId, status: "queued" },
     ]);
-    beginQueuedRunEdit(threadKey, edit([]), runs);
+    beginQueuedRunEdit(threadKey, edit([]), runs, () => {});
     setComposerDraftText(queuedEditDraftKey(threadKey, runId), "");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);
@@ -242,7 +242,7 @@ describe("beginQueuedRunEdit", () => {
       { id: runId, status: "queued" },
     ]);
     setComposerDraftText(threadKey, "other work");
-    beginQueuedRunEdit(threadKey, edit([image("kept")]), runs);
+    beginQueuedRunEdit(threadKey, edit([image("kept")]), runs, () => {});
     removeQueuedRunEditAttachment(threadKey, "kept");
 
     appAtomRegistry.set(runs, [{ id: runId, status: "running" }]);

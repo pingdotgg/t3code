@@ -106,11 +106,15 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
   );
 }
 
-/** `runs` is the thread's runs; the edit ends when its run leaves the queue. */
+/**
+ * `runs` is the thread's runs; the edit ends when its run leaves the queue.
+ * `hold` sets or releases the server's hold on the run while it is edited.
+ */
 export function beginQueuedRunEdit(
   threadKey: string,
   edit: QueuedRunEdit,
   runs: QueuedRunsAtom,
+  hold: (held: boolean) => void,
 ): void {
   const previous = getQueuedRunEdit(threadKey);
   if (previous !== null && previous.runId !== edit.runId) {
@@ -126,7 +130,7 @@ export function beginQueuedRunEdit(
   queuedRunEdits.begin(
     threadKey,
     { ...edit, originalText },
-    { runs, onRunLeftQueue: exitQueuedRunEdit },
+    { runs, onRunLeftQueue: exitQueuedRunEdit, hold },
   );
 }
 

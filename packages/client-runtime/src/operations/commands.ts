@@ -1155,6 +1155,23 @@ export const retryWorkspacePreparation = Effect.fn("EnvironmentCommands.retryWor
   },
 );
 
+export interface HoldQueuedRunEditInput extends ThreadCommandInput {
+  readonly runId: RunId;
+  readonly held: boolean;
+}
+
+export const holdQueuedRunEdit = Effect.fn("EnvironmentCommands.holdQueuedRunEdit")(function* (
+  input: HoldQueuedRunEditInput,
+) {
+  return yield* dispatch({
+    type: "queued-run.edit.hold",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+    held: input.held,
+  });
+});
+
 export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(function* (
   input: EditQueuedRunInput,
 ) {

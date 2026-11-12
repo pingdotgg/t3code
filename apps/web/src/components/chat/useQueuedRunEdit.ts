@@ -211,6 +211,10 @@ export function useQueuedRunEdit(input: {
     composerRef,
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
+  // An older server has no hold; the edit then works as before.
+  const holdQueuedRunEdit = useAtomCommand(threadEnvironment.holdQueuedRunEdit, {
+    reportFailure: false,
+  });
   const editKey = scopedThreadKey(routeThreadRef);
   const storedEdit = useAtomValue(queuedRunEdits.atom)[editKey] ?? null;
   const editing = activeThreadId === null ? null : storedEdit;
@@ -288,6 +292,11 @@ export function useQueuedRunEdit(input: {
               get(environmentThreadDetails.quietThreadAtom(threadRef))?.projection.runs ?? null,
           ),
         }),
+        hold: (held) =>
+          void holdQueuedRunEdit({
+            environmentId,
+            input: { threadId: activeThreadId, runId: request.runId, held },
+          }),
         // The run started or was cancelled from another client. A changed
         // edit moves into the thread's own draft when that draft is empty;
         // otherwise it is dropped. Edits outlive navigation, so the toast is

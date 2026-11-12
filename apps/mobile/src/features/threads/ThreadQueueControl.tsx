@@ -132,6 +132,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
+  // An older server has no hold; the edit then works as before.
+  const holdEdit = useAtomCommand(threadEnvironment.holdQueuedRunEdit, { reportFailure: false });
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
@@ -172,6 +174,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             (get) => get(environmentThreadDetails.quietThreadAtom(target))?.projection.runs ?? null,
           ),
         }),
+        (held) => void holdEdit({ ...target, input: { threadId: target.threadId, runId, held } }),
       );
       navigation.goBack();
       return;
