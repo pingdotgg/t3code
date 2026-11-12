@@ -955,6 +955,50 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("another connection on a different runner reuses the server without restarting it", () =>
+    Effect.gen(function* () {
+      const { fs, home, fakeServer, sshAsLocalShell } = yield* prepare("an unrelated process");
+      const otherServer = `${home}/fake-t3-other.cjs`;
+      yield* fs.writeFileString(otherServer, FAKE_SERVER);
+      const other = { ...target, alias: "devbox-tailnet", hostname: "devbox-tailnet" };
+      const launch = (
+        launchTarget: Parameters<typeof SshTunnel.launchOrReuseRemoteServer>[0],
+        nodeScriptPath: string,
+      ) =>
+        SshTunnel.launchOrReuseRemoteServer(launchTarget, undefined, { nodeScriptPath }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
+        );
+      const runtimePid = fs
+        .readFileString(`${home}/.t3/userdata/server-runtime.json`)
+        .pipe(Effect.map((runtime) => Number(JSON.parse(runtime).pid)));
+      const launchedPids: Array<number> = [];
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(launchedPids, (pid) =>
+          Effect.sync(() => {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }),
+        ),
+      );
+
+      const kinds: Array<string | null> = [];
+      const pids: Array<number> = [];
+      for (const [launchTarget, script] of [
+        [target, fakeServer],
+        [other, otherServer],
+        [target, fakeServer],
+      ] as const) {
+        kinds.push((yield* launch(launchTarget, script)).remoteServerKind);
+        const pid = yield* runtimePid;
+        launchedPids.push(pid);
+        pids.push(pid);
+      }
+      assert.deepEqual(kinds, ["managed", "external", "managed"]);
+      assert.deepEqual(pids, [pids[0], pids[0], pids[0]]);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live.each(staleIds)("disconnecting does not signal %s named by the managed pid file", (kind) =>
     Effect.gen(function* () {
       const { fs, holder, sshAsLocalShell, staleId, stateDir } = yield* prepare(kind);
