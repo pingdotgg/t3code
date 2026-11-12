@@ -388,7 +388,9 @@ it.effect("keeps the server browser host for other threads when one request time
         },
       };
       const openDelivered = yield* Deferred.make<RoutedRequest>();
-      const requests = requestsFrom(yield* broker.connect(makeHost({ clientId, preferred: true })));
+      const requests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId }), { preferred: true }),
+      );
       yield* Stream.runForEach(requests, (request) => {
         if (request.operation === "open") return Deferred.succeed(openDelivered, request);
         if (request.operation === "snapshot") return Effect.void;
