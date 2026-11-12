@@ -753,6 +753,56 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("paints a tab the agent owns before a later turn's first command", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+      const turn = (active: boolean) =>
+        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
+
+      yield* turn(true);
+      yield* command(host, 1, "Runtime.evaluate");
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      yield* turn(false);
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+
+      // The next turn paints the tab before any command, so the command finds a live guest.
+      yield* turn(true);
+      yield* settle;
+      expect(painting).toEqual([true, false, true]);
+
+      yield* turn(false);
+      yield* settle;
+      expect(painting).toEqual([true, false, true, false]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("paints a tab the agent opens during its turn", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      const painting = yield* watchPainting(host);
+
+      yield* host.handleCommandLine(
+        encodeJson({ type: "turn", threadId: key.threadId, active: true }),
+      );
+      host.attach(key, debuggee.tab);
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      yield* host.handleCommandLine(
+        encodeJson({ type: "turn", threadId: key.threadId, active: false }),
+      );
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("lets a guest throttle when Chromium refuses a viewer's screencast", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
