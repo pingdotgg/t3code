@@ -386,12 +386,12 @@ describe("provider workspace snapshot refresh atom", () => {
     unmount();
   });
 
-  it("rescans at once when the server drops the snapshot, lifting TTL and cooldown", async () => {
+  it.each([false, true])("rescans a dropped snapshot (pending: %s)", async (pending) => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
     const { registry, providersAtom, run, unmount } = setup(noSnapshot);
     await vi.advanceTimersByTimeAsync(0);
     expect(run).toHaveBeenCalledTimes(1);
-    registry.set(providersAtom, withSnapshot("2026-01-01T00:00:00.000Z"));
+    registry.set(providersAtom, withSnapshot("2026-01-01T00:00:00.000Z", pending));
     expect(run).toHaveBeenCalledTimes(1);
     registry.set(providersAtom, noSnapshot);
     expect(run).toHaveBeenCalledTimes(2);

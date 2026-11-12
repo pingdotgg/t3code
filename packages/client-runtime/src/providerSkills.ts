@@ -200,7 +200,7 @@ function planProviderWorkspaceSnapshotRefresh(
   const pending = Boolean(snapshot && isProviderWorkspaceSnapshotPending(snapshot));
   // Losing a snapshot (the server dropped it) lifts both the TTL and the retry
   // cooldown so the scan happens at once.
-  const lost = previous.hadSnapshot && !hasSnapshot;
+  const lost = (previous.hadSnapshot && !hasSnapshot) || (previous.snapshotPending && !snapshot);
   const requestedAt = lost ? null : previous.requestedAt;
   const retryNotBefore =
     lost || (previous.retryNotBefore !== null && now >= previous.retryNotBefore)
