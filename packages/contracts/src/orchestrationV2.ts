@@ -1304,6 +1304,7 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
           /** Null when the wake is not about one head, so a newer push does not outdate it. */
           headSha: Schema.NullOr(TrimmedNonEmptyString),
           watchEnded: Schema.optional(Schema.Boolean),
+          readBlocker: Schema.optional(TrimmedNonEmptyString),
         }),
       ),
     }),

@@ -534,7 +534,7 @@ export const make = Effect.gen(function* () {
         if (failures >= READ_FAILURE_LIMIT) {
           const operation =
             !activityAccessFailure && Exit.isFailure(detailRead) ? "detail" : "activity";
-          const readBlocker = `${operation}:${reason}`;
+          const readBlocker = `${operation}:${reason}:${yield* random.uuidV4()}`;
           yield* eachTarget(group, (target) =>
             target.watch.readBlocker !== undefined
               ? Effect.void

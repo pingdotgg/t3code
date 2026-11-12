@@ -5047,6 +5047,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   });
 
   it.effect.each([
+    "blocker still watching",
+    "blocker new watch",
+    "blocker recovered",
+    "blocker new outage",
+    "blocker unwatch",
+    "blocker newer head",
     "unwatch",
     "unlink",
     "new watch",
@@ -5067,9 +5073,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         `queued-${mode}`,
         mode === "reopened",
       );
+      const accessNotice = mode.startsWith("blocker ");
       const finalNotice =
         mode === "closed notice" || mode === "closed notice unlinked and relinked";
+      const wakeSummary = finalNotice
+        ? "#7: closed, stopped watching"
+        : accessNotice
+          ? "#7: host access blocked, watching for recovery"
+          : "#7: checks failed";
       const deliverable =
+        mode === "blocker still watching" ||
+        mode === "blocker new watch" ||
+        mode === "blocker newer head" ||
         mode === "still watching" ||
         mode === "closed notice" ||
         mode === "reopened" ||
@@ -5088,7 +5103,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         dispatchMode: { type: "start_immediately" },
       });
       const wakeMessageId = MessageId.make(`${threadId}-wake`);
-      const recordedWatch = { ...watch, headSha: "abc123", wakes: 1 };
+      const recordedWatch = {
+        ...watch,
+        headSha: "abc123",
+        wakes: 1,
+        ...(accessNotice ? { readBlocker: "detail:forbidden" } : {}),
+      };
       yield* orchestrator.dispatch({
         type: "thread.pull-request-watch.sync",
         commandId: CommandId.make(`${threadId}-wake`),
@@ -5098,11 +5118,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watch: finalNotice ? null : recordedWatch,
         wake: {
           messageId: wakeMessageId,
-          text: finalNotice ? "Closed, stopped watching" : "Checks failed",
+          text: wakeSummary,
           notification: {
             source: { kind: "monitor" },
             outcome: "updated",
-            summary: finalNotice ? "#7: closed, stopped watching" : "#7: checks failed",
+            summary: wakeSummary,
           },
           ...(mode === "comments then newer head" || mode === "comment limit"
             ? { includesRemarks: true }
@@ -5132,7 +5152,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(wakeRun.status, "queued");
       assert.equal(userRun.status, "queued");
 
-      if (mode === "unwatch" || mode === "new watch") {
+      if (
+        mode === "unwatch" ||
+        mode === "new watch" ||
+        mode === "blocker unwatch" ||
+        mode === "blocker new watch"
+      ) {
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
           commandId: CommandId.make(`${threadId}-unwatch`),
@@ -5140,7 +5165,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ...key,
           watching: false,
         });
-        if (mode === "new watch") {
+        if (mode === "new watch" || mode === "blocker new watch") {
           yield* TestClock.adjust("1 millis");
           yield* orchestrator.dispatch({
             type: "thread.pull-request.watch",
@@ -5222,7 +5247,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             includesRemarks: true,
           },
         });
-      } else if (mode === "newer head" || mode === "comments then newer head") {
+      } else if (mode === "blocker recovered" || mode === "blocker new outage") {
+        const { readBlocker: _blocker, ...recovered } = recordedWatch;
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-recovered`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch:
+            mode === "blocker new outage"
+              ? { ...recovered, readBlocker: "detail:forbidden:next" }
+              : recovered,
+        });
+      } else if (
+        mode === "newer head" ||
+        mode === "comments then newer head" ||
+        mode === "blocker newer head"
+      ) {
         yield* orchestrator.dispatch({
           type: "thread.pull-request-watch.sync",
           commandId: CommandId.make(`${threadId}-advance`),
@@ -5281,7 +5323,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         after.messages
           .filter((message) => message.id === wakeMessageId)
           .map((message) => message.notification?.summary),
-        [finalNotice ? "#7: closed, stopped watching" : "#7: checks failed"],
+        [wakeSummary],
       );
     }),
   );
