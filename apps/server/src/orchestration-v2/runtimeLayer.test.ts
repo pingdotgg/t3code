@@ -5257,6 +5257,50 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("keeps one queued wake per pull request while the thread is busy", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, key, watch } = yield* createWatchedThread("coalesce");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}-active`),
+        threadId,
+        messageId: MessageId.make(`${threadId}-active`),
+        text: "Active work",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const recordedWatch = { ...watch, headSha: "abc123" };
+      for (const [index, summary] of ["#7: checks failed", "#7: 3 new comments"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-wake-${index}`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: { ...recordedWatch, wakes: index + 1 },
+          wake: {
+            messageId: MessageId.make(`${threadId}-wake-${index}`),
+            text: summary,
+            notification: { source: { kind: "monitor" }, outcome: "updated", summary },
+            ...(index === 1 ? { includesRemarks: true } : {}),
+          },
+        });
+      }
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const queuedWakes = projection.runs.filter(
+        (run) =>
+          run.status === "queued" &&
+          projection.messages.find((message) => message.id === run.userMessageId)?.notification
+            ?.source.kind === "monitor",
+      );
+      assert.lengthOf(queuedWakes, 1);
+    }),
+  );
+
   it.effect("reads each watched PR as soon as its own fingerprint lands", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
