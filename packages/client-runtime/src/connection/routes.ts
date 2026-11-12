@@ -235,6 +235,8 @@ export function mergeLearnedRoutes(input: {
   readonly reported: ReadonlyArray<ReportedEndpoint>;
   /** Plain HTTP routes are unusable from an HTTPS page (mixed content). */
   readonly allowInsecure: boolean;
+  /** Learned addresses the previous report already left out, from `unreportedLearnedUrls`. */
+  readonly unreported?: ReadonlySet<string> | undefined;
 }): ReadonlyArray<ConnectionRoute> | null {
   const { entry } = input;
   const active = input.activeRoute.target;
@@ -287,9 +289,9 @@ export function mergeLearnedRoutes(input: {
     }
     if (url === null || known.has(normalized(url))) return [];
     if (!reported.has(normalized(url))) {
-      // TLS proves an HTTPS address still names this server, so a gap in the
-      // report (a restart, one failed Serve probe) keeps it where the user put it.
-      if (!routeKeepsItsHost(route)) return [];
+      // A restarting server or one failed Serve probe briefly omits an HTTPS
+      // address, so it keeps its place through one omitting report, not two.
+      if (!routeKeepsItsHost(route) || input.unreported?.has(normalized(url))) return [];
       known.add(normalized(url));
       return [route];
     }
@@ -342,6 +344,27 @@ export function mergeLearnedRoutes(input: {
       )
       .join("\n");
   return signature(saved) === signature(next) ? null : next;
+}
+
+export function unreportedLearnedUrls(
+  routes: ReadonlyArray<ConnectionRoute>,
+  reported: ReadonlyArray<ReportedEndpoint>,
+): ReadonlySet<string> {
+  const origins = new Set(
+    reported.flatMap((endpoint) => {
+      try {
+        return [new URL(endpoint.httpBaseUrl).origin];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return new Set(
+    routes.flatMap((route) => {
+      const url = isLearned(route) ? routeHttpBaseUrl(route)?.replace(/\/+$/, "") : undefined;
+      return url === undefined || origins.has(url) ? [] : [url];
+    }),
+  );
 }
 
 // A paired token goes to a plain HTTP address outside the tailnet only when

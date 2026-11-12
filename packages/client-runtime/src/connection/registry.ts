@@ -51,6 +51,7 @@ import {
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
+  unreportedLearnedUrls,
   routesAfterRemoving,
   upsertRoute,
   type ReportedEndpoint,
@@ -273,6 +274,9 @@ export const make = Effect.gen(function* () {
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
   >(new Map());
   const platformEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(new Set());
+  const unreportedLearned = yield* Ref.make<ReadonlyMap<EnvironmentId, ReadonlySet<string>>>(
+    new Map(),
+  );
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
   );
@@ -937,7 +941,12 @@ export const make = Effect.gen(function* () {
           activeRoute: input.activeRoute,
           reported: input.reported,
           allowInsecure: allowInsecureRoutes,
+          unreported: (yield* Ref.get(unreportedLearned)).get(input.environmentId),
         });
+        const unreported = unreportedLearnedUrls(routes ?? connectionRoutes(entry), input.reported);
+        yield* Ref.update(unreportedLearned, (current) =>
+          new Map(current).set(input.environmentId, unreported),
+        );
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
         const previousProfiles = new Map(

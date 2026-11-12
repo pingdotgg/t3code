@@ -24,6 +24,7 @@ import {
   routeKeepsItsHost,
   routesAfterRemoving,
   sendsTokenInClear,
+  unreportedLearnedUrls,
   upsertRoute,
   usableRoutes,
 } from "./routes.ts";
@@ -237,6 +238,19 @@ describe("learned routes", () => {
       "relay",
       `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
     ]);
+    // Serve turned off: the next report that also omits it drops the route.
+    const unreported = unreportedLearnedUrls(connectionRoutes(reordered), []);
+    expect(
+      ids(
+        mergeLearnedRoutes({
+          entry: reordered,
+          activeRoute: RELAY,
+          reported: [],
+          allowInsecure: true,
+          unreported,
+        }),
+      ),
+    ).toEqual(["relay"]);
   });
 
   it("labels a learned address Tailscale only while the server reports it as tailnet", () => {
