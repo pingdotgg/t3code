@@ -5,12 +5,13 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { VcsProcessSpawnError } from "@t3tools/contracts";
+import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
 import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -1990,4 +1991,48 @@ it.effect(
         );
       }
     }),
+);
+
+it.effect("explains a slow fj instead of advising an install when tea is absent", () =>
+  Effect.gen(function* () {
+    const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
+    assert.strictEqual(spec.type, "managed-cli");
+    if (spec.type !== "managed-cli") return;
+    const result = yield* spec.probe("/repo");
+    assert.strictEqual(result.status, "missing");
+    assert.strictEqual(result.executable, "fj");
+    assert.include(result.installHint, "`fj version` timed out");
+    assert.notInclude(result.installHint, "Install");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              const context = {
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+              };
+              if (input.command === "git") return Effect.succeed(processOutput(""));
+              if (input.command === "fj")
+                return Effect.fail(new VcsProcessTimeoutError({ ...context, timeoutMs: 5_000 }));
+              return Effect.fail(
+                new VcsProcessSpawnError({
+                  ...context,
+                  cause: PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "ChildProcess",
+                    method: "spawn",
+                    pathOrDescriptor: input.command,
+                  }),
+                }),
+              );
+            },
+          },
+        }),
+      ),
+    ),
+  ),
 );
