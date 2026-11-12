@@ -264,3 +264,42 @@ index 690d069..c60dd79 100644
    getInstances(): NativeLiveActivity[];
 +  dismissEnded(): void;
  }
+diff --git a/plugin/build/android/withAndroidWidgetFiles.js b/plugin/build/android/withAndroidWidgetFiles.js
+index 0fcc4a9..b26dd41 100644
+--- a/plugin/build/android/withAndroidWidgetFiles.js
++++ b/plugin/build/android/withAndroidWidgetFiles.js
+@@ -149,7 +149,9 @@ const createWidgetInfoXml = (widget)=>{
+     return `<?xml version="1.0" encoding="utf-8"?>
+ <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+   android:minWidth="${android.minWidth}dp"
+-  android:minHeight="${android.minHeight}dp"
++  android:minHeight="${android.minHeight}dp"${android.minResizeWidth === undefined ? '' : `
++  android:minResizeWidth="${android.minResizeWidth}dp"`}${android.minResizeHeight === undefined ? '' : `
++  android:minResizeHeight="${android.minResizeHeight}dp"`}
+   android:targetCellWidth="${android.targetCellWidth}"
+   android:targetCellHeight="${android.targetCellHeight}"
+   android:updatePeriodMillis="0"
+@@ -177,6 +179,8 @@ const getAndroidWidgetConfig = (widget)=>{
+     return {
+         minWidth: widget.android?.minWidth ?? 180,
+         minHeight: widget.android?.minHeight ?? 110,
++        minResizeWidth: widget.android?.minResizeWidth,
++        minResizeHeight: widget.android?.minResizeHeight,
+         targetCellWidth: widget.android?.targetCellWidth ?? 4,
+         targetCellHeight: widget.android?.targetCellHeight ?? 2
+     };
+diff --git a/plugin/build/types/WidgetConfig.type.d.ts b/plugin/build/types/WidgetConfig.type.d.ts
+index d617583..e998182 100644
+--- a/plugin/build/types/WidgetConfig.type.d.ts
++++ b/plugin/build/types/WidgetConfig.type.d.ts
+@@ -23,6 +23,10 @@ export type WidgetConfig = {
+     android?: {
+         minWidth?: number;
+         minHeight?: number;
++        /** Smallest width in dp the user can resize the widget to. Defaults to minWidth. */
++        minResizeWidth?: number;
++        /** Smallest height in dp the user can resize the widget to. Defaults to minHeight. */
++        minResizeHeight?: number;
+         targetCellWidth?: number;
+         targetCellHeight?: number;
+         resizeMode?: 'none' | 'horizontal' | 'vertical' | 'both';
