@@ -210,6 +210,31 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
   }),
 );
 
+it.effect("--wait lasts until background work the agent waits on wakes it and that run ends", () =>
+  Effect.gen(function* () {
+    const wakeRun = RunId.make("run-2");
+    const { tools, calls } = scriptedTools({
+      t3_thread_wait: [
+        {
+          threadId,
+          runId,
+          status: "completed",
+          timedOut: false,
+          resultRun: { runId: wakeRun, status: "completed" },
+        },
+      ],
+    });
+
+    const outcome = yield* waitForRun(tools, threadId, runId);
+
+    assert.deepStrictEqual(
+      calls.map((entry) => entry.args),
+      [{ threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true }],
+    );
+    assert.deepStrictEqual(outcome, { type: "ended", runId: wakeRun, status: "completed" });
+  }),
+);
+
 it.effect("--wait stops when the thread waits for an answer instead of polling forever", () =>
   Effect.gen(function* () {
     const { tools } = scriptedTools({
