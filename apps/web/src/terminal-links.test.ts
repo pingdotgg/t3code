@@ -198,6 +198,8 @@ describe("extractTerminalLinks", () => {
     "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
     "+redis://localhost:6379/0",
     "-redis://localhost:6379/0",
+    "git clone git@github.com:acme/widgets.git",
+    "remote: git@gitlab.com:group/sub/project.git",
   ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
     expect(extractTerminalLinks(line)).toEqual([]);
   });
