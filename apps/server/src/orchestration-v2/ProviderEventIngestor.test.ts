@@ -23,7 +23,10 @@ import {
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  type ServerProvider,
   TurnItemId,
+  UsageLimitSourceId,
+  type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -48,6 +51,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { UsageLimitSources } from "../usage/UsageLimitSources.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -324,6 +328,132 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
       }).pipe(Effect.provide(makeLayerTest(layerTestEventSink, instances)));
     }),
   ),
+);
+
+it.effect(
+  "takes a proxied usage limit's missing reset from the configured hub's exhausted pool",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const driverKind = ProviderDriverKind.make("claudeAgent");
+        const adapter = yield* ProviderAdapter.ProviderAdapterV2.pipe(
+          Effect.provide(
+            Layer.mock(ProviderAdapter.ProviderAdapterV2)({ instanceId, driver: driverKind }),
+          ),
+        );
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind,
+          continuationIdentity: { driverKind, continuationKey: "proxy" },
+          enabled: true,
+          displayName: undefined,
+          orchestrationAdapter: adapter,
+          textGeneration: {
+            generateBranchName: () => Effect.die("unused"),
+            generateCommitMessage: () => Effect.die("unused"),
+            generatePrContent: () => Effect.die("unused"),
+            generateThreadTitle: () => Effect.die("unused"),
+            generateReviewGuide: () => Effect.die("unused"),
+            generateTranscriptionPostProcessing: () => Effect.die("unused"),
+          },
+          snapshot: {
+            refreshUsage: Effect.void,
+            // A Claude instance pointed at a hub through ANTHROPIC_BASE_URL.
+            getSnapshot: Effect.succeed({
+              auth: {
+                status: "authenticated",
+                type: "customEndpoint",
+                label: "Custom API endpoint",
+              },
+            } as unknown as ServerProvider),
+            refresh: Effect.die("unused"),
+            resolveMaintenance: () => Effect.die("unused"),
+            applyUsageLimits: () => Effect.die("unused"),
+            streamChanges: Stream.empty,
+          },
+        };
+        const instances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: (id) => Effect.succeed(id === instanceId ? instance : undefined),
+        });
+        const firstRefill = "2033-05-19T07:20:00.000Z";
+        const exhausted = (id: string, resetsAt: string) => ({
+          id,
+          driver: driverKind,
+          usageLimits: {
+            checkedAt: "2033-05-19T05:00:00.000Z",
+            windows: [
+              { id: "five_hour", kind: "session", label: "Session", usedPercent: 100, resetsAt },
+            ],
+          },
+        });
+        const hub: UsageLimitSourceSnapshot = {
+          id: UsageLimitSourceId.make("hub"),
+          kind: "cliproxy",
+          label: "Hub",
+          checkedAt: "2033-05-19T05:00:00.000Z",
+          accounts: [
+            exhausted("a.json", "2033-05-19T09:00:00.000Z"),
+            exhausted("b.json", firstRefill),
+          ],
+        } as UsageLimitSourceSnapshot;
+        const sources = Layer.mock(UsageLimitSources)({
+          current: Effect.succeed([hub]),
+          streamChanges: Stream.empty,
+        });
+        yield* Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const threadEvent = yield* threadCreatedEvent(now);
+          yield* eventSink.write({ events: [threadEvent] });
+          const stored = yield* ingestor.ingestNormalized({
+            providerSessionId: yield* idAllocator.allocate.providerSession({
+              providerInstanceId: instanceId,
+              threadId: threadEvent.threadId,
+            }),
+            providerInstanceId: instanceId,
+            threadId: threadEvent.threadId,
+            event: {
+              type: "turn.terminal",
+              driver: driverKind,
+              providerThreadId: idAllocator.derive.providerThread({
+                driver: driverKind,
+                nativeThreadId: "limited",
+              }),
+              providerTurnId: idAllocator.derive.providerTurn({
+                driver: driverKind,
+                nativeTurnId: "pool-cooldown",
+              }),
+              runOrdinal: 1,
+              failureItemOrdinal: 1,
+              status: "failed",
+              // regression: #26574 the CLI drops the hub's Retry-After, so the native failure has no reset.
+              failure: makeProviderFailure({
+                class: "usage_limit",
+                message: "Claude API rate limit reached. Try again later.",
+                code: "api_error_429",
+                retryable: true,
+                resetAt: null,
+              }),
+              threadDisposition: "reusable",
+            },
+          });
+          const item = stored[0]?.event;
+          assert.equal(
+            item?.type === "turn-item.updated" && item.payload.type === "error"
+              ? item.payload.failure.resetAt
+              : undefined,
+            firstRefill,
+          );
+        }).pipe(
+          Effect.provide(
+            makeLayerTest(layerTestEventSink, instances).pipe(Layer.provideMerge(sources)),
+          ),
+        );
+      }),
+    ),
 );
 
 it.effect("records accepted billed turn usage once without billing the context window", () => {
