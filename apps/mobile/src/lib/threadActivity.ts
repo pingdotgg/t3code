@@ -1457,9 +1457,9 @@ function activityAsksUser(activity: ThreadFeedActivity): boolean {
 }
 
 /**
- * The reply an agent wrote right before it asked the user something: zen keeps it, since the
- * run still works while it waits and after the answer. Reasoning and the one tool call that
- * asks may sit between them.
+ * The last reply an agent wrote before it asked the user something: zen keeps it, since the run
+ * still works while it waits and after the answer. Agents often run a command or a tool between
+ * the reply and the request, so only a user message ends the search.
  */
 function repliesBeforeAsks(
   feed: ReadonlyArray<ThreadFeedEntry>,
@@ -1467,26 +1467,13 @@ function repliesBeforeAsks(
 ): ReadonlySet<MessageId> {
   const ids = new Set<MessageId>();
   let reply: MessageId | null = null;
-  let workSince = 0;
   for (let index = start; index < feed.length; index += 1) {
     const entry = feed[index]!;
     if (entry.type === "message") {
       reply = entry.message.role === "assistant" ? entry.message.id : null;
-      workSince = 0;
-      continue;
-    }
-    if (entry.type !== "activity-group") {
-      workSince += 1;
-      continue;
-    }
-    for (const activity of entry.activities) {
-      if (activity.workEntry.itemType === "reasoning") continue;
-      if (activityAsksUser(activity)) {
-        if (reply !== null && workSince <= 1) ids.add(reply);
-        reply = null;
-      } else {
-        workSince += 1;
-      }
+    } else if (entry.type === "activity-group" && entry.activities.some(activityAsksUser)) {
+      if (reply !== null) ids.add(reply);
+      reply = null;
     }
   }
   return ids;

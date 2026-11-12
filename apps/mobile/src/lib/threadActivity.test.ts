@@ -1450,9 +1450,10 @@ describe("buildThreadFeed", () => {
       "question",
       "thinking:",
     ]);
-    // Narration followed by other work is not what the question asks about.
+    // Agents often run a command between the reply and the question; the reply still shows.
     expect(rows([user, step, passed, asking, question(true)], "zen", running)).toEqual([
       "user",
+      "step",
       "question",
       "thinking:",
     ]);

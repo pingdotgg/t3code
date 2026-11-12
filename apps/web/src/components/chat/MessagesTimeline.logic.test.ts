@@ -3134,8 +3134,16 @@ describe("v2 run and attempt history", () => {
       "live-activity-row",
     ]);
     expect(rows([user, step, passed, final, asking, secret], "zen", running)).toContain("final");
-    // Narration followed by other work is not what the question asks about.
-    expect(rows([user, step, passed, asking, question(true)], "zen", running)).not.toContain(
+    // Agents often run a command between the reply and the question; the reply still shows.
+    expect(rows([user, step, passed, asking, question(true)], "zen", running)).toEqual([
+      "user",
+      "working-indicator-row",
+      "step",
+      "question",
+      "live-activity-row",
+    ]);
+    // Only the last reply before the question shows.
+    expect(rows([user, step, passed, final, asking, question(true)], "zen", running)).not.toContain(
       "step",
     );
     expect(liveAnswerPreview([user, step, passed, final, asking, question(true)])).toBeNull();

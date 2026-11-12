@@ -1434,24 +1434,19 @@ function timelineEntryAsksUser(entry: TimelineEntry): boolean {
 }
 
 /**
- * The reply an agent wrote right before it asked the user something: zen keeps it, since the
- * run still works while it waits and after the answer. Reasoning and the one tool call that
- * asks may sit between them.
+ * The last reply an agent wrote before it asked the user something: zen keeps it, since the run
+ * still works while it waits and after the answer. Agents often run a command or a tool between
+ * the reply and the request, so only a user message ends the search.
  */
 function deriveRepliesBeforeAsks(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
   const ids = new Set<string>();
   let reply: string | null = null;
-  let workSince = 0;
   for (const entry of entries) {
-    if (entry.kind === "work" && entry.entry.itemType === "reasoning") continue;
     if (timelineEntryAsksUser(entry)) {
-      if (reply !== null && workSince <= 1) ids.add(reply);
+      if (reply !== null) ids.add(reply);
       reply = null;
     } else if (entry.kind === "message") {
       reply = entry.message.role === "assistant" ? entry.message.id : null;
-      workSince = 0;
-    } else {
-      workSince += 1;
     }
   }
   return ids;
