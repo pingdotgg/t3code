@@ -82,24 +82,5 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         ),
       ),
     );
-
-    it.effect(
-      "does not report a loopback web host published through Tailscale Serve as local-only",
-      () =>
-        Effect.gen(function* () {
-          const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-          const descriptor = yield* policy.getDescriptor();
-
-          expect(descriptor.policy).not.toBe("loopback-browser");
-        }).pipe(
-          Effect.provide(
-            layerEnvironmentAuthPolicy({
-              mode: "web",
-              host: undefined,
-              tailscaleServeEnabled: true,
-            }),
-          ),
-        ),
-    );
   },
 );

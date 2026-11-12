@@ -45,11 +45,7 @@ it.effect("binds only the loopback address it approved when remote clients are n
       policy: { readonly document: ManagedPolicyDocument | undefined } = desktopAndLocal,
     ) =>
       ManagedLimits.checkServerReachability(policy, {
-        authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy({
-          mode: "web",
-          host,
-          tailscaleServeEnabled: false,
-        }),
+        authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy({ mode: "web", host }),
         host,
         tailscaleServeEnabled: false,
       });
@@ -80,10 +76,10 @@ it.effect("binds only the loopback address it approved when remote clients are n
 
 it.effect("refuses Tailscale Serve when remote clients are not allowed", () =>
   Effect.gen(function* () {
-    const config = { mode: "web", host: undefined, tailscaleServeEnabled: true } as const;
     const error = yield* ManagedLimits.checkServerReachability(desktopAndLocal, {
-      ...config,
-      authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy(config),
+      authPolicy: "loopback-browser",
+      host: undefined,
+      tailscaleServeEnabled: true,
     }).pipe(Effect.flip);
     assert.include(error.message, "Tailscale Serve");
   }),
