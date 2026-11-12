@@ -817,12 +817,13 @@ export function useComposerSend(input: ComposerSendInput) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    const unformattedMessageText = messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT;
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      text: unformattedMessageText,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
@@ -1123,9 +1124,12 @@ export function useComposerSend(input: ComposerSendInput) {
     const optimisticMessage: ChatMessage = {
       id: messageIdForSend,
       role: "user",
-      text: outgoingMessageText,
       ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-      ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
+      ...withMessageContext({
+        text: outgoingMessageText,
+        context: outgoingMessageContext,
+        unformattedText: unformattedMessageText,
+      }),
       runId: null,
       createdAt: messageCreatedAt,
       updatedAt: messageCreatedAt,
@@ -1286,6 +1290,7 @@ export function useComposerSend(input: ComposerSendInput) {
               context: buildOutgoingMessageContext(
                 boundAttachmentIds(turnAttachmentsResult.value, composerAttachmentsSnapshot),
               ),
+              unformattedText: unformattedMessageText,
             }),
           },
           modelSelection: ctxSelectedModelSelection,

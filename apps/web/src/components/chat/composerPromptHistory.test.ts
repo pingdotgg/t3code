@@ -51,7 +51,7 @@ describe("recallableComposerPrompt", () => {
   it("strips legacy send-time context blocks and the ultrathink prefix", () => {
     const sent =
       "Ultrathink:\nInvestigate this\n\n<terminal_context>\n- Terminal 1 lines 12-13:\n  12 | git status\n  13 | On branch main\n</terminal_context>\n\n<element_context>\n- <button>:\n  url: https://example.com\n</element_context>";
-    expect(recallableComposerPrompt(sent)).toBe("Investigate this");
+    expect(recallableComposerPrompt(sent, "Ultrathink:\n")).toBe("Investigate this");
   });
 
   it.each([
@@ -70,12 +70,14 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(sent)).toBe(expected);
   });
 
-  it("strips only review comments appended at the end", () => {
+  it("strips review comments only where a legacy client appended them after its context", () => {
     const block = '<review_comment filePath="src/app.ts">Keep this configurable.</review_comment>';
-    expect(recallableComposerPrompt("Please update this.\n\n" + block)).toBe("Please update this.");
+    const terminal = "<terminal_context>\n- Terminal 1 line 4:\n  4 | ls\n</terminal_context>";
+    expect(recallableComposerPrompt(`Please update this.\n\n${terminal}\n\n${block}`)).toBe(
+      "Please update this.",
+    );
     const midPrompt = "Before\n\n" + block + "\n\nAfter";
-    expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
-    expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
+    expect(recallableComposerPrompt(midPrompt + "\n\n" + terminal)).toBe(midPrompt);
   });
 
   it.each([

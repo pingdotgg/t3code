@@ -5,13 +5,13 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
-const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
 const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_comment>/g;
 const TRAILING_LEGACY_CONTEXT =
   /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
 
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
+  readonly context?: { readonly effortPrefix?: string | undefined } | undefined;
 };
 
 interface ComposerPromptHistoryEntry {
@@ -70,15 +70,16 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
   return result;
 }
 
-export function recallableComposerPrompt(messageText: string): string {
+export function recallableComposerPrompt(messageText: string, effortPrefix?: string): string {
   let prompt = messageText.trim();
-  if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
-    prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
+  if (effortPrefix && prompt.startsWith(effortPrefix)) {
+    prompt = prompt.slice(effortPrefix.length);
   }
 
   while (prompt.length > 0) {
+    // Only legacy clients appended review blocks, always after their context blocks.
     const withoutReviewComments = stripTrailingReviewComments(prompt);
-    if (withoutReviewComments !== prompt) {
+    if (withoutReviewComments !== prompt && TRAILING_LEGACY_CONTEXT.test(withoutReviewComments)) {
       prompt = withoutReviewComments;
       continue;
     }
@@ -125,7 +126,7 @@ export function buildComposerPromptHistoryEntries(
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
-    const prompt = recallableComposerPrompt(message.text);
+    const prompt = recallableComposerPrompt(message.text, message.context?.effortPrefix);
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {

@@ -1196,11 +1196,32 @@ describe("withMessageContext", () => {
   >;
 
   it("sends the context inline", () => {
-    expect(withMessageContext({ text: "hi", context })).toEqual({ text: "hi", context });
+    expect(withMessageContext({ text: "hi", context, unformattedText: "hi" })).toEqual({
+      text: "hi",
+      context,
+    });
   });
 
   it("sends the text alone without context", () => {
-    expect(withMessageContext({ text: "hi", context: undefined })).toEqual({ text: "hi" });
+    expect(withMessageContext({ text: "hi", context: undefined, unformattedText: "hi" })).toEqual({
+      text: "hi",
+    });
+  });
+
+  it("records only an effort prefix the send added", () => {
+    expect(
+      withMessageContext({ text: "Ultrathink:\nhi", context: undefined, unformattedText: " hi" }),
+    ).toEqual({
+      text: "Ultrathink:\nhi",
+      context: { version: 1, records: [], effortPrefix: "Ultrathink:\n" },
+    });
+    expect(
+      withMessageContext({
+        text: "Ultrathink:\nhi",
+        context: undefined,
+        unformattedText: "Ultrathink:\nhi",
+      }),
+    ).toEqual({ text: "Ultrathink:\nhi" });
   });
 });
 
