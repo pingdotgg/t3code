@@ -431,15 +431,34 @@ it("binds through the GNOME extension when the portal has no GlobalShortcuts", a
   expect(capture).not.toHaveBeenCalled();
   bus.signal(gnome, "ShortcutActivated", gnomePath, [], gnomeOwner);
   expect(capture).toHaveBeenCalledOnce();
-  bus.signal(
-    "org.freedesktop.DBus",
-    "NameOwnerChanged",
-    "/org/freedesktop/DBus",
-    [gnome, gnomeOwner, ""],
-    "org.freedesktop.DBus",
-  );
-  expect(client.state).toMatchObject({ shortcutRegistered: false, shortcutCanRetry: true });
+});
+
+it("rebinds through the GNOME extension after the screen lock disables it", async () => {
+  const bus = new FakeBus();
+  bus.versionError = missingInterface();
+  const { client, capture, changed } = start(bus, chord, false, true);
+  await client.ready;
+  const ownerChanged = (from: string, to: string) =>
+    bus.signal(
+      "org.freedesktop.DBus",
+      "NameOwnerChanged",
+      "/org/freedesktop/DBus",
+      [gnome, from, to],
+      "org.freedesktop.DBus",
+    );
+  ownerChanged(gnomeOwner, "");
+  expect(client.state).toMatchObject({ shortcutRegistered: false, shortcutPending: true });
   bus.signal(gnome, "ShortcutActivated", gnomePath, [], gnomeOwner);
+  expect(capture).not.toHaveBeenCalled();
+  const rebound = new Promise((resolve) => changed.mockImplementationOnce(resolve));
+  ownerChanged("", ":1.4");
+  await rebound;
+  expect(client.state).toMatchObject({ shortcutRegistered: true, shortcutPending: false });
+  expect(bus.calls.filter((call) => call.member === "BindShortcut").at(-1)?.destination).toBe(
+    ":1.4",
+  );
+  expect(bus.disconnect).not.toHaveBeenCalled();
+  bus.signal(gnome, "ShortcutActivated", gnomePath, [], ":1.4");
   expect(capture).toHaveBeenCalledOnce();
 });
 
