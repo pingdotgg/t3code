@@ -519,6 +519,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  /** The title when generation last finished. Once `title` differs, someone renamed the thread. */
+  automaticTitle: Schema.optional(TrimmedNonEmptyString),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(
     Schema.NullOr(

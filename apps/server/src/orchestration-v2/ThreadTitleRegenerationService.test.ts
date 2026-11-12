@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -51,6 +52,7 @@ const adapter = {
 function makeHarness(
   options: {
     readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
+    readonly regenerationInterval?: number;
   } = {},
 ) {
   const layerDatabase = SqlitePersistence.layerMemory;
@@ -58,7 +60,13 @@ function makeHarness(
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
     { name: "thread-title-regeneration" },
     layerRegistry,
-    { databaseLayer: layerDatabase, runEffectWorker: false },
+    {
+      databaseLayer: layerDatabase,
+      runEffectWorker: false,
+      ...(options.regenerationInterval === undefined
+        ? {}
+        : { threadTitleRegenerationInterval: options.regenerationInterval }),
+    },
   );
   const layerServerSettings = ServerSettings.layerTest({});
   const layerThreadManagement = ThreadManagement.layer.pipe(
@@ -147,6 +155,9 @@ function dispatchUserMessage(input: {
   readonly threadId: ThreadId;
   readonly text: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
+  readonly titleSeed?: string;
+  readonly createdBy?: "user" | "agent";
+  readonly scheduledTaskId?: ScheduledTaskId;
 }) {
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
@@ -157,9 +168,11 @@ function dispatchUserMessage(input: {
       messageId: MessageId.make(`${input.command}:message`),
       text: input.text,
       attachments: input.attachments ?? [],
+      ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+      ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       modelSelection,
       dispatchMode: { type: "defer_start" },
-      createdBy: "user",
+      createdBy: input.createdBy ?? "user",
       creationSource: "web",
     });
   });
@@ -540,6 +553,102 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("regenerates on every Nth message a person sends until the thread is renamed", () =>
+    Effect.gen(function* () {
+      let generated = 0;
+      const harness = makeHarness({
+        regenerationInterval: 2,
+        // The fourth request is the manual one below; the model keeps the title it finds.
+        generateTitle: () =>
+          Effect.sync(() => ({
+            title: ++generated === 4 ? "Manual title" : `Generated ${generated}`,
+          })),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:auto:create",
+          thread: "thread:title:auto",
+        });
+        const title = Effect.map(threads.getThreadProjection(threadId), (it) => it.thread.title);
+        // Sends a message, runs the title job it queued, and reports which kind that was.
+        const send = Effect.fn(function* (
+          step: string,
+          message: Pick<
+            Parameters<typeof dispatchUserMessage>[0],
+            "titleSeed" | "createdBy" | "scheduledTaskId"
+          > = {},
+        ) {
+          const command = `command:title:auto:${step}`;
+          yield* dispatchUserMessage({ command, threadId, text: `Message ${step}`, ...message });
+          const requestId = CommandId.make(command);
+          const queued = (yield* outbox.listByCommandId(requestId)).flatMap((effect) =>
+            effect.request.type === "thread-title.generate" ? [effect.request.kind] : [],
+          );
+          for (const kind of queued) yield* service.execute({ threadId, requestId, kind });
+          return queued.map((kind) => kind.type);
+        });
+
+        assert.deepEqual(yield* send("1", { titleSeed: "First ask" }), ["initial"]);
+        assert.deepEqual(yield* send("2"), ["regenerate"]);
+        assert.equal(yield* title, "Generated 2");
+        assert.deepEqual(yield* send("3"), []);
+        // Agent and scheduled traffic neither trigger a regeneration nor count toward the next.
+        assert.deepEqual(yield* send("agent", { createdBy: "agent" }), []);
+        const scheduledTaskId = ScheduledTaskId.make("task:title:auto");
+        assert.deepEqual(yield* send("scheduled", { scheduledTaskId }), []);
+        assert.deepEqual(yield* send("4"), ["regenerate"]);
+        assert.equal(yield* title, "Generated 3");
+
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:title:auto:rename"),
+          threadId,
+          title: "Manual title",
+        });
+        assert.deepEqual(yield* send("5"), []);
+        assert.deepEqual(yield* send("6"), []);
+        assert.equal(yield* title, "Manual title");
+
+        // Asking for a generated title hands the thread back, even when the title stands.
+        const requestId = yield* armRegeneration({ command: "command:title:auto:regen", threadId });
+        yield* service.execute({ threadId, requestId, kind: { type: "regenerate" } });
+        assert.equal(yield* title, "Manual title");
+        assert.deepEqual(yield* send("7"), []);
+        assert.deepEqual(yield* send("8"), ["regenerate"]);
+        assert.equal(yield* title, "Generated 5");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("leaves titles alone when no regeneration interval is set", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const threadId = yield* createThread({
+          command: "command:title:off:create",
+          thread: "thread:title:off",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:off:1",
+          threadId,
+          text: "First ask",
+          titleSeed: "First ask",
+        });
+        yield* dispatchUserMessage({ command: "command:title:off:2", threadId, text: "Second" });
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(CommandId.make("command:title:off:2"))).filter(
+            (effect) => effect.request.type === "thread-title.generate",
+          ),
+          [],
+        );
       }).pipe(Effect.provide(harness.layer));
     }),
   );
