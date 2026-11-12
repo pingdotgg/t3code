@@ -139,7 +139,7 @@ function classifyMdcRule(path: string, contents: string): CursorRule | undefined
 const decoder = new TextDecoder();
 
 export const readCursorRulesAboveWorkspace = Effect.fn("readCursorRulesAboveWorkspace")(function* (
-  workspaceRoots: ReadonlyArray<string>,
+  workspaceRoot: string,
   stopAt?: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -153,8 +153,8 @@ export const readCursorRulesAboveWorkspace = Effect.fn("readCursorRulesAboveWork
   };
   const realPath = (file: string) =>
     fileSystem.realPath(file).pipe(Effect.map(path.normalize), Effect.option);
-  const realRoots = yield* Effect.forEach(workspaceRoots, (root) =>
-    realPath(root).pipe(Effect.map(Option.getOrElse(() => path.resolve(root)))),
+  const realRoot = Option.getOrElse(yield* realPath(workspaceRoot), () =>
+    path.resolve(workspaceRoot),
   );
 
   /** At most 100 KB plus Cursor's truncation notice; `undefined` when unreadable. */
@@ -210,27 +210,15 @@ export const readCursorRulesAboveWorkspace = Effect.fn("readCursorRulesAboveWork
 
   // The SDK walks each level closest-first: .cursor/rules, then CLAUDE.md, CLAUDE.local.md, AGENTS.md.
   const candidates: Array<{ readonly file: string; readonly markdown: boolean }> = [];
-  const seen = new Set<string>();
   const lastDirectory = stopAt === undefined ? undefined : path.resolve(stopAt);
-  for (const root of workspaceRoots) {
-    let directory = path.resolve(root);
-    while (path.dirname(directory) !== directory && directory !== lastDirectory) {
-      directory = path.dirname(directory);
-      const levelFiles = [
-        ...(yield* listMdcFiles(path.join(directory, ".cursor", "rules"))).map((file) => ({
-          file,
-          markdown: false,
-        })),
-        ...MARKDOWN_RULE_FILES.map((name) => ({
-          file: path.join(directory, name),
-          markdown: true,
-        })),
-      ];
-      for (const candidate of levelFiles) {
-        if (seen.has(candidate.file)) continue;
-        seen.add(candidate.file);
-        candidates.push(candidate);
-      }
+  let directory = path.resolve(workspaceRoot);
+  while (path.dirname(directory) !== directory && directory !== lastDirectory) {
+    directory = path.dirname(directory);
+    for (const file of yield* listMdcFiles(path.join(directory, ".cursor", "rules"))) {
+      candidates.push({ file, markdown: false });
+    }
+    for (const name of MARKDOWN_RULE_FILES) {
+      candidates.push({ file: path.join(directory, name), markdown: true });
     }
   }
 
@@ -238,8 +226,8 @@ export const readCursorRulesAboveWorkspace = Effect.fn("readCursorRulesAboveWork
   for (const { file, markdown } of candidates) {
     if (loaded.length >= MAX_RULE_FILES) break;
     const real = yield* realPath(file);
-    // The SDK already loads (and keeps) everything that resolves into a workspace root.
-    if (Option.isNone(real) || realRoots.some((root) => isInside(real.value, root))) continue;
+    // The SDK already loads (and keeps) everything that resolves into the workspace.
+    if (Option.isNone(real) || isInside(real.value, realRoot)) continue;
     const text = yield* readRuleText(file);
     if (text === undefined) continue;
     const rule = markdown

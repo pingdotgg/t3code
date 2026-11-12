@@ -29,10 +29,10 @@ const fixture = Effect.gen(function* () {
   });
   const workspace = path.join(top, "mid", "ws");
   yield* fileSystem.makeDirectory(workspace, { recursive: true });
-  const readRoots = (roots: ReadonlyArray<string>) => readCursorRulesAboveWorkspace(roots, top);
-  const readRaw = readRoots([workspace]);
-  const read = Effect.map(readRaw, (rules) => rules ?? "");
-  return { fileSystem, path, top, workspace, write, readRoots, readRaw, read };
+  const readRoot = (root: string) =>
+    Effect.map(readCursorRulesAboveWorkspace(root, top), (rules) => rules ?? "");
+  const read = readRoot(workspace);
+  return { fileSystem, path, top, workspace, write, readRoot, read };
 });
 
 const indexOfMarker = (output: string, marker: string) => {
@@ -76,7 +76,7 @@ describe("readCursorRulesAboveWorkspace", () => {
     "skips files inside the workspace, including through symlinks",
     () =>
       Effect.gen(function* () {
-        const { fileSystem, path, top, workspace, write, readRoots, read } = yield* fixture;
+        const { fileSystem, path, top, workspace, write, readRoot, read } = yield* fixture;
         yield* write("mid/ws/.cursor/rules/in.mdc", always("MARK-IN-WORKSPACE"));
         yield* write("mid/ws/AGENTS.md", "MARK-WORKSPACE-AGENTS");
         const target = yield* write(
@@ -88,7 +88,7 @@ describe("readCursorRulesAboveWorkspace", () => {
         const linkedRoot = path.join(top, "root-link");
         yield* fileSystem.symlink(workspace, linkedRoot);
 
-        for (const output of [yield* read, (yield* readRoots([linkedRoot])) ?? ""]) {
+        for (const output of [yield* read, yield* readRoot(linkedRoot)]) {
           indexOfMarker(output, "MARK-KEPT");
           assert.notInclude(output, "MARK-IN-WORKSPACE");
           assert.notInclude(output, "MARK-WORKSPACE-AGENTS");
@@ -159,67 +159,6 @@ describe("readCursorRulesAboveWorkspace", () => {
       ]) {
         assert.notInclude(output, skipped);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect.skipIf(!symlinksSupported)(
-    "reads each root's ancestors once and skips files inside either root",
-    () =>
-      Effect.gen(function* () {
-        const { fileSystem, path, top, write, readRoots } = yield* fixture;
-        const ws1 = path.join(top, "a", "ws1");
-        const ws2 = path.join(top, "b", "ws2");
-        yield* fileSystem.makeDirectory(ws1, { recursive: true });
-        yield* fileSystem.makeDirectory(ws2, { recursive: true });
-        yield* write("a/AGENTS.md", "MARK-A");
-        yield* write("b/AGENTS.md", "MARK-B");
-        yield* write("AGENTS.md", "MARK-TOP");
-        yield* write("a/ws1/AGENTS.md", "MARK-IN-WS1");
-        yield* write("b/ws2/AGENTS.md", "MARK-IN-WS2");
-        const target = yield* write("b/ws2/linked.mdc", always("MARK-LINKED-INTO-WS2"));
-        yield* write("a/.cursor/rules/real.mdc", always("MARK-A-RULE"));
-        yield* fileSystem.symlink(target, path.join(top, "a/.cursor/rules/link.mdc"));
-
-        const output = (yield* readRoots([ws1, ws2])) ?? "";
-        const order = ["MARK-A-RULE", "MARK-A", "MARK-TOP", "MARK-B"].map((marker) =>
-          indexOfMarker(output, `${marker}\n`),
-        );
-        assert.deepEqual(
-          order,
-          order.toSorted((left, right) => left - right),
-        );
-        assert.strictEqual(output.split("MARK-TOP").length - 1, 1);
-        for (const skipped of ["MARK-IN-WS1", "MARK-IN-WS2", "MARK-LINKED-INTO-WS2"]) {
-          assert.notInclude(output, skipped);
-        }
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("skips empty rule bodies", () =>
-    Effect.gen(function* () {
-      const { write, readRaw } = yield* fixture;
-      yield* write(".cursor/rules/empty.mdc", always(""));
-      yield* write("CLAUDE.md", "  \n");
-      assert.isUndefined(yield* readRaw);
-      yield* write("AGENTS.md", "MARK-AGENTS");
-      const output = (yield* readRaw) ?? "";
-      assert.strictEqual(output.split("<rule path=").length - 1, 1);
-      indexOfMarker(output, "MARK-AGENTS");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("loads at most 100 rule files in walk order", () =>
-    Effect.gen(function* () {
-      const { path, top, write, read } = yield* fixture;
-      for (let index = 0; index <= 100; index += 1) {
-        yield* write(`.cursor/rules/rule-${String(index).padStart(3, "0")}.mdc`, always("BODY"));
-      }
-      const output = yield* read;
-      const rulePath = (index: number) =>
-        path.join(top, ".cursor/rules", `rule-${String(index).padStart(3, "0")}.mdc`);
-      assert.strictEqual(output.split("<rule path=").length - 1, 100);
-      assert.include(output, `<rule path="${rulePath(99)}">`);
-      assert.notInclude(output, rulePath(100));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

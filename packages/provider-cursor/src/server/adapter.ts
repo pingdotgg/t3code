@@ -2368,7 +2368,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             return { message: "/compress", prompt: undefined, rules: undefined };
           }
           const currentRules = yield* readCursorRulesAboveWorkspace(
-            [turnInput.runtimePolicy.cwd ?? process.cwd()],
+            turnInput.runtimePolicy.cwd ?? process.cwd(),
             rulesWalkStop,
           ).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
