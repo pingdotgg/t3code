@@ -18,7 +18,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { deriveThreadArrangementSizing } from "../../lib/layout";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
-import { steadyNavigationThreadShellsAtom } from "../../state/threads";
+import { steadyNavigationThreadShellsAtom, steadyShellsHoldingAtom } from "../../state/threads";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import {
@@ -176,6 +176,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
+  const holdingRows = useAtomValue(steadyShellsHoldingAtom);
   const { moveThread } = useThreadListActions();
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
@@ -489,6 +490,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                               disabled={
                                 dropBusy ||
                                 pendingOrder !== null ||
+                                holdingRows ||
                                 (!listEnvironments.pinReorderEnvironmentIds.has(
                                   thread.environmentId,
                                 ) &&

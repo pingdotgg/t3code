@@ -35,11 +35,7 @@ import { projectFaviconUrlAtom } from "./assets";
 import { orchestrationEnvironment } from "./orchestration";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import {
-  environmentThreadDetails,
-  environmentThreadShells,
-  steadyNavigationThreadShellsAtom,
-} from "./threads";
+import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
   Atom.withLabel("mobile-project:empty"),
@@ -205,7 +201,7 @@ export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> 
 }
 
 export function useNavigationThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
-  return useAtomValue(steadyNavigationThreadShellsAtom);
+  return useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
 }
 
 export function useProject(ref: ScopedProjectRef | null): EnvironmentProject | null {
