@@ -7,11 +7,13 @@ import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { CursorCredentialSource } from "./accountCache.ts";
 import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
+import { CursorUsageResponse } from "./usageLimits.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -36,6 +38,8 @@ export interface CursorAccountUsageReadResult {
   readonly records: readonly UsageRecord[];
   readonly missing: boolean;
   readonly error: string | null;
+  /** Start of the billing cycle in which Cursor reports usage; its history should reach it. */
+  readonly usageSinceMs?: number;
 }
 
 class CursorAccountUsageInvalidError extends Schema.TaggedError<CursorAccountUsageInvalidError>()(
@@ -112,6 +116,38 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
     accountKey = yield* accountHash(subject);
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
       return yield* invalid("Invalid date window");
+    const periodUsage = yield* httpClient
+      .execute(
+        HttpClientRequest.post(
+          `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`,
+        ).pipe(
+          HttpClientRequest.bearerToken(accessToken),
+          HttpClientRequest.setHeaders({
+            "connect-protocol-version": "1",
+            "x-cursor-client-type": "cli",
+          }),
+          HttpClientRequest.bodyJsonUnsafe({}),
+        ),
+      )
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(CursorUsageResponse)),
+        Effect.map(({ billingCycleStart, planUsage }) => {
+          const cycleStartMs = Number(billingCycleStart);
+          const used = [
+            planUsage?.totalPercentUsed,
+            planUsage?.autoPercentUsed,
+            planUsage?.apiPercentUsed,
+          ].some((percent) => percent !== undefined && percent > 0);
+          return used && Number.isFinite(cycleStartMs) && cycleStartMs > 0
+            ? cycleStartMs
+            : undefined;
+        }),
+        Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+        Effect.timeout(Duration.seconds(10)),
+        Effect.orElseSucceed(() => undefined),
+        Effect.forkScoped,
+      );
     const pageRequest = HttpClientRequest.post(
       `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
     ).pipe(
@@ -310,11 +346,13 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       "cursor.usage.events": rawCount,
       "cursor.usage.records": records.length,
     });
+    const usageSinceMs = yield* Fiber.join(periodUsage);
     return {
       accountKey,
       records,
       missing: false,
       error: null,
+      ...(usageSinceMs === undefined ? {} : { usageSinceMs }),
     } satisfies CursorAccountUsageReadResult;
   });
   return yield* read.pipe(

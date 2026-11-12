@@ -285,6 +285,7 @@ function makeFakeCursor() {
     accountKey: "account-a",
     events: [] as { readonly timestampMs: number; readonly outputTokens: number }[],
     error: null as string | null,
+    usageSinceMs: undefined as number | undefined,
     gate: undefined as Deferred.Deferred<void> | undefined,
     calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
     credentials: [] as unknown[],
@@ -320,7 +321,14 @@ function makeFakeCursor() {
             dedupeKey: `cursor-account:${accountKey}:${key}:${occurrence}`,
           };
         });
-      return { accountKey, records, missing: false, error: null };
+      const { usageSinceMs } = state;
+      return {
+        accountKey,
+        records,
+        missing: false,
+        error: null,
+        ...(usageSinceMs === undefined ? {} : { usageSinceMs }),
+      };
     });
   return { state, read };
 }
@@ -1576,6 +1584,25 @@ describe("UsageService", () => {
         assert.deepStrictEqual(after.state.calls, [
           { sinceMs: CURSOR_NOW - HOUR_MS, untilMs: CURSOR_NOW + 2 * 60 * 1000 },
         ]);
+
+        // Cursor reports usage since a cycle start that its usage events never reach.
+        after.state.usageSinceMs = CURSOR_NOW - 2 * HOUR_MS;
+        yield* TestClock.adjust(Duration.minutes(2));
+        const stale = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.deepStrictEqual(stale.buckets, original.buckets);
+        assert.strictEqual(cursorSource(stale)?.status, "partial");
+        assert.strictEqual(
+          cursorSource(stale)?.message,
+          "Cursor has not reported your recent usage history.",
+        );
+
+        after.state.events = [
+          ...before.state.events,
+          { timestampMs: CURSOR_NOW + 3 * 60 * 1000, outputTokens: 2 },
+        ];
+        yield* TestClock.adjust(Duration.minutes(2));
+        const caughtUp = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(cursorSource(caughtUp)?.status, "ok");
       }).pipe(
         Effect.provide(
           layerService({
