@@ -16,6 +16,7 @@ import { SidebarMenuItem } from "../ui/sidebar";
 const SHORT_SUMMARY = {
   Settled: msg("{count, plural, =1 {Settled,} other {Settled {count},}}"),
   Snoozed: msg("{count, plural, =1 {Snoozed,} other {Snoozed {count},}}"),
+  Rescheduled: msg("{count, plural, =1 {Rescheduled,} other {Rescheduled {count},}}"),
   Unpinned: msg("{count, plural, =1 {Unpinned,} other {Unpinned {count},}}"),
   Archived: msg("{count, plural, =1 {Archived,} other {Archived {count},}}"),
   Discarded: msg("{count, plural, =1 {Discarded,} other {Discarded {count},}}"),

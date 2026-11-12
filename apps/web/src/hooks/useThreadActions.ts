@@ -25,6 +25,7 @@ import { msg } from "gt-react";
 import { useRouter } from "@tanstack/react-router";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import { rescheduleUndoTarget } from "../components/Sidebar.snooze";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -970,7 +971,8 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
-    if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
+    const now = new Date();
+    if (resolved && !canSnooze(resolved.thread, { now: now.toISOString() })) {
       return AsyncResult.failure(
         Cause.fail(
           new ThreadSnoozeBlockedError({
@@ -980,6 +982,7 @@ export function useThreadActions() {
         ),
       );
     }
+    const previousWake = rescheduleUndoTarget(resolved?.thread ?? null, now);
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
       environmentId: target.environmentId,
@@ -989,11 +992,14 @@ export function useThreadActions() {
       action.finish();
       return result;
     }
+    const undoPlan = ThreadUndo.planThreadUndo("snooze", { snoozedUntil: previousWake });
     showThreadUndoNotice({
-      action: "Snoozed",
+      action: previousWake ? "Rescheduled" : "Snoozed",
       claim: action,
-      undo: () => runUndoPlan(target, ThreadUndo.planThreadUndo("snooze")),
-      failureTitle: m(msg("Failed to wake thread")),
+      undo: () => runUndoPlan(target, undoPlan),
+      failureTitle: previousWake
+        ? m(msg("Failed to restore the previous wake time"))
+        : m(msg("Failed to wake thread")),
     });
     return result;
   };
