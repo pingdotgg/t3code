@@ -44,11 +44,19 @@ function setup() {
   mocks.reachable = Atom.make(false);
   mocks.connectedSession = Atom.make(1);
   let view!: ReturnType<typeof useDirectoryEntries>;
-  const calls: Array<{ path: string; resolve: (entries: readonly ProjectEntry[]) => void }> = [];
+  const calls: Array<{
+    path: string;
+    includeModifiedTimes: boolean | undefined;
+    resolve: (entries: readonly ProjectEntry[]) => void;
+  }> = [];
   let activeQueries = 0;
   let peakQueries = 0;
-  function HookProbe() {
-    const result = useDirectoryEntries(EnvironmentId.make("files-test"), "/workspace");
+  function HookProbe(props: { includeModifiedTimes: boolean }) {
+    const result = useDirectoryEntries(
+      EnvironmentId.make("files-test"),
+      "/workspace",
+      props.includeModifiedTimes,
+    );
     useEffect(() => {
       view = result;
     });
@@ -65,6 +73,7 @@ function setup() {
     return new Promise((resolve) => {
       calls.push({
         path: request.input.directoryPath,
+        includeModifiedTimes: request.input.includeModifiedTimes,
         resolve: (entries) => {
           activeQueries--;
           resolve({ entries });
@@ -73,9 +82,9 @@ function setup() {
     });
   });
   return {
-    Probe: () => (
+    Probe: (props: { includeModifiedTimes?: boolean }) => (
       <RegistryContext.Provider value={appAtomRegistry}>
-        <HookProbe />
+        <HookProbe includeModifiedTimes={props.includeModifiedTimes ?? false} />
       </RegistryContext.Provider>
     ),
     settle,
@@ -191,7 +200,7 @@ it("does not start a queued follow-up after unmount", async () => {
 });
 
 function ReconnectProbe() {
-  const directory = useDirectoryEntries(EnvironmentId.make("env-files"), "/repo");
+  const directory = useDirectoryEntries(EnvironmentId.make("env-files"), "/repo", false);
   return (
     <output>{directory.error ?? directory.entries.map((entry) => entry.path).join(",")}</output>
   );
@@ -213,4 +222,52 @@ it("reads a folder that failed while unreachable again once a new session is up"
     appAtomRegistry.set(mocks.connectedSession, 2);
   });
   await expect.element(screen.getByText("README.md")).toBeInTheDocument();
+});
+
+it("lists loaded folders again when modified times are first needed", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using screen = await render(<state.Probe />, { router: false });
+  await state.settle(0, [{ path: "src", kind: "directory" }]);
+  await act(async () => void state.view.load("src"));
+  await state.settle(1, [{ path: "src/a.ts", kind: "file" }]);
+  expect(state.calls.map((call) => call.includeModifiedTimes)).toEqual([false, false]);
+
+  await screen.rerender(<state.Probe includeModifiedTimes />);
+  expect(
+    state.calls
+      .slice(2)
+      .map((call) => [call.path, call.includeModifiedTimes])
+      .toSorted(),
+  ).toEqual([
+    ["", true],
+    ["src", true],
+  ]);
+  await state.settle(2, [
+    { path: "src", kind: "directory", mtimeMs: 10 },
+    { path: "lib", kind: "directory", mtimeMs: 5 },
+  ]);
+  await state.settle(3, [{ path: "src/a.ts", kind: "file", mtimeMs: 20 }]);
+  expect(state.view.entries.map((entry) => [entry.path, entry.mtimeMs]).toSorted()).toEqual([
+    ["lib", 5],
+    ["src", 10],
+    ["src/a.ts", 20],
+  ]);
+
+  await act(async () => void state.view.load("lib"));
+  expect(state.calls.at(-1)).toMatchObject({ path: "lib", includeModifiedTimes: true });
+  await state.settle(4);
+
+  await screen.rerender(<state.Probe />);
+  expect(state.calls).toHaveLength(5);
+});
+
+it("lists a folder with modified times when the flag turns on during its listing", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using screen = await render(<state.Probe />, { router: false });
+  await screen.rerender(<state.Probe includeModifiedTimes />);
+  await state.settle(0);
+  await state.settle(1);
+  expect(state.calls.map((call) => call.includeModifiedTimes)).toEqual([false, true]);
 });

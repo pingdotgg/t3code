@@ -185,6 +185,65 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("reports modified times only when asked, following links to their target", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const cwd = yield* makeTempDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, "file.txt");
+        yield* writeTextFile(cwd, "dir/nested.txt");
+        yield* writeTextFile(cwd, "unreadable.txt");
+        yield* fileSystem.symlink("file.txt", path.join(cwd, "link.txt"));
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const mtimes = () =>
+          workspaceEntries
+            .list({ cwd, directoryPath: "", includeModifiedTimes: true })
+            .pipe(
+              Effect.map(({ entries }) =>
+                Object.fromEntries(entries.map((entry) => [entry.path, entry.mtimeMs])),
+              ),
+            );
+
+        const fileTime = 1_600_000_000;
+        const dirTime = 1_500_000_000;
+        yield* Effect.promise(() => NodeFSP.utimes(path.join(cwd, "file.txt"), fileTime, fileTime));
+        yield* Effect.promise(() => NodeFSP.utimes(path.join(cwd, "dir"), dirTime, dirTime));
+        const actual = yield* Effect.promise(() => NodeFSP.stat(path.join(cwd, "unreadable.txt")));
+        expect(yield* mtimes()).toEqual({
+          "file.txt": 1_600_000_000_000,
+          "link.txt": 1_600_000_000_000,
+          dir: 1_500_000_000_000,
+          "unreadable.txt": actual.mtimeMs,
+        });
+
+        const stat = NodeFSP.stat;
+        const statSpy = vi.spyOn(NodeFSP, "stat").mockImplementation((async (target: string) => {
+          if (target.endsWith("unreadable.txt")) throw new Error("EACCES");
+          return stat(target);
+        }) as typeof NodeFSP.stat);
+        const { entries } = yield* workspaceEntries.list({
+          cwd,
+          directoryPath: "",
+          includeModifiedTimes: true,
+        });
+        expect(entries.find((entry) => entry.path === "unreadable.txt")).toEqual({
+          path: "unreadable.txt",
+          kind: "file",
+        });
+        expect(entries).toHaveLength(4);
+
+        statSpy.mockClear();
+        for (const input of [{}, { includeModifiedTimes: false }]) {
+          const plain = yield* workspaceEntries.list({ cwd, directoryPath: "", ...input });
+          expect(plain.entries.some((entry) => "mtimeMs" in entry)).toBe(false);
+          expect(plain.entries).toHaveLength(4);
+        }
+        expect(statSpy).toHaveBeenCalledTimes(2);
+      }),
+    );
+
     it.effect("hides folder links that lead back to a folder on the listed path", () =>
       // "Expand all folders" loads every folder it expands, so a link that loops would
       // keep nesting the same entries without end.

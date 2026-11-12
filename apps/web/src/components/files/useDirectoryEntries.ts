@@ -8,7 +8,11 @@ import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
-export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
+export function useDirectoryEntries(
+  environmentId: EnvironmentId,
+  cwd: string,
+  includeModifiedTimes: boolean,
+) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
   const [pending, setPending] = useState(1);
@@ -22,11 +26,19 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const active = useRef(true);
   const running = useRef(0);
   const waiting = useRef<Array<() => void>>([]);
+  const includeModifiedTimesRef = useRef(includeModifiedTimes);
 
   const startRequest = (directoryPath: string, refresh: boolean): Promise<void> => {
     loaded.current.add(directoryPath);
     requested.current.add(directoryPath);
-    const atom = projectEnvironment.listEntries({ environmentId, input: { cwd, directoryPath } });
+    const atom = projectEnvironment.listEntries({
+      environmentId,
+      input: {
+        cwd,
+        directoryPath,
+        includeModifiedTimes: includeModifiedTimesRef.current,
+      },
+    });
     const request = (async () => {
       if (running.current >= 4) await new Promise<void>((resolve) => waiting.current.push(resolve));
       else running.current++;
@@ -144,6 +156,13 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       void load(path, true);
     }
   };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- folders listed without mtimes must be listed again once a date sort asks for them
+  useEffect(() => {
+    if (includeModifiedTimesRef.current === includeModifiedTimes) return;
+    includeModifiedTimesRef.current = includeModifiedTimes;
+    if (includeModifiedTimes) refresh();
+  }, [includeModifiedTimes, refresh]);
 
   return {
     entries,
