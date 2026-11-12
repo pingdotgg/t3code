@@ -96,5 +96,46 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
         assert.strictEqual(project?.archivedAt, at);
       }),
     );
+
+    it.effect("attributes provider sessions to one project", () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const project = (id: string, title: string) =>
+          sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+            VALUES (${id}, ${title}, ${`/work/${id}`}, '[]', '2026-08-01', '2026-08-01')`;
+        const thread = (id: string, projectId: string) =>
+          sql`INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+            VALUES (${id}, ${projectId}, ${id}, 'claudeAgent', 'full-access', 'default', '2026-08-01', '2026-08-01', '{}')`;
+        const binding = (id: string, threadId: string, nativeId: string) =>
+          sql`INSERT INTO orchestration_v2_projection_provider_threads (provider_thread_id, thread_id, provider, driver, status, updated_at, payload_json)
+            VALUES (${id}, ${threadId}, 'claudeAgent', 'claudeAgent', 'idle', '2026-08-01', ${JSON.stringify(
+              { nativeThreadRef: { driver: "claudeAgent", nativeId } },
+            )})`;
+
+        yield* project("p-app", "App");
+        yield* project("p-other", "Other");
+        yield* thread("t-main", "p-app");
+        yield* thread("t-worktree", "p-app");
+        yield* thread("t-other", "p-other");
+        yield* binding("pt-main", "t-main", "bound");
+        yield* binding("pt-worktree", "t-worktree", "worktree");
+        yield* binding("pt-ambiguous-app", "t-main", "ambiguous");
+        yield* binding("pt-ambiguous-other", "t-other", "ambiguous");
+
+        const attributions = yield* projects.listUsageProjectAttributions();
+        assert.deepStrictEqual(
+          attributions.get(ProjectStore.usageProjectSessionKey("claudeAgent", "bound")),
+          { projectId: ProjectId.make("p-app"), title: "App" },
+        );
+        assert.deepStrictEqual(
+          attributions.get(ProjectStore.usageProjectSessionKey("claudeAgent", "worktree")),
+          { projectId: ProjectId.make("p-app"), title: "App" },
+        );
+        assert.isFalse(
+          attributions.has(ProjectStore.usageProjectSessionKey("claudeAgent", "ambiguous")),
+        );
+      }),
+    );
   },
 );

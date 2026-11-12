@@ -855,12 +855,7 @@ function ProjectRows(props: {
       <View className="flex-row flex-wrap">
         {ordered.map((row, index) => {
           const unknown = isModelCostUnknown(row);
-          const label =
-            row.kind === "project"
-              ? row.title
-              : row.kind === "unlinked"
-                ? "Unlinked usage"
-                : "Project unavailable";
+          const label = row.kind === "project" ? row.title : "No project";
           const value =
             metric === "tokens"
               ? formatTokens(row.totalTokens)
@@ -901,11 +896,6 @@ function ProjectRows(props: {
       {ordered.length === 0 ? (
         <Text className="p-4 text-sm text-foreground-muted">No project usage in this window.</Text>
       ) : null}
-      <Text className="px-4 pb-4 text-xs text-foreground-tertiary">
-        Unlinked usage matches no single T3 project. Project unavailable means details were not
-        reported or are temporarily unavailable. Refresh to retry; older servers may need an update.
-        Costs exclude records with no known price; tokens include them.
-      </Text>
     </View>
   );
 }
@@ -921,9 +911,7 @@ function projectDetail(
     if (showEnvironment) qualifiers.push(row.environmentLabel);
     if (row.duplicateTitleId !== null) qualifiers.push(`ID ${row.duplicateTitleId}`);
   } else {
-    qualifiers.push(
-      row.kind === "unlinked" ? "No single T3 project" : "Project details unavailable",
-    );
+    qualifiers.push("Not tied to one T3 project");
   }
   const partial = !unknown && row.unpricedRecords > 0 ? " · some unpriced" : "";
   const figure =

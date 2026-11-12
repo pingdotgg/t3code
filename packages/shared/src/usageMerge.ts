@@ -61,11 +61,8 @@ export interface HourlyTotals {
   readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
 }
 
-/**
- * `unlinked` is usage no T3 thread claims; `unreported` comes from servers that predate
- * projects or could not read them. Project ids are environment-local.
- */
-export type ProjectIdentity =
+/** Project ids are environment-local. */
+type ProjectIdentity =
   | {
       readonly kind: "project";
       readonly environmentId: EnvironmentId;
@@ -73,7 +70,7 @@ export type ProjectIdentity =
       readonly projectId: ProjectId;
       readonly title: string;
     }
-  | { readonly kind: "unlinked" | "unreported" };
+  | { readonly kind: "none" };
 
 export type ProjectTotals = ProjectIdentity & {
   readonly key: string;
@@ -440,6 +437,8 @@ export function mergeUsage(
     project.unpricedRecords += usage.unpricedRecords;
     projectAccumulator.set(key, project);
   };
+  const noProjectKey = "none";
+  const noProjectIdentity = { kind: "none" } as const;
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
@@ -453,17 +452,17 @@ export function mergeUsage(
 
     const { projectTotals, projects = [] } = environment.summary;
     if (projectTotals === undefined) {
-      for (const bucket of buckets) addProjectUsage("unreported", { kind: "unreported" }, bucket);
+      for (const bucket of buckets) addProjectUsage(noProjectKey, noProjectIdentity, bucket);
     } else {
       // Window-wide project totals cannot attribute cells retained from another scan.
       for (const bucket of buckets) {
-        if (!owns(bucket)) addProjectUsage("unreported", { kind: "unreported" }, bucket);
+        if (!owns(bucket)) addProjectUsage(noProjectKey, noProjectIdentity, bucket);
       }
       const titles = new Map(projects.map((project) => [project.projectId, project.title]));
       for (const row of projectTotals) {
         if (!owns(row)) continue;
         if (row.projectId === undefined) {
-          addProjectUsage("unlinked", { kind: "unlinked" }, row);
+          addProjectUsage(noProjectKey, noProjectIdentity, row);
           continue;
         }
         addProjectUsage(

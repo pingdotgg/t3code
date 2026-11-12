@@ -200,9 +200,8 @@ describe("mergeUsage", () => {
       ]),
     ).toEqual([
       ["project", "env-a:App", 6, 6 / 14],
-      ["unlinked", null, 4, 4 / 14],
+      ["none", null, 5, 5 / 14],
       ["project", "env-b:App", 3, 3 / 14],
-      ["unreported", null, 1, 1 / 14],
     ]);
   });
 
@@ -387,9 +386,7 @@ describe("mergeUsage", () => {
       expect(merged.costUsd).toBe(13);
       expect(merged.records).toBe(6);
       expect(merged.sessions).toBe(2);
-      expect(merged.projects.map(({ kind, costUsd }) => [kind, costUsd])).toEqual([
-        ["unreported", 13],
-      ]);
+      expect(merged.projects.map(({ kind, costUsd }) => [kind, costUsd])).toEqual([["none", 13]]);
       expect(merged.projects.reduce((sum, project) => sum + project.totalTokens, 0)).toBe(
         merged.totalTokens,
       );

@@ -1,6 +1,7 @@
 import {
   type ApplicationProjectEvent,
   IsoDateTime,
+  type UsageProject,
   ModelSelection,
   type OrchestrationProjectShell,
   StoredProjectIcon,
@@ -55,6 +56,17 @@ const ProjectDbRow = Schema.Struct({
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
 });
 
+const UsageProjectAttributionRow = Schema.Struct({
+  driver: Schema.String,
+  nativeId: Schema.String,
+  projectId: ProjectId,
+  title: Schema.String,
+  workspaceRoot: Schema.String,
+});
+
+export const usageProjectSessionKey = (driver: string, nativeId: string) =>
+  `${driver}\u0000${nativeId}`;
+
 function toShell(row: ProjectRow): OrchestrationProjectShell {
   return {
     id: row.projectId,
@@ -87,6 +99,11 @@ export class ProjectStoreV2 extends Context.Service<
       readonly projectIds?: ReadonlyArray<ProjectId>;
       readonly includeDeleted?: boolean;
     }) => Effect.Effect<ReadonlyArray<ProjectRow>, ProjectStoreV2Error>;
+    /** Keyed by `usageProjectSessionKey`; deleted projects keep their past usage. */
+    readonly listUsageProjectAttributions: () => Effect.Effect<
+      ReadonlyMap<string, UsageProject>,
+      ProjectStoreV2Error
+    >;
     /** Workspace roots match by exact string; callers normalize before asking. */
     readonly findActiveByWorkspaceRoot: (
       workspaceRoot: string,
@@ -139,6 +156,26 @@ export const make = Effect.gen(function* () {
           : [sql`workspace_root = ${request.workspaceRoot}`]),
       ])}
       ORDER BY created_at ASC, project_id ASC
+    `,
+  });
+
+  const selectUsageProjectAttributionRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: UsageProjectAttributionRow,
+    execute: () => sql`
+      SELECT
+        provider_thread.driver AS "driver",
+        json_extract(provider_thread.payload_json, '$.nativeThreadRef.nativeId') AS "nativeId",
+        project.project_id AS "projectId",
+        project.title AS "title",
+        project.workspace_root AS "workspaceRoot"
+      FROM orchestration_v2_projection_provider_threads AS provider_thread
+      JOIN orchestration_v2_projection_threads AS thread
+        ON thread.thread_id = provider_thread.thread_id
+      JOIN projection_projects AS project
+        ON project.project_id = thread.project_id
+      WHERE provider_thread.driver IS NOT NULL
+        AND json_extract(provider_thread.payload_json, '$.nativeThreadRef.nativeId') IS NOT NULL
     `,
   });
 
@@ -215,6 +252,34 @@ export const make = Effect.gen(function* () {
       includeDeleted: options?.includeDeleted === true,
     }).pipe(NodeSqliteClient.readOnly, mapError("list"));
 
+  const listUsageProjectAttributions: ProjectStoreV2["Service"]["listUsageProjectAttributions"] =
+    () =>
+      selectUsageProjectAttributionRows(undefined).pipe(
+        NodeSqliteClient.readOnly,
+        Effect.map((rows) => {
+          const projects = new Map<string, UsageProject | null>();
+          for (const row of rows) {
+            const key = usageProjectSessionKey(row.driver, row.nativeId);
+            const existing = projects.get(key);
+            if (existing !== undefined) {
+              if (existing?.projectId !== row.projectId) projects.set(key, null);
+              continue;
+            }
+            const title =
+              row.title.trim() ||
+              row.workspaceRoot.split(/[\\/]/).findLast((part) => part.length > 0) ||
+              "Untitled project";
+            projects.set(key, { projectId: row.projectId, title });
+          }
+          const resolved = new Map<string, UsageProject>();
+          for (const [key, project] of projects) {
+            if (project !== null) resolved.set(key, project);
+          }
+          return resolved;
+        }),
+        mapError("listUsageProjectAttributions"),
+      );
+
   const findActiveByWorkspaceRoot: ProjectStoreV2["Service"]["findActiveByWorkspaceRoot"] = (
     workspaceRoot,
   ) =>
@@ -281,6 +346,7 @@ export const make = Effect.gen(function* () {
     apply,
     get,
     list,
+    listUsageProjectAttributions,
     findActiveByWorkspaceRoot,
     getShell: Effect.fn("ProjectStoreV2.getShell")(function (projectId) {
       return get(projectId).pipe(Effect.map(Option.map(toShell)));

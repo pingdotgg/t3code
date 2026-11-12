@@ -65,6 +65,9 @@ interface MutableBucket {
 }
 
 interface MutableProjectTotals {
+  projectId: ProjectId | null;
+  provider: UsageProjectTotals["provider"];
+  sourcePath: string;
   totals: MutableBucket["totals"];
   costUsd: number;
   records: number;
@@ -279,6 +282,9 @@ export class UsageAggregator {
     let project = this.#projects.get(key);
     if (project === undefined) {
       project = {
+        projectId,
+        provider: record.provider,
+        sourcePath: source,
         totals: { ...EMPTY_TOTALS },
         costUsd: 0,
         records: 0,
@@ -443,18 +449,15 @@ export class UsageAggregator {
     const projectTotals =
       this.#options.attributeProject === undefined
         ? undefined
-        : [...this.#projects].map(([key, project]): UsageProjectTotals => {
-            const [projectId = "", provider = "", sourcePath = ""] = key.split("\u0000");
-            return {
-              ...(projectId === "" ? {} : { projectId: projectId as ProjectId }),
-              provider: provider as UsageProjectTotals["provider"],
-              ...(sourcePath === "" ? {} : { sourcePath }),
-              totals: { ...project.totals },
-              costUsd: project.costUsd,
-              records: project.records,
-              unpricedRecords: project.unpricedRecords,
-            };
-          });
+        : [...this.#projects.values()].map((project): UsageProjectTotals => ({
+            ...(project.projectId === null ? {} : { projectId: project.projectId }),
+            provider: project.provider,
+            ...(project.sourcePath === "" ? {} : { sourcePath: project.sourcePath }),
+            totals: { ...project.totals },
+            costUsd: project.costUsd,
+            records: project.records,
+            unpricedRecords: project.unpricedRecords,
+          }));
 
     return {
       buckets,
