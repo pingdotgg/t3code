@@ -5221,7 +5221,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("looks up shell stop requests and active runs through their indexes", () =>
+  it.effect("reads shell runs and item counts without walking a thread's history", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
@@ -5230,14 +5230,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* projectionStore
         .getShellSnapshot({ projectId, location: "active" })
         .pipe(Effect.withTracer(tracer));
+      const planOf = (statement: string) =>
+        sql
+          .unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`)
+          .pipe(Effect.map((rows) => rows.map((row) => row.detail)));
 
       const threadQuery = statements.find((statement) =>
         statement.includes("AS latest_run_stop_requested"),
       );
       assert.isDefined(threadQuery);
-      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${threadQuery}`,
-      )).map((row) => row.detail);
+      const plan = yield* planOf(threadQuery);
       const stopRequestLookups = plan.filter((detail) => detail.startsWith("SEARCH stop_request "));
       assert.lengthOf(stopRequestLookups, 2);
       for (const lookup of stopRequestLookups) {
@@ -5252,32 +5254,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       for (const lookup of activeRunLookups) {
         assert.include(lookup, "orchestration_v2_projection_runs_thread_status_idx");
       }
-    }),
-  );
-
-  it.effect("reads a thread's last executed run through the last executed run index", () =>
-    Effect.gen(function* () {
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const sql = yield* SqlClient.SqlClient;
-      const { projectId } = yield* assertProjectScopedShells("sql-shell-last-executed-index");
-      const { statements, tracer } = traceSqlStatements();
-      yield* projectionStore
-        .getShellSnapshot({ projectId, location: "active" })
-        .pipe(Effect.withTracer(tracer));
-
-      const threadQuery = statements.find((statement) =>
-        statement.includes("AS latest_run_stop_requested"),
-      );
-      assert.isDefined(threadQuery);
-      const plan = (yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${threadQuery}`,
-      )).map((row) => row.detail);
       const lastExecutedIndex = plan.findIndex((detail) =>
         detail.includes("orchestration_v2_projection_runs_last_executed_idx"),
       );
       assert.notStrictEqual(lastExecutedIndex, -1);
       // The lookup that follows the search is the sort it no longer needs.
       assert.notInclude(plan[lastExecutedIndex + 1] ?? "", "USE TEMP B-TREE");
+
+      const countQueries = statements.filter((statement) => statement.includes("item_count"));
+      assert.isNotEmpty(countQueries);
+      for (const countQuery of countQueries) {
+        for (const detail of yield* planOf(countQuery)) {
+          assert.notInclude(detail, "orchestration_v2_projection_turn_items");
+        }
+      }
     }),
   );
 
@@ -5532,6 +5522,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             },
           });
         }
+        let runWrites = 0;
         const applyRun = (
           threadId: ThreadId,
           suffix: string,
@@ -5540,9 +5531,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ) => {
           const runId = RunId.make(`run:shell-item-counts:${suffix}`);
           const rootNodeId = NodeId.make(`node:shell-item-counts:${suffix}`);
+          runWrites += 1;
           return projectionStore
             .apply({
-              id: EventId.make(`event:shell-item-counts:${suffix}:run`),
+              id: EventId.make(`event:shell-item-counts:${suffix}:run:${runWrites}`),
               type: "run.created",
               threadId,
               runId,
@@ -5569,11 +5561,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             })
             .pipe(Effect.as(runId));
         };
-        let ordinal = 0;
-        const applyItem = (threadId: ThreadId, runId: RunId | null) => {
-          ordinal += 1;
+        let items = 0;
+        let writes = 0;
+        // Passing `rewrite` writes that earlier item again, possibly under another run.
+        const applyItem = (threadId: ThreadId, runId: RunId | null, rewrite?: number) => {
+          const ordinal = rewrite ?? (items += 1);
+          writes += 1;
           return projectionStore.apply({
-            id: EventId.make(`event:shell-item-counts:item:${ordinal}`),
+            id: EventId.make(`event:shell-item-counts:write:${writes}`),
             type: "turn-item.updated",
             threadId,
             ...(runId === null ? {} : { runId }),
@@ -5626,6 +5621,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           );
           assert.equal(shell?.itemCount, itemCount);
         }
+
+        // Writing an item again keeps its count; moving it to another run moves the count.
+        const itemCountOf = (threadId: ThreadId) =>
+          projectionStore.getThreadShell(threadId).pipe(Effect.map((shell) => shell?.itemCount));
+        yield* applyItem(busyThreadId, completedRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        yield* applyItem(busyThreadId, rolledBackRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyItem(busyThreadId, null, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+
+        // A run's rollback uncounts its items, and writing the run again counts them back.
+        yield* applyRun(busyThreadId, "busy-completed", 1, true);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyRun(busyThreadId, "busy-completed", 1, false);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        // Items written before their run exist count once it does.
+        const lateRunId = RunId.make("run:shell-item-counts:late");
+        yield* applyItem(otherThreadId, lateRunId);
+        assert.equal(yield* itemCountOf(otherThreadId), 1);
+        yield* applyRun(otherThreadId, "late", 2, false);
+        assert.equal(yield* itemCountOf(otherThreadId), 2);
       }),
   );
 
