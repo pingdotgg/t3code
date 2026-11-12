@@ -1107,8 +1107,17 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     "exited",
     "anchored",
     "awaited",
+    "inventory-failed",
+    "inventory-timeout",
+    "inventory-retried",
   ] as const)("recovers only owned native shells using %s inventory", (discovery) =>
     Effect.gen(function* () {
+      const inventoryUnavailable =
+        discovery === "inventory-failed" ||
+        discovery === "inventory-timeout" ||
+        discovery === "inventory-retried";
+      const awaited = discovery === "awaited" || discovery === "settled" || inventoryUnavailable;
+      const legacyInventory = discovery === "shell" || inventoryUnavailable;
       const idAllocator = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
       const id = "sh_recovered";
       const info = {
@@ -1123,29 +1132,28 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         time: { started: 1 },
       };
       const response = (data: unknown) => ({ location: { directory: WORK }, data });
-      const inventory: Array<ProviderReplayEntry> =
-        discovery === "shell"
-          ? []
-          : [
-              out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
-              reply(
-                "job.list",
-                discovery === "fallback"
-                  ? { status: 404, body: {} }
-                  : {
-                      data: [
-                        {
-                          kind: "shell",
-                          shellID: id,
-                          sessionID: discovery === "descendant" ? "ses_descendant" : SESSION,
-                          command: info.command,
-                          status: discovery === "settled" ? "completed" : "running",
-                        },
-                      ],
-                    },
-              ),
-            ];
-      if (discovery === "shell" || discovery === "fallback")
+      const inventory: Array<ProviderReplayEntry> = legacyInventory
+        ? []
+        : [
+            out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
+            reply(
+              "job.list",
+              discovery === "fallback"
+                ? { status: 404, body: {} }
+                : {
+                    data: [
+                      {
+                        kind: "shell",
+                        shellID: id,
+                        sessionID: discovery === "descendant" ? "ses_descendant" : SESSION,
+                        command: info.command,
+                        status: discovery === "settled" ? "completed" : "running",
+                      },
+                    ],
+                  },
+            ),
+          ];
+      if (legacyInventory || discovery === "fallback")
         inventory.push(
           out("shell.list", "<any>"),
           reply(
@@ -1162,19 +1170,49 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           response({ output: "retained", cursor: 8, size: 8, truncated: false }),
         ),
       );
-      const gate = makeProviderReplayGate(["recovered-exit"]);
-      const { runtime, thread } = yield* resumed(
+      const gate = makeProviderReplayGate([
+        "recovered-exit",
+        "inventory-pending",
+        "inventory-retry",
+      ]);
+      const recovery = yield* resumed(
         discovery === "settled"
           ? []
           : [
+              ...(discovery === "inventory-retried"
+                ? [
+                    event(
+                      "session.execution.succeeded",
+                      { sessionID: "ses_unrelated" },
+                      "inventory-retry",
+                    ),
+                    { type: "runtime_exit", status: "success" } as const,
+                    out("event.subscribe"),
+                    ...inventory,
+                    out("session.active"),
+                    replyData("session.active", {}),
+                    event("session.model.selected", {
+                      sessionID: SESSION,
+                      model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+                    }),
+                  ]
+                : []),
               ...(discovery === "exited"
                 ? [event("shell.exited", { id, exit: 0, status: "exited" }, "recovered-exit")]
                 : []),
-              out("shell.output", { id, cursor: "8" }),
+              out("shell.output", {
+                id,
+                cursor: discovery === "inventory-failed" ? "0" : "8",
+              }),
               reply(
                 "shell.output",
                 response({
-                  output: discovery === "exited" ? " finished" : "",
+                  output:
+                    discovery === "exited"
+                      ? " finished"
+                      : discovery === "inventory-failed"
+                        ? "retained"
+                        : "",
                   cursor: discovery === "exited" ? 17 : 8,
                   size: discovery === "exited" ? 17 : 8,
                   truncated: false,
@@ -1185,11 +1223,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 : [out("shell.remove", { id }), reply("shell.remove", null)]),
             ],
         {
-          version: discovery === "shell" ? "2.2.1" : "2.2.6",
-          shellRecovery: inventory,
+          version: legacyInventory ? "2.2.1" : "2.2.6",
+          shellRecovery: inventoryUnavailable
+            ? [
+                out("shell.list", "<any>"),
+                reply(
+                  "shell.list",
+                  discovery === "inventory-timeout" ? "<hang>" : { status: 500, body: {} },
+                ),
+                ...(discovery === "inventory-timeout"
+                  ? [
+                      event(
+                        "session.execution.succeeded",
+                        { sessionID: "ses_unrelated" },
+                        "inventory-pending",
+                      ),
+                    ]
+                  : []),
+                ...(discovery === "inventory-timeout"
+                  ? [
+                      out("shell.output", { id, cursor: "0" }),
+                      reply(
+                        "shell.output",
+                        response({ output: "retained", cursor: 8, size: 8, truncated: false }),
+                      ),
+                    ]
+                  : []),
+              ]
+            : inventory,
           external: true,
           ...(discovery === "anchored" ? { lastRunOrdinal: 7 } : {}),
-          ...(discovery === "awaited"
+          ...(awaited
             ? {
                 pendingBackgroundTasks: [
                   {
@@ -1203,13 +1267,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             : {}),
           replayGate: gate,
         },
-      );
+      ).pipe(Effect.forkScoped);
+      if (discovery === "inventory-timeout") {
+        yield* Effect.promise(() => gate.waitForReached("inventory-pending"));
+        yield* TestClock.adjust("5 seconds");
+        gate.release("inventory-pending");
+      }
+      const { runtime, thread } = yield* Fiber.join(recovery);
       const items: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const shellEnded = yield* Deferred.make<void>();
       const rosterEnded = yield* Deferred.make<void>();
+      const shellRead = yield* Deferred.make<void>();
+      const retried = yield* Deferred.make<OrchestrationV2ProviderThread>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
+            if (
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value ===
+                "thinking"
+            )
+              yield* Deferred.succeed(retried, event.providerThread);
             if (
               event.type === "provider_thread.updated" &&
               event.sessionScoped === true &&
@@ -1219,6 +1297,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             if (event.type !== "turn_item.updated" || event.turnItem.type !== "command_execution")
               return;
             items.push(event);
+            if (event.turnItem.output === "retained") yield* Deferred.succeed(shellRead, undefined);
             if (event.turnItem.status !== "running") yield* Deferred.succeed(shellEnded, undefined);
           }),
         ),
@@ -1233,10 +1312,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 taskId: id,
                 kind: "command",
                 description: info.command,
-                ...(discovery === "awaited" ? { awaited: true } : {}),
+                ...(awaited ? { awaited: true } : {}),
               },
             ],
       );
+      if (discovery === "inventory-retried") {
+        gate.release("inventory-retry");
+        assert.deepEqual((yield* Deferred.await(retried)).pendingBackgroundTasks, [
+          { taskId: id, kind: "command", description: info.command, awaited: true },
+        ]);
+      }
+      if (discovery === "inventory-timeout") yield* Deferred.await(shellRead);
+      if (inventoryUnavailable) {
+        assert.deepEqual(
+          yield* runtime.awaitBackgroundTasks!({
+            providerThread: thread,
+            taskIds: [id],
+            awaited: false,
+          }),
+          { matched: [id] },
+        );
+      }
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),
         discovery !== "settled",
@@ -1291,9 +1387,113 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.deepInclude(projected.turnItem, {
           type: "command_execution",
           input: info.command,
-          output: "retained",
+          output: inventoryUnavailable ? "" : "retained",
         });
       }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("restores the native descendant owner of a saved awaited shell", () =>
+    Effect.gen(function* () {
+      const id = "sh_descendant";
+      const info = {
+        id,
+        command: "sleep 600",
+        status: "running",
+        cwd: WORK,
+        shell: "/bin/sh",
+        file: "/remote/output",
+        metadata: { sessionID: CHILD },
+        time: { started: 1 },
+      };
+      const response = (data: unknown) => ({ location: { directory: WORK }, data });
+      const gate = makeProviderReplayGate(["recover-owner"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: "ses_unrelated" }, "recover-owner"),
+          { type: "runtime_exit", status: "success" },
+          out("event.subscribe"),
+          out("shell.list", "<any>"),
+          reply("shell.list", response([info])),
+          out("shell.get", { id }),
+          reply("shell.get", response(info)),
+          out("shell.output", { id, cursor: "0" }),
+          reply(
+            "shell.output",
+            response({ output: "retained", cursor: 8, size: 8, truncated: false }),
+          ),
+          out("shell.list", "<any>"),
+          reply("shell.list", response([info])),
+          out("shell.get", { id }),
+          reply("shell.get", response(info)),
+          out("shell.output", { id, cursor: "8" }),
+          reply("shell.output", response({ output: "", cursor: 8, size: 8, truncated: false })),
+          out("session.active"),
+          replyData("session.active", { [CHILD]: { type: "running" } }),
+          out("permission.list", { sessionID: CHILD }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: CHILD }),
+          replyData("session.form.list", []),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
+          }),
+        ],
+        {
+          version: "2.2.1",
+          shellRecovery: [
+            out("shell.list", "<any>"),
+            reply("shell.list", { status: 500, body: {} }),
+          ],
+          pendingBackgroundTasks: [
+            { taskId: id, kind: "command", description: info.command, awaited: true },
+          ],
+          replayGate: gate,
+        },
+      );
+      const shellOwner = yield* Deferred.make<ProviderThreadId | null>();
+      const collected = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.output === "retained"
+            ? Deferred.succeed(shellOwner, event.turnItem.providerThreadId)
+            : Effect.void,
+        ),
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value === "thinking",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Effect.promise(() => gate.waitForReached("recover-owner"));
+      gate.release("recover-owner");
+      const idAllocator = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
+      const childProviderThreadId = idAllocator.derive.providerThread({
+        driver: OPENCODE_PROVIDER,
+        nativeThreadId: CHILD,
+        providerInstanceId: instanceId,
+      });
+      assert.equal(yield* Deferred.await(shellOwner), childProviderThreadId);
+      const events = yield* Fiber.join(collected);
+      const parent = events.at(-1);
+      assert.deepInclude(
+        parent?.type === "provider_thread.updated"
+          ? parent.providerThread.pendingBackgroundTasks
+          : [],
+        {
+          taskId: id,
+          kind: "command",
+          description: info.command,
+          awaited: true,
+          parentTaskId: "call-background",
+        },
+      );
     }).pipe(Effect.scoped),
   );
 
