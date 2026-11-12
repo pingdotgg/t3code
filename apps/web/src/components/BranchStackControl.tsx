@@ -173,7 +173,7 @@ export function BranchStackControl({
               >
                 <span
                   aria-hidden
-                  className={`absolute -left-[calc(--spacing(3)+3px)] top-1.5 size-1.5 rounded-full ${layer.current ? "bg-primary" : "bg-muted-foreground"}`}
+                  className={`absolute -left-[calc(--spacing(3)+3px)] top-1.5 size-1.5 rounded-full ${layer.current ? "bg-foreground" : "bg-muted-foreground"}`}
                 />
                 <div className="flex min-w-0 items-baseline gap-2">
                   <Tooltip>
