@@ -81,7 +81,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
+import { extractBranchNameFromRemoteRef, isUpstreamAliasOfBranch } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
@@ -1794,7 +1794,7 @@ export const make = Effect.gen(function* () {
     return remoteUrl === null ? null : remoteName;
   });
 
-  // worktree add can set the branch's base as upstream; that is not its published PR head.
+  // A branch's PR head is where it publishes, so a base it tracks is not one (see resolvePushDestination).
   const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
     cwd: string,
     details: {
@@ -1816,16 +1816,14 @@ export const make = Effect.gen(function* () {
         };
       }
     }
-    if (headContext.headBranch === details.branch || headContext.isCrossRepository) {
-      return { headContext, lookup: true };
-    }
-    const upstreamHeadIsBase =
-      headContext.headBranch === details.defaultBranch ||
-      (details.defaultBranch === null &&
-        (headContext.headBranch === "main" || headContext.headBranch === "master")) ||
-      headContext.headBranch ===
-        (yield* gitCore.readBranchBase(cwd, details.branch).pipe(Effect.orElseSucceed(() => null)));
-    if (!upstreamHeadIsBase) {
+    if (
+      headContext.isCrossRepository ||
+      details.upstreamRef === null ||
+      isUpstreamAliasOfBranch(details.branch, {
+        branchName: headContext.headBranch,
+        upstreamRef: details.upstreamRef,
+      })
+    ) {
       return { headContext, lookup: true };
     }
     const remoteName = yield* findRemoteTrackingRemote(

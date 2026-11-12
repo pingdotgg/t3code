@@ -1017,12 +1017,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const inFlight = yield* Effect.forkChild(lookup);
       yield* Deferred.await(gate.reached);
+      yield* runGit(repoDir, ["push", "origin", "--delete", "feature/racing-upstream"]);
       yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/raced-head"]);
       yield* manager.invalidateStatus(repoDir);
       yield* Deferred.succeed(gate.release, undefined);
       yield* Fiber.join(inFlight);
 
-      expect((yield* lookup)?.number).toBe(238);
+      expect(yield* lookup).toBeNull();
     }),
   );
 

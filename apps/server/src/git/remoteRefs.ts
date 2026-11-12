@@ -69,3 +69,14 @@ export function extractBranchNameFromRemoteRef(
   }
   return normalized.slice(firstSlash + 1).trim();
 }
+
+// Differently named upstreams are bases, except Git's `<remote>/<branch>` alias for a remote's head.
+export function isUpstreamAliasOfBranch(
+  branch: string,
+  upstream: { branchName: string; upstreamRef: string },
+): boolean {
+  return (
+    branch === upstream.branchName ||
+    (branch.endsWith(`/${upstream.branchName}`) && upstream.upstreamRef.endsWith(`/${branch}`))
+  );
+}

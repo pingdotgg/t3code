@@ -46,6 +46,7 @@ import { explicitBareRepositoryEnv, gitConfigEnv } from "./VcsProcess.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
+import { isUpstreamAliasOfBranch } from "../git/remoteRefs.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -2756,11 +2757,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const upstream = yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null));
     if (!upstream) return null;
-    // Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
-    const isAliasOfUpstreamHead =
-      branch === upstream.branchName ||
-      (branch.endsWith(`/${upstream.branchName}`) && upstream.upstreamRef.endsWith(`/${branch}`));
-    if (isAliasOfUpstreamHead) {
+    // Pushing HEAD to a base would write features to shared branches.
+    if (isUpstreamAliasOfBranch(branch, upstream)) {
       return {
         remoteName: upstream.remoteName,
         branchName: upstream.branchName,
