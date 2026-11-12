@@ -1,3 +1,5 @@
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -37,6 +39,40 @@ describe("codexRateLimitsToLimits", () => {
       }),
     ).toEqual({ checkedAt, windows });
     expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows });
+  });
+
+  it("keeps a seat-based workspace with a zero credit cap usable while its plan windows have room", () => {
+    const usageLimits = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: {
+        limitId: "codex",
+        planType: "team",
+        rateLimitReachedType: null,
+        primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+        secondary: { usedPercent: 14, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+        individualLimit: { remainingPercent: 0, resetsAt: 1_796_083_200 },
+      },
+    });
+    expect(
+      exhaustedUsageWindow(
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          usageLimits,
+        },
+        Date.parse(checkedAt),
+        "gpt-6.1-sol",
+      ),
+    ).toBeUndefined();
   });
 
   it("maps primary and secondary onto the session and weekly windows", () => {
