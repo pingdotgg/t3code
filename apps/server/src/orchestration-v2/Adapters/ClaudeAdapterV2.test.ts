@@ -6819,7 +6819,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "text-stream-frame",
         });
       for (const frame of [
-        stream({ type: "message_start", message: { id: "text-message" } }),
+        stream({ type: "message_start", message: { id: "msg_text-snapshot" } }),
         stream({
           type: "content_block_start",
           index: 0,
@@ -6845,6 +6845,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         streamedText.some((text) => text.includes("First paragraph.")),
         "assistant text should be visible while the text block is still streaming",
       );
+
+      const finalText = "First paragraph.\n\nSecond paragraph.";
+      yield* harness.offerAndWait(
+        makeAssistantTextFrame({ uuid: "text-snapshot", text: finalText }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.text === finalText,
+        ),
+      );
+      const replies = harness.events.flatMap((event) =>
+        event.type === "message.updated" && event.message.role === "assistant"
+          ? [event.message]
+          : [],
+      );
+      assert.deepStrictEqual(new Set(replies.map((reply) => reply.id)).size, 1);
+      assert.deepInclude(replies.at(-1), { text: finalText, streaming: false });
     }).pipe(
       Effect.scoped,
       Effect.provide(

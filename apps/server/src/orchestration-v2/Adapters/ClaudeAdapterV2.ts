@@ -4477,6 +4477,8 @@ function buildAssistantArtifacts(input: {
   readonly status?: "completed" | "interrupted";
   readonly startedAt: DateTime.Utc;
   readonly completedAt: DateTime.Utc;
+  // Set for text streamed from deltas: the message keeps its start as createdAt across updates.
+  readonly streaming?: boolean;
 }): {
   readonly node: OrchestrationV2ExecutionNode;
   readonly message: OrchestrationV2ConversationMessage;
@@ -4508,7 +4510,7 @@ function buildAssistantArtifacts(input: {
       parentNodeId: input.turnInput.rootNodeId,
       rootNodeId: input.turnInput.rootNodeId,
       kind: "assistant_message",
-      status: input.status ?? "completed",
+      status: input.streaming === true ? "running" : (input.status ?? "completed"),
       countsForRun: false,
       providerThreadId: input.turnInput.providerThread.id,
       providerTurnId: input.providerTurnId,
@@ -4516,7 +4518,7 @@ function buildAssistantArtifacts(input: {
       runtimeRequestId: null,
       checkpointScopeId: null,
       startedAt: input.startedAt,
-      completedAt: input.completedAt,
+      completedAt: input.streaming === true ? null : input.completedAt,
     },
     message: {
       createdBy: "agent",
@@ -4528,8 +4530,8 @@ function buildAssistantArtifacts(input: {
       role: "assistant",
       text: input.text,
       attachments: [],
-      streaming: false,
-      createdAt: input.completedAt,
+      streaming: input.streaming === true,
+      createdAt: input.streaming === undefined ? input.completedAt : input.startedAt,
       updatedAt: input.completedAt,
     },
     turnItem: {
@@ -4542,15 +4544,15 @@ function buildAssistantArtifacts(input: {
       nativeItemRef,
       parentItemId: null,
       ordinal: input.ordinal,
-      status: input.status ?? "completed",
+      status: input.streaming === true ? "running" : (input.status ?? "completed"),
       title: null,
       startedAt: input.startedAt,
-      completedAt: input.completedAt,
+      completedAt: input.streaming === true ? null : input.completedAt,
       updatedAt: input.completedAt,
       type: "assistant_message",
       messageId,
       text: input.text,
-      streaming: false,
+      streaming: input.streaming === true,
     },
   };
 }
@@ -4612,6 +4614,15 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    // Text blocks stream under `${message.id}:text:${n}`; the completed snapshot
+    // has its own uuid, so it finishes the streamed item instead.
+    readonly streamBlocks: Map<number, string>;
+    readonly nextBlockIndex: Map<string, number>;
+    readonly snapshotBlockIndex: Map<string, number>;
+    readonly streamItems: Map<
+      string,
+      { readonly startedAt: DateTime.Utc; readonly ordinal: number }
+    >;
     // The root reply the latest assistant frame carried; a steer's aborted_streaming cuts it off.
     lastReply: {
       readonly nativeItemId: string;
@@ -8322,6 +8333,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }),
         });
 
+        const assistantDeltas = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs: 50,
+          emit:
+            /* Provider events include streaming deltas; avoid a span for each update. */
+            Effect.fnUntraced(function* (update) {
+              const context = yield* Ref.get(activeTurn);
+              if (context === null || context.nativeTurnId !== update.turnId) return;
+              const item = context.assistant.streamItems.get(update.itemId);
+              if (item === undefined || update.text.length === 0) return;
+              if (update.completed) context.assistant.streamItems.delete(update.itemId);
+              context.assistant.emittedNativeItemIds.add(update.itemId);
+              yield* publishAssistantArtifacts({
+                context,
+                nativeItemId: update.itemId,
+                text: update.text,
+                status: "completed",
+                startedAt: item.startedAt,
+                completedAt: yield* DateTime.now,
+                streaming: !update.completed,
+              });
+            }),
+        });
+
         const endToolCalls = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext | null;
           readonly toolCalls: ReadonlyArray<ActiveClaudeToolCall>;
@@ -8419,6 +8453,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
+          yield* assistantDeltas.flushTurn(input.context.nativeTurnId);
           // A turn that completes has taken in every steer; one that stops drops them unread.
           const droppedSteers = [...input.context.pendingSteers];
           input.context.pendingSteers.clear();
@@ -8792,6 +8827,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly status: "completed" | "interrupted";
           readonly startedAt: DateTime.Utc;
           readonly completedAt: DateTime.Utc;
+          readonly streaming?: boolean;
         }) {
           const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
           const artifacts = buildAssistantArtifacts({
@@ -8804,6 +8840,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             status: input.status,
             startedAt: input.startedAt,
             completedAt: input.completedAt,
+            ...(input.streaming === undefined ? {} : { streaming: input.streaming }),
           });
           yield* Effect.all(
             [
@@ -9799,6 +9836,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (event.type === "message_start") {
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
+              context.assistant.streamBlocks.clear();
               const usage: ClaudeMessageUsage | undefined = event.message.usage;
               context.streamUsage =
                 usage === undefined ? null : { messageId: event.message.id, usage };
@@ -9837,6 +9875,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   delta: event.delta.thinking,
                 });
               }
+            } else if (
+              event.type === "content_block_start" &&
+              event.content_block.type === "text" &&
+              reasoning.messageId !== null
+            ) {
+              const assistant = context.assistant;
+              const index = assistant.nextBlockIndex.get(reasoning.messageId) ?? 0;
+              assistant.nextBlockIndex.set(reasoning.messageId, index + 1);
+              const itemId = `${reasoning.messageId}:text:${index}`;
+              assistant.streamBlocks.set(event.index, itemId);
+              assistant.streamItems.set(itemId, {
+                startedAt: yield* DateTime.now,
+                ordinal: yield* resolveItemOrdinal(context, itemId),
+              });
+              yield* assistantDeltas.append({
+                turnId: context.nativeTurnId,
+                itemId,
+                delta: event.content_block.text,
+              });
+            } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+              const itemId = context.assistant.streamBlocks.get(event.index);
+              if (itemId !== undefined) {
+                yield* assistantDeltas.append({
+                  turnId: context.nativeTurnId,
+                  itemId,
+                  delta: event.delta.text,
+                });
+              }
             } else if (event.type === "content_block_stop") {
               const itemId = reasoning.streamBlocks.get(event.index);
               if (itemId !== undefined) {
@@ -9850,14 +9916,49 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          // Set when the snapshot finishes streamed text: the reply item it completed, and
+          // any snapshot text the stream did not deliver.
+          let streamedReply: {
+            readonly nativeItemId: string;
+            readonly text: string;
+            readonly startedAt: DateTime.Utc;
+            readonly unstreamedText: string;
+          } | null = null;
           if (
             message.type === "assistant" &&
             !message.parent_tool_use_id &&
             !context.reasoning.snapshots.has(message.uuid)
           ) {
             context.reasoning.snapshots.add(message.uuid);
+            const unstreamedText: Array<string> = [];
             // The SDK snapshots each completed block; count thinking blocks separately to preserve streamed ids.
             for (const block of message.message.content) {
+              if (block.type === "text") {
+                const assistant = context.assistant;
+                const index = assistant.snapshotBlockIndex.get(message.message.id) ?? 0;
+                assistant.snapshotBlockIndex.set(message.message.id, index + 1);
+                const itemId = `${message.message.id}:text:${index}`;
+                const item = assistant.streamItems.get(itemId);
+                if (item === undefined) {
+                  unstreamedText.push(block.text);
+                } else {
+                  const text = yield* assistantDeltas.complete({
+                    turnId: context.nativeTurnId,
+                    itemId,
+                    ...(block.text ? { finalText: block.text } : {}),
+                    emitEmpty: false,
+                  });
+                  // An empty streamed block delivered nothing; the snapshot path still applies.
+                  if (text.length > 0) {
+                    streamedReply = {
+                      nativeItemId: itemId,
+                      text,
+                      startedAt: item.startedAt,
+                      unstreamedText: "",
+                    };
+                  }
+                }
+              }
               if (block.type !== "thinking") {
                 const update = context.reasoning.lastThinking;
                 context.reasoning.lastThinking = null;
@@ -9896,6 +9997,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     followsThinking: previous !== null && previous.messageId === message.message.id,
                   }
                 : null;
+            }
+            if (streamedReply !== null) {
+              streamedReply = { ...streamedReply, unstreamedText: unstreamedText.join("") };
+              // A repeated snapshot frame must not re-emit the streamed text under its uuid.
+              context.assistant.emittedNativeItemIds.add(message.uuid);
             }
           }
 
@@ -10721,6 +10827,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             "local_command_source" in message &&
             isCompactionCommandMessage({ role: "user", ...context.input.message })
           ) {
+            return;
+          }
+          if (streamedReply !== null) {
+            if (assistantText !== null && streamedReply.unstreamedText.length > 0) {
+              const now = yield* DateTime.now;
+              yield* publishAssistantArtifacts({
+                context,
+                nativeItemId: assistantText.nativeItemId,
+                text: streamedReply.unstreamedText,
+                status: "completed",
+                startedAt: now,
+                completedAt: now,
+              });
+            }
+            const { unstreamedText: _, ...reply } = streamedReply;
+            context.assistant.lastReply = reply;
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
@@ -12100,6 +12222,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                streamBlocks: new Map(),
+                nextBlockIndex: new Map(),
+                snapshotBlockIndex: new Map(),
+                streamItems: new Map(),
                 lastReply: null,
                 noticeTexts: new Set(),
               },
