@@ -9,7 +9,7 @@ const NOTICE_MS = 72 * HOUR_MS;
 const MAX_REQUESTS_PER_RUN = 100;
 const MAX_CLOSES_PER_RUN = 50;
 // A last look that ends in "not today" closes nothing, so the looks need a cap of their own.
-const MAX_RECHECKS_PER_RUN = 200;
+const MAX_RECHECKS_PER_RUN = 150;
 const WRITE_PAUSE_MS = 1_000;
 // Measured here: about two and a half minutes until every open PR has an answer.
 const MERGEABLE_WAIT_MS = 150_000;
