@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 export type DesktopSshEnvironmentRuntimeServices =
@@ -135,6 +136,13 @@ export const make = Effect.gen(function* () {
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
   const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
+  const shell = yield* ElectronShell.ElectronShell;
+  const authUrlOpener = {
+    open: Effect.fn("desktop.ssh.openAuthUrl")(function* (url: string) {
+      yield* Effect.logInfo("ssh.authUrl.open", { url });
+      yield* shell.openExternal(url);
+    }),
+  };
 
   return DesktopSshEnvironment.of({
     discoverHosts: Effect.fn("desktop.ssh.discoverHosts")(function* (input) {
@@ -148,6 +156,7 @@ export const make = Effect.gen(function* () {
         return yield* manager.ensureEnvironment(target, ensureOptions);
       },
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+      Effect.provideService(SshAuth.SshAuthUrlOpener, authUrlOpener),
       Effect.provide(runtimeContext),
     ),
     disconnectEnvironment: Effect.fn("desktop.ssh.disconnectEnvironment")(

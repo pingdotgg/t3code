@@ -56,6 +56,13 @@ export class SshPasswordPrompt extends Context.Service<SshPasswordPrompt, SshPas
   );
 }
 
+/** Opens approval links a server prints mid-login, such as Tailscale SSH check mode's. */
+export class SshAuthUrlOpener extends Context.Reference<{
+  readonly open: (url: string) => Effect.Effect<void>;
+}>("@t3tools/ssh/auth/SshAuthUrlOpener", {
+  defaultValue: () => ({ open: () => Effect.void }),
+}) {}
+
 export interface SshChildEnvironmentOptions {
   readonly interactiveAuth?: boolean;
   readonly baseEnv?: NodeJS.ProcessEnv;

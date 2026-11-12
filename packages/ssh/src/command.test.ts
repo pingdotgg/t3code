@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
@@ -10,6 +11,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { SshAuthUrlOpener } from "./auth.ts";
 import { parseSshResolveOutput, remoteStateKey, runSshCommand } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 
@@ -144,6 +146,51 @@ describe("ssh command", () => {
           ? `[truncated]\n${redacted.slice(-4_000)}`
           : `${redacted.slice(0, 4_000)}\n[truncated]`,
       );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("opens a Tailscale check-mode link while ssh waits for approval", () =>
+    Effect.gen(function* () {
+      const approved = yield* Deferred.make<string>();
+      // Check mode holds the session open until the link is approved, and the
+      // link may arrive split across stderr chunks.
+      const banner = [
+        "# Tailscale SSH requires an additional check.\n# To authenticate, visit: https://login.tail",
+        "scale.com/a/abc12",
+        "3example\n",
+      ];
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(123),
+            stdout: Stream.fromEffect(Deferred.await(approved)).pipe(
+              Stream.map(() => encoder.encode("ok\n")),
+            ),
+            stderr: Stream.fromIterable(banner.map((chunk) => encoder.encode(chunk))).pipe(
+              Stream.concat(Stream.fromEffectDrain(Deferred.await(approved))),
+            ),
+            all: Stream.empty,
+            exitCode: Deferred.await(approved).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          }),
+        ),
+      );
+      const result = yield* runSshCommand(
+        { alias: "tsbox", hostname: "tsbox", username: null, port: null },
+        { remoteCommandArgs: ["sh", "-s"] },
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(SshAuthUrlOpener, {
+          open: (url) => Deferred.succeed(approved, url).pipe(Effect.asVoid),
+        }),
+      );
+      assert.equal(yield* Deferred.await(approved), "https://login.tailscale.com/a/abc123example");
+      assert.equal(result.stdout, "ok\n");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
