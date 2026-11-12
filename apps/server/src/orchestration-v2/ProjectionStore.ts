@@ -7453,6 +7453,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE earlier.thread_id = candidate.thread_id
               AND earlier.ordinal < candidate.ordinal
               AND earlier.status <> 'queued'
+              AND NOT ${isSilentShellRun("earlier")}
               AND (
                 earlier.completed_at IS NULL
                 OR julianday(earlier.completed_at) >= julianday(candidate.completed_at)

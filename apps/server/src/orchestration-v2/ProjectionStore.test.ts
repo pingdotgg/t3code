@@ -7401,6 +7401,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           silent ? hidden : visible,
         ]);
 
+        // A follow-up removed before it started stays latest unless a visible run outlives it.
+        const removedRunId = RunId.make(`run:projection-shell-silent:${key}:removed`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-silent:${key}:removed`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...(yield* projectionStore.getThreadProjection(threadId)).runs[0]!,
+            id: removedRunId,
+            ordinal: 2,
+            userMessageId: MessageId.make(`message:projection-shell-silent:${key}:removed`),
+            status: "cancelled",
+            startedAt: null,
+            completedAt: now,
+          },
+        });
+        assert.deepStrictEqual(
+          (yield* presented).map((shell) => shell.latestRunId),
+          silent ? [removedRunId, removedRunId] : [runId, runId],
+        );
+
         // A run that fails outright, e.g. on a provider error, needs the user too.
         const running = (yield* projectionStore.getThreadProjection(threadId)).runs[0]!;
         const setRunStatus = (status: "failed" | "running") =>
