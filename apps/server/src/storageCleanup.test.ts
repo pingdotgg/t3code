@@ -2123,6 +2123,16 @@ describe("storage cleanup reports and local file policies", () => {
         fixture.setThreads([
           shell({ projectId: ProjectId.make("project-2"), worktreePath: folder, branch: null }),
         ]);
+        const kept = yield* fixture.service.runNow;
+        expect(kept.entries).toEqual([
+          expect.objectContaining({ path: unused, outcome: "kept", threadId: null }),
+          expect.objectContaining({
+            path: folder,
+            outcome: "kept",
+            reason: "Has uncommitted changes (1 file)",
+          }),
+        ]);
+        yield* fixture.fs.remove(`${folder}/notes.md`);
         const report = yield* fixture.service.runNow;
         expect(report.entries).toEqual([
           expect.objectContaining({ path: folder, outcome: "removed" }),

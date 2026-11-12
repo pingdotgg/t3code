@@ -958,6 +958,17 @@ const make = Effect.gen(function* () {
             Effect.map((parent) => pathKey(parent) === pathKey(scratchRoot)),
             Effect.orElseSucceed(() => false),
           );
+    // Every file in a scratch folder is untracked and stored nowhere else.
+    const scratchChangesReason = Effect.fn("StorageCleanup.scratchChangesReason")(function* (
+      folder: string,
+      rules: WorktreeCleanupRules,
+    ) {
+      if (rules.worktreeKeepWhen === "tracked-changes") return null;
+      const count = (yield* fs.readDirectory(folder)).length;
+      return count === 0
+        ? null
+        : `has uncommitted changes (${count} ${count === 1 ? "file" : "files"})`;
+    });
     const worktreePathReason = Effect.fn("StorageCleanup.worktreePathReason")(function* (
       worktreePath: string,
       scratch: boolean,
@@ -1125,7 +1136,9 @@ const make = Effect.gen(function* () {
           return keep("contains a project checkout");
         if (!scratch && (yield* branchChanged(worktreePath, thread.branch)))
           return keep("repository or branch changed");
-        const changes = scratch ? null : yield* localChangesReason(worktreePath, settings);
+        const changes = scratch
+          ? yield* scratchChangesReason(worktreePath, settings)
+          : yield* localChangesReason(worktreePath, settings);
         if (changes !== null) return keep(changes);
         const head = scratch
           ? null
@@ -1334,6 +1347,9 @@ const make = Effect.gen(function* () {
               )
                 return keep("commit changed since check");
               const finalChanges = yield* localChangesReason(worktreePath, settings);
+              if (finalChanges !== null) return keep(finalChanges);
+            } else {
+              const finalChanges = yield* scratchChangesReason(worktreePath, settings);
               if (finalChanges !== null) return keep(finalChanges);
             }
             const currentSettings = yield* settingsService.getSettings;
