@@ -66,6 +66,6 @@ export function agentThinkingChoices(
     .filter((option) => !descriptor?.promptInjectedValues?.includes(option.id))
     .map((option) => ({ value: option.id, label: option.label }));
   return current && !levels.some((level) => level.value === current)
-    ? [...levels, { value: current, label: `${current} (not offered by this model)` }]
+    ? [...levels, { value: current, label: `${current} (unlisted)` }]
     : levels;
 }

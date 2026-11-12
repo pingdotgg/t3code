@@ -76,7 +76,7 @@ describe("agent model catalog", () => {
     ]);
     expect(agentThinkingChoices(model, "max").at(-1)).toEqual({
       value: "max",
-      label: "max (not offered by this model)",
+      label: "max (unlisted)",
     });
     expect(agentThinkingChoices(undefined, "")).toEqual([]);
   });
