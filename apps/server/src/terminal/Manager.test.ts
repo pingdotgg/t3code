@@ -1157,6 +1157,7 @@ it.layer(
 
       process.emitData("prompt ");
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
+      process.emitData("\u001b[=c\u001b[=0c");
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
@@ -1988,6 +1989,20 @@ it.layer(
       expect(snapshot).not.toHaveProperty("env");
       expect(snapshot).not.toHaveProperty("providerInstanceId");
     }),
+  );
+
+  it.effect("expands a provider home named in any case on Windows", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const home = yield* HostProcess.HomeDirectory;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { GROK_HOME: "C:\\inherited-grok" },
+      });
+
+      yield* manager.open(openInput({ env: { grok_home: "~/.grok-work" } }));
+
+      expect(ptyAdapter.spawnInputs[0]?.env.GROK_HOME).toBe(path.join(home, ".grok-work"));
+    }).pipe(Effect.provide(layerWithHostPlatform("win32"))),
   );
 
   it.effect("fails closed when a provider instance is missing", () =>

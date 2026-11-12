@@ -30,6 +30,7 @@ class FakeBus extends NodeEvents.EventEmitter {
   requestPath = "";
   boundId = "";
   foreignHandle = false;
+  owner = ":1.2";
 
   send(message: Message) {
     this.sends.push(message);
@@ -39,7 +40,7 @@ class FakeBus extends NodeEvents.EventEmitter {
     member: string,
     path: string,
     body: unknown[],
-    sender = ":1.2",
+    sender = this.owner,
     signature = "",
   ) {
     this.emit(
@@ -71,7 +72,7 @@ class FakeBus extends NodeEvents.EventEmitter {
       ]),
     });
   }
-  activate(id = this.boundId, session = this.session, sender = ":1.2") {
+  activate(id = this.boundId, session = this.session, sender = this.owner) {
     this.signal(portal, "Activated", root, [session, id, 1, {}], sender, "osta{sv}");
   }
   async call(message: Message) {
@@ -87,7 +88,7 @@ class FakeBus extends NodeEvents.EventEmitter {
       if (this.registryError) throw this.registryError;
       return reply();
     }
-    if (message.member === "GetNameOwner") return reply([":1.2"]);
+    if (message.member === "GetNameOwner") return reply([this.owner]);
     if (message.member === "Get") return reply([new Variant("u", this.version)]);
     if (message.member === "AddMatch" || message.member === "ConfigureShortcuts") return reply();
     const options = message.body.at(-1) as Record<string, Variant<string>>;
@@ -338,7 +339,30 @@ it("handles a disappearing portal without keeping a false registered state", asy
   );
   expect(client.state.shortcutRegistered).toBe(false);
   expect(client.state.shortcutMessage).toContain("restarted");
-  expect(bus.disconnect).toHaveBeenCalledOnce();
+  expect(client.hasSession).toBe(false);
+  expect(bus.disconnect).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(client.state.shortcutRegistered).toBe(true));
+  expect(bus.calls.filter((call) => call.member === "CreateSession")).toHaveLength(2);
+});
+
+it("binds a new session when the portal restarts", async () => {
+  const { bus, client, capture } = start(new FakeBus(), chord, true);
+  await client.ready;
+  const ownerChanged = (from: string, to: string) =>
+    bus.signal(
+      "org.freedesktop.DBus",
+      "NameOwnerChanged",
+      "/org/freedesktop/DBus",
+      ["org.freedesktop.portal.Desktop", from, to],
+      "org.freedesktop.DBus",
+    );
+  ownerChanged(":1.2", "");
+  bus.owner = ":1.3";
+  ownerChanged("", ":1.3");
+  await vi.waitFor(() => expect(client.state.shortcutActionRegistered).toBe(true));
+  expect(bus.calls.filter((call) => call.member === "CreateSession")).toHaveLength(2);
+  bus.activate();
+  expect(capture).toHaveBeenCalledOnce();
 });
 
 it("accepts old portals without Registry but does not ignore permission denial", async () => {
