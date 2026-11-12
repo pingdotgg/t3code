@@ -203,7 +203,7 @@ function ThreadRowContext({
         render={
           <span
             tabIndex={0}
-            className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption"
+            className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >
