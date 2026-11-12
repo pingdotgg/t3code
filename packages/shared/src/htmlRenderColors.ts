@@ -1,44 +1,56 @@
 import "culori/css";
-import { clampChroma, converter, formatHex, wcagContrast } from "culori/fn";
+import { clampChroma, converter, formatHex, wcagContrast, type Rgb } from "culori/fn";
 
 const toRgb = converter("rgb");
 const toOklch = converter("oklch");
+const LIGHTNESS_STEPS = 200;
 
-export function readableHtmlRenderColor(color: string, surface: string, minimum: number): string {
+/** Keeps `color` unless it falls below `minimum` contrast on any of `surfaces`. */
+export function readableHtmlRenderColor(
+  color: string,
+  surfaces: readonly string[],
+  minimum: number,
+): string {
   const foreground = toRgb(color);
-  const background = toRgb(surface);
-  // A translucent canvas needs the host's underlying surface to determine contrast.
-  if (!foreground || !background || (background.alpha ?? 1) < 1) return color;
+  const backgrounds = surfaces.map((surface) => toRgb(surface));
+  const opaque = backgrounds.filter(
+    (background): background is Rgb => background !== undefined && (background.alpha ?? 1) >= 1,
+  );
+  // A translucent surface needs the host's underlying surface to determine contrast.
+  if (!foreground || opaque.length === 0 || opaque.length < backgrounds.length) return color;
 
   const alpha = Math.max(0, Math.min(1, foreground.alpha ?? 1));
-  const painted = {
-    mode: "rgb" as const,
+  const paintedOn = (background: Rgb): Rgb => ({
+    mode: "rgb",
     r: foreground.r * alpha + background.r * (1 - alpha),
     g: foreground.g * alpha + background.g * (1 - alpha),
     b: foreground.b * alpha + background.b * (1 - alpha),
-  };
-  if (wcagContrast(painted, background) >= minimum) return color;
+  });
+  const originalWorst = Math.min(
+    ...opaque.map((background) => wcagContrast(paintedOn(background), background)),
+  );
+  if (originalWorst >= minimum) return color;
 
-  const base = toOklch(painted);
-  const encode = (lightness: number) =>
-    formatHex(clampChroma({ ...base, l: lightness }, "oklch", "rgb"));
-  const original = encode(base.l);
-  if (wcagContrast(original, background) >= minimum) return original;
-
-  const lighter = wcagContrast("#ffffff", background) >= wcagContrast("#000000", background);
-  let low = lighter ? base.l : 0;
-  let high = lighter ? 1 : base.l;
-  let result = encode(lighter ? 1 : 0);
-  for (let step = 0; step < 24; step += 1) {
-    const mid = (low + high) / 2;
-    const candidate = encode(mid);
+  const base = toOklch(paintedOn(opaque[0]!));
+  let nearest: string | undefined;
+  let nearestDistance = Infinity;
+  let strongest = color;
+  let strongestWorst = originalWorst;
+  // Contrast against several surfaces is not monotonic in lightness, so scan it.
+  for (let step = 0; step <= LIGHTNESS_STEPS; step += 1) {
+    const lightness = step / LIGHTNESS_STEPS;
     // Measure the encoded sRGB paint so rounding cannot put it below the threshold.
-    if (wcagContrast(candidate, background) >= minimum) {
-      result = candidate;
-      if (lighter) high = mid;
-      else low = mid;
-    } else if (lighter) low = mid;
-    else high = mid;
+    const candidate = formatHex(clampChroma({ ...base, l: lightness }, "oklch", "rgb"));
+    const worst = Math.min(...opaque.map((background) => wcagContrast(candidate, background)));
+    const distance = Math.abs(lightness - base.l);
+    if (worst >= minimum && distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+    if (worst > strongestWorst) {
+      strongest = candidate;
+      strongestWorst = worst;
+    }
   }
-  return result;
+  return nearest ?? strongest;
 }

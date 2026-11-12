@@ -179,14 +179,16 @@ export function htmlRenderTheme(
   fonts: HtmlRenderFonts = HTML_RENDER_DEFAULT_FONTS,
 ): HtmlRenderTheme {
   const fixed = FIXED_COLORS[appearance];
-  const accent = readableHtmlRenderColor(colors.accent, colors.canvas, 3);
+  // Graphics sit on the canvas or, per the render guide, inside a --card box.
+  const graphicSurfaces = [colors.canvas, colors.surface];
+  const accent = readableHtmlRenderColor(colors.accent, graphicSurfaces, 3);
   const accentForeground =
     accent === colors.accent
       ? colors.accentForeground
-      : readableHtmlRenderColor(colors.accentForeground, accent, 4.5);
+      : readableHtmlRenderColor(colors.accentForeground, [accent], 4.5);
   const chart = [
     accent,
-    ...fixed.chart.map((color) => readableHtmlRenderColor(color, colors.canvas, 3)),
+    ...fixed.chart.map((color) => readableHtmlRenderColor(color, graphicSurfaces, 3)),
   ];
   return {
     appearance,
