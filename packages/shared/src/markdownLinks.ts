@@ -18,23 +18,26 @@ const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 // `(group)/[id]/+page.svelte`, `@scope/pkg`). The final segment is optional so an explicit
 // folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*\/)+(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?::\d+){0,2})?$/u;
+  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*\/)+(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?::\d+(?::\d+|-\d+)?)?)?$/u;
 
 // No `@` here: `me@example.com` is an address, not a file.
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[\p{L}\p{M}\p{N}._$+()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+()[\]-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+  /^[\p{L}\p{M}\p{N}._$+()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+()[\]-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+(?::\d+|-\d+)?)?$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
-const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
+// Agents shorten long paths with a `...` or `…` segment, which no file chip can open.
+const ELIDED_PATH_SEGMENT_PATTERN = /(?:^|[\\/])(?:\.{3,}|…)(?:[\\/]|$)/;
 
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
+const ANY_FILE_EXTENSION_PATTERN = /\.[^./\\]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 
@@ -114,7 +117,6 @@ const GENERIC_HOSTNAME_TLDS = new Set([
   "xyz",
   "me",
   "tv",
-  "cc",
   "gg",
   "chat",
   "cloud",
@@ -157,6 +159,8 @@ const COUNTRY_HOSTNAME_TLDS = new Set([
   "tr",
   "sg",
   "hk",
+  // C++ sources end in `.cc`, so `allocator.cc:217` names a file, not a host and port.
+  "cc",
 ]);
 
 function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
@@ -178,6 +182,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
+  if (ELIDED_PATH_SEGMENT_PATTERN.test(candidate.replace(POSITION_SUFFIX_PATTERN, ""))) return null;
 
   const hasExplicitPathShape =
     RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
@@ -196,7 +201,17 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .split(/[\\/]/)
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
-    if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
+    if (!FILE_EXTENSION_PATTERN.test(basename)) {
+      if (!hasPosition) return null;
+      // A `:line` suffix alone does not make `I/W217:220` a file reference.
+      if (
+        withoutPosition.includes("/") &&
+        !ANY_FILE_EXTENSION_PATTERN.test(basename) &&
+        !EXTENSIONLESS_FILE_NAMES.has(basename)
+      ) {
+        return null;
+      }
+    }
   }
   return candidate;
 }
@@ -252,7 +267,8 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const labelPosition = splitFilePathPosition(label.trim());
   if (
     (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column)
+    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
   ) {
     return false;
   }
@@ -310,8 +326,18 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
+  const position = parseFilePathLink(path, hash);
+  // `src\a.ts` is Windows-relative. A link that already parses keeps its spelling, since POSIX
+  // names may contain `\`; a rooted `\\host` or `\foo` would change root if rewritten.
+  if (position || /^[\\/]/.test(path) || isWindowsAbsolutePath(path)) return position;
+  return path.includes("\\") ? parseFilePathLink(path.replaceAll("\\", "/"), hash) : null;
+}
+
+function parseFilePathLink(path: string, hash: string): FilePathPosition | null {
   const position = splitFilePathPosition(path, hash);
-  return looksLikeFilePath(position.path, path) ? position : null;
+  return !ELIDED_PATH_SEGMENT_PATTERN.test(position.path) && looksLikeFilePath(position.path, path)
+    ? position
+    : null;
 }
 
 const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
@@ -425,4 +451,48 @@ export function resolveMarkdownFileLinkTarget(
 
 export function isWindowsDrivePathHref(href: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(safeDecodeURIComponent(href));
+}
+
+// Bare prose paths need a filesystem root or a position, so `/api/users.json` stays a route,
+// and a file-shaped last segment.
+export function absoluteFilePathMatches(text: string): Array<{ index: number; path: string }> {
+  const paths: Array<{ index: number; path: string }> = [];
+  for (const match of text.matchAll(/(^|[\s(["'])(\/[^\s<>"'`]+)/g)) {
+    const source = match[2]!;
+    let parentheses = 0;
+    let brackets = 0;
+    for (const character of source) {
+      if (character === "(") parentheses += 1;
+      if (character === ")") parentheses -= 1;
+      if (character === "[") brackets += 1;
+      if (character === "]") brackets -= 1;
+    }
+    let end = source.length;
+    while (end > 0) {
+      const character = source[end - 1]!;
+      if (character === ")" && parentheses < 0) parentheses += 1;
+      else if (character === "]" && brackets < 0) brackets += 1;
+      else if (!".,;!?:".includes(character)) break;
+      end -= 1;
+    }
+    const path = source.slice(0, end);
+    // Trimming `/tmp/a/....` to `/tmp/a/` would hide its elided segment.
+    if (path.endsWith("/") && source.startsWith("...", end)) continue;
+    if (
+      !POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
+      !POSITION_SUFFIX_PATTERN.test(path)
+    )
+      continue;
+    // Prose ends a path at whitespace, so `/Users/me/Library/Application Support/...` must not link.
+    const basename = path.slice(path.lastIndexOf("/") + 1);
+    if (
+      !POSITION_SUFFIX_PATTERN.test(path) &&
+      !FILE_EXTENSION_PATTERN.test(basename) &&
+      !EXTENSIONLESS_FILE_NAMES.has(basename)
+    )
+      continue;
+    if (!parseMarkdownFileLink(path)) continue;
+    paths.push({ index: match.index + match[1]!.length, path });
+  }
+  return paths;
 }
