@@ -110,10 +110,10 @@ export const make = Effect.fn("CodexManagedResponses.make")(function* () {
   ) {
     const grant = grants.get(request.headers.authorization?.replace(/^Bearer /u, "") ?? "");
     if (!grant) return HttpServerResponse.empty({ status: 401 });
-    const path = request.url.split("?", 1)[0];
+    const path = request.url.split("?", 1)[0] ?? "";
     const inference =
       request.method === "POST" &&
-      ["/v1/responses", "/v1/responses/compact", "/v1/responses/input_tokens"].includes(path!);
+      ["/v1/responses", "/v1/responses/compact", "/v1/responses/input_tokens"].includes(path);
     if (!inference && !(request.method === "GET" && path === "/v1/models"))
       return HttpServerResponse.empty({ status: 404 });
     // Replay only the request body; successful SSE responses continue streaming with backpressure.
@@ -134,19 +134,16 @@ export const make = Effect.fn("CodexManagedResponses.make")(function* () {
       );
     let response = yield* send();
     if (inference && response.status === 401) {
-      const rejected = yield* response.text;
-      const renewed =
-        decodeExpiredToken(rejected)._tag === "Some"
-          ? yield* FiberSet.run(renewals, grant.auth.renew(credentials.accessToken)).pipe(
-              Effect.flatMap(Fiber.join),
-              Effect.option,
-            )
-          : Option.none();
+      const expired = Option.isSome(decodeExpiredToken(yield* response.text));
+      if (!expired)
+        return terminalAuth("ChatGPT rejected the managed credential (HTTP 401). Sign in again.");
+      const renewed = yield* FiberSet.run(renewals, grant.auth.renew(credentials.accessToken)).pipe(
+        Effect.flatMap(Fiber.join),
+        Effect.option,
+      );
       if (Option.isNone(renewed))
         return terminalAuth(
-          decodeExpiredToken(rejected)._tag === "Some"
-            ? "The managed ChatGPT token expired and could not be renewed. Retry or sign in again."
-            : "ChatGPT rejected the managed credential (HTTP 401). Sign in again.",
+          "The managed ChatGPT token expired and could not be renewed. Retry or sign in again.",
         );
       credentials = renewed.value;
       response = yield* send();
