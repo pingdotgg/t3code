@@ -320,27 +320,30 @@ export function defaultModelSelectionsAreMixed(
     projectId: ProjectId | null;
     settings: ServerSettings;
     providers: ReadonlyArray<ServerProvider>;
+    /** Maps this target's instance ids onto the shown environment's, so equal accounts compare equal. */
+    toShown?: (selection: ModelSelection) => ModelSelection;
   }>,
 ): boolean {
-  const selections = targets.map(({ projectId, settings, providers }) => {
+  const selections = targets.map(({ projectId, settings, providers, toShown = (s) => s }) => {
     const stored = settings.defaultModelSelection;
     const selection =
       stored === null
         ? resolveProjectDefaultProviderModelSelection(providers, settings, projectId)
         : resolveDefaultProviderModelSelection(providers, stored);
+    const effective = selection
+      ? resolveEffectiveDefaultModelSelection(
+          {
+            ...clientSettings,
+            ...settings,
+            ...resolveModelPreferences(settings, clientSettings),
+          },
+          providers,
+          selection,
+        )
+      : null;
     return {
-      stored,
-      effective: selection
-        ? resolveEffectiveDefaultModelSelection(
-            {
-              ...clientSettings,
-              ...settings,
-              ...resolveModelPreferences(settings, clientSettings),
-            },
-            providers,
-            selection,
-          )
-        : null,
+      stored: stored === null ? null : toShown(stored),
+      effective: effective ? toShown(effective) : null,
     };
   });
   return selections.some((selection) => !Equal.equals(selection, selections[0]));

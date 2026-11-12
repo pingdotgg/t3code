@@ -13,6 +13,7 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
+  matchingProviderInstanceId,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
@@ -278,6 +279,33 @@ describe("brandProviderInstanceEntries", () => {
     const personal = entries.find((entry) => entry.instanceId === "codex");
 
     expect(personal && shouldShowInstanceBadge(personal, entries)).toBe(true);
+  });
+});
+
+describe("matchingProviderInstanceId", () => {
+  it("maps an instance to the one signed in to the same account elsewhere", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const signedIn = (instanceId: string, email: string, workspaceId = "personal") => ({
+      ...provider({ provider: codex, instanceId }),
+      auth: { status: "authenticated" as const, email, workspaceId },
+    });
+    const id = ProviderInstanceId.make;
+    const laptop = [
+      signedIn("codex_laptop", "a@example.test"),
+      provider({ provider: codex, instanceId: "codex" }),
+    ];
+    const match = (target: ServerProvider[], instanceId = "codex_laptop") =>
+      matchingProviderInstanceId(id(instanceId), laptop, target);
+
+    expect(match([signedIn("codex_server", "A@example.test")])).toBe("codex_server");
+    expect(match([signedIn("codex_laptop", "b@example.test")])).toBe("codex_laptop");
+    expect(match([provider({ provider: codex, instanceId: "codex" })], "codex")).toBe("codex");
+    expect(match([signedIn("codex_server", "b@example.test")])).toBeNull();
+    expect(match([signedIn("codex_server", "a@example.test", "team")])).toBeNull();
+    expect(
+      match([signedIn("codex_one", "a@example.test"), signedIn("codex_two", "a@example.test")]),
+    ).toBeNull();
+    expect(match([provider({ provider: codex, instanceId: "codex_server" })])).toBeNull();
   });
 });
 

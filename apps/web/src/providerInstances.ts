@@ -80,6 +80,42 @@ export function deriveProviderInstanceEntries(
   });
 }
 
+function providerAccountKey(provider: ServerProvider): string | null {
+  const email = provider.auth.email?.trim().toLowerCase();
+  return provider.auth.status === "authenticated" && email
+    ? `${provider.driver}:${email}:${provider.auth.workspaceId ?? ""}`
+    : null;
+}
+
+/**
+ * Instance ids are machine-local, so the same signed-in account can have a different id on
+ * another environment. Prefers the same id, then the one instance signed in to the same account.
+ */
+export function matchingProviderInstanceId(
+  instanceId: ProviderInstanceId,
+  source: ReadonlyArray<ServerProvider>,
+  target: ReadonlyArray<ServerProvider>,
+): ProviderInstanceId | null {
+  if (target.some((provider) => provider.instanceId === instanceId)) return instanceId;
+  const sourceProvider = source.find((provider) => provider.instanceId === instanceId);
+  const key = sourceProvider ? providerAccountKey(sourceProvider) : null;
+  if (key === null) return null;
+  const matches = target.filter((provider) => providerAccountKey(provider) === key);
+  return matches.length === 1 ? matches[0]!.instanceId : null;
+}
+
+export function localizeModelSelection<T extends { readonly instanceId?: ProviderInstanceId }>(
+  selection: T,
+  source: ReadonlyArray<ServerProvider>,
+  target: ReadonlyArray<ServerProvider>,
+): T {
+  if (selection.instanceId === undefined) return selection;
+  const instanceId = matchingProviderInstanceId(selection.instanceId, source, target);
+  return instanceId === null || instanceId === selection.instanceId
+    ? selection
+    : { ...selection, instanceId };
+}
+
 /** Instance ids repeat across environments; lookups must stay scoped. */
 export function deriveProviderEntriesByEnvironment(
   providersByEnvironment: Iterable<
