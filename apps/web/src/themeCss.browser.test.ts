@@ -13,6 +13,7 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
     @import url(https://example.com/sheet.css);
     @property --registered { syntax: "<url>"; inherits: false; initial-value: url(https://example.com/d); }
     @counter-style leak { system: cyclic; symbols: url(https://example.com/f); }
+    @keyframes leak { to { background-image: url(https://example.com/g); } }
     :root { --leak: u\\72l(https://example.com/a); }
     [data-theme-css-probe] {
       color: rgb(1, 2, 3);
@@ -30,6 +31,10 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   expect(style.listStyleImage).toBe("none");
   expect(style.borderImageSource).toBe("none");
   expect(style.maskImage).toBe("none");
+  const kept = document.adoptedStyleSheets.flatMap((sheet) =>
+    Array.from(sheet.cssRules, (rule) => rule.cssText),
+  );
+  expect(kept.join("\n")).not.toContain("example.com");
   expect(style.cursor).toBe("auto");
 
   applyThemeCss(undefined);

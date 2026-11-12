@@ -11,6 +11,8 @@ describe("themeCssValueFetches", () => {
     ["--leak", "u\\72l(https://example.com/a)", true],
     ["background-image", "im\\61ge-set(var(--leak) 1x)", true],
     ["background-image", "v\\61r(--none, u\\72l(https://example.com/a))", true],
+    // A no-break space before the scheme makes this a path on the app's own origin.
+    ["background-image", 'url("\u00a0data:/../../probe")', true],
     ["background-image", 'url("data:image/png;base64,AA")', false],
     ["filter", 'url("#blur")', false],
     ["background-image", "var(--pattern)", false],

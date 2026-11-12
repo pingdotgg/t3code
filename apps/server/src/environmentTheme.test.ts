@@ -164,7 +164,9 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
       {},
       Effect.gen(function* () {
         const themes = yield* EnvironmentTheme.EnvironmentThemeService;
-        const css = "[data-chat-header] { border-bottom: 1px solid red; }";
+        // A comment may name an address. Only a rule that loads one is refused.
+        const css =
+          "/* from url(https://example.com/guide) */ [data-chat-header] { border-bottom: 1px solid red; }";
         yield* themes.publish("agent-look", { ...NIGHTFALL_THEME, css });
         assert.deepEqual(yield* themes.current, [{ id: "agent-look", ...NIGHTFALL_THEME, css }]);
 

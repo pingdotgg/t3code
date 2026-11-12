@@ -1,7 +1,8 @@
 import { THEME_COLOR_ROLES } from "./themePalettes.ts";
 
 const FETCHES_BY_STRING = /image-set\(|\bsrc\(/i;
-const URL_NOT_LOCAL = /url\((?!\s*["']?\s*(?:data:|#))/i;
+// Only CSS whitespace may come first. \s also matches U+00A0, which makes the address relative.
+const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
 
 /**
  * Whether one declaration value can load a remote file. Clients drop those declarations.
@@ -14,7 +15,8 @@ export function themeCssValueFetches(value: string): boolean {
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
 export function themeCssLoadsRemoteFiles(css: string): boolean {
-  return /@import/i.test(css) || FETCHES_BY_STRING.test(css) || URL_NOT_LOCAL.test(css);
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  return /@import/i.test(code) || FETCHES_BY_STRING.test(code) || URL_NOT_LOCAL.test(code);
 }
 
 /**
