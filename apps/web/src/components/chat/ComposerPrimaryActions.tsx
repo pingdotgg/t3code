@@ -111,6 +111,12 @@ function MessageActionPill({ className, type = "button", ...props }: ComponentPr
   return <button type={type} className={cn(messageActionPillClassName, className)} {...props} />;
 }
 
+function ComposerPillButton({ className, type = "button", ...props }: ComponentProps<"button">) {
+  return (
+    <button type={type} className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, className)} {...props} />
+  );
+}
+
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
 };
@@ -323,9 +329,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         : submitLabel);
 
   const sendButton = (
-    <button
+    <ComposerPillButton
       type={showResume ? "button" : "submit"}
-      className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, "w-8")}
+      className="w-8"
       {...pointerFocusProps}
       onClick={showResume ? onResume : onSubmitMessage}
       disabled={
@@ -349,11 +355,39 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       ) : (
         <ArrowUpIcon className="size-3.5" aria-hidden="true" />
       )}
-    </button>
+    </ComposerPillButton>
   );
 
   const submit = (
     <ComposerSendPill>
+      {compactTokens !== null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <ComposerPillButton
+                className="gap-1.5 px-2.5 text-label tabular-nums after:pointer-events-none after:absolute after:inset-y-2 after:right-0 after:w-px after:bg-current after:opacity-16"
+                {...pointerFocusProps}
+                aria-pressed={!keepFullHistory}
+                aria-label={`Compact ${compactTokens} tokens of history before sending`}
+                disabled={!canOperateThread}
+                onClick={onToggleKeepFullHistory}
+              />
+            }
+          >
+            <Minimize2Icon aria-hidden="true" className="size-3.5" />
+            <span className={cn(keepFullHistory && "line-through")}>{compactTokens}</span>
+          </TooltipTrigger>
+          <TooltipPopup>
+            <div>Compact {compactTokens} tokens</div>
+            <div>
+              {keepFullHistory
+                ? `Next send keeps all ${compactTokens} tokens.`
+                : `Next send compacts ${compactTokens} tokens first.`}
+            </div>
+            <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {renderSpeechAction?.(true)}
       <Tooltip>
         {/* A span trigger keeps the tooltip reachable while send is disabled. */}
@@ -364,50 +398,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       {stopPhase === null ? null : renderStopSlot(false)}
     </ComposerSendPill>
   );
-  if (compactTokens === null) {
-    return (
-      <>
-        {children}
-        {submit}
-      </>
-    );
-  }
-  const compactTone = keepFullHistory ? "text-muted-foreground" : "text-warning-foreground";
-
   return (
-    <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="action"
-              variant="pill"
-              {...pointerFocusProps}
-              aria-pressed={!keepFullHistory}
-              aria-label={`Compact ${compactTokens} tokens of history before sending`}
-              disabled={!canOperateThread}
-              onClick={onToggleKeepFullHistory}
-            />
-          }
-        >
-          <Minimize2Icon aria-hidden="true" className={compactTone} />
-          <span className={cn("@max-[480px]/composer-surface:hidden", compactTone)}>
-            {keepFullHistory ? "Full" : "Compact"}
-          </span>
-          <span className={cn("tabular-nums", compactTone)}>{compactTokens}</span>
-        </TooltipTrigger>
-        <TooltipPopup>
-          <div>
-            {keepFullHistory
-              ? `Next send keeps all ${compactTokens} tokens.`
-              : `Next send compacts ${compactTokens} tokens first.`}
-          </div>
-          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
-        </TooltipPopup>
-      </Tooltip>
+    <>
       {children}
       {submit}
-    </div>
+    </>
   );
 });
 
