@@ -173,7 +173,9 @@ export function createNewThreadHandler(router: AnyRouter) {
       environmentSelection: preserveOpenDraft
         ? (currentDraft.environmentSelection ?? "auto")
         : target.environmentSelection,
-      loadBalancedEnvironmentId: null,
+      loadBalancedEnvironmentId: preserveOpenDraft
+        ? (currentDraft.loadBalancedEnvironmentId ?? null)
+        : null,
     };
     const targetServerSettings =
       environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
