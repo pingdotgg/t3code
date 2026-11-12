@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
-import { threadContextReference } from "./lib/composerContextRecords";
+import { reviewCommentContextRecord, threadContextReference } from "./lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -25,6 +25,30 @@ describe("projectPendingUserInputAnswer", () => {
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
+  });
+
+  // regression: #28022 a review comment chip in an answer reached the agent as a bare link
+  it("sends review comment chips with the comment text and diff", () => {
+    const comment = reviewCommentContextRecord({
+      id: "file-comment-1",
+      sectionId: "branch",
+      sectionTitle: "Changes",
+      filePath: "notes.md",
+      startIndex: 2,
+      endIndex: 2,
+      rangeLabel: "+2",
+      text: "Rename this to line two updated",
+      diff: "@@ -0,0 +2,1 @@\n+line two changed",
+      fenceLanguage: "diff",
+    });
+    const answer = `See my note: ${formatInlineContextReference({
+      kind: "review-comment",
+      contextId: comment.contextId,
+      label: comment.label,
+    })}`;
+    const projected = projectPendingUserInputAnswer(answer, [comment]);
+    expect(projected).toContain("Rename this to line two updated");
+    expect(projected).toContain("+line two changed");
   });
 
   // regression: #18789 answers to pending questions lost exact text and option values
