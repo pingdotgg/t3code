@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isNextPromptInDraft, toggleNextPromptInDraft } from "./nextPromptDraft";
+import { isNextPromptInDraft, toggleNextPromptInDraft } from "./nextPromptDraft.ts";
 
 describe("toggleNextPromptInDraft", () => {
   it.each([
