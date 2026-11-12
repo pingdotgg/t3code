@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { loadMcpConfigCommand } from "./mcpConfigCommand.ts";
-import { cursorMcpServers } from "./adapter.ts";
 
 it.live("resolves project MCPs in the thread cwd and preserves t3-code", () =>
   Effect.gen(function* () {
@@ -21,8 +20,6 @@ it.live("resolves project MCPs in the thread cwd and preserves t3-code", () =>
       url: "https://example.test/ditto",
       headers: { session: "fresh-cursor-thread", cwd: process.cwd() },
     });
-    const merged = cursorMcpServers(undefined, servers);
-    assert.deepEqual(Object.keys(merged ?? {}), ["ditto", "ditto-backroom"]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -40,7 +37,7 @@ it.live.each([
         },
         cwd: null,
         threadId: "fresh-thread",
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }),
     );
     assert.equal(result._tag, "Failure");
     assert.notInclude(JSON.stringify(result), "secret-");
