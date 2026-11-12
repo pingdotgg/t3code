@@ -28,6 +28,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { fleetQueueCreateTurnInput, fleetSeatCommandTarget } from "../fleetAddress.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
@@ -543,6 +544,35 @@ describe("remote thread lifecycle commands", () => {
       );
       expect(snoozed?.pendingRuntimeRequest).toEqual(USER_INPUT);
       yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
+  );
+});
+
+describe("fleet seat queue create", () => {
+  it.effect("queues a turn on the seat environment through startTurn", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const seat = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };
+      const target = fleetSeatCommandTarget(
+        seat,
+        fleetQueueCreateTurnInput({
+          seat,
+          message: { messageId: MessageId.make("fleet-queue"), text: "Ship the fix" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      const result = h.commands.startTurn.run(h.registry, target);
+      const request = yield* Queue.take(h.requests);
+      expect(request.command).toMatchObject({
+        type: "message.dispatch",
+        threadId: THREAD_ID,
+        messageId: MessageId.make("fleet-queue"),
+        text: "Ship the fix",
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* Deferred.succeed(request.reply, { sequence: 1 });
       expect((yield* Effect.promise(() => result))._tag).toBe("Success");
     }),
   );
