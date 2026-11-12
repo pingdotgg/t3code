@@ -618,9 +618,10 @@ const make = Effect.gen(function* () {
       }
       workspaceRecorded = true;
 
-      // An opened branch existed before this launch, so its name is the user's, even a temporary one.
+      // Only rename a branch this launch created; an opened or joined branch keeps its name.
       if (
         reused === undefined &&
+        input.workspaceStrategy.type === "worktree" &&
         !checkoutExisting &&
         worktreePath !== null &&
         branch !== null &&

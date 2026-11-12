@@ -1266,18 +1266,22 @@ it.effect.each([
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect("joins the worktree that already has the branch checked out", () => {
-  const harness = checkoutExistingHarness([
-    localBranch("feature/login", "/repo-worktrees/existing-login"),
-  ]);
-  return Effect.gen(function* () {
-    const launched = yield* launchCheckoutExisting("feature/login", "join");
-    const settled = yield* preparationSettled(launched.threadId);
-    assert.equal(harness.createWorktree.mock.calls.length, 0);
-    assert.equal(settled.thread.worktreePath, "/repo-worktrees/existing-login");
-    assert.equal(settled.thread.branch, "feature/login");
-  }).pipe(Effect.provide(harness.layer));
-});
+it.effect.each(["feature/login", "t3/1234abcd"])(
+  "joins the worktree that already has %s checked out and keeps its name",
+  (branch) => {
+    const harness = checkoutExistingHarness([
+      localBranch(branch, "/repo-worktrees/existing-login"),
+    ]);
+    return Effect.gen(function* () {
+      const launched = yield* launchCheckoutExisting(branch, `join:${branch}`);
+      const settled = yield* preparationSettled(launched.threadId);
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(settled.thread.worktreePath, "/repo-worktrees/existing-login");
+      assert.equal(settled.thread.branch, branch);
+      assert.equal(harness.generateBranchName.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
 
 it.effect("refuses to open the project folder's branch in a separate worktree", () => {
   const harness = checkoutExistingHarness([localBranch("main", project.workspaceRoot)]);
