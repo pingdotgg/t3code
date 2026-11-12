@@ -10,8 +10,6 @@ import {
 } from "@t3tools/contracts";
 import {
   derivePendingThreadRequests,
-  onThreadRequestsResolved,
-  pruneResolvedUserInputDrafts,
   seedUserInputDraftAnswers,
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
@@ -19,7 +17,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { create } from "zustand";
 import { useRef, useState, type RefObject, type SetStateAction } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
@@ -39,6 +36,8 @@ import {
 } from "../../pendingUserInput";
 import {
   questionAttachmentDraftId,
+  usePendingUserInputAnswers,
+  usePendingUserInputQuestionIndex,
   useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
 import {
@@ -55,29 +54,9 @@ import { toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-const usePendingUserInputAnswers = create<
-  Record<string, Record<string, PendingUserInputDraftAnswer>>
->(() => ({}));
-const usePendingUserInputQuestionIndex = create<Record<string, number>>(() => ({}));
 const NO_PENDING_REQUESTS = { approvals: [], userInputs: [] } as const;
 const NO_PENDING_APPROVALS: ReturnType<typeof derivePendingApprovals> = [];
 const NO_PENDING_USER_INPUTS: ReturnType<typeof derivePendingUserInputs> = [];
-
-// Resolution can come from anywhere: another device, an interrupt, the turn
-// ending, or a thread that is not open. Question attachment drafts are pruned
-// by questionAttachments.ts, which owns them.
-onThreadRequestsResolved(({ environmentId, threadId, pendingRequestIds }) => {
-  usePendingUserInputAnswers.setState(
-    (existing) =>
-      pruneResolvedUserInputDrafts(existing, environmentId, threadId, pendingRequestIds),
-    true,
-  );
-  usePendingUserInputQuestionIndex.setState(
-    (existing) =>
-      pruneResolvedUserInputDrafts(existing, environmentId, threadId, pendingRequestIds),
-    true,
-  );
-});
 
 function makePendingCustomAnswerSetter(input: {
   readonly activePendingUserInput: PendingUserInput | null;
