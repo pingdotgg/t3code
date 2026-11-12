@@ -79,6 +79,8 @@ import {
   PaneNotch,
 } from "./PaneNotch";
 import { previewBridge } from "./preview/previewBridge";
+import { dispatchPreviewAction } from "./preview/previewActionBus";
+import { preventThumbButtonFocus, takeThumbButtonNavigation } from "./preview/thumbButtons";
 import { observeResize } from "~/lib/observeResize";
 import {
   previewFaviconOf,
@@ -633,7 +635,7 @@ function RightPanelTab(
                     if (surface.kind === "device" && canRename) onStartRename(surface.id);
                   }}
                   className={cn(
-                    "cursor-pointer flex min-w-0 items-center",
+                    "cursor-pointer flex min-w-0 items-center outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
                     filesCrumb && notched && "max-md:hidden",
                     active && surface.kind === "diff" && "shrink-0",
                   )}
@@ -1026,6 +1028,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
       {...(props.pane ? { pane: true } : {})}
       {...(props.inlineSize ? { inlineSize: props.inlineSize } : {})}
+      onMouseDown={preventThumbButtonFocus}
+      onMouseUp={(event) =>
+        takeThumbButtonNavigation(
+          event,
+          focusedSurface?.kind === "preview" ? dispatchPreviewAction : undefined,
+        )
+      }
     >
       <div
         className={cn(
