@@ -85,6 +85,8 @@ const terminalOutputBytes = Number(process.env.T3_ACP_EMIT_TERMINAL_OUTPUT_BYTES
 const supportsSessionLifecycle = process.env.T3_ACP_SESSION_LIFECYCLE === "1";
 const supportsAcpMcp = process.env.T3_ACP_MCP_ACP === "1";
 const supportsHttpMcp = process.env.T3_ACP_MCP_HTTP === "1";
+// OpenClaw's `openclaw acp` bridge refuses any non-empty per-session mcpServers list.
+const rejectSessionMcp = process.env.T3_ACP_REJECT_SESSION_MCP === "1";
 const supportsV2Management = process.env.T3_ACP_V2_MANAGEMENT === "1";
 const failDeleteSession = process.env.T3_ACP_FAIL_DELETE_SESSION === "1";
 const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
@@ -601,9 +603,21 @@ const program = Effect.gen(function* () {
     }
   });
 
-  yield* agent.handleCreateSession(() =>
+  const rejectPerSessionMcp = Effect.fn("acpMockAgent.rejectPerSessionMcp")(function* (
+    mcpServers: ReadonlyArray<unknown> | undefined,
+  ) {
+    if (rejectSessionMcp && (mcpServers?.length ?? 0) > 0) {
+      return yield* AcpError.AcpRequestError.internalError("Internal error", {
+        details:
+          "ACP bridge mode does not support per-session MCP servers. Configure MCP on the OpenClaw gateway or agent instead.",
+      });
+    }
+  });
+
+  yield* agent.handleCreateSession((request) =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      yield* rejectPerSessionMcp(request.mcpServers);
       if (newSessionErrorData !== undefined) {
         return yield* AcpError.AcpRequestError.internalError("Internal error", newSessionErrorData);
       }
@@ -620,6 +634,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleResumeSession((request) =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      yield* rejectPerSessionMcp(request.mcpServers);
       yield* agent.client.sessionUpdate({
         sessionId: request.sessionId,
         update: {
@@ -665,6 +680,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      yield* rejectPerSessionMcp(request.mcpServers);
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }
