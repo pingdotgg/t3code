@@ -1077,13 +1077,13 @@ it.effect("routes compaction and goal commands and marks cross-thread agent mess
         text: "/compact keep the tests",
         expected: `/compact ${origin}\n\nkeep the tests`,
       },
-      { ...agent, text: "/goal finish", expected: `/goal ${origin}\n\nfinish` },
+      { ...agent, text: "/goal finish", expected: "/goal finish" },
       {
         ...agent,
         driver: ProviderDriverKind.make("antigravity"),
         nativeGoals: true,
         text: "/goal finish",
-        expected: `/goal ${origin}\n\nfinish`,
+        expected: "/goal finish",
       },
       {
         ...agent,

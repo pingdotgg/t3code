@@ -1913,15 +1913,15 @@ export const layer: Layer.Layer<
           isCrossThreadAgentMessage(turnInput.message) && acceptsNativeGoalCommands(input.session)
             ? parseGoalCommand(input.message)
             : null;
-        const markOrigin = (text: string) =>
-          withProviderMessageOrigin(turnInput.message, text, input.session.driver);
-        // The native goal command must stay first, so the origin marks its objective.
+        // Native goal objectives go verbatim: providers cap their length.
         const providerText =
           goalCommand === null
-            ? markOrigin(turnInput.message.text)
-            : goalCommand.type === "set"
-              ? `/goal ${markOrigin(goalCommand.objective)}`
-              : turnInput.message.text;
+            ? withProviderMessageOrigin(
+                turnInput.message,
+                turnInput.message.text,
+                input.session.driver,
+              )
+            : turnInput.message.text;
         const startTurn = compact
           ? (input.session.compactThread?.(turnInput) ??
             Effect.fail(

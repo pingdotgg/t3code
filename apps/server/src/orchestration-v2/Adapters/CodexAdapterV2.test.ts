@@ -9693,7 +9693,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect("sends a /goal objective at the 4000 character limit unchanged", () =>
+    it.effect("sends an agent /goal objective at the 4000 character limit unchanged", () =>
       Effect.gen(function* () {
         const atLimit = "y".repeat(4000);
         const goal = (status: string) => ({ ...codexGoal(status, 0), objective: atLimit });
@@ -9713,7 +9713,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeThreadId,
                 nativeTurnId: "goal-turn-limit",
                 prompt: atLimit,
-                sentPrompt: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${atLimit}`,
+                sentPrompt: `[Message from another thread's agent (thread "thread:sender"). This is agent-authored coordination, not a message from the human user.]\n\nThis thread's goal is already set. Do not call create_goal. Start working on it now: ${atLimit}`,
               }).slice(5),
               5,
             ),
@@ -9735,7 +9735,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ],
         });
         const harness = yield* makeCodexReplayHarness(transcript);
-        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${atLimit}`));
+        const input = yield* goalTurnInput(harness, `/goal ${atLimit}`);
+        yield* harness.runtime.startTurn({
+          ...input,
+          message: {
+            ...input.message,
+            createdBy: "agent",
+            senderThreadId: ThreadId.make("thread:sender"),
+          },
+        });
         yield* harness.firstTerminal;
 
         assert.deepEqual(
