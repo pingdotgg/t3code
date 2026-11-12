@@ -488,6 +488,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src-link");
         expect(paths).toContain("index-link.ts");
         expect(paths).not.toContain("ignored-link");
+
+        yield* fileSystem.remove(path.join(cwd, "index-link.ts"));
+        const afterDelete = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        expect(afterDelete.entries.map((entry) => entry.path)).not.toContain("index-link.ts");
       }),
     );
 

@@ -276,6 +276,23 @@ function isWholeWordRange(
   return leftIsBoundary && rightIsBoundary;
 }
 
+async function resolveSymlinkKind(root: string, absolutePath: string) {
+  const target = await NodeFSP.realpath(absolutePath).catch(() => undefined);
+  if (target === undefined) return undefined;
+  const relative = NodePath.relative(root, target);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(relative) ||
+    relative.split(NodePath.sep).includes(".git")
+  ) {
+    return undefined;
+  }
+  const stat = await NodeFSP.stat(target).catch(() => undefined);
+  if (stat?.isFile()) return "file";
+  return stat?.isDirectory() ? "directory" : undefined;
+}
+
 // fff leaves symlinks out of its index; list them beside it, without following directory links.
 async function scanSymlinkEntries(
   cwd: string,
@@ -283,22 +300,6 @@ async function scanSymlinkEntries(
 ): Promise<ProjectEntry[]> {
   const root = await NodeFSP.realpath(cwd).catch(() => undefined);
   if (root === undefined) return [];
-  const resolveKind = async (absolutePath: string) => {
-    const target = await NodeFSP.realpath(absolutePath).catch(() => undefined);
-    if (target === undefined) return undefined;
-    const relative = NodePath.relative(root, target);
-    if (
-      relative === ".." ||
-      relative.startsWith(`..${NodePath.sep}`) ||
-      NodePath.isAbsolute(relative) ||
-      relative.split(NodePath.sep).includes(".git")
-    ) {
-      return undefined;
-    }
-    const stat = await NodeFSP.stat(target).catch(() => undefined);
-    if (stat?.isFile()) return "file";
-    return stat?.isDirectory() ? "directory" : undefined;
-  };
   const entries: ProjectEntry[] = [];
   for (
     let offset = 0;
@@ -314,7 +315,7 @@ async function scanSymlinkEntries(
           children.map(async (child): Promise<ProjectEntry[]> => {
             if (!child.isSymbolicLink() || child.name === ".git") return [];
             const entryPath = directory ? `${directory}/${child.name}` : child.name;
-            const kind = await resolveKind(NodePath.join(cwd, entryPath));
+            const kind = await resolveSymlinkKind(root, NodePath.join(cwd, entryPath));
             return kind ? [{ path: entryPath, kind }] : [];
           }),
         );
@@ -323,6 +324,22 @@ async function scanSymlinkEntries(
     entries.push(...batch.flat(2));
   }
   return entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
+}
+
+// fff's watcher reports no event when a symlink is deleted, so cached links are re-checked on each read.
+async function currentSymlinkEntries(
+  cwd: string,
+  links: ReadonlyArray<ProjectEntry>,
+): Promise<ProjectEntry[]> {
+  const root = await NodeFSP.realpath(cwd).catch(() => undefined);
+  if (root === undefined) return [];
+  const kinds = await Promise.all(
+    links.map((link) => resolveSymlinkKind(root, NodePath.join(cwd, link.path))),
+  );
+  return links.flatMap((link, index) => {
+    const kind = kinds[index];
+    return kind ? [{ path: link.path, kind }] : [];
+  });
 }
 
 function withSymlinkMatches(
@@ -520,7 +537,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   let symlinkEntriesCache:
     | Effect.Effect<ReadonlyArray<ProjectEntry>, WorkspaceSearchIndexSearchFailed>
     | undefined;
-  const symlinkEntries = Effect.fn("WorkspaceSearchIndex.symlinkEntries")(function* () {
+  const cachedSymlinkEntries = Effect.fn("WorkspaceSearchIndex.cachedSymlinkEntries")(function* () {
     if (symlinkEntriesCache !== undefined) return yield* symlinkEntriesCache;
     const scan = yield* Effect.cached(scanSymlinks());
     if (!hasIncompleteInitialScan()) symlinkEntriesCache = scan;
@@ -531,6 +548,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         }),
       ),
     );
+  });
+  const symlinkEntries = Effect.fn("WorkspaceSearchIndex.symlinkEntries")(function* () {
+    const links = yield* cachedSymlinkEntries();
+    return links.length === 0
+      ? links
+      : yield* Effect.promise(() => currentSymlinkEntries(cwd, links));
   });
 
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
