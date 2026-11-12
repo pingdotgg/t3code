@@ -521,6 +521,9 @@ const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapter
 const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly environment: (runtimeOrdinal: number) => Readonly<Record<string, string>>;
   readonly runtimeMode?: "full-access" | "approval-required";
+  readonly wrapPrompt?: (
+    prompt: AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"],
+  ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -540,7 +543,9 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
         environment: input.environment,
         wrapRuntime: (runtime) => {
           natives.push(runtime);
-          return runtime;
+          return input.wrapPrompt === undefined
+            ? runtime
+            : { ...runtime, prompt: input.wrapPrompt(runtime.prompt) };
         },
       }),
     },
@@ -4095,6 +4100,36 @@ describe("AcpAdapterV2", () => {
         assert.equal(silent?.status, "failed");
         assert.equal(next?.status, "completed");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("delivers a follow-up the agent rejects while it is still processing", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({}),
+        // pi-agent-core based agents (oh-my-pi) end a turn but keep background work running.
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          return promptCalls === 2
+            ? Effect.fail(
+                EffectAcpErrors.AcpRequestError.internalError(
+                  "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+                ),
+              )
+            : prompt(payload, options);
+        },
+      });
+      yield* harness.startTurn(1);
+      const [first] = yield* harness.terminals(1);
+      assert.equal(first?.status, "completed");
+
+      const followUp = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(2);
+      yield* TestClock.adjust("1 minute");
+      const [delivered] = yield* Fiber.join(followUp);
+      assert.equal(delivered?.status, "completed");
+      assert.equal(promptCalls, 3);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("holds the inactivity timeout while the agent waits on an approval", () =>
