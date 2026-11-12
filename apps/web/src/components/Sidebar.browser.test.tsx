@@ -16,7 +16,7 @@ import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
-import { useProjects, useQuietThreadShells } from "../state/entities";
+import { useProjects, useQuietThreadShells, useServerConfigs } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -109,6 +109,57 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+});
+
+describe("sidebar settled shelf", () => {
+  // regression: #34291 changing the project filter collapsed an expanded Settled shelf back to 10
+  it("keeps its expanded length when the project filter changes", async () => {
+    using stack = new DisposableStack();
+    localStorage.setItem("t3code:sidebar:settled-expanded", "true");
+    stack.defer(() => localStorage.removeItem("t3code:sidebar:settled-expanded"));
+    const projectA = project("a");
+    const projectB = project("b");
+    const settled = (projectId: ProjectId, index: number) => ({
+      ...threadShell(projectId, index),
+      settledOverride: "settled" as const,
+    });
+    const threads = [
+      ...Array.from({ length: 14 }, (_, index) => settled(projectA.id, index)),
+      ...Array.from({ length: 2 }, (_, index) => settled(projectB.id, 14 + index)),
+    ];
+    vi.mocked(useProjects).mockReturnValue([projectA, projectB]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    // Threads only count as settled once their environment's config has loaded.
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([[projectA.environmentId, { environment: { capabilities: {} } } as never]]),
+    );
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: { environmentId: projectA.environmentId, projectId: projectA.id },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Show 6 more" }));
+    await expect.element(screen.getByText("Thread 15").first()).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("combobox", { name: "Filter threads by project" }));
+    await userEvent.click(screen.getByRole("option", { name: "a" }));
+    await expect.element(screen.getByRole("button", { name: "Settled14" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Thread \d+, a$/ }).elements(),
+      "the Settled shelf fell back to its first page",
+    ).toHaveLength(14);
   });
 });
 
