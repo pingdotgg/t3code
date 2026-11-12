@@ -417,7 +417,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         switch (input.action) {
           case "assign": {
             const title = yield* required(input.title, "title");
-            if (input.assigneeThreadId !== undefined) {
+            if (input.assigneeThreadId != null) {
               yield* readThread(input.assigneeThreadId);
             }
             const random = yield* SecureRandom.SecureRandom;

@@ -6718,12 +6718,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.deliveryIntent,
     );
     // A staged next-turn switch must not hijack a steer/restart of the live turn.
-    let modelSelection =
-      command.modelSelection ??
-      (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active"
-        ? (projection.runs.find((run) => run.id === dispatchMode.targetRunId)?.modelSelection ??
-          projection.thread.modelSelection)
-        : (projection.thread.nextTurnModelSelection ?? projection.thread.modelSelection));
+    let modelSelection = command.modelSelection;
+    if (modelSelection === undefined) {
+      if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
+        const targetRunId = dispatchMode.targetRunId;
+        modelSelection =
+          projection.runs.find((run) => run.id === targetRunId)?.modelSelection ??
+          projection.thread.modelSelection;
+      } else {
+        modelSelection =
+          projection.thread.nextTurnModelSelection ?? projection.thread.modelSelection;
+      }
+    }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
