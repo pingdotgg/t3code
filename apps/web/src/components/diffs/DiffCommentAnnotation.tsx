@@ -13,6 +13,7 @@ import {
   type TextFieldSpeech,
 } from "~/speech/useTextFieldSpeech";
 import { textDirection } from "~/textDirection";
+import { isMacPlatform } from "~/lib/utils";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
 
@@ -76,6 +77,7 @@ export function DiffCommentAnnotation({
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
   const [textarea, setTextarea] = useState<HTMLTextAreaElement | null>(null);
+  const modifierKey = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the draft textarea on the next animation frame after mount
   useLayoutEffect(() => {
@@ -171,7 +173,16 @@ export function DiffCommentAnnotation({
       />
       {renderAttachments?.(onTextChange ?? setLocalDraftText, setUploading, textarea)}
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto flex flex-col text-3xs text-muted-foreground/70">
+          <span>
+            {modifierKey}+Enter to {submitLabel.toLowerCase()}
+          </span>
+          {secondaryAction ? (
+            <span>
+              {modifierKey}+Shift+Enter to {secondaryAction.label.toLowerCase()}
+            </span>
+          ) : null}
+        </span>
         {speech ? <TextFieldSpeechControls speech={speech} disabled={blocked} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
