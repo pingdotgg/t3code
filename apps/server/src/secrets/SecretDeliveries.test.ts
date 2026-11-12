@@ -19,6 +19,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as SecretDeliveries from "./SecretDeliveries.ts";
 
 const decodeMetadata = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
+const isProcessSpawnError = Schema.is(ProcessRunner.ProcessSpawnError);
 
 class RecordingFailure extends Schema.TaggedError<RecordingFailure>()("RecordingFailure", {}) {}
 
@@ -220,7 +221,7 @@ const windowsHost = (acls: Map<string, unknown>) =>
       ProcessRunner.ProcessRunner.of({
         run: (input) => {
           const acl = acls.get(input.env?.T3_PRIVATE_FILE ?? "");
-          if (acl instanceof ProcessRunner.ProcessSpawnError) return Effect.fail(acl);
+          if (isProcessSpawnError(acl)) return Effect.fail(acl);
           return Effect.succeed({
             stdout: typeof acl === "string" ? acl : acl === undefined ? "" : JSON.stringify(acl),
             stderr: "",
