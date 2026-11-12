@@ -25,12 +25,15 @@ import {
   AuthSessionState,
 } from "@t3tools/contracts";
 import { SshHttpBridgeError } from "@t3tools/ssh/errors";
+import { targetConnectionKey } from "@t3tools/ssh/command";
 import { resolveLoopbackSshHttpBaseUrl } from "@t3tools/ssh/tunnel";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopSshEnvironment from "../../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../../ssh/DesktopSshPasswordPrompts.ts";
 
@@ -137,14 +140,36 @@ export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
     options,
   }) {
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
-    return yield* sshEnvironment.ensureEnvironment(target, options).pipe(
-      Effect.catchIf(DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation, (error) =>
-        Effect.succeed({
-          type: DesktopSshPasswordPromptCancelledType,
-          message: error.message,
-        }),
-      ),
-    );
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const mainWindow = yield* electronWindow.main;
+    const targetKey = targetConnectionKey(target);
+    const onProgress = Option.isNone(mainWindow)
+      ? undefined
+      : (text: string) => {
+          try {
+            if (!mainWindow.value.isDestroyed()) {
+              mainWindow.value.webContents.send(IpcChannels.SSH_ENVIRONMENT_PROGRESS_CHANNEL, {
+                targetKey,
+                text,
+              });
+            }
+          } catch {
+            // The window can close mid-setup; progress delivery is best-effort.
+          }
+        };
+    return yield* sshEnvironment
+      .ensureEnvironment(target, {
+        ...options,
+        ...(onProgress === undefined ? {} : { onProgress }),
+      })
+      .pipe(
+        Effect.catchIf(DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation, (error) =>
+          Effect.succeed({
+            type: DesktopSshPasswordPromptCancelledType,
+            message: error.message,
+          }),
+        ),
+      );
   }),
 });
 

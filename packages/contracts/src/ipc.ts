@@ -458,6 +458,16 @@ export const DesktopSshEnvironmentEnsureResultSchema = Schema.Union([
   DesktopSshPasswordPromptCancelledResultSchema,
 ]);
 
+export interface DesktopSshEnvironmentProgressEvent {
+  targetKey: string;
+  text: string;
+}
+
+export const DesktopSshEnvironmentProgressEventSchema = Schema.Struct({
+  targetKey: Schema.String,
+  text: Schema.String,
+});
+
 export const DesktopSshHttpBaseUrlInputSchema = Schema.Struct({
   httpBaseUrl: Schema.String,
 });
@@ -1114,6 +1124,9 @@ export interface DesktopBridge {
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
   /** Fires with a prompt's request id once it is answered, cancelled, expired or abandoned. */
   onSshPasswordPromptSettled: (listener: (requestId: string) => void) => () => void;
+  onSshEnvironmentProgress: (
+    listener: (event: DesktopSshEnvironmentProgressEvent) => void,
+  ) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;

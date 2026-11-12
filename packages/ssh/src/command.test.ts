@@ -75,6 +75,49 @@ describe("ssh command", () => {
     );
   });
 
+  it.effect("streams output chunks live while still collecting the result", () => {
+    const chunks: Array<{ stream: "stdout" | "stderr"; text: string }> = [];
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.make(encoder.encode('{"remotePort":1}\n')),
+          stderr: Stream.make(encoder.encode("t3: downloading\n")),
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      ),
+    );
+    return runSshCommand(
+      { alias: "devbox", hostname: "devbox", username: null, port: null },
+      { onOutput: (chunk) => chunks.push(chunk) },
+    ).pipe(
+      Effect.map((result) => {
+        assert.equal(result.stdout, '{"remotePort":1}\n');
+        assert.deepEqual(
+          [...chunks].sort((left, right) => left.stream.localeCompare(right.stream)),
+          [
+            { stream: "stderr", text: "t3: downloading\n" },
+            { stream: "stdout", text: '{"remotePort":1}\n' },
+          ],
+        );
+      }),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
+
   // Remote servers store state under this key, so it must not change across releases.
   it.effect("derives a stable remote state key", () =>
     Effect.gen(function* () {

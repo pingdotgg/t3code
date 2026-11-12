@@ -1,6 +1,7 @@
 import { Atom, AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { sshTargetKey } from "@t3tools/client-runtime/connection";
 import { useState } from "react";
 import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -62,7 +63,7 @@ function Owner() {
 
 function setup() {
   mocks.connectSshEnvironment.mockClear();
-  return stubGlobal("desktopBridge", {});
+  return stubGlobal("desktopBridge", { onSshEnvironmentProgress: () => () => {} });
 }
 
 const remoteCard = () => page.getByRole("button", { name: /Remote link/ });
@@ -95,6 +96,43 @@ describe("AddEnvironmentDialog", () => {
     expect(mocks.connectSshEnvironment).toHaveBeenCalledOnce();
 
     await expectDefaultModeAfterReopen();
+  });
+
+  it("shows live SSH setup logs for the target being added", async () => {
+    const listeners: Array<(event: { targetKey: string; text: string }) => void> = [];
+    using _bridge = stubGlobal("desktopBridge", {
+      onSshEnvironmentProgress: (
+        listener: (event: { targetKey: string; text: string }) => void,
+      ) => {
+        listeners.push(listener);
+        return () => {};
+      },
+    });
+    mocks.connectSshEnvironment.mockReturnValueOnce(
+      new Promise<AtomCommandResult<void, Error>>(() => {}),
+    );
+    await using _screen = await render(<Owner />);
+
+    await openDialogOnSsh();
+    await userEvent.type(page.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.click(
+      page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
+    );
+    expect(mocks.connectSshEnvironment).toHaveBeenCalledOnce();
+
+    const targetKey = sshTargetKey({
+      alias: "devbox",
+      hostname: "devbox",
+      username: null,
+      port: null,
+    });
+    expect(listeners.length).toBeGreaterThan(0);
+    for (const listener of listeners) {
+      listener({ targetKey: "other-target", text: "unrelated noise\n" });
+      listener({ targetKey, text: "t3: downloading archive\n" });
+    }
+    await expect.element(page.getByRole("log")).toHaveTextContent("t3: downloading archive");
+    await expect.element(page.getByRole("log")).not.toHaveTextContent("unrelated noise");
   });
 
   it("clears the form after dismissing it on SSH", async () => {

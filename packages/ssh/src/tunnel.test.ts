@@ -217,6 +217,7 @@ describe("ssh tunnel scripts", () => {
         assert.notEqual(result.status, 0);
         if (downloads) {
           assert.include(result.stderr, "download attempt");
+          assert.include(result.stderr, "t3: downloading");
           // A bare curl error does not tell the user that t3 itself could not be downloaded.
           assert.include(result.stderr, ARCHIVE.archiveVersion);
           assert.include(result.stderr, "https://github.com/pingdotgg/t3code/releases/download");
@@ -229,6 +230,48 @@ describe("ssh tunnel scripts", () => {
       }
     },
   );
+
+  it.effect("forwards remote launch stderr to the progress callback", () => {
+    const progress: string[] = [];
+    const encoder = new TextEncoder();
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(123),
+          stdout: Stream.make(encoder.encode('{"remotePort":41773}\n')),
+          stderr: Stream.make(encoder.encode("t3: downloading archive\n")),
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      ),
+    );
+    return SshTunnel.launchOrReuseRemoteServer(
+      { alias: "devbox", hostname: "devbox.example.com", username: null, port: null },
+      {},
+      ARCHIVE,
+      (text) => progress.push(text),
+    ).pipe(
+      Effect.map((result) => {
+        assert.equal(result.remotePort, 41773);
+        const joined = progress.join("");
+        assert.include(joined, "Launching remote T3 server");
+        assert.include(joined, "t3: downloading archive");
+      }),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {

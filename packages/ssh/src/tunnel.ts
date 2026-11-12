@@ -155,7 +155,10 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
 export interface SshEnvironmentManagerShape {
   readonly ensureEnvironment: (
     target: DesktopSshEnvironmentTarget,
-    options?: { readonly issuePairingToken?: boolean },
+    options?: {
+      readonly issuePairingToken?: boolean;
+      readonly onProgress?: (text: string) => void;
+    },
   ) => Effect.Effect<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -507,6 +510,7 @@ if ! t3_runtime_ready; then
   T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
   t3_fetch() {
+    printf 't3: downloading %s\\n' "$1" >&2
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
     elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
     else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
@@ -517,6 +521,7 @@ if ! t3_runtime_ready; then
   }
   t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS" @@T3_ARCHIVE_CHECKSUMS_SECONDS@@
   t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE" @@T3_ARCHIVE_DOWNLOAD_SECONDS@@
+  printf 't3: verifying checksum\\n' >&2
   T3_EXPECTED="$(grep " \\*\\{0,1\\}$T3_ARCHIVE$" "$T3_STAGING/SHA256SUMS" | cut -d' ' -f1)"
   if command -v sha256sum >/dev/null 2>&1; then
     T3_ACTUAL="$(sha256sum "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
@@ -526,6 +531,7 @@ if ! t3_runtime_ready; then
   if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
     printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
   fi
+  printf 't3: extracting runtime\\n' >&2
   tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1
   rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
@@ -985,6 +991,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     target: DesktopSshEnvironmentTarget,
     input?: SshAuth.SshAuthOptions,
     runner?: RemoteT3RunnerOptions,
+    onProgress?: (text: string) => void,
   ): Effect.fn.Return<
     { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
@@ -996,12 +1003,20 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...sshRunnerLogFields(runner),
       stateKey,
     });
+    onProgress?.("Launching remote T3 server…\n");
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
         : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS,
+      ...(onProgress === undefined
+        ? {}
+        : {
+            onOutput: (chunk) => {
+              if (chunk.stream === "stderr") onProgress(chunk.text);
+            },
+          }),
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1045,6 +1060,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   target: DesktopSshEnvironmentTarget,
   input?: SshAuth.SshAuthOptions,
   runner?: RemoteT3RunnerOptions,
+  onProgress?: (text: string) => void,
 ): Effect.fn.Return<
   {
     readonly credential: string;
@@ -1061,6 +1077,13 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemotePairingScript(stateKey, runner),
     ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
+    ...(onProgress === undefined
+      ? {}
+      : {
+          onOutput: (chunk) => {
+            if (chunk.stream === "stderr") onProgress(chunk.text);
+          },
+        }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1651,6 +1674,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     readonly key: string;
     readonly resolvedTarget: DesktopSshEnvironmentTarget;
     readonly runner?: RemoteT3RunnerOptions;
+    readonly onProgress?: (text: string) => void;
   }): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logDebug("ssh.environment.tunnel.create.start", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -1661,7 +1685,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
-        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
+        launchOrReuseRemoteServer(
+          input.resolvedTarget,
+          authOptions,
+          input.runner,
+          input.onProgress,
+        ),
     });
     const remotePort = remoteLaunch.remotePort;
     yield* Effect.logDebug("ssh.environment.remotePort.ready", {
@@ -1767,6 +1796,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     key: string,
     resolvedTarget: DesktopSshEnvironmentTarget,
     runner?: RemoteT3RunnerOptions,
+    onProgress?: (text: string) => void,
   ): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     const entry = tunnels.get(key) ?? null;
 
@@ -1805,6 +1835,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key,
       resolvedTarget,
       ...(runner === undefined ? {} : { runner }),
+      ...(onProgress === undefined ? {} : { onProgress }),
     }).pipe(
       Effect.tapError((cause) =>
         Effect.logWarning("ssh.environment.tunnel.create.failed", {
@@ -1818,7 +1849,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   const ensureEnvironment = Effect.fn("ssh/tunnel.ensureEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
-    requestOptions?: { readonly issuePairingToken?: boolean },
+    requestOptions?: {
+      readonly issuePairingToken?: boolean;
+      readonly onProgress?: (text: string) => void;
+    },
   ): Effect.fn.Return<
     DesktopSshEnvironmentBootstrap,
     SshEnvironmentEffectError,
@@ -1828,6 +1862,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
     });
+    const onProgress = requestOptions?.onProgress;
+    onProgress?.(`Resolving SSH host ${target.alias || target.hostname}…\n`);
     const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
     const resolvedTarget: DesktopSshEnvironmentTarget = {
       ...baseResolved,
@@ -1849,14 +1885,15 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     return yield* withTargetLock(
       key,
       Effect.gen(function* () {
-        const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
+        const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner, onProgress);
 
+        if (requestOptions?.issuePairingToken) onProgress?.("Issuing pairing token…\n");
         const pairingResult = requestOptions?.issuePairingToken
           ? yield* runWithSshAuth({
               key,
               target: entry.target,
               operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, runner),
+                issueRemotePairingToken(entry.target, authOptions, runner, onProgress),
             })
           : null;
         const pairingToken = pairingResult?.credential ?? null;

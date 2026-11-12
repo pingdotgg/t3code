@@ -9,6 +9,7 @@ import {
 import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
+  sshTargetKey,
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
@@ -66,6 +67,7 @@ import {
 } from "./ConnectionsSettings.logic";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
+const MAX_SSH_PROGRESS_TEXT = 20_000;
 
 export function AddEnvironmentDialog({
   open,
@@ -119,6 +121,9 @@ export function AddEnvironmentDialog({
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const savedBackendSessionRef = useRef(0);
+  const [sshProgressText, setSshProgressText] = useState("");
+  const sshProgressTargetKeyRef = useRef<string | null>(null);
+  const sshProgressLogRef = useRef<HTMLDivElement | null>(null);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
   const desktopSshHosts = useEnvironmentQuery(
     isSshDiscoveryActive ? desktopSshHostsStateAtom : null,
@@ -130,6 +135,19 @@ export function AddEnvironmentDialog({
   useEffect(() => {
     if (isSshDiscoveryActive) refreshDesktopSshHosts();
   }, [isSshDiscoveryActive, refreshDesktopSshHosts]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- SSH setup progress arrives over desktop IPC while the dialog is open
+  useEffect(() => {
+    if (!desktopBridge || !open) return;
+    return desktopBridge.onSshEnvironmentProgress((event) => {
+      if (event.targetKey !== sshProgressTargetKeyRef.current) return;
+      setSshProgressText((current) => (current + event.text).slice(-MAX_SSH_PROGRESS_TEXT));
+    });
+  }, [desktopBridge, open]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the live setup log pinned to the newest output
+  useEffect(() => {
+    const log = sshProgressLogRef.current;
+    if (log && sshProgressText.length > 0) log.scrollTop = log.scrollHeight;
+  }, [sshProgressText]);
   const discoveredSshHosts = desktopSshHosts.data ?? EMPTY_DISCOVERED_SSH_HOSTS;
   const unsavedDiscoveredSshHosts = discoveredSshHosts.filter((target) => {
     const address = formatDesktopSshTarget(target);
@@ -156,6 +174,8 @@ export function AddEnvironmentDialog({
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
+      sshProgressTargetKeyRef.current = null;
+      setSshProgressText("");
     }
     onOpenChange(nextOpen);
   };
@@ -163,6 +183,8 @@ export function AddEnvironmentDialog({
     const session = savedBackendSessionRef.current;
     setIsAddingSavedBackend(true);
     onErrorChange(null);
+    sshProgressTargetKeyRef.current = sshTargetKey(target);
+    setSshProgressText("");
     const result = await connectSshEnvironment({
       target,
       label: "",
@@ -172,6 +194,7 @@ export function AddEnvironmentDialog({
       if (session === savedBackendSessionRef.current && !isAtomCommandInterrupted(result)) {
         pipe(squashAtomCommandFailure(result), formatDesktopSshConnectionError, onErrorChange);
       }
+      sshProgressTargetKeyRef.current = null;
       setIsAddingSavedBackend(false);
       return;
     }
@@ -587,6 +610,16 @@ export function AddEnvironmentDialog({
             />
           </label>
         </div>
+        {sshProgressText.length > 0 ? (
+          <div
+            ref={sshProgressLogRef}
+            role="log"
+            aria-label="SSH setup log"
+            className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-border/60 bg-muted/30 p-2 font-mono text-2xs text-muted-foreground"
+          >
+            {sshProgressText}
+          </div>
+        ) : null}
         {error || discoveredSshHostsError ? (
           <Alert variant="error">
             <AlertDescription>{error ?? discoveredSshHostsError}</AlertDescription>

@@ -41,6 +41,10 @@ export interface RunSshCommandOptions extends SshAuthOptions {
   readonly timeoutMs?: number;
   /** Keep the end of long failed-command stdout, where the final cause usually is. */
   readonly keepErrorOutputTail?: boolean;
+  readonly onOutput?: (chunk: {
+    readonly stream: "stdout" | "stderr";
+    readonly text: string;
+  }) => void;
 }
 
 export function parseSshResolveOutput(alias: string, stdout: string): DesktopSshEnvironmentTarget {
@@ -127,9 +131,13 @@ export function getLastNonEmptyOutputLine(stdout: string): string | null {
   );
 }
 
-const collectProcessOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
+const collectProcessOutput = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+  observe?: (text: string) => void,
+): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
+    Stream.tap((text) => Effect.sync(() => observe?.(text))),
     Stream.runFold(
       () => "",
       (acc, chunk) => acc + chunk,
@@ -287,8 +295,8 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
 
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
-      collectProcessOutput(child.stdout),
-      collectProcessOutput(child.stderr),
+      collectProcessOutput(child.stdout, (text) => input.onOutput?.({ stream: "stdout", text })),
+      collectProcessOutput(child.stderr, (text) => input.onOutput?.({ stream: "stderr", text })),
       child.exitCode.pipe(Effect.map(Number)),
     ],
     { concurrency: "unbounded" },
