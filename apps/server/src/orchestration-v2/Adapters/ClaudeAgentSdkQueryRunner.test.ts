@@ -633,6 +633,69 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }),
   );
 
+  // The default AgentScope is what macOS gets: no systemd scope to catch a job outside the CLI's group.
+  it.effect("stops a job the CLI started in its own process group when the session closes", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          `perl -e 'setpgrp(0, 0); exec @ARGV' sleep 600 > "$dir/alive" &`,
+          'echo $! > "$dir/leftover.pid"',
+          "cat > /dev/null",
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
+          } catch {}
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      );
+      const alive = NodeFS.createReadStream(NodePath.join(dir, "alive"));
+      const leftoverStarted = new Promise<void>((resolve) => alive.once("open", () => resolve()));
+      const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
+      alive.resume();
+
+      const session = yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
+      yield* Effect.promise(() => leftoverStarted);
+      yield* session.close;
+      yield* Effect.promise(() => leftoverStopped);
+    }),
+  );
+
+  // Live clock: the job is found by polling while the CLI runs, and the CLI exits on its own.
+  it.live("stops a job the CLI started in its own process group when the CLI exits", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          `perl -e 'setpgrp(0, 0); exec @ARGV' sleep 600 > "$dir/alive" &`,
+          'echo $! > "$dir/leftover.pid"',
+          "sleep 3",
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
+          } catch {}
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      );
+      const alive = NodeFS.createReadStream(NodePath.join(dir, "alive"));
+      const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
+      alive.resume();
+
+      yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
+      yield* Effect.promise(() => leftoverStopped);
+    }),
+  );
+
   const rootRefusal =
     "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
