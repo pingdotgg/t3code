@@ -37,6 +37,7 @@ import {
   type ScopedThreadRef,
   type ThreadContextRecord,
   type EnvironmentContextRecord,
+  type ResponseContextRecord,
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
@@ -228,16 +229,6 @@ export function resolveProactiveTurnDiffAction(input: {
   }
   const totals = checkpointFileTotals(input.checkpoint);
   return totals.count >= 3 || totals.additions + totals.deletions >= 50 ? "open" : "ignore";
-}
-
-/** Mark reactivated Diff tabs to preserve review scope. Already-active tabs must not leave a marker for
- * the next open. */
-export function resolveExplicitDiffOpenOnActivate(input: {
-  readonly surfaceKind: RightPanelSurface["kind"];
-  readonly diffOpen: boolean;
-  readonly activeThreadRef: ScopedThreadRef;
-}): ScopedThreadRef | null {
-  return input.surfaceKind === "diff" && !input.diffOpen ? input.activeThreadRef : null;
 }
 
 export function codexArtifactTemplatePromptToAppend(
@@ -1259,6 +1250,8 @@ export interface ComposerSendContents {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  /** The response the message replies to. `prompt` already leads with its reference. */
+  readonly replyTo: ResponseContextRecord | null;
 }
 
 /**
@@ -1270,6 +1263,14 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
   const images = [...contents.images];
   const files = [...contents.files];
   const terminalContexts = [...contents.sendableTerminalContexts];
+  const messageText = contents.terminalContexts
+    .filter((context) => !terminalContexts.includes(context))
+    .reduce(
+      (text, context) =>
+        removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+      contents.prompt,
+    )
+    .trim();
   return {
     images,
     files,
@@ -1279,14 +1280,12 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     reviewComments: [...contents.reviewComments],
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
-    messageText: contents.terminalContexts
-      .filter((context) => !terminalContexts.includes(context))
-      .reduce(
-        (text, context) =>
-          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
-        contents.prompt,
-      )
-      .trim(),
+    replyTo: contents.replyTo,
+    messageText,
+    /** What a failed send puts back in the composer: the reply returns above it, not in the text. */
+    draftText: contents.replyTo
+      ? removeInlineContextReference(messageText, contents.replyTo.contextId).prompt.trimStart()
+      : messageText,
   };
 }
 
@@ -1331,7 +1330,9 @@ export function planComposerTurn(input: {
     baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
     compactBeforeSend,
     turnDispatchMode:
-      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : dispatchMode,
+      compactBeforeSend || (input.sendQueuesBehindSetup && dispatchMode !== "steer")
+        ? ("queue" as const)
+        : dispatchMode,
     shouldQueueBehindActiveRun:
       compactBeforeSend ||
       input.sendQueuesBehindSetup ||
@@ -1453,22 +1454,46 @@ export function presentThreadShellFromProjection(
   };
 }
 
-/** Background work the provider still runs after the latest run ended. */
+// Excludes `waiting`: that is post-terminal checkpoint drain, so its agent turn is over.
+const LIVE_RUN_STATUSES = new Set(["queued", "preparing", "starting", "running"]);
+
+/**
+ * Background work the provider still runs after an earlier run ended. It
+ * stays listed while a later run is live; that live run's own items are its
+ * foreground work, so they never count as background. The provider roster is
+ * not run-tied, so it drops entries naming a live run's item by native id.
+ */
 export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure | null) {
   if (projection === null) return [];
   const sessionError =
     projection.providerSessions.findLast(
       (session) => session.providerInstanceId === projection.thread.providerInstanceId,
     )?.lastError ?? null;
+  const liveRunIds = new Set(
+    projection.runs.filter((run) => LIVE_RUN_STATUSES.has(run.status)).map((run) => run.id),
+  );
+  const foregroundTaskIds = new Set<string>();
+  for (const item of projection.turnItems) {
+    if (item.runId === null || !liveRunIds.has(item.runId)) continue;
+    if (item.nativeItemRef?.nativeId) foregroundTaskIds.add(item.nativeItemRef.nativeId);
+  }
   const latestRun =
     usageLimitRunPresentedAsLatest(projection.runs, projection.turnItems, sessionError) ??
-    latestUnheldRun(projection.runs);
+    latestUnheldRun(projection.runs.filter((run) => !liveRunIds.has(run.id)));
   return [
     ...derivePendingBackgroundWork({
       latestRun,
-      providerThreads: projection.providerThreads,
-      turnItems: projection.turnItems,
+      providerThreads: projection.providerThreads.map((thread) => ({
+        ...thread,
+        pendingBackgroundTasks: thread.pendingBackgroundTasks?.filter(
+          (task) => !foregroundTaskIds.has(task.taskId),
+        ),
+      })),
+      turnItems: projection.turnItems.filter(
+        (item) => item.runId === null || !liveRunIds.has(item.runId),
+      ),
       activeProviderThreadId: projection.thread.activeProviderThreadId,
+      hasActiveRun: false,
       runs: projection.runs,
       pullRequests: projection.thread.pullRequests,
     }),
