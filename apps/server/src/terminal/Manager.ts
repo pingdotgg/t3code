@@ -43,6 +43,7 @@ import { mergePathEntries } from "@t3tools/shared/shell";
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
@@ -75,6 +76,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
+import { watchShellReadiness } from "./shellReadiness.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export {
@@ -279,8 +281,6 @@ interface TerminalStartInput {
   readonly worktreePath?: string | null;
   readonly cols: number;
   readonly rows: number;
-  readonly initialCommand?: string;
-  readonly initialCommandShellHistory?: "preserve" | "suppress";
 }
 
 interface TerminalSessionState {
@@ -406,16 +406,6 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     cols: session.cols,
     rows: session.rows,
   };
-}
-
-function openSnapshot(
-  session: TerminalSessionState,
-  initialCommandHandled: boolean,
-): TerminalSessionSnapshot {
-  const current = snapshot(session);
-  return initialCommandHandled && session.status === "running"
-    ? { ...current, initialCommandHandled: true }
-    : current;
 }
 
 function summary(session: TerminalSessionState): TerminalSummary {
@@ -609,47 +599,10 @@ function formatShellCandidate(candidate: ShellCandidate): string {
   return `${candidate.shell} ${candidate.args.join(" ")}`;
 }
 
-function quotePosixShellArgument(value: string): string {
-  return `'${value.replaceAll("'", "'\"'\"'")}'`;
-}
-
-function posixShellCandidateWithInitialCommand(
-  candidate: ShellCandidate,
-  initialCommand: string,
-  shellHistory: "preserve" | "suppress" | undefined,
-): ShellCandidate {
-  const baseArgs = candidate.args ?? [];
-  const reenterShell = [candidate.shell, ...baseArgs].map(quotePosixShellArgument).join(" ");
-  const shellName = basenameForPlatform(candidate.shell, "linux").toLowerCase();
-  const quotedCommand = quotePosixShellArgument(initialCommand);
-  const recordHistory =
-    shellHistory !== "preserve"
-      ? ""
-      : shellName === "bash"
-        ? `history -s -- ${quotedCommand}; history -a\n`
-        : shellName === "zsh"
-          ? `print -sr -- ${quotedCommand}; fc -AI\n`
-          : "";
-  return {
-    shell: candidate.shell,
-    args: [
-      ...baseArgs,
-      "-i",
-      "-c",
-      `trap ':' INT\n${recordHistory}${initialCommand}\nexec ${reenterShell}`,
-    ],
-  };
-}
-
-function supportsPosixInitialCommand(
-  candidates: ReadonlyArray<ShellCandidate>,
-  platform: NodeJS.Platform,
-): boolean {
-  if (platform === "win32") return false;
-  return candidates.every((candidate) => {
-    const shellName = basenameForPlatform(candidate.shell, platform).toLowerCase();
-    return shellName === "zsh" || shellName === "bash" || shellName === "sh";
-  });
+// PowerShell and cmd have no line-editor signal, so their input is written right away.
+function shellSignalsLineEditor(shell: string): boolean {
+  const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
+  return name !== "cmd" && name !== "pwsh" && name !== "powershell";
 }
 
 function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellCandidate[] {
@@ -2505,32 +2458,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     let ptyProcess: PtyAdapter.PtyProcess | null = null;
     let startedShell: string | null = null;
-    let initialCommandHandled = false;
 
     const startResult = yield* Effect.result(
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const resolvedShellCandidates = resolveShellCandidates(
-              shellResolver,
-              platform,
-              baseEnv,
-            );
-            const initialCommand = input.initialCommand;
-            let shellCandidates = resolvedShellCandidates;
-            if (
-              initialCommand !== undefined &&
-              supportsPosixInitialCommand(resolvedShellCandidates, platform)
-            ) {
-              initialCommandHandled = true;
-              shellCandidates = resolvedShellCandidates.map((candidate) =>
-                posixShellCandidateWithInitialCommand(
-                  candidate,
-                  initialCommand,
-                  input.initialCommandShellHistory,
-                ),
-              );
-            }
+            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               session.runtimeEnv,
@@ -2618,7 +2551,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (startResult._tag === "Success") {
-      return initialCommandHandled;
+      return;
     }
 
     {
@@ -2661,7 +2594,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         cause: error,
         ...(startedShell ? { shell: startedShell } : {}),
       });
-      return false;
     }
   });
 
@@ -2978,21 +2910,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
 
       yield* evictInactiveSessionsIfNeeded();
-      const initialCommandHandled = yield* startSession(
+      return yield* startOpenedSession(
         session,
         {
           cwd: input.cwd,
           ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
           cols,
           rows,
-          ...(input.initialCommand ? { initialCommand: input.initialCommand } : {}),
-          ...(input.initialCommandShellHistory
-            ? { initialCommandShellHistory: input.initialCommandShellHistory }
-            : {}),
         },
-        "started",
+        input,
       );
-      return openSnapshot(session, initialCommandHandled);
     }
 
     const liveSession = existing.value;
@@ -3032,21 +2959,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     if (!liveSession.process) {
-      const initialCommandHandled = yield* startSession(
+      return yield* startOpenedSession(
         liveSession,
         {
           cwd: input.cwd,
           worktreePath: liveSession.worktreePath,
           cols: targetCols,
           rows: targetRows,
-          ...(input.initialCommand ? { initialCommand: input.initialCommand } : {}),
-          ...(input.initialCommandShellHistory
-            ? { initialCommandShellHistory: input.initialCommandShellHistory }
-            : {}),
         },
-        "started",
+        input,
       );
-      return openSnapshot(liveSession, initialCommandHandled);
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
@@ -3054,6 +2976,48 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     return snapshot(liveSession);
+  });
+
+  // Input written while the shell starts can be swallowed by rc-file startup, so an initial
+  // command waits for the line editor and then runs in that shell, after its prompt hooks.
+  const startOpenedSession = Effect.fn("terminal.startOpenedSession")(function* (
+    session: TerminalSessionState,
+    startInput: TerminalStartInput,
+    input: TerminalOpenInput,
+  ) {
+    const initialCommand = input.initialCommand;
+    if (initialCommand === undefined) {
+      yield* startSession(session, startInput, "started");
+      return snapshot(session);
+    }
+    const readiness = yield* watchShellReadiness({
+      subscribe: (listener) => subscribe(listener),
+      threadId: session.threadId,
+      terminalId: session.terminalId,
+      onStartupPrompt: Effect.void,
+    });
+    yield* startSession(session, startInput, "started").pipe(
+      Effect.onExit(() =>
+        session.status === "running" ? Effect.void : Effect.sync(readiness.unsubscribe),
+      ),
+    );
+    if (session.status !== "running" || session.shell === null) return snapshot(session);
+    const target = { threadId: session.threadId, terminalId: session.terminalId };
+    const data =
+      input.initialCommandShellHistory === "preserve"
+        ? `${initialCommand}\r`
+        : projectScriptTerminalInput(initialCommand);
+    yield* (shellSignalsLineEditor(session.shell) ? readiness.wait : Effect.succeed("ready")).pipe(
+      Effect.flatMap((outcome) =>
+        outcome === "exited" ? Effect.void : write({ ...target, data }),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("terminal initial command was not written", { ...target, cause }),
+      ),
+      Effect.ensuring(Effect.sync(readiness.unsubscribe)),
+      Effect.forkIn(workerScope),
+    );
+    return { ...snapshot(session), initialCommandHandled: true };
   });
 
   const openLocked = (input: TerminalOpenInput) =>

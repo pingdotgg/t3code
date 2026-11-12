@@ -64,6 +64,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   killed = false;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
   onKill: ((signal?: string) => void) | undefined;
+  onWrite: ((data: string) => void) | undefined;
 
   constructor(pid: number) {
     this.pid = pid;
@@ -74,6 +75,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
       throw this.writeFailure;
     }
     this.writes.push(data);
+    this.onWrite?.(data);
   }
 
   resize(cols: number, rows: number): void {
@@ -128,6 +130,7 @@ class FakePtyAdapter {
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
+  onWrite: ((data: string) => void) | undefined;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
@@ -149,6 +152,7 @@ class FakePtyAdapter {
     }
     const process = new FakePtyProcess(this.nextPid++);
     process.exitOnSubscribe = this.exitOnSubscribe;
+    process.onWrite = this.onWrite;
     this.processes.push(process);
     if (this.mode === "async") {
       return Effect.tryPromise({
@@ -432,23 +436,20 @@ it.layer(
     }),
   );
 
-  it.effect("runs an initial command during fresh shell startup", () =>
+  it.effect("writes an initial command once the fresh shell's line editor reads input", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/bin/zsh",
-      });
+      const ptyAdapter = new FakePtyAdapter();
+      const written = yield* Deferred.make<string>();
+      ptyAdapter.onWrite = (data) => Deferred.doneUnsafe(written, Effect.succeed(data));
+      const { manager } = yield* createManager(5, { ptyAdapter });
 
       const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
-
-      expect(ptyAdapter.spawnInputs[0]?.args).toEqual([
-        "-o",
-        "nopromptsp",
-        "-i",
-        "-c",
-        "trap ':' INT\nnpm run dev\nexec '/bin/zsh' '-o' 'nopromptsp'",
-      ]);
-      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
       expect(snapshot.initialCommandHandled).toBe(true);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+
+      ptyAdapter.processes[0]?.emitData("\x1b[?2004h$ ");
+      expect(yield* Deferred.await(written)).toBe(" npm run dev\r");
+      expect(ptyAdapter.processes[0]?.writes).toEqual([" npm run dev\r"]);
     }),
   );
 
@@ -467,9 +468,7 @@ it.layer(
 
   it.effect("handles an initial command when open restarts a running session", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
-        shellResolver: () => "/bin/zsh",
-      });
+      const { manager, ptyAdapter, baseDir } = yield* createManager();
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
       const originalCwd = path.join(baseDir, "original");
@@ -483,37 +482,31 @@ it.layer(
       );
 
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
-      expect(ptyAdapter.spawnInputs[1]?.args).toEqual([
-        "-o",
-        "nopromptsp",
-        "-i",
-        "-c",
-        "trap ':' INT\nnpm run dev\nexec '/bin/zsh' '-o' 'nopromptsp'",
-      ]);
       expect(reopened.initialCommandHandled).toBe(true);
       expect(reopened.cwd).toBe(differentCwd);
     }),
   );
 
-  it.effect("leaves a Windows shell unchanged for an initial command", () =>
+  it.effect("writes an initial command to PowerShell without waiting for a line editor", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
+      const ptyAdapter = new FakePtyAdapter();
+      const written = yield* Deferred.make<string>();
+      ptyAdapter.onWrite = (data) => Deferred.doneUnsafe(written, Effect.succeed(data));
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
         env: {
           PATH: "C:\\Windows\\System32",
           SystemRoot: "C:\\Windows",
         },
       }).pipe(Effect.provide(layerWithHostPlatform("win32")));
 
-      const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
-
-      expect(ptyAdapter.spawnInputs[0]).toEqual(
-        expect.objectContaining({
-          shell: "pwsh.exe",
-          args: ["-NoLogo"],
-        }),
+      const snapshot = yield* manager.open(
+        openInput({ initialCommand: "npm run dev", initialCommandShellHistory: "preserve" }),
       );
-      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
-      expect(snapshot.initialCommandHandled).toBeUndefined();
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("pwsh.exe");
+      expect(snapshot.initialCommandHandled).toBe(true);
+      expect(yield* Deferred.await(written)).toBe("npm run dev\r");
     }),
   );
 

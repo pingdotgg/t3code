@@ -43,7 +43,7 @@ export const TerminalOpenInput = Schema.Struct({
   providerInstanceId: Schema.optional(ProviderInstanceId),
   stopOnSettle: Schema.optional(Schema.Boolean),
   initialCommandShellHistory: Schema.optional(Schema.Literals(["preserve", "suppress"])),
-  /** Ask the server to run a command during shell startup when supported. */
+  /** Typed into a freshly started shell once its line editor reads input. */
   initialCommand: Schema.optional(
     Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
   ),
