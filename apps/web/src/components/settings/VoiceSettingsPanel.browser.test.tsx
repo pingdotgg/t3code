@@ -14,6 +14,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import { chooseRecordingMicrophone } from "../../speech/browserMicrophones";
 import {
   useEnvironmentSpeechInput,
   useVoiceTranscriptionDestination,
@@ -331,17 +332,23 @@ it("tests the selected model after download and preserves its transcript across 
           const result = screen.getByRole("status", { name: "Test transcript" });
           await expect.element(result).toHaveTextContent(transcript);
 
-          const search = screen.getByRole("textbox", { name: "Search transcription models" });
+          const search = screen.getByRole("searchbox", { name: "Search transcription models" });
           await userEvent.fill(search, "no matching model");
           await expect.element(screen.getByText("No models match.")).toBeVisible();
           await userEvent.clear(search);
+          const languages = screen.getByRole("button", { name: /^Filter by language/ });
+          await userEvent.click(languages);
           await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
-          const french = screen.getByRole("button", { name: "French", exact: true });
+          const french = screen.getByRole("menuitemcheckbox", { name: "French", exact: true });
           await userEvent.click(french);
+          await userEvent.keyboard("{Escape}");
           await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
           await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
           expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
+          await userEvent.click(languages);
+          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
           await userEvent.click(french);
+          await userEvent.keyboard("{Escape}");
           await expect.element(result).toBeVisible();
           await vi.waitFor(() =>
             expect(
@@ -590,4 +597,51 @@ it("keeps punctuation in a saved dictionary term and its alias", async () => {
   expect(getClientSettings().speechCustomWords).toEqual([
     { term: "O'Reilly", aliases: ['"Oh Really"'] },
   ]);
+});
+
+it("records from the first connected microphone in the saved order", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  // A single saved microphone from before the order existed comes first.
+  __setClientSettingsForTests({ ...previous, voiceMicrophone: "yeti", voiceMicrophones: [] });
+  const input = (deviceId: string, label: string) =>
+    ({ deviceId, label, groupId: deviceId, kind: "audioinput" }) as MediaDeviceInfo;
+  const yeti = input("yeti", "Blue Yeti");
+  const airpods = input("airpods", "AirPods Pro");
+  using devices = vi
+    .spyOn(navigator.mediaDevices, "enumerateDevices")
+    .mockResolvedValue([yeti, airpods]);
+  const saved = () =>
+    getClientSettings().voiceMicrophones.map((entry) =>
+      entry.kind === "default" ? "System default" : entry.label,
+    );
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  const list = screen.getByRole("list", { name: "Microphones, preferred first" });
+  await expect.poll(saved).toEqual(["Blue Yeti", "System default", "AirPods Pro"]);
+  const row = (index: number) => list.getByRole("listitem").nth(index);
+  await expect.element(row(0)).toHaveTextContent("1Blue YetiIn use");
+  expect(await chooseRecordingMicrophone()).toBe("yeti");
+
+  devices.mockResolvedValue([airpods]);
+  await userEvent.click(screen.getByRole("button", { name: "Refresh microphones" }));
+  await expect.element(row(0)).toHaveTextContent("1Blue YetiNot connected");
+  await expect.element(row(1)).toHaveTextContent("2System defaultIn use");
+  expect(await chooseRecordingMicrophone()).toBe("");
+
+  await userEvent.click(screen.getByRole("button", { name: "Move AirPods Pro up" }));
+  await userEvent.click(screen.getByRole("button", { name: "Move AirPods Pro up" }));
+  expect(saved()).toEqual(["AirPods Pro", "Blue Yeti", "System default"]);
+  await expect.element(screen.getByRole("button", { name: "Move AirPods Pro up" })).toBeDisabled();
+  expect(await chooseRecordingMicrophone()).toBe("airpods");
+
+  await userEvent.click(screen.getByRole("button", { name: "Forget Blue Yeti" }));
+  expect(saved()).toEqual(["AirPods Pro", "System default"]);
+  await expect
+    .element(screen.getByRole("button", { name: "Forget System default" }))
+    .not.toBeInTheDocument();
 });

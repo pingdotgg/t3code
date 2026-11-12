@@ -331,6 +331,8 @@ interface ThreadState {
   unsettled: boolean;
   /** A late first start belongs to the failed prompt; only a subsequent start proves a lost end. */
   unsettledStarted: boolean;
+  /** Execution starts seen; lets a check that awaited OpenCode notice a run that began meanwhile. */
+  starts: number;
   directory: string;
   agent: string;
   title: string | undefined;
@@ -359,6 +361,8 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
+  /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
+  readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
@@ -579,7 +583,7 @@ const claudeUsageLimit = (message: string | undefined) =>
     ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
     : undefined;
 
-const INTERRUPT_TIMEOUT = "10 seconds";
+const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = "2 seconds";
@@ -588,6 +592,7 @@ const RECONNECT_WAIT = "30 seconds";
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
+const MCP_TOOL_RELOAD_SETTLE = "250 millis";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -618,6 +623,7 @@ const turnPromptId = (sessionId: string, attemptId: string) =>
   SessionMessage.ID.make(`msg_t3_turn_${sessionId}:${attemptId}`);
 const steerPromptId = (sessionId: string, messageId: string) =>
   SessionMessage.ID.make(`msg_t3_steer_${sessionId}:${messageId}`);
+const isOwnPrompt = (inboxId: string) => inboxId.startsWith("msg_t3_");
 
 const promptOf = (turn: OrchestrationV2ProviderTurn) => {
   const nativeId = turn.nativeTurnRef?.nativeId;
@@ -827,6 +833,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       model: undefined,
       unsettled: false,
       unsettledStarted: false,
+      starts: 0,
       directory,
       agent: "build",
       title: undefined,
@@ -839,6 +846,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       reports: new Map(),
       stoppedChildren: new Set(),
       strandedSteers: new Set(),
+      externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
     });
@@ -1117,6 +1125,57 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           messageId,
           text: entry.text,
           streaming: !completed,
+        },
+      });
+    });
+
+    // T3's own prompts are sent while their turn is active, so only other clients reach here.
+    const emitExternalPrompt = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      inboxId: string,
+      text: string,
+    ) {
+      const now = yield* DateTime.now;
+      const base = {
+        ...itemBase(state, turn, inboxId, "completed", now, now, now),
+        nodeId: turn.input.rootNodeId,
+      };
+      // History derives the same ID from the message ID, so a later snapshot does not duplicate it.
+      const messageId = idAllocator.derive.messageFromProviderItem({
+        driver,
+        nativeItemId: inboxId,
+      });
+      yield* emit({
+        type: "message.updated",
+        driver,
+        message: {
+          createdBy: "user",
+          creationSource: "provider",
+          id: messageId,
+          threadId: turn.input.threadId,
+          runId: turn.input.runId,
+          nodeId: base.nodeId,
+          role: "user",
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...base,
+          createdBy: "user",
+          creationSource: "provider",
+          type: "user_message",
+          messageId,
+          inputIntent: "turn_start",
+          text,
+          attachments: [],
         },
       });
     });
@@ -1829,7 +1888,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         driver,
         nativeItemId: call.nativeId,
       });
-      const childThreadId = idAllocator.derive.threadFromProviderThread({
+      const childThreadId = idAllocator.derive.subagentThread({
         driver,
         nativeThreadId: childId,
         providerInstanceId: instanceId,
@@ -2760,6 +2819,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       const { delivered, stopped } = yield* takeReports(state);
       if (stopped) return;
       const route = state.providerThread.appThreadId;
+      // History begins at whichever OpenCode queued first: a report or another client's prompt.
+      // A prompt leads only this wake, so one dropped undelivered cannot move a later boundary.
+      const leading = [...state.externalPrompts].find(([, prompt]) => prompt.leads)?.[0];
+      for (const prompt of state.externalPrompts.values()) prompt.leads = false;
       const wake: Wake = {
         messageId:
           route === null
@@ -2771,7 +2834,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
         after: delivered.at(-1)?.inboxId,
-        first: delivered[0]?.inboxId,
+        first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
       };
       state.wakes.push(wake);
@@ -3020,6 +3083,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         ) {
           // Executions are serial: a second start proves the unsettled run lost its end.
           const state = threads.get(sessionId);
+          if (state !== undefined) state.starts += 1;
           if (state?.unsettled === true) {
             if (state.unsettledStarted) state.unsettled = false;
             else state.unsettledStarted = true;
@@ -3176,21 +3240,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       }
       if (event.type === "session.inbox.cancelled" || event.type === "session.inbox.delivered") {
         state.reports.delete(event.data.inboxID);
+        const external = state.externalPrompts.get(event.data.inboxID);
+        state.externalPrompts.delete(event.data.inboxID);
         const turn = state.active;
         if (turn !== undefined && turn.steers.delete(event.data.inboxID)) {
           turn.settledInbox.add(event.data.inboxID);
           if (event.type === "session.inbox.cancelled") yield* endIfSettled(state, turn);
+        } else if (
+          event.type === "session.inbox.delivered" &&
+          external !== undefined &&
+          turn !== undefined
+        ) {
+          yield* emitExternalPrompt(state, turn, event.data.inboxID, external.text);
         }
         return;
       }
+      // No T3 turn existed while a wake held these, so its user items came from another client.
       if (
         event.type === "session.inbox.enqueued" &&
         event.data.item.type === "user" &&
-        state.subagent !== undefined &&
-        state.subagent.prompt === undefined &&
-        state.active === undefined
+        (state.active === undefined || (held && state.subagent === undefined))
       ) {
-        state.subagent.prompt = event.data.item.payload.text;
+        const text = event.data.item.payload.text;
+        if (state.subagent !== undefined) state.subagent.prompt ??= text;
+        // T3's own prompts can be admitted after a failed submit ended their turn.
+        else if (!isOwnPrompt(event.data.inboxID)) {
+          state.externalPrompts.set(event.data.inboxID, {
+            text,
+            leads: !held && state.reports.size === 0,
+          });
+        }
         return;
       }
       const started =
@@ -3485,11 +3564,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
+      // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
       for (const state of threads.values()) {
         state.mcp = undefined;
         state.goalFresh = false;
         state.goalRefreshing = false;
         state.goalRevision += 1;
+        for (const prompt of state.externalPrompts.values()) prompt.leads = false;
       }
       if (supportsNativeGoals()) {
         yield* Effect.forEach(
@@ -3752,21 +3833,37 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       verb: "roll back" | "fork",
     ) {
       const state = threads.get(sessionId);
+      // A stopped turn whose end was lost with the stream stays active here,
+      // so OpenCode's own list decides whether it still runs.
+      const stopped = state?.active?.interrupted === true ? state.active : undefined;
+      const starts = state?.starts;
+      const stillWorking = new ProviderAdapter.ProviderAdapterProtocolError({
+        driver: OPENCODE_PROVIDER,
+        detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
+      });
       const busyHere =
         state !== undefined &&
-        (state.active !== undefined ||
-          busy.has(sessionId) ||
+        ((stopped === undefined && (state.active !== undefined || busy.has(sessionId))) ||
           (verb === "roll back" && hasBackground(state)));
       const busyThere =
         !busyHere &&
-        (state === undefined || state.unsettled) &&
+        (state === undefined || state.unsettled || stopped !== undefined) &&
         sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT)));
-      if (busyHere || busyThere) {
-        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-          driver: OPENCODE_PROVIDER,
-          detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
-        });
-      }
+      if (busyHere || busyThere) return yield* stillWorking;
+      if (state === undefined || stopped === undefined) return;
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          // A run that started during the check may postdate OpenCode's answer.
+          if (state.starts !== starts) return yield* stillWorking;
+          if (state.active !== stopped) return;
+          // Its end may still arrive late; unsettled swallows it and makes the next turn await its start.
+          // OpenCode reported it idle, so any later start is a new run.
+          state.unsettled = true;
+          state.unsettledStarted = true;
+          busy.delete(sessionId);
+          yield* finishTurn(state, { status: "interrupted" });
+        }),
+      );
     });
 
     const cancelStrandedSteers = Effect.fnUntraced(function* (state: ThreadState) {
@@ -3967,6 +4064,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
+        const fresh = state.mcp === undefined;
         mcpAvailable = yield* client.mcp
           .add({
             server: name,
@@ -3988,6 +4086,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             ),
           );
         if (mcpAvailable) state.mcp = wanted;
+        // Before 2.2.6, OpenCode loads a new server's tools 100 ms after it connects, and a prompt sent sooner lacks them.
+        if (mcpAvailable && fresh && compareSemverVersions(connection.version, "2.2.6") < 0) {
+          yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
+        }
       }
       const instructions = [
         buildRuntimeInstructions({
@@ -4133,7 +4235,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           const wake = state.wakes.shift()!;
           const turn = state.active;
           if (turn !== undefined && wake.after !== undefined) turn.before = wake.after;
-          // Its first report is where its history begins, so fork and rollback cut there.
+          // Fork and rollback cut where its history begins.
           if (turn !== undefined && wake.first !== undefined) {
             turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(wake.first, "weak") };
           }
@@ -4726,8 +4828,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               ),
             );
           if (reply._tag === "None") {
-            markUnsettled(state);
-            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+            if (state.active !== turn) return;
+            // The turn stays open: its tools may still run, and the user decides whether to Force stop.
+            return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+              driver: OPENCODE_PROVIDER,
+              providerThreadId: interruptInput.providerThread.id,
+              providerTurnId: interruptInput.providerTurnId,
+              timeoutMs: INTERRUPT_TIMEOUT,
+            });
           }
           // Stop between steer executions retracts pending steers and skips any run they already started.
           if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {

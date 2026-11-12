@@ -133,3 +133,22 @@ it("finds a review with no text of its own through the earliest comment it poste
   );
   expect(resolvePullRequestReviewAnchor("issuecomment-9", [], threads)).toBe("issuecomment-9");
 });
+
+it("reads GitLab merge request file and line anchors", () => {
+  const path = "internal/commands/issuable/view/issuable_view_test.go";
+  const digest = "0cd3702f060909d3161d1095b8347d4d07671427";
+  expect(pullRequestDiffPathMatches(digest, path)).toBe(true);
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}`)).toEqual({
+    kind: "diff",
+    digest,
+    range: null,
+  });
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_248_253`)).toEqual({
+    kind: "diff",
+    digest,
+    range: { start: 253, side: "right", end: 253, endSide: "right" },
+  });
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}_12_0`)).toMatchObject({
+    range: { start: 12, side: "left" },
+  });
+});
