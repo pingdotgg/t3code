@@ -1,0 +1,351 @@
+import { assert, it } from "@effect/vitest";
+import {
+  EventId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationV2DomainEvent,
+  type ThreadLinkedPullRequest,
+} from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as ThreadSearch from "./ThreadSearch.ts";
+
+const layerTest = Layer.mergeAll(
+  ThreadSearch.layer,
+  ProjectionStore.layer,
+  ProjectStore.layer,
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
+
+const providerInstanceId = ProviderInstanceId.make("codex");
+const at = (minute: number) => DateTime.makeUnsafe(Date.UTC(2026, 8, 27, 0, minute));
+
+const createProject = (projectId: ProjectId) =>
+  Effect.flatMap(ProjectStore.ProjectStoreV2, (projects) =>
+    projects.apply({
+      sequence: 0,
+      eventId: EventId.make(`created:${projectId}`),
+      aggregateKind: "project",
+      aggregateId: projectId,
+      occurredAt: DateTime.formatIso(at(0)),
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.created",
+      payload: {
+        projectId,
+        title: projectId,
+        workspaceRoot: `/work/${projectId}`,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: DateTime.formatIso(at(0)),
+        updatedAt: DateTime.formatIso(at(0)),
+      },
+    }),
+  );
+
+const thread = (
+  threadId: ThreadId,
+  projectId: ProjectId,
+  overrides: {
+    readonly archivedAt?: DateTime.Utc;
+    readonly deletedAt?: DateTime.Utc;
+    readonly subagentOf?: ThreadId;
+    readonly sideChatOf?: ThreadId;
+    readonly title?: string;
+    readonly settledAt?: DateTime.Utc;
+    readonly linkedPullRequest?: ThreadLinkedPullRequest;
+    readonly branchPullRequest?: ThreadLinkedPullRequest;
+  } = {},
+): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`created:${threadId}`),
+  type: "thread.created",
+  threadId,
+  providerInstanceId,
+  occurredAt: at(0),
+  payload: {
+    createdBy: "user",
+    creationSource: "web",
+    id: threadId,
+    projectId,
+    title: overrides.title ?? threadId,
+    providerInstanceId,
+    modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    linkedPullRequest: overrides.linkedPullRequest ?? null,
+    branchPullRequest: overrides.branchPullRequest ?? null,
+    activeProviderThreadId: null,
+    lineage: overrides.subagentOf
+      ? {
+          parentThreadId: overrides.subagentOf,
+          relationshipToParent: "subagent",
+          rootThreadId: overrides.subagentOf,
+        }
+      : overrides.sideChatOf
+        ? {
+            parentThreadId: overrides.sideChatOf,
+            relationshipToParent: "fork",
+            rootThreadId: overrides.sideChatOf,
+            sideChat: true,
+          }
+        : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    forkedFrom: null,
+    createdAt: at(0),
+    updatedAt: at(0),
+    archivedAt: overrides.archivedAt ?? null,
+    settledOverride: overrides.settledAt === undefined ? null : "settled",
+    settledAt: overrides.settledAt ?? null,
+    lastVisitedAt: null,
+    deletedAt: overrides.deletedAt ?? null,
+  },
+});
+
+const message = (
+  threadId: ThreadId,
+  id: string,
+  role: "user" | "assistant" | "system",
+  text: string,
+  options: {
+    readonly minute?: number;
+    readonly streaming?: boolean;
+    readonly createdBy?: "user" | "agent";
+  } = {},
+): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`message:${id}`),
+  type: "message.updated",
+  threadId,
+  providerInstanceId,
+  occurredAt: at(options.minute ?? 1),
+  payload: {
+    createdBy: options.createdBy ?? (role === "user" ? "user" : "agent"),
+    creationSource: role === "user" ? "web" : "provider",
+    id: MessageId.make(id),
+    threadId,
+    runId: null,
+    nodeId: null,
+    role,
+    text,
+    attachments: [],
+    streaming: options.streaming ?? false,
+    createdAt: at(options.minute ?? 1),
+    updatedAt: at(options.minute ?? 1),
+  },
+});
+
+
+
+
+
+
+
+
+
+
+
+
+it.layer(layerTest)("ThreadSearch", (it) => {
+  it.effect("reads the newest hits without sorting all of them", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      for (const match of ['"needle"', null]) {
+        const plan = yield* sql<{
+          readonly detail: string;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        assert.isFalse(
+          plan.some((row) => row.detail.includes("TEMP B-TREE")),
+          plan.map((row) => row.detail).join("\n"),
+        );
+        if (match !== null) {
+          assert.lengthOf(
+            plan.filter((row) =>
+              row.detail.startsWith("SEARCH messages USING INTEGER PRIMARY KEY"),
+            ),
+            1,
+            plan.map((row) => row.detail).join("\n"),
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect("returns one finished user or assistant match per active thread", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search");
+      const deletedProject = ProjectId.make("project:search-deleted");
+      yield* createProject(project);
+      yield* createProject(deletedProject);
+      yield* Effect.flatMap(ProjectStore.ProjectStoreV2, (projects) =>
+        projects.apply({
+          sequence: 0,
+          eventId: EventId.make("deleted:project"),
+          aggregateKind: "project",
+          aggregateId: deletedProject,
+          occurredAt: DateTime.formatIso(at(2)),
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.deleted",
+          payload: { projectId: deletedProject, deletedAt: DateTime.formatIso(at(2)) },
+        }),
+      );
+
+      const both = ThreadId.make("thread:both");
+      const assistantOnly = ThreadId.make("thread:assistant");
+      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        thread(both, project),
+        message(both, "both-assistant", "assistant", "needle from the answer", { minute: 3 }),
+        message(both, "both-user-old", "user", "older needle question", { minute: 1 }),
+        message(both, "both-user-new", "user", "newer needle question", { minute: 2 }),
+        thread(assistantOnly, project),
+        message(assistantOnly, "assistant-only", "assistant", "needle in an answer"),
+        message(assistantOnly, "assistant-streaming", "user", "needle still typing", {
+          streaming: true,
+        }),
+        message(assistantOnly, "assistant-system", "system", "needle system prompt"),
+        thread(ThreadId.make("thread:archived"), project, { archivedAt: at(1) }),
+        message(ThreadId.make("thread:archived"), "archived", "user", "needle archived"),
+        thread(ThreadId.make("thread:deleted"), project, { deletedAt: at(1) }),
+        message(ThreadId.make("thread:deleted"), "deleted", "user", "needle deleted"),
+        thread(ThreadId.make("thread:orphaned"), deletedProject),
+        message(ThreadId.make("thread:orphaned"), "orphaned", "user", "needle orphaned"),
+      ];
+      yield* Effect.forEach(events, projections.apply, { discard: true });
+
+      const result = yield* search.search({ query: "NEEDLE", limit: 20 });
+      assert.deepEqual(
+        result.matches
+          .map((match) => [match.threadId, match.source, match.snippet, match.messageId])
+          .toSorted(([left], [right]) => String(left).localeCompare(String(right))),
+        [
+          [assistantOnly, "assistant", "needle in an answer", "assistant-only"],
+          [both, "user", "newer needle question", "both-user-new"],
+        ],
+      );
+      assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
+      assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
+    }),
+  );
+
+  it.effect("indexes a message when it finishes streaming and follows later edits", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-sync");
+      const threadId = ThreadId.make("thread:sync");
+      yield* createProject(project);
+      yield* projections.apply(thread(threadId, project));
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      yield* projections.apply(
+        message(threadId, "sync", "assistant", "streaming draft", { streaming: true }),
+      );
+      assert.deepEqual(yield* threadIds("draft"), []);
+
+      yield* projections.apply(message(threadId, "sync", "assistant", "finished answer"));
+      assert.deepEqual(yield* threadIds("finished"), [threadId]);
+
+      yield* projections.apply(message(threadId, "sync", "assistant", "edited reply"));
+      assert.deepEqual(yield* threadIds("finished"), []);
+      assert.deepEqual(yield* threadIds("edited"), [threadId]);
+    }),
+  );
+
+  it.effect("matches inside identifiers and skips hidden threads and short tokens", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-tokens");
+      const parent = ThreadId.make("thread:tokens-parent");
+      const subagent = ThreadId.make("thread:tokens-subagent");
+      const sideChat = ThreadId.make("thread:tokens-side-chat");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(parent, project),
+          message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
+          thread(subagent, project, { subagentOf: parent }),
+          message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
+          thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
+          message(sideChat, "side-chat", "user", "Why rename ThreadSearchService?"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+
+      const result = yield* search.search({ query: "search servi" });
+      assert.deepEqual(
+        result.matches.map((match) => [match.threadId, match.snippet]),
+        [[parent, "Rename ThreadSearchService before shipping"]],
+      );
+      // "ab" alone cannot use the index; with a longer token it narrows the hits.
+      assert.deepEqual((yield* search.search({ query: "ab" })).matches, []);
+      assert.lengthOf((yield* search.search({ query: "renam be" })).matches, 1);
+      assert.lengthOf((yield* search.search({ query: "renam ab" })).matches, 0);
+    }),
+  );
+
+  it.effect("indexes neither subagent messages nor rewrites that keep the text", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const project = ProjectId.make("project:search-index-writes");
+      const parent = ThreadId.make("thread:index-parent");
+      const subagent = ThreadId.make("thread:index-subagent");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(parent, project),
+          message(parent, "index-parent", "assistant", "parent answer"),
+          thread(subagent, project, { subagentOf: parent }),
+          message(subagent, "index-subagent", "assistant", "subagent answer"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const indexedThreads = sql<{ readonly threadId: string }>`
+        SELECT messages.thread_id AS "threadId"
+        FROM orchestration_v2_message_search AS search
+        INNER JOIN orchestration_v2_projection_messages AS messages
+          ON messages.rowid = search.rowid
+        WHERE messages.thread_id IN (${parent}, ${subagent})
+      `.pipe(Effect.map((rows) => rows.map((row) => row.threadId)));
+      assert.deepEqual(yield* indexedThreads, [parent]);
+
+      // total_changes counts trigger writes, so 1 means the index was untouched.
+      const changes = sql<{ readonly n: number }>`SELECT total_changes() AS n`.pipe(
+        Effect.map(([row]) => row?.n ?? 0),
+      );
+      const before = yield* changes;
+      yield* sql`
+        UPDATE orchestration_v2_projection_messages
+        SET payload_json = json_set(payload_json, '$.updatedAt', '2026-09-27T01:00:00.000Z')
+        WHERE message_id = 'index-parent'
+      `;
+      assert.strictEqual((yield* changes) - before, 1);
+      assert.deepEqual(yield* indexedThreads, [parent]);
+    }),
+  );
+});
+
