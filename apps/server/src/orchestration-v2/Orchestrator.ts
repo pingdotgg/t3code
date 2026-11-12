@@ -4874,11 +4874,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       !providerSwitchPlan.instanceChanged &&
       providerSwitchPlan.releaseProviderSessionIds.length === 0
     ) {
-      const { providerThread, providerTurn } = yield* projectionStore
+      const { run, providerThread, providerTurn } = yield* projectionStore
         .getRunningTurnContext(command.threadId)
         .pipe(mapDispatchError(command));
       const providerSessionId = providerThread?.providerSessionId;
-      if (providerThread !== undefined && providerTurn !== undefined && providerSessionId) {
+      if (
+        run !== undefined &&
+        providerThread !== undefined &&
+        providerTurn !== undefined &&
+        providerSessionId
+      ) {
         const session = yield* providerSessions.get(providerSessionId).pipe(
           Effect.mapError(
             (cause) =>
@@ -4890,6 +4895,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
         if (Option.isSome(session) && session.value.applyModelSelection !== undefined) {
+          // The running run now runs at the new selection; task_status reads it from here.
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, modelSelection: command.modelSelection },
+          });
           yield* Ref.update(effects, (existing) => [
             ...existing,
             {
