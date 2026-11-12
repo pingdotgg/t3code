@@ -68,6 +68,19 @@ describe("Cursor skills", () => {
           "oversized",
           "x".repeat(1_000_001),
         );
+        const pluginSkillsRoot = path.join(
+          userHome,
+          ".cursor",
+          "plugins",
+          "local",
+          "demo",
+          "skills",
+        );
+        yield* writeSkill(
+          pluginSkillsRoot,
+          "plugin-skill",
+          "---\ndescription: plugin skill\n---\n",
+        );
         const builtinRoot = path.join(userHome, ".cursor", "skills-cursor");
         yield* writeSkill(builtinRoot, "loop", "---\ndescription: builtin loop\n---\n");
         yield* writeSkill(builtinRoot, "review", "---\ndescription: builtin review\n---\n");
@@ -98,6 +111,13 @@ describe("Cursor skills", () => {
             name: "oversized",
             path: path.join(workspace, ".cursor", "skills", "oversized", "SKILL.md"),
             scope: "project",
+            enabled: true,
+          },
+          {
+            name: "plugin-skill",
+            description: "plugin skill",
+            path: path.join(pluginSkillsRoot, "plugin-skill", "SKILL.md"),
+            scope: "user",
             enabled: true,
           },
           {
