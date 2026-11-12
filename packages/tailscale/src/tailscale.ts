@@ -308,23 +308,30 @@ export const readTailscaleStatus = readTailscaleOutput("status", ["status", "--j
   Effect.flatMap(parseTailscaleStatus),
 );
 
-const TailscaleExitNodeJson = Schema.Struct({
+const TailscalePeersJson = Schema.Struct({
+  BackendState: Schema.optional(Schema.Unknown),
+  TUN: Schema.optional(Schema.Unknown),
+  // Go prints a nil Self or Peer as null: logged out, or no other machines.
+  Self: Schema.optional(
+    Schema.NullOr(Schema.Struct({ TailscaleIPs: Schema.optional(Schema.Unknown) })),
+  ),
   ExitNodeStatus: Schema.optional(Schema.Struct({ Online: Schema.optional(Schema.Unknown) })),
   Peer: Schema.optional(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({
-        ExitNode: Schema.optional(Schema.Unknown),
-        HostName: Schema.optional(Schema.Unknown),
-        DNSName: Schema.optional(Schema.Unknown),
-      }),
+    Schema.NullOr(
+      Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          ExitNode: Schema.optional(Schema.Unknown),
+          HostName: Schema.optional(Schema.Unknown),
+          DNSName: Schema.optional(Schema.Unknown),
+          TailscaleIPs: Schema.optional(Schema.Unknown),
+        }),
+      ),
     ),
   ),
 });
 
-const decodeTailscaleExitNodeJson = Schema.decodeEffect(
-  Schema.fromJsonString(TailscaleExitNodeJson),
-);
+const decodeTailscalePeersJson = Schema.decodeEffect(Schema.fromJsonString(TailscalePeersJson));
 
 export interface TailscaleExitNode {
   readonly name: string | null;
@@ -338,7 +345,7 @@ export interface TailscaleExitNode {
 export const parseTailscaleExitNode = (
   rawStatusJson: string,
 ): Effect.Effect<TailscaleExitNode | null, TailscaleStatusParseError> =>
-  decodeTailscaleExitNodeJson(rawStatusJson).pipe(
+  decodeTailscalePeersJson(rawStatusJson).pipe(
     Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
     Effect.map((parsed) => {
       if (parsed.ExitNodeStatus === undefined) return null;
@@ -357,6 +364,33 @@ export const parseTailscaleExitNode = (
 
 export const readTailscaleExitNode = readTailscaleOutput("status", ["status", "--json"]).pipe(
   Effect.flatMap(parseTailscaleExitNode),
+);
+
+/**
+ * The addresses of this machine and every other machine on its tailnet. Empty
+ * unless Tailscale runs with its TUN device: stopped or in userspace networking,
+ * it still lists them, but the OS would send traffic to them unencrypted.
+ */
+export const parseTailnetAddresses = (
+  rawStatusJson: string,
+): Effect.Effect<ReadonlySet<string>, TailscaleStatusParseError> =>
+  decodeTailscalePeersJson(rawStatusJson).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.map((parsed) => {
+      if (parsed.BackendState !== "Running" || parsed.TUN !== true) return new Set<string>();
+      const nodes = [...(parsed.Self ? [parsed.Self] : []), ...Object.values(parsed.Peer ?? {})];
+      return new Set(
+        nodes.flatMap((node) =>
+          Array.isArray(node.TailscaleIPs)
+            ? node.TailscaleIPs.filter((address): address is string => typeof address === "string")
+            : [],
+        ),
+      );
+    }),
+  );
+
+export const readTailnetAddresses = readTailscaleOutput("status", ["status", "--json"]).pipe(
+  Effect.flatMap(parseTailnetAddresses),
 );
 
 const TailscalePrefsJson = Schema.Struct({

@@ -14,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   ensureTailscaleServe,
+  parseTailnetAddresses,
   parseTailscaleExitNode,
   parseTailscaleServeRootHolders,
   parseTailscaleServeRoutesTo,
@@ -313,6 +314,20 @@ describe("tailscale", () => {
       assert.deepEqual(unnamed, { name: null, online: false });
 
       assert.equal(yield* parseTailscaleExitNode(tailscaleStatusJson), null);
+    }),
+  );
+
+  it.effect("lists this machine's addresses when it has no other peers", () =>
+    Effect.gen(function* () {
+      const addresses = yield* parseTailnetAddresses(
+        `{"BackendState":"Running","TUN":true,"Self":{"TailscaleIPs":["100.101.0.1"]},"Peer":null}`,
+      );
+      assert.deepEqual([...addresses], ["100.101.0.1"]);
+
+      const loggedOut = yield* parseTailnetAddresses(
+        `{"BackendState":"NeedsLogin","TUN":true,"Self":null,"Peer":null}`,
+      );
+      assert.equal(loggedOut.size, 0);
     }),
   );
 
