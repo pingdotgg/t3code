@@ -646,6 +646,7 @@ describe("local project navigation", () => {
       expect(navigation.getState().routes.map((route) => route.name)).toEqual(["Home", "Thread"]);
       expect(navigation.getState().routes[1]?.params).toEqual({
         draft: {
+          environmentSelection: "manual",
           environmentId: "environment",
           projectId: "project",
           title: "t3-mobile-audit-fixture",
