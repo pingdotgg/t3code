@@ -48,6 +48,7 @@ export interface CourseProblems {
     readonly text?: string;
     readonly solution?: string | null;
     readonly references?: ReadonlyArray<CourseProblemReference>;
+    readonly cite?: string;
     readonly note?: string;
     readonly workedExampleUnits?: ReadonlyArray<{ readonly unit: number; readonly title: string }>;
   }>;
@@ -666,14 +667,17 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
                 : references.length === 0
                   ? "No published solution was found online. End every verdict on this problem with the cite line. "
                   : 'Published references (hidden from the learner until their final answer) are a check, not the truth. End every verdict on this problem, even a quick "correct", with the cite line. If your worked answer differs, say "the posted solution disagrees; here\'s why mine differs" and grade against your own working, never the reference. If a reference\'s numbers differ from the problem\'s own, treat it as a likely transcription misread; never say its author used wrong numbers. ';
-            const cite =
-              references === undefined
-                ? undefined
-                : references.length === 0
-                  ? "No published solution was found online."
-                  : `Checked against ${references.map(({ label, url }) => `[${label}](${url})`).join(", ")}.`;
             const referenceFields =
-              references === undefined ? {} : { references, cite, note: referencesNote.trim() };
+              references === undefined
+                ? {}
+                : {
+                    references,
+                    cite:
+                      references.length === 0
+                        ? "No published solution was found online."
+                        : `Checked against ${references.map(({ label, url }) => `[${label}](${url})`).join(", ")}.`,
+                    note: referencesNote.trim(),
+                  };
             if ((!input.reveal && !input.skip) || input.pset === undefined) {
               if (input.pset === undefined && input.unit === undefined) return item;
               return {
