@@ -710,6 +710,9 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       shell("old", null, null, 30),
       shell("middle", "parent", null),
       shell("leaf", "middle", null),
+      // Idle, and kept either way: a live subagent is below it.
+      shell("upper", "parent", null),
+      shell("deep", "upper", "running"),
     ];
     const firstSnapshot = (input: {
       readonly omitIdleSubagents?: boolean;
@@ -770,7 +773,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     const withoutChildren = yield* firstSnapshot({ omitIdleSubagents: true });
     assert.deepEqual(
       withoutChildren?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "old", "middle"],
+      ["parent", "live", ...recent, "old", "middle", "upper", "deep"],
     );
     const withoutIdleParents = yield* firstSnapshot({
       omitIdleSubagents: true,
@@ -778,12 +781,12 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     });
     assert.deepEqual(
       withoutIdleParents?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "old"],
+      ["parent", "live", ...recent, "old", "upper", "deep"],
     );
     const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
     assert.deepEqual(
       withoutOld?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "middle"],
+      ["parent", "live", ...recent, "middle", "upper", "deep"],
     );
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
       { projectId: ProjectId.make("project"), count: 1 },

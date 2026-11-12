@@ -87,7 +87,7 @@ import {
 // boundedThreadSnapshotHttp.ts, threadHistoryHttp.ts, shellSnapshotHttp.ts, threads.ts and shell.ts.
 const CLIENT_BOUNDED_QUERY = "compactTurnItems=1&dedupeBodies=1&compactIds=1";
 const CLIENT_HISTORY_QUERY = "compactIds=1";
-const CLIENT_SHELL_QUERY = "omitIdleSubagents=1&omitOlderSettled=1";
+const CLIENT_SHELL_QUERY = "omitIdleSubagents=1&omitIdleSubagentParents=1&omitOlderSettled=1";
 
 const decodeThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot)),
@@ -245,6 +245,7 @@ const subscribe = Effect.fn("transfer.subscribe")(function* (
           afterSequence,
           requestCompletionMarker: true,
           omitIdleSubagents: true,
+          omitIdleSubagentParents: true,
           omitOlderSettled: true,
         });
   yield* stream.pipe(
