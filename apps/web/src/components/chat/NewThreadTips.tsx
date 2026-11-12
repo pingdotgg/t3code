@@ -26,7 +26,7 @@ import { compactSidebarTimeLabel, formatRelativeTimeLabel } from "~/timestampFor
 import { TIP_BY_ID, TIPS, type Tip, type TipAction } from "~/tips/catalog";
 import { sidebarPreviewFolders, type SidebarPreviewFolder } from "~/tips/sidebarPreview";
 import { deckStartIndex } from "~/tips/tipsState";
-import { canStoreTips, readTipsState } from "~/tips/tipsStorage";
+import { canStoreTips, markTipDone, readTipsState } from "~/tips/tipsStorage";
 import { markTipOpened, markTipShown, runTipsVisit, setTipDismissed } from "~/tips/tipsStore";
 import { settingsSearchHash } from "../settings/settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -45,6 +45,7 @@ export function NewThreadTips({
   readyDrivers,
   composerDriver,
   onTryPrompt,
+  onEmpty,
 }: {
   environmentId: EnvironmentId;
   projectId: string | null;
@@ -52,6 +53,8 @@ export function NewThreadTips({
   readyDrivers: string | undefined;
   composerDriver: string | null;
   onTryPrompt: (prompt: string) => void;
+  /** Called when the last tip left while focus was inside, so focus has somewhere to go. */
+  onEmpty: () => void;
 }) {
   const enabled = useClientSettings((settings) => settings.newThreadTipsEnabled);
   const settingsReady = useClientSettingsHydrated();
@@ -82,6 +85,7 @@ export function NewThreadTips({
       readyDrivers={readyDrivers}
       composerDriver={composerDriver}
       onTryPrompt={onTryPrompt}
+      onEmpty={onEmpty}
     />
   );
 }
@@ -92,16 +96,18 @@ function TipsSection({
   readyDrivers,
   composerDriver,
   onTryPrompt,
+  onEmpty,
 }: {
   environmentId: EnvironmentId;
   /**
    * Whether what the pick reads has loaded. Checked only until the pick, so a machine that
-   * connects later never unmounts an open section and its Undo.
+   * connects later never unmounts an open section.
    */
   ready: boolean;
   readyDrivers: string | undefined;
   composerDriver: string | null;
   onTryPrompt: (prompt: string) => void;
+  onEmpty: () => void;
 }) {
   // Picked once per draft, after it is on screen and its project's providers have loaded, so it
   // never changes while the user types or switches tabs.
@@ -127,55 +133,54 @@ function TipsSection({
       environmentId={environmentId}
       composerDriver={composerDriver}
       onTryPrompt={onTryPrompt}
+      onEmpty={onEmpty}
     />
   );
 }
 
 function TipsCarousel({
-  deck,
+  deck: picked,
   environmentId,
   composerDriver,
   onTryPrompt,
+  onEmpty,
 }: {
   deck: ReadonlyArray<TipId>;
   environmentId: EnvironmentId;
   composerDriver: string | null;
   onTryPrompt: (prompt: string) => void;
+  onEmpty: () => void;
 }) {
   const navigate = useNavigate();
+  // Tips hidden or finished in this visit leave at once. Settings lists every tip, and a
+  // hidden one can be brought back there.
+  const [gone, setGone] = useState<ReadonlySet<TipId>>(new Set());
+  const deck = picked.filter((id) => !gone.has(id));
   // Start on the oldest tip not yet seen, so each one gets its turn without the arrows.
-  const [index, setIndex] = useState(() => deckStartIndex(TIPS, deck, readTipsState()));
-  const [hidden, setHidden] = useState<ReadonlySet<TipId>>(new Set());
-  const [boringSidebarTurnedOn, setBoringSidebarTurnedOn] = useState(false);
+  const [currentId, setCurrentId] = useState(
+    () => picked[deckStartIndex(TIPS, picked, readTipsState())],
+  );
   // Read once: the setting changes as soon as "Turn it on" is pressed, and that button must
-  // stay until the save ends, so focus can move from it to Undo.
+  // stay until the save ends.
   const [sidebarWasOn] = useState(() => getClientSettings().boringSidebarEnabled);
-  const tip = TIP_BY_ID.get(deck[Math.min(index, deck.length - 1)]!)!;
-  const isHidden = hidden.has(tip.id);
+  const index = currentId === undefined ? -1 : deck.indexOf(currentId);
+  const tip = currentId === undefined || index === -1 ? undefined : TIP_BY_ID.get(currentId);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the first time a tip is on screen in localStorage and analytics
   useEffect(() => {
-    if (!isHidden) markTipShown(tip.id, environmentId);
-  }, [tip.id, isHidden, environmentId]);
+    if (tip !== undefined) markTipShown(tip.id, environmentId);
+  }, [tip, environmentId]);
 
   const sectionRef = useRef<HTMLElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const slideId = useId();
+  const savingSidebar = useRef(false);
+  if (tip === undefined) return null;
+
   // Paging replaces the focused button; keep focus in the section so the arrows still work.
   const keepFocus = () => sectionRef.current?.focus({ preventScroll: true });
-  // Hide, Turn it on and Undo replace the action buttons. When that removes the button that had
-  // focus, focus goes to what took its place (Undo, or the restored action). A button that
-  // stays, such as Next after the user moved on during a slow save, keeps its focus.
-  const replaceActions = (update: () => void) => {
-    const focused = document.activeElement;
-    const inActions = actionsRef.current?.contains(focused) === true;
-    flushSync(update);
-    if (inActions && focused?.isConnected === false) {
-      actionsRef.current?.querySelector<HTMLElement>("button, a")?.focus({ preventScroll: true });
-    }
-  };
   const paged = deck.length > 1;
-  const go = (step: number) => setIndex((current) => (current + step + deck.length) % deck.length);
+  const go = (step: number) => setCurrentId(deck[(index + step + deck.length) % deck.length]);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     // With one tip the arrows have nowhere to go, so focus stays on its button.
     if (!paged || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
@@ -186,27 +191,34 @@ function TipsCarousel({
     if (actionsRef.current?.contains(document.activeElement)) keepFocus();
     go(event.key === "ArrowLeft" ? -1 : 1);
   };
-  const setHiddenFor = (hide: boolean) => {
-    if (!setTipDismissed(tip.id, hide, environmentId)) return;
-    replaceActions(() =>
-      setHidden((current) => {
-        const next = new Set(current);
-        if (hide) next.add(tip.id);
-        else next.delete(tip.id);
-        return next;
-      }),
-    );
+  // The tip leaves and the next one takes its place. When that removes the button that had
+  // focus, focus stays in the section, or goes to the composer after the last tip.
+  const remove = (id: TipId) => {
+    const focused = document.activeElement;
+    const inside = sectionRef.current?.contains(focused) === true;
+    const at = deck.indexOf(id);
+    flushSync(() => {
+      setGone((current) => new Set(current).add(id));
+      if (id === currentId) setCurrentId(deck[at + 1] ?? deck[at - 1]);
+    });
+    if (!inside || focused?.isConnected) return;
+    if (sectionRef.current) keepFocus();
+    else onEmpty();
   };
-  const savingSidebar = useRef(false);
-  const setBoringSidebar = (on: boolean) => {
+  const hide = () => {
+    if (setTipDismissed(tip.id, true, environmentId)) remove(tip.id);
+  };
+  const turnOnSidebar = () => {
     // A second press during a slow save would queue the same write again.
     if (savingSidebar.current) return;
     savingSidebar.current = true;
-    // The next visit records it as done if it is still on, so Undo leaves no trace. The section
-    // says it is on only once the setting is saved.
-    void persistClientSettingsUpdate((current) => ({ ...current, boringSidebarEnabled: on }))
+    void persistClientSettingsUpdate((current) => ({ ...current, boringSidebarEnabled: true }))
       .then(
-        () => replaceActions(() => setBoringSidebarTurnedOn(on)),
+        () => {
+          // The sidebar changes on screen, so the tip has nothing more to say.
+          markTipDone("boring-sidebar");
+          remove("boring-sidebar");
+        },
         () => toastManager.add({ type: "error", title: "Could not save the sidebar setting" }),
       )
       .finally(() => {
@@ -215,7 +227,7 @@ function TipsCarousel({
   };
   const runAction = (action: TipAction) => {
     markTipOpened(tip.id, environmentId);
-    if (action.kind === "boring-sidebar") setBoringSidebar(true);
+    if (action.kind === "boring-sidebar") turnOnSidebar();
     else if (action.kind === "prompt") onTryPrompt(action.prompt);
     else if (action.kind === "setting")
       void navigate({
@@ -228,8 +240,7 @@ function TipsCarousel({
       });
   };
 
-  const boringDone = tip.id === "boring-sidebar" && boringSidebarTurnedOn;
-  const showPreview = tip.id === "boring-sidebar" && !isHidden && !boringDone;
+  const showPreview = tip.id === "boring-sidebar";
   return (
     <section
       ref={sectionRef}
@@ -284,7 +295,7 @@ function TipsCarousel({
               void navigate({ to: "/settings/tips", search: { machine: environmentId } })
             }
           >
-            All tips
+            See all
           </InlineButton>
         </span>
       </div>
@@ -306,45 +317,24 @@ function TipsCarousel({
                 }
               : {})}
           >
-            <p className="text-sm font-medium text-foreground">
-              {isHidden ? "Tip hidden." : boringDone ? "Boring sidebar is on." : tip.lead}
-            </p>
-            <p className="mt-0.5 text-pretty leading-relaxed text-muted-foreground">
-              {isHidden
-                ? "Find it again in Settings → Tips."
-                : boringDone
-                  ? "Your threads are grouped by project."
-                  : tip.body}
-            </p>
+            <p className="text-sm font-medium text-foreground">{tip.lead}</p>
+            <p className="mt-0.5 text-pretty leading-relaxed text-muted-foreground">{tip.body}</p>
           </div>
-          <div ref={actionsRef} className="-ms-0.5 flex flex-wrap items-center gap-1.5">
-            {isHidden || boringDone ? (
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => (isHidden ? setHiddenFor(false) : setBoringSidebar(false))}
-              >
-                Undo
-              </Button>
-            ) : (
-              <>
-                <TipActions
-                  key={tip.id}
-                  tip={withoutDoneActions(tip, sidebarWasOn)}
-                  appearance="button"
-                  composerDriver={composerDriver}
-                  onAction={runAction}
-                />
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  aria-label="Hide this tip"
-                  onClick={() => setHiddenFor(true)}
-                >
-                  Hide
-                </Button>
-              </>
-            )}
+          {/* Keyed by tip, so a new tip never inherits focus on Hide. */}
+          <div
+            key={tip.id}
+            ref={actionsRef}
+            className="-ms-0.5 flex flex-wrap items-center gap-1.5"
+          >
+            <TipActions
+              tip={withoutDoneActions(tip, sidebarWasOn)}
+              appearance="button"
+              composerDriver={composerDriver}
+              onAction={runAction}
+            />
+            <Button size="xs" variant="ghost-muted" aria-label="Hide this tip" onClick={hide}>
+              Hide
+            </Button>
           </div>
         </div>
         {showPreview ? <BoringSidebarPreview /> : null}
@@ -353,10 +343,7 @@ function TipsCarousel({
   );
 }
 
-/**
- * Drops "Turn it on" when Boring sidebar is already on, as after clearing "Tried it": Undo would
- * then turn off a choice the user made before.
- */
+/** Drops "Turn it on" when Boring sidebar is already on, as after clearing "Tried it". */
 export const withoutDoneActions = (tip: Tip, boringSidebarOn: boolean): Tip =>
   tip.id === "boring-sidebar" && boringSidebarOn
     ? { ...tip, actions: tip.actions.filter((action) => action.kind !== "boring-sidebar") }

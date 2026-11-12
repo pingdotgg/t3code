@@ -3861,6 +3861,7 @@ export default function ChatView(props: ChatViewProps) {
                                 : (selectedProviderEntry?.driverKind ?? null)
                             }
                             onTryPrompt={insertTipPromptStable}
+                            onEmpty={scheduleComposerFocusStable}
                           />
                         </div>
                       ) : null}
