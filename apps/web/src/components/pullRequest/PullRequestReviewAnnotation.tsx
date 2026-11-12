@@ -197,8 +197,13 @@ export function InlineReviewThreads({
   const isExpanded = (thread: PullRequestReviewThread) =>
     choices.get(thread.id) ?? !thread.isResolved;
   const folded = threads.filter((thread) => thread.isResolved && !isExpanded(thread));
-  // A marker that went away took its focus request with it, so a later one cannot steal focus.
-  if (markerFocus > 0 && folded.length === 0) setFocus(null);
+  // A focus request lives only while its target is on the line, so a later remount cannot steal focus.
+  const focusTargetGone =
+    focus !== null &&
+    ("marker" in focus
+      ? folded.length === 0
+      : !threads.some((thread) => thread.id === focus.threadId && !folded.includes(thread)));
+  if (focusTargetGone) setFocus(null);
   return (
     <>
       {folded.length > 0 ? (

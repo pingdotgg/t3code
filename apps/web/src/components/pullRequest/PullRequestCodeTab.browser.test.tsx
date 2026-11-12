@@ -457,6 +457,13 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
   await expect.element(marker()).toBeVisible();
   await expect.element(card("Resolved")).not.toBeInTheDocument();
 
+  // Reopened by someone else, the returning card leaves focus alone too.
+  await screen.rerender(withThread(false));
+  await expect.element(card("Open")).toBeVisible();
+  await expect.element(card("Open")).not.toHaveFocus();
+  await screen.rerender(withThread(true));
+  await expect.element(marker()).toBeVisible();
+
   // Stacked view draws a context row once, so both sides' conversations share its marker.
   await screen.rerender(withThread(true, true));
   const both = screen.getByRole("button", { name: "Show 2 resolved conversations" });
