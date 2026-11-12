@@ -413,7 +413,36 @@ describe("CursorAdapterV2", () => {
       failure: null,
       answers: [],
     },
-  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers }) =>
+    {
+      reason: "the token usage Cursor reported when the turn ended",
+      updates: [
+        { type: "text-delta", text: "pong" },
+        {
+          type: "turn-ended",
+          usage: {
+            inputTokens: 31961,
+            outputTokens: 181,
+            cacheReadTokens: 7,
+            cacheWriteTokens: 31955,
+          },
+        },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "finished" as const,
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+      turnTokenUsage: {
+        inputTokens: 31961,
+        outputTokens: 181,
+        cachedInputTokens: 7,
+        cacheCreationTokens: 31955,
+      },
+    },
+  ])("ends the turn with $reason", ({ updates = [], wait, failure, answers, turnTokenUsage }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
@@ -513,6 +542,28 @@ describe("CursorAdapterV2", () => {
       assert.equal(terminal?.status, failure === null ? "completed" : "failed");
       assert.equal(terminal?.failure?.class, failure?.class);
       assert.equal(terminal?.failure?.message, failure?.message);
+      if (turnTokenUsage !== undefined) {
+        const completedTurn = events.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.equal(completedTurn?.type, "provider_turn.updated");
+        const usage =
+          completedTurn?.type === "provider_turn.updated"
+            ? completedTurn.providerTurn.turnTokenUsage
+            : undefined;
+        assert.deepEqual(
+          usage === undefined
+            ? undefined
+            : {
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cachedInputTokens: usage.cachedInputTokens,
+                cacheCreationTokens: usage.cacheCreationTokens,
+              },
+          turnTokenUsage,
+        );
+      }
       if (answers !== undefined) {
         assert.deepEqual(
           events.flatMap((event) =>
