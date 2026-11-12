@@ -183,7 +183,7 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
   );
 }
 
-const DEFERRED_WORK_ITEM_TYPES = [
+export const DEFERRED_WORK_ITEM_TYPES = [
   "command_execution",
   "reasoning",
   "file_change",
@@ -394,7 +394,7 @@ export function selectRecentTimelineWindow(input: {
   });
 }
 
-function findCursorEndIndex(
+export function findCursorEndIndex(
   items: ReadonlyArray<HistoryRow>,
   cursor: ThreadHistoryCursorPayload,
 ): number {
