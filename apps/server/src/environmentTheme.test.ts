@@ -1,4 +1,8 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentThemeFile } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentThemeFile,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -31,6 +35,9 @@ const SHARED_THEME: EnvironmentThemeFile = {
   colors: { canvas: "#eff1f5", accent: "#1e66f5" },
 };
 
+/** The settings mock refuses to make this theme the default, as a managed policy can. */
+const REFUSED_THEME_ID = "refused";
+
 const withEnvironmentThemes = <A, E>(
   seeds: Readonly<Record<string, string>>,
   body: Effect.Effect<
@@ -62,10 +69,17 @@ const withEnvironmentThemes = <A, E>(
           Layer.provideMerge(
             Layer.mock(ServerSettingsService)({
               updateSettings: (patch) =>
-                Effect.sync(() => {
-                  selected.push(patch.defaultTheme);
-                  return DEFAULT_SERVER_SETTINGS;
-                }),
+                patch.defaultTheme === REFUSED_THEME_ID
+                  ? Effect.fail(
+                      new ServerSettingsError({
+                        settingsPath: "settings.json",
+                        operation: "write-managed-setting",
+                      }),
+                    )
+                  : Effect.sync(() => {
+                      selected.push(patch.defaultTheme);
+                      return DEFAULT_SERVER_SETTINGS;
+                    }),
             }),
           ),
         ),
@@ -152,6 +166,20 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           (yield* currentThemes).map((theme) => theme.id),
           ["nightfall", "notepad"],
         );
+      }),
+    ),
+  );
+
+  it.effect("puts the previous theme back when the new one cannot be selected", () =>
+    withEnvironmentThemes(
+      { [`${REFUSED_THEME_ID}.json`]: encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const refused = yield* themes
+          .apply({ themeId: REFUSED_THEME_ID, theme: { ...NIGHTFALL_THEME, name: "Changed" } })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused.reason, "not-selected");
+        assert.deepEqual(yield* themes.current, [{ id: REFUSED_THEME_ID, ...NIGHTFALL_THEME }]);
       }),
     ),
   );

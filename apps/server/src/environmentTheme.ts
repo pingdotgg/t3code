@@ -253,6 +253,8 @@ const make = Effect.gen(function* () {
   // One publish at a time: they share a staging path, and each one checks what is served after it.
   const publishSemaphore = yield* Semaphore.make(1);
 
+  /** Callers hold `publishSemaphore`. Succeeds with the effect that undoes this publish. */
+
   const publish = Effect.fnUntraced(function* (themeId: string, file: EnvironmentThemeFile) {
     const fail = (reason: EnvironmentThemeApplyError["reason"], cause?: unknown) =>
       new EnvironmentThemeApplyError({ themeId, reason, cause });
@@ -277,28 +279,25 @@ const make = Effect.gen(function* () {
         Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
       );
 
-    yield* publishSemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        // The guarded reader does not block on a FIFO and does not follow a symlink.
-        const previous = Option.fromNullOr(readThemeFileGuarded(destination, MAX_THEME_FILE_BYTES));
-        const servedBefore = (yield* refresh).themes.map((theme) => theme.id);
-        yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
-          Effect.andThen(replace(contents)),
-          Effect.mapError((cause) => fail("not-published", cause)),
-        );
-        // The reader stops at its count and size limits, so this file can go unserved, or it can
-        // push another theme out. Both count as a failed publish.
-        const served = new Set((yield* refresh).themes.map((theme) => theme.id));
-        if (served.has(themeId) && servedBefore.every((id) => served.has(id))) return;
-        // Put back what was there, so a rejected publish does not take a working theme away.
-        yield* Option.match(previous, {
-          onNone: () => fs.remove(destination, { force: true }),
-          onSome: replace,
-        }).pipe(Effect.ignore);
-        yield* refresh;
-        return yield* fail("not-published");
-      }),
+    // The guarded reader does not block on a FIFO and does not follow a symlink.
+    const previous = Option.fromNullOr(readThemeFileGuarded(destination, MAX_THEME_FILE_BYTES));
+    const servedBefore = (yield* refresh).themes.map((theme) => theme.id);
+    // Puts back what was there, so a failed apply does not take a working theme away.
+    const revert = Option.match(previous, {
+      onNone: () => fs.remove(destination, { force: true }),
+      onSome: replace,
+    }).pipe(Effect.ignore, Effect.andThen(refresh), Effect.asVoid);
+
+    yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
+      Effect.andThen(replace(contents)),
+      Effect.mapError((cause) => fail("not-published", cause)),
     );
+    // The reader stops at its count and size limits, so this file can go unserved, or it can
+    // push another theme out. Both count as a failed publish.
+    const served = new Set((yield* refresh).themes.map((theme) => theme.id));
+    if (served.has(themeId) && servedBefore.every((id) => served.has(id))) return revert;
+    yield* revert;
+    return yield* fail("not-published");
   });
 
   const apply: EnvironmentThemeService["Service"]["apply"] = Effect.fn(
@@ -309,19 +308,27 @@ const make = Effect.gen(function* () {
       detail?: { readonly known?: ReadonlyArray<string>; readonly cause?: unknown },
     ) => new EnvironmentThemeApplyError({ themeId, reason, ...detail });
     if (!isEnvironmentThemeId(themeId)) return yield* fail("invalid-id");
-    if (theme !== undefined) {
-      yield* publish(themeId, theme);
-    } else {
+    // The timestamp makes clients apply the theme again when its id did not change.
+    const select = Effect.gen(function* () {
+      yield* settings
+        .updateSettings({
+          defaultTheme: themeId,
+          defaultThemeSetAt: DateTime.formatIso(yield* DateTime.now),
+        })
+        .pipe(Effect.mapError((cause) => fail("not-selected", { cause })));
+    });
+    if (theme === undefined) {
       const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
       if (!known.includes(themeId)) return yield* fail("unknown-id", { known });
+      return yield* select;
     }
-    // The timestamp makes clients apply the theme again when its id did not change.
-    yield* settings
-      .updateSettings({
-        defaultTheme: themeId,
-        defaultThemeSetAt: DateTime.formatIso(yield* DateTime.now),
-      })
-      .pipe(Effect.mapError((cause) => fail("not-selected", { cause })));
+    // One at a time. If the theme cannot be selected, the file it replaced comes back.
+    yield* publishSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const revert = yield* publish(themeId, theme);
+        yield* select.pipe(Effect.tapError(() => revert));
+      }),
+    );
   });
 
   return {
