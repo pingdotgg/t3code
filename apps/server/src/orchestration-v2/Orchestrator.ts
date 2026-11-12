@@ -34,6 +34,7 @@ import {
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2LimitRecoveryUpdate,
+  type OrchestrationV2Notification,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
@@ -80,6 +81,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
@@ -428,6 +430,10 @@ export interface OrchestratorV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, OrchestratorProjectionError>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly getTranscriptByteFloor: (
+    threadId: ThreadId,
+    limit: number,
+  ) => Effect.Effect<number, OrchestratorV2Error>;
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
@@ -960,14 +966,21 @@ function pullRequestSnapshotEndsWatch(
   );
 }
 
-function isStalePullRequestWatchWake(
+type MonitorPullRequestStamp = NonNullable<
+  Extract<OrchestrationV2Notification["source"], { readonly kind: "monitor" }>["pullRequest"]
+>;
+
+function monitorPullRequestStamps(
+  source: OrchestrationV2Notification["source"] | undefined,
+): ReadonlyArray<MonitorPullRequestStamp> {
+  if (source?.kind !== "monitor" || source.pullRequest === undefined) return [];
+  return [source.pullRequest, ...(source.otherPullRequests ?? [])];
+}
+
+function isStalePullRequestWatchStamp(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
-  run: OrchestrationV2Run,
+  stamp: MonitorPullRequestStamp,
 ): boolean {
-  const source = projection.messages.find((message) => message.id === run.userMessageId)
-    ?.notification?.source;
-  if (source?.kind !== "monitor" || source.pullRequest === undefined) return false;
-  const stamp = source.pullRequest;
   const link = threadPullRequestsOf(projection.thread).find(
     (candidate) =>
       candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, stamp),
@@ -980,15 +993,14 @@ function isStalePullRequestWatchWake(
   }
   if (link.watch === undefined) {
     // A watch the server ended with a final notice still owes the wakes it queued before it.
-    const endedWithNotice = projection.messages.some((message) => {
-      const ending = message.notification?.source;
-      return (
-        ending?.kind === "monitor" &&
-        ending.pullRequest?.watchEnded === true &&
-        ending.pullRequest.watchStartedAt === stamp.watchStartedAt &&
-        threadPullRequestKeysEqual(ending.pullRequest, stamp)
-      );
-    });
+    const endedWithNotice = projection.messages.some((message) =>
+      monitorPullRequestStamps(message.notification?.source).some(
+        (ending) =>
+          ending.watchEnded === true &&
+          ending.watchStartedAt === stamp.watchStartedAt &&
+          threadPullRequestKeysEqual(ending, stamp),
+      ),
+    );
     return (
       !endedWithNotice ||
       link.endedWatch?.startedAt !== stamp.watchStartedAt ||
@@ -1000,6 +1012,58 @@ function isStalePullRequestWatchWake(
     (stamp.headSha !== null && link.watch.headSha !== stamp.headSha) ||
     pullRequestSnapshotEndsWatch(link.snapshot, link.watch.startedAt)
   );
+}
+
+function isStalePullRequestWatchWake(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+  run: OrchestrationV2Run,
+): boolean {
+  const stamps = monitorPullRequestStamps(
+    projection.messages.find((message) => message.id === run.userMessageId)?.notification?.source,
+  );
+  return (
+    stamps.length > 0 && stamps.every((stamp) => isStalePullRequestWatchStamp(projection, stamp))
+  );
+}
+
+/**
+ * A queued wake covering several pull requests, rebuilt from the ones still current, or
+ * undefined when it needs no change.
+ */
+function currentPullRequestWatchWake(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+  run: OrchestrationV2Run,
+): OrchestrationV2ConversationMessage | undefined {
+  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  const stamps = monitorPullRequestStamps(message?.notification?.source);
+  if (message === undefined || stamps.length < 2) return undefined;
+  const current = stamps.filter((stamp) => !isStalePullRequestWatchStamp(projection, stamp));
+  const [first, ...rest] = current;
+  if (first === undefined || rest.length === stamps.length - 1) return undefined;
+  const sections = current.flatMap(({ section }) => (section === undefined ? [] : [section]));
+  if (sections.length !== current.length) return undefined;
+  const wake = combinePullRequestWatchWakes(
+    sections.map(({ text, outcome, summary }) => ({
+      text,
+      notification: { source: { kind: "monitor" }, outcome, summary },
+    })) as [PullRequestWatchWake, ...Array<PullRequestWatchWake>],
+  );
+  return {
+    ...message,
+    text: wake.text,
+    notification: {
+      ...wake.notification,
+      source: {
+        kind: "monitor",
+        pullRequest: rest.length === 0 ? withoutSection(first) : first,
+        ...(rest.length === 0 ? {} : { otherPullRequests: rest }),
+      },
+    },
+  };
+}
+
+function withoutSection({ section: _, ...stamp }: MonitorPullRequestStamp) {
+  return stamp;
 }
 
 function queuedRunCancellationEvents(
@@ -1489,6 +1553,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // Commands here read only undelivered or active tasks; a dispatcher thread keeps
           // thousands of delivered ones, each carrying its full prompt.
           omitSettledSubagents: true,
+          // Commands act on pending forks and merge-backs only; consumed ones stay unread.
+          contextTransferStatuses: ["pending"],
         },
       )
       .pipe(
@@ -2110,6 +2176,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         projection = yield* readCommandProjection(threadId);
         storedQueuedRun = nextQueuedRun(projection);
+      }
+      // A wake that outlived some of its pull requests tells only the current ones.
+      const currentWake =
+        storedQueuedRun === undefined
+          ? undefined
+          : currentPullRequestWatchWake(projection, storedQueuedRun);
+      if (storedQueuedRun !== undefined && currentWake !== undefined) {
+        const now = yield* DateTime.now;
+        yield* writeSystemEvents([
+          {
+            type: "message.updated",
+            threadId,
+            runId: storedQueuedRun.id,
+            ...(storedQueuedRun.rootNodeId === null ? {} : { nodeId: storedQueuedRun.rootNodeId }),
+            providerInstanceId: storedQueuedRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...currentWake, updatedAt: now },
+          },
+        ]);
+        const runId = storedQueuedRun.id;
+        projection = yield* readCommandProjection(threadId);
+        storedQueuedRun = projection.runs.find((run) => run.id === runId);
       }
       if (storedQueuedRun === undefined) {
         return;
@@ -3548,57 +3636,79 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
           ),
         );
-      const key = normalizeThreadPullRequestKey(command);
-      const link = threadPullRequestsOf(thread).find(
-        (candidate) =>
-          candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
-      );
+      const { others = [], wake, ...primary } = command;
+      const entries = [
+        { ...primary, includesRemarks: wake?.includesRemarks },
+        ...others.map((other) => ({
+          type: primary.type,
+          commandId: primary.commandId,
+          threadId: primary.threadId,
+          ...other,
+        })),
+      ].map((entry) => {
+        const key = normalizeThreadPullRequestKey(entry);
+        const link = threadPullRequestsOf(thread).find(
+          (candidate) =>
+            candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
+        );
+        return { entry, key, link };
+      });
       const inactive =
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         thread.settledAt !== null ||
         isProviderNativeSubagentThread(thread);
-      if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
+      // An idle thread dispatches immediately, bypassing queued-wake validation.
+      const outdated = entries.map(
+        ({ entry, link }) =>
+          wake?.notification.source.kind === "monitor" &&
+          entry.watch !== null &&
+          pullRequestSnapshotEndsWatch(link?.snapshot ?? null, entry.startedAt),
+      );
+      if (
+        entries.some(({ entry, link }) => link?.watch?.startedAt !== entry.startedAt) ||
+        (wake && inactive) ||
+        // One wake cannot drop the news of just some of its pull requests; the sender splits it.
+        (entries.length > 1 && outdated.some(Boolean))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: "The pull request watch ended or its thread settled while it was read.",
         });
       }
-      yield* dispatchThreadMutation(command, events, effects);
-      if (command.wake === undefined) return;
-      // An idle thread dispatches immediately, bypassing queued-wake validation.
-      if (
-        command.wake.notification.source.kind === "monitor" &&
-        command.watch !== null &&
-        pullRequestSnapshotEndsWatch(link.snapshot, command.startedAt)
-      ) {
-        return;
+      for (const { entry } of entries) {
+        const { includesRemarks: _, ...mutation } = entry;
+        yield* dispatchThreadMutation(mutation, events, effects);
       }
+      if (wake === undefined || outdated[0]) return;
+      const { sections, ...wakeMessage } = wake;
+      const stamps = entries.map(({ entry, key }, index) => ({
+        ...key,
+        watchStartedAt: entry.startedAt,
+        headSha: entry.includesRemarks === true ? null : (entry.watch?.headSha ?? null),
+        ...(entry.watch === null ? { watchEnded: true } : {}),
+        ...(entries.length > 1 && sections?.[index] !== undefined
+          ? { section: sections[index] }
+          : {}),
+      }));
       yield* dispatchMessage(
         {
           type: "message.dispatch",
           commandId: command.commandId,
           threadId: command.threadId,
-          messageId: command.wake.messageId,
-          text: command.wake.text,
+          messageId: wakeMessage.messageId,
+          text: wakeMessage.text,
           notification: {
-            ...command.wake.notification,
+            ...wakeMessage.notification,
             source:
-              command.wake.notification.source.kind === "monitor"
+              wake.notification.source.kind === "monitor"
                 ? {
                     kind: "monitor",
-                    pullRequest: {
-                      ...key,
-                      watchStartedAt: command.startedAt,
-                      headSha:
-                        command.wake.includesRemarks === true
-                          ? null
-                          : (command.watch?.headSha ?? null),
-                      ...(command.watch === null ? { watchEnded: true } : {}),
-                    },
+                    pullRequest: stamps[0]!,
+                    ...(stamps.length > 1 ? { otherPullRequests: stamps.slice(1) } : {}),
                   }
-                : command.wake.notification.source,
+                : wake.notification.source,
           },
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
@@ -4070,6 +4180,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             return plan;
           })
         : null;
+
+    // Archive and settle stop idle background work; serialized commands prevent starts racing detach.
+    // Settlement rejects active or blocked runs.
+    const detachSessionIds = new Set(
+      command.type === "thread.archive" || command.type === "thread.settle"
+        ? (providerContext?.providerSessions ?? []).map((session) => session.id)
+        : command.type === "thread.metadata.update" &&
+            command.worktreePath !== undefined &&
+            command.worktreePath !== thread.worktreePath
+          ? (providerContext?.providerSessions ?? []).map((session) => session.id)
+          : command.type === "thread.runtime-mode.set"
+            ? (providerContext?.providerSessions ?? [])
+                .filter(
+                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+                )
+                .map((session) => session.id)
+            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
+    );
+    const liveSessions = (providerContext?.providerSessions ?? []).filter(
+      (session) =>
+        detachSessionIds.has(session.id) &&
+        session.status !== "stopped" &&
+        session.status !== "error",
+    );
+    if (command.type !== "thread.archive" && command.type !== "thread.settle") {
+      for (const session of liveSessions) {
+        if (yield* sessionHasBackgroundWork(session, providerContext!.providerThreads)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "The current session is still running background agents or commands, and this change would end them. Wait for them to finish, or press Stop, then try again.",
+          });
+        }
+      }
+    }
 
     const now = yield* DateTime.now;
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
@@ -4862,30 +5008,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* closePendingLinkRequests({ command, events, threadId: command.threadId, now });
     }
 
-    // Archive and settle stop idle background work; serialized commands prevent starts racing detach.
-    // Settlement rejects active or blocked runs.
-    const detachSessionIds = new Set(
-      command.type === "thread.archive" || command.type === "thread.settle"
-        ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-        : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
-          ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-          : command.type === "thread.runtime-mode.set"
-            ? (providerContext?.providerSessions ?? [])
-                .filter(
-                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-                )
-                .map((session) => session.id)
-            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
-    );
-    if (detachSessionIds.size > 0) {
-      const liveSessions = (providerContext?.providerSessions ?? []).filter(
-        (session) =>
-          detachSessionIds.has(session.id) &&
-          session.status !== "stopped" &&
-          session.status !== "error",
-      );
+    if (liveSessions.length > 0) {
       yield* Effect.forEach(
         liveSessions,
         (session) =>
@@ -13484,6 +13607,51 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  // A finished delegate otherwise keeps its provider process until the idle timeout. Callers hold
+  // the parent lock; the child lock orders this after any follow-up that started a run meanwhile.
+  const releaseFinishedDelegateSessions = Effect.fn("Orchestrator.releaseFinishedDelegateSessions")(
+    function* (childThreadId: ThreadId, resultRunId: RunId) {
+      yield* threadDispatch.withLock(
+        childThreadId,
+        Effect.gen(function* () {
+          const child = yield* projectionStore.getThreadRecords(
+            childThreadId,
+            ["runs", "messages", "subagents", "providerThreads", "providerSessions"],
+            { messageRoles: ["user"] },
+          );
+          // Unawaited background tasks still allow a result but die with the process; the idle
+          // timer keeps their process pinned.
+          if (
+            delegatedTaskProgress(child).state !== "result_available" ||
+            child.providerThreads.some((thread) => (thread.pendingBackgroundTasks ?? []).length > 0)
+          )
+            return;
+          for (const session of child.providerSessions) {
+            // Shared processes unload their threads themselves; only a per-thread process lingers.
+            if (
+              session.status === "stopped" ||
+              session.status === "error" ||
+              session.capabilities.sessions.supportsMultipleProviderThreadsPerSession
+            )
+              continue;
+            yield* dispatchWithReceiptEffect({
+              type: "provider-session.detach",
+              commandId: CommandId.make(
+                `command:system:delegated-task-release:${resultRunId}:${session.id}`,
+              ),
+              threadId: childThreadId,
+              providerSessionId: session.id,
+              reason: "Delegated task finished.",
+            });
+          }
+        }),
+      );
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to release a finished delegate's provider session", { cause }),
+    ),
+  );
+
   /**
    * Callers must hold the parent thread's dispatch lock: wake-policy updates the same
    * subagent row with full-row payloads, so unserialized writers clobber policy or terminal status.
@@ -13762,6 +13930,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ];
       yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
+      yield* releaseFinishedDelegateSessions(childThreadId, childRun.id);
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
@@ -15357,6 +15526,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getMessageCount(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
     }),
+    getTranscriptByteFloor: Effect.fn("OrchestratorV2.getTranscriptByteFloor")(
+      function (threadId, limit) {
+        return projectionStore
+          .getTranscriptByteFloor(threadId, limit)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
     getTurnItem: Effect.fn("OrchestratorV2.getTurnItem")(function (input) {
       return projectionStore
         .getTurnItem(input)

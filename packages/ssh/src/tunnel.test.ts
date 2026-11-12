@@ -205,7 +205,7 @@ describe("ssh tunnel scripts", () => {
         );
         NodeFS.writeFileSync(
           NodePath.join(bin, "curl"),
-          "#!/bin/sh\necho 'download attempt' >&2\nexit 22\n",
+          "#!/bin/sh\necho 'download attempt' >&2\necho 'curl: (6) Could not resolve host: github.com' >&2\nexit 6\n",
           { mode: 0o755 },
         );
         const runner = NodePath.join(root, "run-t3.sh");
@@ -217,6 +217,9 @@ describe("ssh tunnel scripts", () => {
         assert.notEqual(result.status, 0);
         if (downloads) {
           assert.include(result.stderr, "download attempt");
+          // A bare curl error does not tell the user that t3 itself could not be downloaded.
+          assert.include(result.stderr, ARCHIVE.archiveVersion);
+          assert.include(result.stderr, "https://github.com/pingdotgg/t3code/releases/download");
         } else {
           assert.notInclude(result.stderr, "download attempt");
           assert.include(result.stderr, "has no t3 release archive.");
@@ -461,6 +464,49 @@ describe("ssh tunnel scripts", () => {
         yield* TestClock.adjust(Duration.seconds(60));
         const environment = yield* Fiber.join(ensure);
         assert.equal(environment.httpBaseUrl, `http://127.0.0.1:${LOCAL_PORT}/`);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("reconnects a saved alias through the port its ssh config names now", () =>
+    Effect.gen(function* () {
+      let configPort = 53_791;
+      const tunnelPorts: Array<string | undefined> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        const args = commandArgs(command);
+        if (args.includes("-G")) {
+          return Effect.succeed(
+            makeSuccessfulProcess(`hostname 127.0.0.1\nuser developer\nport ${configPort}\n`),
+          );
+        }
+        if (args.includes("-N")) {
+          tunnelPorts.push(args[args.indexOf("-p") + 1]);
+          return Effect.succeed(makeRunningProcess(() => undefined));
+        }
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      });
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const added = yield* manager.ensureEnvironment({
+          alias: "lima-sandbox",
+          hostname: "lima-sandbox",
+          username: null,
+          port: null,
+        });
+        // The VM restarts on a new port; the client reconnects with the target it saved.
+        yield* manager.disconnectEnvironment(added.target);
+        configPort = 53_812;
+        yield* manager.ensureEnvironment(added.target);
+        assert.deepStrictEqual(tunnelPorts, ["53791", "53812"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );

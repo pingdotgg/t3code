@@ -255,6 +255,8 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly label?: string;
+      /** Shown instead of "Thinking" while the provider has not started a turn. */
+      readonly providerStartingLabel?: string;
     };
 
 export interface ThreadFeedLatestRun {
@@ -263,6 +265,7 @@ export interface ThreadFeedLatestRun {
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly turnEnded?: boolean;
+  readonly providerStartingLabel?: string;
 }
 
 /** Long Android headers can ANR despite one-line display; cap labels only, preserving expanded and copied text. */
@@ -1365,7 +1368,8 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
       left.status === right.status &&
       left.startedAt === right.startedAt &&
       left.completedAt === right.completedAt &&
-      left.turnEnded === right.turnEnded)
+      left.turnEnded === right.turnEnded &&
+      left.providerStartingLabel === right.providerStartingLabel)
   );
 }
 
@@ -1773,7 +1777,12 @@ export function deriveThreadFeedPresentation(
     )
   ) {
     result.push(
-      thinkingRow(activeWorkStartedAt, activeRunId, zen ? liveAnswerPreview(feed) : null),
+      thinkingRow(
+        activeWorkStartedAt,
+        activeRunId,
+        zen ? liveAnswerPreview(feed) : null,
+        latestRun?.providerStartingLabel,
+      ),
     );
   }
   const checkpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
@@ -1878,11 +1887,17 @@ function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
-function thinkingRow(createdAt: string, runId: RunId | null, label: string | null) {
+function thinkingRow(
+  createdAt: string,
+  runId: RunId | null,
+  label: string | null,
+  providerStartingLabel: string | undefined,
+) {
   if (
     cachedThinkingRow?.createdAt !== createdAt ||
     cachedThinkingRow.runId !== runId ||
-    (cachedThinkingRow.label ?? null) !== label
+    (cachedThinkingRow.label ?? null) !== label ||
+    cachedThinkingRow.providerStartingLabel !== providerStartingLabel
   ) {
     cachedThinkingRow = {
       type: "thinking",
@@ -1890,6 +1905,7 @@ function thinkingRow(createdAt: string, runId: RunId | null, label: string | nul
       createdAt,
       runId,
       ...(label === null ? {} : { label }),
+      ...(providerStartingLabel === undefined ? {} : { providerStartingLabel }),
     };
   }
   return cachedThinkingRow;
