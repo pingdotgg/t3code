@@ -307,7 +307,7 @@ export const makeFleetBundleImporter = (input: {
           const envelope: BundleEnvelope = decodedEnvelope;
           const threadId = envelope.threadId;
           // Checkout artifacts share the thread-*.json naming but hold no thread.
-          if (threadId !== undefined && threadId.startsWith("worktree:")) return "skipped" as const;
+          if (threadId !== undefined && threadId.startsWith("worktree:")) return "ignored" as const;
           if (threadId === undefined || envelope.body === undefined) {
             return yield* new FleetDrainImportError({
               operation: "decode",

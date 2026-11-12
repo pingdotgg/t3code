@@ -103,7 +103,7 @@ export interface FleetDrainExecutor {
     readonly sandboxName: string;
     /** Deterministic `drain:<envId>:<generation>`; retries reuse it. */
     readonly drainId: string;
-    /** `force` removal: thread snapshots only, worktree pushes are skipped. */
+    /** `force` removal: thread snapshots only, checkout bundle exports are skipped. */
     readonly snapshotOnly: boolean;
     /** Epoch ms; the executor must give up by then so removal can refuse. */
     readonly deadlineAt: number;
