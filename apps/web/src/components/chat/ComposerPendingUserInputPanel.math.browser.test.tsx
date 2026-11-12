@@ -31,6 +31,10 @@ it("typesets math in option labels and descriptions like the question", async ()
               options: [
                 { label: "$1$", description: "Converges to $1$" },
                 { label: "$\\frac{1}{2}$", description: "Half of $1$" },
+                {
+                  label: "Edit `apps/web/src/index.ts` for Array<T>, priced $5",
+                  description: "Keeps `$x$` and <div> as written",
+                },
               ],
               multiSelect: false,
             },
@@ -53,4 +57,12 @@ it("typesets math in option labels and descriptions like the question", async ()
   await expect.element(equations.nth(4)).toBeVisible();
   await expect.element(screen.getByText("$\\frac{1}{2}$", { exact: true })).not.toBeInTheDocument();
   await expect.element(screen.getByText("Half of $1$", { exact: true })).not.toBeInTheDocument();
+  await expect
+    .element(
+      screen.getByText("Edit `apps/web/src/index.ts` for Array<T>, priced $5", { exact: true }),
+    )
+    .toBeVisible();
+  await expect
+    .element(screen.getByText("Keeps `$x$` and <div> as written", { exact: true }))
+    .toBeVisible();
 });

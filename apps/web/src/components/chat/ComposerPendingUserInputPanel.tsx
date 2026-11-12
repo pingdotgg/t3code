@@ -13,6 +13,7 @@ import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
+import { PlainTextMath } from "./PlainTextMath";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -291,19 +292,16 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       )}
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <ChatMarkdown
-                        text={option.label}
-                        cwd={cwd}
-                        threadRef={threadRef}
-                        className="text-sm font-medium text-inherit"
-                      />
+                      <span className="text-sm font-medium" dir={textDirection(option.label)}>
+                        <PlainTextMath text={option.label} />
+                      </span>
                       {option.description && option.description !== option.label ? (
-                        <ChatMarkdown
-                          text={option.description}
-                          cwd={cwd}
-                          threadRef={threadRef}
+                        <span
                           className="text-secondary-label text-2xs"
-                        />
+                          dir={textDirection(option.description)}
+                        >
+                          <PlainTextMath text={option.description} />
+                        </span>
                       ) : null}
                     </div>
                     {index < 9 ? (

@@ -1,13 +1,9 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
-// Sets each block's direction as the real renderer's rehypeTextDirection does.
-vi.mock(import("../ChatMarkdown"), async () => {
-  const { textDirection } = await import("~/textDirection");
-  return {
-    default: (({ text }: { text: string }) => <p dir={textDirection(text)}>{text}</p>) as never,
-  };
-});
+vi.mock(import("../ChatMarkdown"), () => ({
+  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
+}));
 
 import { render } from "../../../test/render";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
