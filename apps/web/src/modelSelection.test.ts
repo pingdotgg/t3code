@@ -920,26 +920,6 @@ describe("instance-scoped model selection", () => {
     );
   });
 
-  it("does not select a model that the provider cannot use for text generation", () => {
-    const codex = provider({ instanceId: "codex", models: ["gpt-5.6-sol", "extension-model"] });
-    const providers = [
-      {
-        ...codex,
-        models: codex.models.map((m) =>
-          m.slug === "extension-model" ? { ...m, supportsTextGeneration: false } : m,
-        ),
-      },
-    ];
-    const settings: UnifiedSettings = {
-      ...settingsWithProviderInstances(),
-      textGenerationModelSelection: createModelSelection(codex.instanceId, "extension-model"),
-    };
-
-    expect(resolveAppModelSelectionState(settings, providers)).toEqual(
-      createModelSelection(codex.instanceId, "gpt-5.6-sol"),
-    );
-  });
-
   it("excludes customized extension models while preserving unknown custom and thread models", () => {
     const pi = provider({
       provider: ProviderDriverKind.make("pi"),

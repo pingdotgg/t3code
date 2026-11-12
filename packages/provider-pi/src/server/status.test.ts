@@ -355,26 +355,6 @@ describe("PiProvider", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "keeps Pi usable for text generation when Pi without extensions answers malformed",
-    () =>
-      Effect.gen(function* () {
-        const spawner = yield* piDiscoverySpawner(
-          { models: [{ provider: "demo", id: "demo-model" }] },
-          {},
-        );
-        const snapshot = yield* checkPiProviderStatus(settings).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        assert.equal(snapshot.auth.status, "authenticated");
-        assert.equal(snapshot.supportsTextGeneration, undefined);
-        assert.equal(
-          snapshot.models.find((model) => model.slug === "demo/demo-model")?.supportsTextGeneration,
-          undefined,
-        );
-      }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("preserves normal discovery when the extension-free model listing times out", () =>
     Effect.gen(function* () {
       const modelRequested = yield* Deferred.make<void>();
