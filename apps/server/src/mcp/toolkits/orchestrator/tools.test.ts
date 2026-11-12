@@ -17,6 +17,17 @@ it("states t3_thread_read page size limits in the parameter descriptions", () =>
   }
 });
 
+// The server binds an omitted bindToCurrentThread only in the caller's own project;
+// the schema description is the only place a model sees that default.
+it("states the conditional bindToCurrentThread default in the schedule_task schema", () => {
+  const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.schedule_task) as {
+    readonly properties: Readonly<Record<string, unknown>>;
+  };
+  const serialized = JSON.stringify(schema.properties.bindToCurrentThread);
+  expect(serialized).toContain("this thread's own project");
+  expect(serialized).not.toContain("Default true: runs post in this thread.");
+});
+
 it("refuses a t3_thread_update whose fields do not fit its action", () => {
   const decode = Schema.decodeUnknownExit(
     OrchestratorToolkit.tools.t3_thread_update.parametersSchema,
