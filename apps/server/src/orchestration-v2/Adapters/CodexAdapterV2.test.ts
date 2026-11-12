@@ -719,7 +719,7 @@ function codexReplayPreamble(input: {
   ];
 }
 
-/** Every turn/start follows a config/read; inserts that exchange and shifts later client ids. */
+/** Every turn/start follows a config/read; inserts that exchange where a test has not. */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
@@ -737,7 +737,11 @@ function withConfigReadBeforeTurnStart(
         offset = 0;
         clientIds = new Map();
       }
-      if (frame.method === "turn/start") {
+      const previous = result.at(-1);
+      if (
+        frame.method === "turn/start" &&
+        !(previous?.type === "emit_inbound" && previous.label === "config/read")
+      ) {
         const id = frame.id + offset;
         const params = Predicate.isObject(frame.params) ? frame.params : {};
         result.push(
@@ -1818,10 +1822,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }).map((entry): CodexReplay.CodexAppServerReplayEntry => {
           if (entry.type === "runtime_exit" || !Predicate.isObject(entry.frame)) return entry;
           const frame = entry.frame;
+          // Without a sandbox mode, Codex starts untrusted projects read-only.
           if (entry.label === "thread/start" && Predicate.isObject(frame.result)) {
             return {
               ...entry,
-              frame: { ...frame, result: { ...frame.result, sandbox: configuredSandbox } },
+              frame: {
+                ...frame,
+                result: { ...frame.result, sandbox: { type: "readOnly", networkAccess: false } },
+              },
             };
           }
           if (entry.type === "expect_outbound" && entry.label === "turn/start") {
@@ -1841,9 +1849,39 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }
           return entry;
         });
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: withConfigReadBeforeTurnStart(entries),
+        });
+        const configured = {
+          ...transcript,
+          entries: transcript.entries.map((entry): CodexReplay.CodexAppServerReplayEntry =>
+            entry.type === "emit_inbound" &&
+            entry.label === "config/read" &&
+            Predicate.isObject(entry.frame)
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: {
+                      config: {
+                        sandbox_workspace_write: {
+                          writable_roots: ["/shared/worktrees"],
+                          network_access: true,
+                          exclude_tmpdir_env_var: false,
+                          exclude_slash_tmp: false,
+                        },
+                      },
+                      origins: {},
+                    },
+                  },
+                }
+              : entry,
+          ),
+        };
         const turnStarts: Array<unknown> = [];
         const harness = yield* makeCodexReplayHarness(
-          makeCodexReplayTranscript({ scenario, entries }),
+          configured,
           () => Effect.void,
           (method, params) =>
             Effect.sync(() => {

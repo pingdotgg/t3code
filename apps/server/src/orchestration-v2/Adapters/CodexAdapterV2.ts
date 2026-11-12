@@ -729,14 +729,10 @@ const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
 );
 
-type CodexWorkspaceWriteSandbox = Extract<
-  CodexSchema.V2ThreadStartResponse__SandboxPolicy,
-  { readonly type: "workspaceWrite" }
+type CodexWorkspaceWriteSandbox = Omit<
+  Extract<CodexSchema.V2TurnStartParams__SandboxPolicy, { readonly type: "workspaceWrite" }>,
+  "type"
 >;
-
-const isCodexWorkspaceWriteSandbox = (
-  sandbox: CodexSchema.V2ThreadStartResponse__SandboxPolicy | undefined,
-): sandbox is CodexWorkspaceWriteSandbox => sandbox?.type === "workspaceWrite";
 
 function codexRuntimeModeTurnDefaults(
   runtimeMode: RuntimeMode,
@@ -793,8 +789,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** The user's `model_reasoning_summary` from the Codex config, when set. */
     readonly configuredReasoningSummary?: CodexSchema.V2TurnStartParams__ReasoningSummary;
-    /** The workspace-write sandbox Codex resolved for the thread from its config. */
-    readonly configuredWorkspaceWriteSandbox?: CodexWorkspaceWriteSandbox | undefined;
+    /** The user's `sandbox_workspace_write` from the Codex config, when set. */
+    readonly configuredWorkspaceWriteSandbox?: CodexWorkspaceWriteSandbox;
   }) {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(
       input.runtimePolicy.runtimeMode,
@@ -1488,10 +1484,7 @@ function codexThreadRuntimeParams(input: {
 }
 
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }),
-    sandbox: Schema.optionalKey(CodexSchema.V2ThreadStartResponse__SandboxPolicy),
-  }),
+  Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
 );
 
 const CodexChildSelection = Schema.Struct({
@@ -1815,15 +1808,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           >(),
         );
         const threadsAwaitingContextRestore = yield* Ref.make(new Set<string>());
-        const configuredWorkspaceWriteSandboxes = new Map<string, CodexWorkspaceWriteSandbox>();
-        const rememberConfiguredSandbox = (
-          nativeThreadId: string,
-          sandbox: CodexSchema.V2ThreadStartResponse__SandboxPolicy | undefined,
-        ) =>
-          Effect.sync(() => {
-            if (isCodexWorkspaceWriteSandbox(sandbox))
-              configuredWorkspaceWriteSandboxes.set(nativeThreadId, sandbox);
-          });
         // Codex drops client developer messages during compaction but only resends additionalContext
         // when it changes. Restore after turn/completed: items injected mid-turn make the turn sample again.
         const restoreAdditionalContext = Effect.fn("CodexAdapterV2.restoreAdditionalContext")(
@@ -7266,14 +7250,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-            const configuredReasoningSummary = yield* client
+            const config = yield* client
               .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
               .pipe(
-                Effect.map((response) => response.config.model_reasoning_summary ?? undefined),
+                Effect.map((response) => response.config),
                 Effect.catch(() =>
                   Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
                 ),
               );
+            const configuredReasoningSummary = config?.model_reasoning_summary ?? undefined;
+            const workspaceWrite = config?.sandbox_workspace_write ?? undefined;
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
@@ -7285,7 +7271,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
-              configuredWorkspaceWriteSandbox: configuredWorkspaceWriteSandboxes.get(threadId),
+              ...(workspaceWrite === undefined
+                ? {}
+                : {
+                    configuredWorkspaceWriteSandbox: {
+                      ...(workspaceWrite.writable_roots === undefined
+                        ? {}
+                        : { writableRoots: workspaceWrite.writable_roots }),
+                      ...(workspaceWrite.network_access === undefined
+                        ? {}
+                        : { networkAccess: workspaceWrite.network_access }),
+                      ...(workspaceWrite.exclude_tmpdir_env_var === undefined
+                        ? {}
+                        : { excludeTmpdirEnvVar: workspaceWrite.exclude_tmpdir_env_var }),
+                      ...(workspaceWrite.exclude_slash_tmp === undefined
+                        ? {}
+                        : { excludeSlashTmp: workspaceWrite.exclude_slash_tmp }),
+                    },
+                  }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
@@ -7612,9 +7615,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
                 ),
               ),
-              Effect.tap((response) =>
-                rememberConfiguredSandbox(response.thread.id, response.sandbox),
-              ),
               Effect.map((response): OrchestrationV2ProviderThread =>
                 providerThreadFromCodexThread({
                   appThreadId: threadInput.threadId,
@@ -7655,7 +7655,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(resume),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
-              yield* rememberConfiguredSandbox(response.thread.id, response.sandbox);
               return {
                 ...threadInput.providerThread,
                 providerSessionId: input.providerSessionId,
@@ -8517,7 +8516,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
-              yield* rememberConfiguredSandbox(response.thread.id, response.sandbox);
               let forkedThread = response.thread;
               if (boundary.rollbackTurnCount > 0) {
                 const { historyMode } = yield* ensureInitialized.pipe(
