@@ -58,6 +58,10 @@ also send files to T3 Code through another app's system share sheet.
 On Android, you can also drag images from another app into the message input
 in split screen.
 
+To mark up an attached image before sending it, such as a screenshot or
+SnapShot, hover it and choose **Edit**. You can draw, add arrows, boxes, and
+text, or crop it. **Apply** replaces the attachment; the original is not kept.
+
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
 ## Send while the agent is working

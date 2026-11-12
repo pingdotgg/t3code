@@ -209,6 +209,8 @@ import {
   ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ImageAnnotationDialog, type ImageAnnotationResult } from "./ImageAnnotationDialog";
+import { cropSnapShotSource, resizeSnapShotSource } from "../../lib/snapShotSource";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -706,6 +708,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const openPrLink = useOpenPrLink(routeThreadRef);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
+  const [annotatingImageId, setAnnotatingImageId] = useState<string | null>(null);
+  const annotatingImage = composerImages.find((image) => image.id === annotatingImageId) ?? null;
   const composerContextActions = {
     environmentId,
     cwd: gitCwd ?? undefined,
@@ -787,6 +791,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
+  const replaceComposerDraftImage = useComposerDraftStore((store) => store.replaceImage);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftFile = useComposerDraftStore((store) => store.removeFile);
   const insertComposerDraftTerminalContext = useComposerDraftStore(
@@ -1257,6 +1262,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removeComposerDraftImage(attachmentDraftTarget, imageId);
   };
 
+  const canEditComposerImages = !(questionAttachmentTarget && activePendingIsResponding);
+  const applyComposerImageAnnotation = (
+    image: ComposerImageAttachment,
+    result: ImageAnnotationResult,
+  ) => {
+    setAnnotatingImageId(null);
+    if (!canEditComposerImages) return;
+    const source =
+      image.source && result.crop ? cropSnapShotSource(image.source, result.crop) : image.source;
+    // The old bytes may already be uploaded under this id; release so the new ones upload.
+    releaseAttachmentUpload(image.id);
+    replaceComposerDraftImage(attachmentDraftTarget, image.id, {
+      file: result.file,
+      previewUrl: URL.createObjectURL(result.file),
+      name: result.file.name,
+      mimeType: result.file.type,
+      sizeBytes: result.file.size,
+      dataUrl: result.dataUrl,
+      ...(source ? { source: resizeSnapShotSource(source, result.imageSize) } : {}),
+    });
+  };
+
   const removeComposerFileFromDraft = (fileId: string) => {
     if (questionAttachmentTarget && activePendingIsResponding) return;
     // Hydrated uploads use persisted attachment ids, not queue keys.
@@ -1525,7 +1552,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           composerImages,
           currentPersistedAttachments,
         );
-        if (cancelled) return;
+        // An edited image keeps its id, so a read of its old bytes must not overwrite the new copy.
+        if (cancelled || getComposerDraft(attachmentDraftTarget)?.images !== composerImages) return;
         syncComposerDraftPersistedAttachments(attachmentDraftTarget, serialized);
       } catch {
         const currentImageIds = new Set(composerImages.map((image) => image.id));
@@ -3244,6 +3272,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         canOperateThread={canOperateThread}
         onExpandImage={onExpandImage}
         onFileOpen={onFileOpen}
+        onAnnotateImage={canEditComposerImages ? setAnnotatingImageId : null}
         onRemoveImage={removeComposerImage}
         onRemoveFile={removeComposerFileFromDraft}
       />
@@ -3509,6 +3538,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               {composerAttachmentMediaRow}
 
               {composerAttachmentFileList}
+
+              <ImageAnnotationDialog
+                image={annotatingImage}
+                onClose={() => setAnnotatingImageId(null)}
+                onSave={(result) => {
+                  if (annotatingImage) applyComposerImageAnnotation(annotatingImage, result);
+                }}
+              />
 
               <div className="relative">
                 {previewFile ? (

@@ -672,6 +672,16 @@ interface ComposerDraftStoreState {
     options?: { allowDuplicates?: boolean },
   ) => string[];
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
+  /**
+   * Swaps an image's pixels in place, keeping its id so prompt references still resolve.
+   * `dataUrl` holds the new bytes, so a reload right after the swap restores them.
+   */
+  replaceImage: (
+    threadRef: ComposerThreadTarget,
+    imageId: string,
+    next: Pick<ComposerImageAttachment, "file" | "previewUrl" | "name" | "mimeType" | "sizeBytes"> &
+      Partial<Pick<ComposerImageAttachment, "source">> & { readonly dataUrl: string },
+  ) => boolean;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
   addFiles: (
     threadRef: ComposerThreadTarget,
@@ -3525,6 +3535,49 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        replaceImage: (threadRef, imageId, next) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          const existing = threadKey ? get().draftsByThreadKey[threadKey] : undefined;
+          const previous = existing?.images.find((image) => image.id === imageId);
+          if (!existing || !previous) {
+            revokeObjectPreviewUrl(next.previewUrl);
+            return false;
+          }
+          if (previous.previewUrl !== next.previewUrl) {
+            revokeObjectPreviewUrl(previous.previewUrl);
+          }
+          const { dataUrl, ...imageFields } = next;
+          const replaced: ComposerImageAttachment = { ...previous, ...imageFields };
+          // Persistence reuses data URLs by id, so the stored copy must change with the bytes.
+          const persisted: PersistedComposerImageAttachment = {
+            id: imageId,
+            name: replaced.name,
+            mimeType: replaced.mimeType,
+            sizeBytes: replaced.sizeBytes,
+            dataUrl,
+            ...(replaced.source ? { source: replaced.source } : {}),
+          };
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) return state;
+            const others = current.persistedAttachments.filter(
+              (attachment) => attachment.id !== imageId,
+            );
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...current,
+                  images: current.images.map((image) =>
+                    image.id === imageId ? { ...image, ...imageFields } : image,
+                  ),
+                  persistedAttachments: [...others, persisted],
+                },
+              },
+            };
+          });
+          return true;
         },
         addFiles: (threadRef, files, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
