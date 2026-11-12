@@ -38,6 +38,7 @@ import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassifi
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { isPrivateNetworkAddress } from "../startupAccess.ts";
 
 const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
   .add(EnvironmentHttpApi.groups.metadata)
@@ -146,10 +147,17 @@ const failStorage = (cause: unknown) =>
     ),
   );
 
+/** Whether credentials sent to `url` cross the network unencrypted. */
+const sendsInClear = (url: string | URL) => {
+  const { protocol, hostname } = new URL(url);
+  return protocol === "http:" && !isLocalLoopbackHost(hostname) && !isTailnetHost(hostname);
+};
+
 /**
  * The base URL a peer is reached at, normalised to its origin. The pairing
- * code and then the link's token travel to it, so plain http is accepted only
- * where the network already encrypts: this machine, or a Tailscale address.
+ * code and then the link's token travel to it, so plain http off this machine
+ * and the tailnet is accepted only to a private IP, as a LAN server pairs
+ * over. A name is refused: DNS could resolve it to a public address.
  */
 const peerOrigin = (url: string) => {
   const parsed = URL.parse(url);
@@ -161,20 +169,24 @@ const peerOrigin = (url: string) => {
       }),
     );
   }
-  if (
-    parsed.protocol === "http:" &&
-    !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
-  ) {
+  if (sendsInClear(parsed) && !isPrivateNetworkAddress(parsed.hostname)) {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+        message: `${url} is plain http to an address that is not a private IP, so the link's credentials could travel unencrypted across the internet. Use its https address, its Tailscale address, or its IP address on your local network.`,
       }),
     );
   }
   return Effect.succeed(parsed.origin);
 };
+
+/**
+ * The origins a link made over `primary` keeps. As with a paired client's
+ * token, a link's token goes over plain http only when the link was made over
+ * it, so one made over https, loopback or the tailnet never travels in clear.
+ */
+const keptOrigins = (primary: string, origins: ReadonlyArray<string>) =>
+  sendsInClear(primary) ? origins : origins.filter((origin) => !sendsInClear(origin));
 
 /** Whether a host is this machine's own loopback. Tests serve their peers there, so they narrow it. */
 export const LoopbackHost = Context.Reference<(host: string) => boolean>(
@@ -403,8 +415,9 @@ const make = Effect.gen(function* () {
 
   /**
    * The addresses that answer as `environmentId`, in the order given, with
-   * what the first one answered. Addresses this environment would not send
-   * credentials to are skipped; when every one is, the failure says why.
+   * the one to link through and what it answered. Addresses this environment
+   * would not send credentials to are skipped; when every one is, the failure
+   * says why.
    */
   const answeringAs = Effect.fn("PeerLinks.answeringAs")(function* (
     urls: ReadonlyArray<string>,
@@ -434,7 +447,8 @@ const make = Effect.gen(function* () {
         ? [{ origin: result.success.origin, descriptor: result.success.descriptor.value }]
         : [],
     );
-    const first = matching[0];
+    // Plain http is the fallback when no address that encrypts answers.
+    const first = matching.find((found) => !sendsInClear(found.origin)) ?? matching[0];
     if (first === undefined) {
       const refusals = checked.flatMap((result) =>
         Result.isFailure(result) ? [result.failure.message] : [],
@@ -448,7 +462,7 @@ const make = Effect.gen(function* () {
       });
     }
     // Each address is kept once, even when two spellings share an origin.
-    const origins = [...new Set(matching.map((found) => found.origin))];
+    const origins = keptOrigins(first.origin, [...new Set(matching.map((found) => found.origin))]);
     return { primary: first.origin, peer: first.descriptor, origins };
   });
 
@@ -463,7 +477,10 @@ const make = Effect.gen(function* () {
         message: `Nothing at ${primary} answered as a T3 Code environment.`,
       });
     }
-    return { primary, peer: descriptor.value, origins };
+    if (sendsInClear(primary) && origins.length > 1) {
+      return yield* answeringAs(origins, descriptor.value.environmentId, descriptor.value.label);
+    }
+    return { primary, peer: descriptor.value, origins: keptOrigins(primary, origins) };
   });
 
   const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {
