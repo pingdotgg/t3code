@@ -5,6 +5,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  retainedTerminalHistory,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -62,14 +63,15 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
-import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
+import type { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
@@ -1105,7 +1107,7 @@ function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   if (finalByte === "R" && /^[0-9;?]*$/.test(body)) {
     return true;
   }
-  if (finalByte === "c" && /^[>0-9;?]*$/.test(body)) {
+  if (finalByte === "c" && /^[>=0-9;?]*$/.test(body)) {
     return true;
   }
   // Strip DECRQM/DECRPM query traffic to prevent echoed replies during replay; $ guards preserve setters.
@@ -1363,16 +1365,27 @@ function createTerminalSpawnEnv(
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
+    if (platform === "win32") {
+      const normalizedKey = key.toUpperCase();
+      if (normalizedKey === "TERM_PROGRAM" || normalizedKey === "TERM_PROGRAM_VERSION") continue;
+    }
     spawnEnv[key] = value;
   }
+  // The server inherits its launcher's identity (e.g. Apple_Terminal); shells
+  // and tools inside the integrated terminal should see T3 Code instead.
+  spawnEnv.TERM_PROGRAM = "t3code";
+  spawnEnv.TERM_PROGRAM_VERSION = packageJson.version;
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
       const existingKey =
         platform === "win32"
           ? Object.keys(spawnEnv).find((candidate) => candidate.toLowerCase() === key.toLowerCase())
           : undefined;
-      spawnEnv[existingKey ?? key] =
-        key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value, home) : value;
+      spawnEnv[existingKey ?? key] = expandHomeVariable(
+        platform === "win32" ? key.toUpperCase() : key,
+        value,
+        home,
+      );
     }
   }
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
@@ -1439,6 +1452,7 @@ interface TerminalManagerOptions {
 export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   "terminal.resolveProviderInstanceTerminalEnvironment",
 )(function* (input: {
+  readonly deriveProviderInstanceConfigMap: typeof deriveProviderInstanceConfigMap;
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
@@ -1448,7 +1462,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   const settings = yield* input.serverSettings.getSettings.pipe(
     Effect.mapError((cause) => new TerminalProviderEnvironmentError({ providerInstanceId, cause })),
   );
-  const instance = deriveProviderInstanceConfigMap(settings)[providerInstanceId];
+  const instance = input.deriveProviderInstanceConfigMap(settings)[providerInstanceId];
   if (instance === undefined) {
     return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
   }
@@ -1478,7 +1492,9 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 });
 
 /** @public */
-export const make = Effect.fn("TerminalManager.make")(function* () {
+export const make = Effect.fn("TerminalManager.make")(function* (
+  deriveConfigMap: typeof deriveProviderInstanceConfigMap,
+) {
   const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -1489,6 +1505,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     "terminal.resolveProviderInstanceEnvironment",
   )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
     resolveProviderInstanceTerminalEnvironment({
+      deriveProviderInstanceConfigMap: deriveConfigMap,
       serverSettings,
       path,
       rawProviderInstanceId,
@@ -3224,20 +3241,41 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       registerCleanup,
     );
 
-  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (input, viewerId) =>
-    Stream.unwrap(
+  const attachOutputStream: TerminalManager["Service"]["attachOutputStream"] = (
+    input,
+    viewerId,
+  ) => {
+    const { maxHistoryBytes } = input;
+    const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
+      maxHistoryBytes === undefined
+        ? listener
+        : (event: TerminalAttachStreamEvent) =>
+            listener(
+              "snapshot" in event
+                ? {
+                    ...event,
+                    snapshot: {
+                      ...event.snapshot,
+                      history: retainedTerminalHistory(event.snapshot.history, maxHistoryBytes),
+                    },
+                  }
+                : event,
+            );
+    return Stream.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => retainViewerOnce(input, viewerId, null)),
         (release) => Effect.sync(release),
       ).pipe(
         Effect.as(
           terminalOutputStream(
-            (listener, registerCleanup) => attachStream(input, listener, registerCleanup, viewerId),
-            (listener, registerCleanup) => resyncStream(input, listener, registerCleanup),
+            (listener, registerCleanup) =>
+              attachStream(input, retained(listener), registerCleanup, viewerId),
+            (listener, registerCleanup) => resyncStream(input, retained(listener), registerCleanup),
           ),
         ),
       ),
     );
+  };
 
   const metadataEventFromTerminalEvent = (
     event: TerminalEvent,
@@ -3497,4 +3535,5 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 });
 
-export const layer = Layer.effect(TerminalManager, make()).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = (deriveConfigMap: typeof deriveProviderInstanceConfigMap) =>
+  Layer.effect(TerminalManager, make(deriveConfigMap)).pipe(Layer.provide(ProcessRunner.layer));
