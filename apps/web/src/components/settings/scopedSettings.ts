@@ -221,19 +221,28 @@ export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
   patch: ScopedSettingsPatch,
+  options?: { readonly deviceOnly?: boolean },
 ) {
-  const clientPatch = Object.fromEntries(
-    Object.entries(patch).filter(([key]) => CLIENT_KEYS.has(key) && !SERVER_KEYS.has(key)),
-  ) as ClientSettingsPatch;
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const refusesClientKeys = isProjectScope && options?.deviceOnly !== true;
+  const clientKeys = Object.keys(patch).filter(
+    (key) => CLIENT_KEYS.has(key) && !SERVER_KEYS.has(key),
+  );
   const serverPatch = Object.fromEntries(
     Object.entries(patch).filter(([key]) => SERVER_KEYS.has(key)),
   ) as ServerSettingsPatch;
   const serverKeys = Object.keys(serverPatch);
   const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
-  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  // Client settings are stored per device, so a project has nowhere to keep an override.
   const unscopableKeys = isProjectScope
-    ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
+    ? [
+        ...(refusesClientKeys ? clientKeys : []),
+        ...serverKeys.filter((key) => !isProjectScopedSettingKey(key)),
+      ]
     : [];
+  const clientPatch = Object.fromEntries(
+    refusesClientKeys ? [] : Object.entries(patch).filter(([key]) => clientKeys.includes(key)),
+  ) as ClientSettingsPatch;
   const serverWrites: ScopedServerWrite[] =
     serverKeys.length === 0
       ? []
