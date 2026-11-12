@@ -4832,13 +4832,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  const compactionAfterResumedTurnTranscript = (startOutcome: "accepted" | "interrupted") => {
+  const compactionAfterResumedTurnTranscript = (
+    startOutcome: "accepted" | "interrupted" | "hook-stopped",
+  ) => {
     const nativeThreadId = "compact-thread";
     const nativeTurnId = "compact-turn";
     const resumedTurnId = "resumed-turn";
     const item = { type: "contextCompaction", id: "compact-item" };
     const startResponse =
-      startOutcome === "accepted"
+      startOutcome !== "interrupted"
         ? { type: "emit_inbound" as const, label: "compact", frame: { id: 3, result: {} } }
         : {
             type: "emit_inbound" as const,
@@ -4891,11 +4893,38 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           },
         },
-        ...(["item/started", "item/completed"] as const).map((method) => ({
-          type: "emit_inbound" as const,
-          label: method,
-          frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, item } },
-        })),
+        ...(startOutcome === "hook-stopped"
+          ? [
+              {
+                type: "emit_inbound" as const,
+                label: "hook/completed",
+                frame: {
+                  method: "hook/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    run: {
+                      id: "compact-hook",
+                      eventName: "preCompact",
+                      source: "project",
+                      sourcePath: "/workspace/.codex/hooks.json",
+                      scope: "turn",
+                      executionMode: "sync",
+                      handlerType: "command",
+                      displayOrder: 1,
+                      startedAt: 1782622440,
+                      status: "stopped",
+                      entries: [{ kind: "stop", text: "Not now." }],
+                    },
+                  },
+                },
+              },
+            ]
+          : (["item/started", "item/completed"] as const).map((method) => ({
+              type: "emit_inbound" as const,
+              label: method,
+              frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, item } },
+            }))),
         {
           type: "emit_inbound",
           label: "complete",
@@ -4903,7 +4932,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             method: "turn/completed",
             params: {
               threadId: nativeThreadId,
-              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              turn: makeCodexReplayTurn({
+                id: nativeTurnId,
+                status: startOutcome === "hook-stopped" ? "interrupted" : "completed",
+              }),
             },
           },
         },
@@ -4911,8 +4943,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
-  it.effect.each(["accepted", "interrupted"] as const)(
-    "tracks the compaction item after an interrupted resumed turn when the start RPC is %s",
+  it.effect.each(["accepted", "interrupted", "hook-stopped"] as const)(
+    "binds the compaction turn after an interrupted resumed turn (%s)",
     (startOutcome) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -4935,14 +4967,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ? [event.turnItem]
               : [],
           );
+          const hookStopped = startOutcome === "hook-stopped";
           assert.deepEqual(
             items.map((entry) => entry.status),
-            ["running", "completed"],
+            hookStopped ? [] : ["running", "completed"],
           );
           // The resumed turn was never adopted: the only terminal is the compaction's.
           assert.deepEqual(
             harness.terminalEvents().map((event) => event.status),
-            ["completed"],
+            [hookStopped ? "interrupted" : "completed"],
           );
         }).pipe(
           Effect.provide(
