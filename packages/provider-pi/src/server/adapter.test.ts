@@ -4744,7 +4744,11 @@ describe("PiAdapterV2", () => {
       const running = yield* takeEvent(
         (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
       );
-      yield* fake.emit({ type: "auto_retry_end", success: true, attempt: 1 });
+      // Streamed tool input settles the retry; Pi sends auto_retry_end only after the message ends.
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "{" },
+      });
       const recovered = yield* takeEvent(
         (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
       );
@@ -4757,6 +4761,7 @@ describe("PiAdapterV2", () => {
           recovered.turnItem.status === "completed" &&
           recovered.turnItem.title === "Provider recovered",
       );
+      yield* fake.emit({ type: "auto_retry_end", success: true, attempt: 1 });
 
       yield* fake.emit({ type: "agent_settled" });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");

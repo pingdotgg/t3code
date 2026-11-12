@@ -1388,6 +1388,22 @@ describe("buildThreadFeed", () => {
     expect(rows(turn, "zen")).toEqual(["user", "final"]);
     const [steer, answer] = [say("steer", 2, true, true), say("answer", 3)];
     expect(rows([user, steer, answer, final], "zen")).toEqual(["user", "steer", "answer", "final"]);
+    const commentary = { ...step, phase: "commentary" as const };
+    expect(rows([user, commentary, steer, final], "zen")).toEqual(["user", "steer", "final"]);
+    for (const phase of ["commentary", "partial_answer", "final_answer", undefined] as const) {
+      const partial = { ...answer, ...(phase === undefined ? {} : { phase }) };
+      const interrupted = buildThreadFeed(
+        [user, passed, partial, steer, final].map((item, index) => projected(item, index)),
+      );
+      expect(
+        deriveThreadFeedPresentation(interrupted, null, new Set()).some(
+          (row) => row.type === "message" && row.message.id === answer.messageId,
+        ),
+      ).toBe(phase === "final_answer");
+      expect(rows([user, partial, steer, final], "zen").includes("answer")).toBe(
+        phase === "final_answer",
+      );
+    }
     expect(rows([user, steer, step, passed, final], "zen")).toEqual(["user", "steer", "final"]);
     expect(rows([user, steer, answer, step], "zen", running)).toEqual([
       "user",
