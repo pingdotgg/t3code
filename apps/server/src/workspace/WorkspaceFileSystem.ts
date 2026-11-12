@@ -159,7 +159,7 @@ export const make = Effect.gen(function* () {
       : Option.some(expandedPath);
     if (Option.isNone(resolved)) return null;
     const stat = yield* fileSystem.stat(resolved.value).pipe(Effect.option);
-    if (stat._tag === "None") return null;
+    if (stat._tag === "None" || (yield* isServerInternalPath(expandedPath))) return null;
     const realPath = resolveRealPath ? { realPath: resolved.value } : {};
     if (stat.value.type === "Directory") return { kind: "directory", ...realPath } as const;
     if (stat.value.type !== "File") return { kind: "other", ...realPath } as const;
