@@ -326,6 +326,135 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(green.next, botDone, noRemarks).changes, []);
   });
 
+  it("reports an owed all-checks result when a rerun also settles the others", () => {
+    const required = (url: string) => ({
+      ...check("test", "success"),
+      url,
+      required: true,
+    });
+    const e2e = (status: PullRequestCheck["status"], url = "https://ci.example/e2e") => ({
+      ...check("e2e", status),
+      url,
+    });
+    const first = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [required(run(1)), e2e("pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(first.next.owedChecks, ["e2e"]);
+
+    // The required rerun and the owed advisory settle in the same read: deliver one completion.
+    const settled = detail({ checks: [required(run(2)), e2e("success")] });
+    const final = evaluatePullRequestWatch(first.next, settled, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(final.next.owedChecks, []);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, settled, noRemarks).changes, []);
+
+    const expanded = detail({
+      checks: [
+        required(run(2)),
+        e2e("success"),
+        {
+          ...check("new gate", "success"),
+          required: true,
+        },
+      ],
+    });
+    const expandedRead = evaluatePullRequestWatch(first.next, expanded, noRemarks);
+    assert.deepEqual(expandedRead.changes, [{ kind: "checks-passed", count: 3, required: false }]);
+    assert.deepEqual(expandedRead.next.owedChecks, []);
+    assert.deepEqual(evaluatePullRequestWatch(expandedRead.next, expanded, noRemarks).changes, []);
+
+    // A rerun before the owed check settles keeps its debt for the later wake.
+    const rerun = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [required(run(3)), e2e("pending")] }),
+      noRemarks,
+    );
+    assert.deepEqual(rerun.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(rerun.next.owedChecks, ["e2e"]);
+    const settledRerun = detail({ checks: [required(run(3)), e2e("success")] });
+    assert.deepEqual(evaluatePullRequestWatch(rerun.next, settledRerun, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: false },
+    ]);
+  });
+
+  it("does not wake again for a stable duplicate check name with distinct URLs", () => {
+    const pipeline = (url: string): PullRequestCheck => ({ ...check("Pipeline", "success"), url });
+    const firstUrl = "https://gitlab.example/pipelines/1";
+    const secondUrl = "https://gitlab.example/pipelines/2";
+    const checks = [pipeline(firstUrl), pipeline(secondUrl)];
+    const first = evaluatePullRequestWatch(watch(), detail({ checks }), noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(first.next.passedCheckRuns, [
+      { name: "Pipeline", url: firstUrl },
+      { name: "Pipeline", url: secondUrl },
+    ]);
+    const again = evaluatePullRequestWatch(first.next, detail({ checks }), noRemarks);
+    assert.deepEqual(again.changes, []);
+    assert.deepEqual(again.next.passedCheckRuns, first.next.passedCheckRuns);
+
+    // A new advisory name has no baseline identity, so it is not a rerun of one.
+    const grown = detail({ checks: [...checks, check("downstream", "success")] });
+    const growth = evaluatePullRequestWatch(again.next, grown, noRemarks);
+    assert.deepEqual(growth.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(growth.next, grown, noRemarks).changes, []);
+
+    // One duplicate reruns: its new URL is news once, then quiet.
+    const rerun = [pipeline("https://gitlab.example/pipelines/3"), pipeline(secondUrl)];
+    const rerunRead = evaluatePullRequestWatch(growth.next, detail({ checks: rerun }), noRemarks);
+    assert.deepEqual(rerunRead.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(rerunRead.next, detail({ checks: rerun }), noRemarks).changes,
+      [],
+    );
+  });
+
+  it("keeps stage baselines through a partial pipeline read so a later rerun still wakes", () => {
+    const stage = (job: string, url: string): PullRequestCheck => ({
+      ...check(`build / ${job}`, "success"),
+      url,
+    });
+    const testUrl = "https://gitlab.example/jobs/1";
+    const deployUrl = "https://gitlab.example/jobs/2";
+    const full = detail({ checks: [stage("test", testUrl), stage("deploy", deployUrl)] });
+    const first = evaluatePullRequestWatch(watch(), full, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+
+    // A URL-less partial read cannot identify a rerun, so it keeps every baseline.
+    const unaddressed = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [{ ...check("Pipeline", "success"), url: null }] }),
+      noRemarks,
+    );
+    assert.deepEqual(unaddressed.changes, []);
+    assert.deepEqual(unaddressed.next.passedCheckRuns, first.next.passedCheckRuns);
+
+    // The stage read falls back to one passing pipeline check, which changes no known name.
+    const fallback = detail({
+      checks: [{ ...check("Pipeline", "success"), url: "https://gitlab.example/pipelines/9" }],
+    });
+    const fallbackRead = evaluatePullRequestWatch(unaddressed.next, fallback, noRemarks);
+    assert.deepEqual(fallbackRead.changes, []);
+    assert.deepEqual(fallbackRead.next.passedCheckRuns, [
+      { name: "build / test", url: testUrl },
+      { name: "build / deploy", url: deployUrl },
+      { name: "Pipeline", url: "https://gitlab.example/pipelines/9" },
+    ]);
+    const fallbackAgain = evaluatePullRequestWatch(fallbackRead.next, fallback, noRemarks);
+    assert.deepEqual(fallbackAgain.changes, []);
+    assert.lengthOf(fallbackAgain.next.passedCheckRuns ?? [], 3);
+
+    // Full jobs return after a rerun of one existing name: its new URL is a successful rerun.
+    const rerun = detail({
+      checks: [stage("test", "https://gitlab.example/jobs/3"), stage("deploy", deployUrl)],
+    });
+    const rerunRead = evaluatePullRequestWatch(fallbackAgain.next, rerun, noRemarks);
+    assert.deepEqual(rerunRead.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(evaluatePullRequestWatch(rerunRead.next, rerun, noRemarks).changes, []);
+  });
+
   it("reports an owed non-required failure once after the required notice", () => {
     const required = { ...check("test", "success"), required: true };
     const early = detail({ checks: [required, check("e2e", "pending")] });

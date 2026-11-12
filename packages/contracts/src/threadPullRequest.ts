@@ -87,6 +87,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** Job URLs distinguish successful reruns that finish between watch reads. */
+  passedCheckRuns: Schema.optional(
+    Schema.Array(Schema.Struct({ name: TrimmedNonEmptyString, url: Schema.String })),
+  ),
   /** Checks still pending when required ones passed early, owed one wake once all settle. */
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Approval holds keyed by workflow run URL, or check name when no run URL is known. */

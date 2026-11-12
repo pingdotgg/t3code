@@ -4060,10 +4060,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* watch(true, "start");
 
       let headSha = "ad70160aaa";
+      let runId = 1;
+      let required = true;
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
+          watchFingerprint: () =>
+            Effect.succeed({ status: `${headSha} run-${runId}`, remarks: "unchanged" }),
+          invalidate: () => Effect.void,
           detail: () =>
             Effect.sync(() => ({
               ...watchedPullRequestDetail({
@@ -4072,12 +4077,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 at: "2026-10-02T12:00:00.000Z",
               }),
               headSha,
-              checks: ["lint", "test"].map((name) => ({
+              checks: ["lint", "test"].map((name, index) => ({
                 name,
                 status: "success" as const,
                 description: null,
-                url: null,
-                required: true,
+                url: `https://github.com/pingdotgg/t3code/actions/runs/${runId}/job/${runId * 10 + index}`,
+                required,
               })),
             })),
           activity: () =>
@@ -4097,7 +4102,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* reactor.sweep;
-      yield* TestClock.adjust("10 minutes");
+      yield* TestClock.adjust("2 minutes");
       yield* reactor.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed"]);
 
@@ -4110,10 +4115,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* restarted.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed"]);
 
-      headSha = "bbbbbbbbbb";
-      yield* TestClock.adjust("10 minutes");
+      // A complete same-head run can fall between reads, without any pending detail.
+      runId = 2;
+      yield* TestClock.adjust("2 minutes");
       yield* restarted.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+
+      const afterRerun = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* afterRerun.sweep;
+      yield* watch(false, "stop-rerun");
+      yield* watch(true, "again-rerun");
+      yield* afterRerun.sweep;
+      assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+
+      required = false;
+      runId = 3;
+      yield* TestClock.adjust("2 minutes");
+      yield* afterRerun.sweep;
+      assert.equal((yield* summaries).length, 3);
+      yield* afterRerun.sweep;
+      assert.equal((yield* summaries).length, 3);
+
+      headSha = "bbbbbbbbbb";
+      yield* TestClock.adjust("2 minutes");
+      yield* afterRerun.sweep;
+      assert.equal((yield* summaries).length, 4);
       yield* watch(false, "end");
     }),
   );
