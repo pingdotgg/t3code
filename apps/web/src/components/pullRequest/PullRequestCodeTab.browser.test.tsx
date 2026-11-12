@@ -429,7 +429,8 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   await marker.click();
   await expect.element(marker).toHaveAttribute("aria-expanded", "true");
   await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
-  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  // The redesigned card keeps a reply field open instead of a Reply button.
+  await reply().click();
   await reply().fill("Unsent");
 
   // Hidden conversations stay mounted, so the unsent reply is still there.
