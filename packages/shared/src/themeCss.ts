@@ -25,7 +25,12 @@ export function themeCssLoadsRemoteFiles(css: string): boolean {
  */
 export const THEME_CSS_HOOKS = [
   { selector: '[data-slot="sidebar"]', styles: "app sidebar" },
+  { selector: '[data-slot="sidebar-inner"]', styles: "sidebar surface" },
   { selector: "[data-thread-item]", styles: "sidebar thread row" },
+  {
+    selector: '[data-slot="project-monogram"]',
+    styles: "project icon with letters; its svg holds the tile",
+  },
   { selector: "[data-chat-header]", styles: "chat header" },
   { selector: '[data-workspace-area="conversation"]', styles: "chat area, behind the messages" },
   { selector: ".messages-timeline-scroll", styles: "chat scroller" },
@@ -36,6 +41,7 @@ export const THEME_CSS_HOOKS = [
   { selector: ".chat-markdown", styles: "assistant text" },
   { selector: ".chat-markdown-codeblock", styles: "code block" },
   { selector: "[data-chat-composer-form]", styles: "composer" },
+  { selector: '[data-slot="composer-host"]', styles: "composer card" },
   { selector: ".composer-tiptap", styles: "composer text" },
   { selector: "[data-thread-details-card]", styles: "thread details card" },
   { selector: "[data-thread-terminal-drawer]", styles: "terminal drawer" },
@@ -65,6 +71,7 @@ export const THEME_GUIDE = [
   "The app's own rules can be more specific. If a rule has no effect, add !important.",
   "It cannot reach the terminal text, the file tree, or diff internals. Use color roles for those.",
   "Native scrollbars take `::-webkit-scrollbar` and `::-webkit-scrollbar-thumb`.",
+  "Icons are `svg.lucide`. stroke-width, stroke-linecap, and stroke-linejoin restyle them.",
   "",
   "Stable selectors (other class names change between releases, so do not use them):",
   ...THEME_CSS_HOOKS.map((hook) => `- ${hook.selector}: ${hook.styles}`),
