@@ -89,6 +89,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const recheckPendingRef = yield* Ref.make(false);
+  // Live usage updates advance the published checkedAt, so the explicit-refresh floor uses the probe's.
+  const usageProbedAtRef = yield* Ref.make<string | undefined>(undefined);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
 
@@ -182,6 +184,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     // A probe without usage must not erase a report published while its I/O was in flight.
     const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
     const probedSnapshot = yield* input.checkProvider;
+    yield* Ref.set(usageProbedAtRef, probedSnapshot.usageLimits?.checkedAt);
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
       options?.deferFailure === true &&
@@ -295,8 +298,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       Effect.gen(function* () {
         // Interval checks reuse cached usage. An explicit refresh re-reads it, but usage
         // endpoints rate-limit per account, so a reading within the floor is kept.
-        const { snapshot } = yield* Ref.get(snapshotStateRef);
-        const checkedAt = Date.parse(snapshot.usageLimits?.checkedAt ?? "");
+        const checkedAt = Date.parse((yield* Ref.get(usageProbedAtRef)) ?? "");
         if (
           !Number.isFinite(checkedAt) ||
           (yield* Clock.currentTimeMillis) - checkedAt >=

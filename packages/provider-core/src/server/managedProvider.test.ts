@@ -247,6 +247,11 @@ describe("makeManagedServerProvider", () => {
         assert.strictEqual(withinFloor.usageLimits?.windows[0]?.usedPercent, 20);
 
         yield* TestClock.adjust("1 minute");
+        // A live reading of one window must not hold back re-reading the rest.
+        yield* provider.applyUsageLimits({
+          checkedAt: DateTime.formatIso(yield* DateTime.now),
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 50 }],
+        });
         const pastFloor = yield* provider.refresh;
         assert.strictEqual(yield* Ref.get(calls), 2);
         assert.strictEqual(pastFloor.usageLimits?.windows[0]?.usedPercent, 100);
