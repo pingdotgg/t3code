@@ -3092,6 +3092,18 @@ describe("OrchestratorMcpService provider resolution", () => {
             NodeCrypto.layer,
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: () => Effect.succeed(null),
+              getThreadRecords: () =>
+                Effect.succeed({
+                  thread: {
+                    id: ThreadId.make("thread:caller"),
+                    projectId,
+                    modelSelection: existing.modelSelection,
+                    runtimeMode: existing.runtimeMode,
+                    interactionMode: existing.interactionMode,
+                    archivedAt: null,
+                  },
+                  runs: [],
+                } as never),
             }),
             ServerSettings.layerTest(),
             Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -3156,13 +3168,14 @@ describe("OrchestratorMcpService provider resolution", () => {
         const selections = yield* Ref.make<
           ReadonlyArray<ScheduledTaskUpsertInput["modelSelection"]>
         >([]);
+        const modes = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
             service(
               masterRepository,
               yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
               existing,
-              undefined,
+              modes,
               selections,
             ),
           ),
@@ -3188,7 +3201,20 @@ describe("OrchestratorMcpService provider resolution", () => {
           model: "gpt-6",
           options: [{ id: "reasoningEffort", value: "xhigh" }],
         };
-        assert.deepEqual(yield* Ref.get(selections), [picked, picked]);
+        // From a thread, a chosen target starts new threads: a bound run would use the thread's model.
+        yield* mcp.scheduleTask(
+          {
+            ...client,
+            thread: {
+              threadId: ThreadId.make("thread:caller"),
+              providerSessionId: "s",
+              providerInstanceId: existing.modelSelection.instanceId,
+            },
+          },
+          { prompt: "Check the build", schedule, target },
+        );
+        assert.deepEqual(yield* Ref.get(selections), [picked, picked, picked]);
+        assert.deepEqual(yield* Ref.get(modes), ["new_thread", "new_thread", "new_thread"]);
       }),
     );
 

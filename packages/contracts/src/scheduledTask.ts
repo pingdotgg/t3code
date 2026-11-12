@@ -79,7 +79,7 @@ const ScheduledTaskWebhookSignatureFields = {
   }),
   encoding: Schema.Literals(["hex", "base64"]),
   prefix: Schema.String.annotate({
-    description: "Text before the digest, e.g. 'sha256='; empty for none.",
+    description: "Digest prefix, e.g. 'sha256='; empty for none.",
   }),
 };
 
@@ -113,7 +113,7 @@ const ScheduledTaskWebhookDedupe = Schema.Struct({
     Schema.Int.check(Schema.isBetween({ minimum: 10, maximum: 3600 })),
   ),
 }).annotate({
-  description: "Replay and coalesce key templates. Window default 120.",
+  description: "Replay/coalesce key templates. Window default 120.",
 });
 
 export const MAX_WEBHOOK_FILTERS = 16;
