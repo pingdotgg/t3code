@@ -570,6 +570,28 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("restarts a stalled relay attempt when the network path changes", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(started);
+      yield* harness.wake("network-changed");
+      yield* TestClock.adjust("1 second");
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("reports a slow SSH preparation failure instead of the setup timeout", () =>
     Effect.gen(function* () {
       const preparationFailure = new ConnectionTransientError({
