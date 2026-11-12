@@ -487,9 +487,16 @@ const makeReader = Effect.fnUntraced(function* (
         const control = input.params.length === 0 && !input.raw;
         const begins = control && beginsTransaction(input.sql);
         // Folding is a guess about the connection's state: only when replies report that state,
-        // and with nothing outstanding on it (an earlier statement could still open or end a
-        // transaction when it runs).
-        if (begins && tracked && !pendingBegin && !inTransaction && pending.size === 0) {
+        // with the worker still running and nothing outstanding on it (an earlier statement could
+        // still open or end a transaction when it runs).
+        if (
+          begins &&
+          tracked &&
+          stoppedMessage === undefined &&
+          !pendingBegin &&
+          !inTransaction &&
+          pending.size === 0
+        ) {
           pendingBegin = true;
           return Effect.succeed([]);
         }

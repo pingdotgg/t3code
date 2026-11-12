@@ -496,6 +496,26 @@ it.effect.each([
     ),
 );
 
+it.effect("fails a BEGIN on a reserved reader whose worker stopped", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const startedBefore = startedWorkers.length;
+      const error = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const connection = yield* sql.reserve;
+          yield* connection.executeUnprepared("SELECT 1", [], undefined);
+          yield* Effect.promise(() => startedWorkers.at(-1)!.terminate());
+          return yield* failureOf(connection.executeUnprepared("BEGIN", [], undefined));
+        }),
+      ).pipe(SqliteClient.readOnly);
+      assert.equal(error._tag, "SqlError");
+      assert.include(String(error.reason.cause), "Database reader exited");
+      assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      assert.equal(startedWorkers.length, startedBefore + 2);
+    }),
+  ),
+);
+
 const withFileClient = <A, E>(
   setup: (
     sql: SqlClient.SqlClient,
