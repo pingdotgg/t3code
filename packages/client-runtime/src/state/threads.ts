@@ -53,7 +53,7 @@ import {
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
-import { makeThreadRequestsResolvedAnnouncer, pendingRuntimeRequestIds } from "./threadRequests.ts";
+import { makeThreadRequestsResolvedAnnouncer } from "./threadRequests.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
@@ -309,7 +309,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     const owns = resumeCache === undefined || resumeCache.owner === owner;
     if (owns && current.status === "deleted") announceRequests([]);
     else if (owns && current.status === "live" && Option.isSome(current.data))
-      announceRequests(pendingRuntimeRequestIds(current.data.value));
+      announceRequests(current.data.value.runtimeRequests);
     committed = {
       state: current,
       sequence,

@@ -158,6 +158,7 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });

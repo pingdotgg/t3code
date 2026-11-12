@@ -10,6 +10,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import { commandLabel } from "./KeybindingsSettings.logic";
@@ -94,30 +95,30 @@ export interface SettingsSearchAvailability {
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
-  "/settings/diagnostics": "Diagnostics",
-  "/settings/extensions": "Extensions",
-  "/settings/projects": "Projects",
-  "/settings/general": "General",
-  "/settings/appearance": "Appearance",
-  "/settings/chat": "Chat",
-  "/settings/diffs": "Diffs & pull requests",
-  "/settings/keybindings": "Keybindings",
-  "/settings/snap-shot": "SnapShots",
-  "/settings/providers": "Providers",
-  "/settings/threads": "Threads",
-  "/settings/browser": "Browser",
-  "/settings/devices": "Devices",
-  "/settings/scheduled-tasks": "Scheduled tasks",
-  "/settings/source-control": "Source control",
-  "/settings/worktrees": "Worktrees",
-  "/settings/connections": "Environments",
-  "/settings/access": "Sharing & access",
-  "/settings/secrets": "Secrets",
-  "/settings/maintenance": "Maintenance",
-  "/settings/labs": "Labs",
-  "/settings/about": "About",
-  "/settings/voice": "Voice",
-  "/settings/archived": "Archive",
+  "/settings/diagnostics": msg("Diagnostics"),
+  "/settings/extensions": msg("Extensions"),
+  "/settings/projects": msg("Projects"),
+  "/settings/general": msg("General"),
+  "/settings/appearance": msg("Appearance"),
+  "/settings/chat": msg("Chat"),
+  "/settings/diffs": msg("Diffs & pull requests"),
+  "/settings/keybindings": msg("Keybindings"),
+  "/settings/snap-shot": msg("SnapShots"),
+  "/settings/providers": msg("Providers"),
+  "/settings/threads": msg("Threads"),
+  "/settings/browser": msg("Browser"),
+  "/settings/devices": msg("Devices"),
+  "/settings/scheduled-tasks": msg("Scheduled tasks"),
+  "/settings/source-control": msg("Source control"),
+  "/settings/worktrees": msg("Worktrees"),
+  "/settings/connections": msg("Environments"),
+  "/settings/access": msg("Sharing & access"),
+  "/settings/secrets": msg("Secrets"),
+  "/settings/maintenance": msg("Maintenance"),
+  "/settings/labs": msg("Labs"),
+  "/settings/about": msg("About"),
+  "/settings/voice": msg("Voice"),
+  "/settings/archived": msg("Archive"),
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -138,7 +139,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: "Agents",
+    heading: msg("Agents"),
     paths: [
       "/settings/providers",
       "/settings/extensions",
@@ -149,11 +150,11 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: "Code",
+    heading: msg("Code"),
     paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
   },
   {
-    heading: "Connections",
+    heading: msg("Connections"),
     paths: [
       "/settings/connections",
       "/settings/access",
@@ -429,13 +430,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "project-grouping",
-    title: "Project grouping",
+    title: msg("Project grouping"),
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
   },
   {
     id: "project-order",
-    title: "Project order",
+    title: msg("Project order"),
     to: "/settings/general",
     searchTerms: ["sort projects sidebar manual created recent"],
   },
@@ -461,7 +462,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "working-shelf",
-    title: "Working section",
+    title: msg("Working section"),
     to: "/settings/general",
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
@@ -543,7 +544,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "voice-microphone",
     title: "Microphone",
     to: "/settings/voice",
-    searchTerms: ["mic input audio device"],
+    searchTerms: ["mic input audio device order priority preferred"],
   },
   {
     id: "dictation-shortcut-mode",
@@ -678,13 +679,21 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "in-app-notifications",
-    title: "In-app notifications",
+    title: msg("In-app notifications"),
     to: "/settings/general",
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "language",
+    title: msg("Language"),
+    to: "/settings/general",
+    searchTerms: [
+      "locale translation english deutsch german español spanish français french português portuguese brasil brazilian chinese 中文 japanese 日本語 korean 한국어 russian русский sprache idioma langue 语言 言語 언어 язык",
+    ],
+  },
+  {
     id: "time-format",
-    title: "Time format",
+    title: msg("Time format"),
     to: "/settings/general",
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
@@ -807,25 +816,25 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "unpin-confirmation",
-    title: "Unpin confirmation",
+    title: msg("Unpin confirmation"),
     to: "/settings/general",
     searchTerms: ["ask before thread pinned section"],
   },
   {
     id: "archive-confirmation",
-    title: "Archive confirmation",
+    title: msg("Archive confirmation"),
     to: "/settings/general",
     searchTerms: ["ask before thread second click inline action"],
   },
   {
     id: "delete-confirmation",
-    title: "Delete confirmation",
+    title: msg("Delete confirmation"),
     to: "/settings/general",
     searchTerms: ["ask before thread chat history"],
   },
   {
     id: "quit-confirmation",
-    title: "Quit shortcut",
+    title: msg("Quit shortcut"),
     to: "/settings/general",
     searchTerms: ["confirmation desktop app exit direct hold double click press twice"],
     desktopOnly: true,
@@ -1518,6 +1527,7 @@ export function settingsForThisPlatform(
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
+  translate: (message: string) => string = (message) => message,
 ): ReadonlyArray<SettingsSearchItem> {
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
@@ -1529,6 +1539,9 @@ export function searchSettings(
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        // The labels as displayed, so search also works in the active language.
+        normalizeSearchText(translate(item.title)),
+        normalizeSearchText(translate(SETTINGS_SECTION_LABELS[item.to])),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];

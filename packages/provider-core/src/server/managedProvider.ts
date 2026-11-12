@@ -28,6 +28,7 @@ interface ProviderSnapshotState {
   readonly enrichmentGeneration: number;
   // null preserves an explicitly cleared plan across probes and enrichment.
   readonly usageAuthLabel: string | null | undefined;
+  readonly checked: boolean;
 }
 
 function withUsageLimits(
@@ -79,6 +80,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
     usageAuthLabel: undefined,
+    checked: false,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -218,7 +220,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation, usageAuthLabel },
+          { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
         ] as const;
       },
     );
@@ -425,6 +427,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+    isAwaitingFirstCheck: Ref.get(snapshotStateRef).pipe(Effect.map((state) => !state.checked)),
     refresh: input
       .resolveMaintenance({ fresh: true })
       .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),

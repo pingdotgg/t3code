@@ -14,6 +14,7 @@ import {
   CheckpointRef,
   CommandId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -1630,6 +1631,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             providerTurnId: providerTurn.id,
             messageId: steerMessageId,
             modelSelection: run.modelSelection,
+            steerFollowUpAfterRunOrdinal: run.ordinal,
           },
         ],
       );
@@ -5627,6 +5629,67 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNull(projection.thread.settledOverride);
       assert.isNull(projection.thread.settledAt);
       assert.isNotNull(projection.thread.unsettledAt);
+    }),
+  );
+
+  it.effect("keeps a linked environment's sender on started and queued messages", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-linked-sender-thread");
+      const linkedSender = {
+        environmentId: EnvironmentId.make("environment-linked"),
+        threadId: ThreadId.make("linked-sending-agent"),
+        title: "Linked sending agent",
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-linked-sender-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-linked-sender-project"),
+        title: "Linked sender",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-linked-sender",
+      });
+      for (const [suffix, type] of [
+        ["started", "start_immediately"],
+        ["queued", "queue_after_active"],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          linkedSender,
+          commandId: CommandId.make(`runtime-layer-linked-sender-${suffix}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-linked-sender-${suffix}`),
+          text: `Linked ${suffix} message`,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type },
+        });
+      }
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      for (const suffix of ["started", "queued"]) {
+        const message = projection.messages.find(
+          (candidate) => candidate.id === `runtime-layer-linked-sender-${suffix}`,
+        );
+        assert.deepStrictEqual(message?.linkedSender, linkedSender);
+        assert.isUndefined(message?.senderThreadId);
+      }
+      const startedItem = projection.turnItems.find(
+        (item) =>
+          item.type === "user_message" && item.messageId === "runtime-layer-linked-sender-started",
+      );
+      assert.deepStrictEqual(
+        startedItem?.type === "user_message" ? startedItem.linkedSender : undefined,
+        linkedSender,
+      );
     }),
   );
 
