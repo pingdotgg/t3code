@@ -301,7 +301,7 @@ export function FloatingWorkingControl(props: {
           <SymbolView
             name="calendar.badge.clock"
             size={13}
-            tintColorClassName="accent-foreground-muted"
+            tintColorClassName="accent-foreground"
           />
           <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {props.automationCount}
