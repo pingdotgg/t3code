@@ -141,6 +141,7 @@ interface MakeInstanceInput {
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
   >;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly relocatePort?: () => Effect.Effect<boolean>;
 }
 
 function makeTestInstance(input: MakeInstanceInput) {
@@ -188,6 +189,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
     ...(input.onStartupFailure ? { onStartupFailure: input.onStartupFailure } : {}),
+    ...(input.relocatePort ? { relocatePort: input.relocatePort } : {}),
   });
 
   return instance.pipe(Effect.provide(layerServices));
@@ -741,10 +743,68 @@ describe("DesktopBackendManager", () => {
             ),
           Deferred.succeed(foreignReady, undefined).pipe(Effect.asVoid),
         );
-        yield* TestClock.adjust(Duration.seconds(180));
+        yield* TestClock.adjust(Duration.millis(100));
         const foreignFailure = yield* Queue.take(reports);
-        assert.equal(foreignFailure.reason, "The server started but did not become ready in time.");
+        assert.equal(foreignFailure.reason, "Another server is answering on port 3773.");
         assert.isFalse(yield* Deferred.isDone(foreignReady));
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("moves a live backend to another port when a foreign server answers on its own", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const port = yield* Ref.make(3773);
+        const kills = yield* Ref.make(0);
+        const killed = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const instance = yield* makeTestInstance({
+          configResolve: Ref.get(port).pipe(
+            Effect.map((value) => ({
+              ...baseConfig,
+              bootstrap: { ...baseConfig.bootstrap, port: value },
+              httpBaseUrl: new URL(`http://127.0.0.1:${value}`),
+            })),
+          ),
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Deferred.make<ChildProcessSpawner.ExitCode>().pipe(
+                Effect.map((exit) =>
+                  makeProcess({
+                    exitCode: Deferred.await(exit),
+                    kill: () =>
+                      Ref.update(kills, (count) => count + 1).pipe(
+                        Effect.andThen(Deferred.succeed(killed, undefined)),
+                        Effect.andThen(Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0))),
+                        Effect.asVoid,
+                      ),
+                  }),
+                ),
+              ),
+            ),
+          ),
+          // A relay on the original port forwards to another T3 server; the moved backend answers itself.
+          httpClientLayer: layerHttpClient((request) =>
+            Effect.succeed(
+              new URL(request.url).port === "3773"
+                ? HttpClientResponse.fromWeb(
+                    request,
+                    new Response(JSON.stringify({ desktopLaunchId: "other-launch" })),
+                  )
+                : responseForRequest(request, 200),
+            ),
+          ),
+          relocatePort: () => Ref.set(port, 3774).pipe(Effect.as(true)),
+          onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+        });
+        yield* instance.start;
+        yield* Deferred.await(killed);
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* Deferred.await(ready);
+        assert.equal(yield* Ref.get(kills), 1);
+        const config = yield* instance.currentConfig;
+        assert.equal(Option.getOrThrow(config).bootstrap.port, 3774);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

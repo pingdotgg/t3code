@@ -206,6 +206,8 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly onExitObserved?: () => Effect.Effect<void>;
   readonly onReady?: () => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
+  /** Fires once per run when another server answers on the port; true stops this run so it restarts. */
+  readonly onForeignServer?: () => Effect.Effect<boolean>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
     chunk: Uint8Array,
@@ -258,6 +260,8 @@ export interface BackendInstanceSpec {
   readonly onStateDirOwned?: () => Effect.Effect<void>;
   /** Fires on each repeated crash or readiness timeout until the backend becomes ready. */
   readonly onStartupFailure?: (failure: BackendStartupFailure) => Effect.Effect<void>;
+  /** Moves the backend to another port when a foreign server answers on its own; true when moved. */
+  readonly relocatePort?: () => Effect.Effect<boolean>;
 }
 
 interface ActiveBackendRun {
@@ -592,7 +596,11 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     return logBackendProcessWarning("another server is answering on the backend port", {
       httpBaseUrl: options.httpBaseUrl.href,
       pid: Number(handle.pid),
-    });
+    }).pipe(
+      Effect.andThen(options.onForeignServer?.() ?? Effect.succeed(false)),
+      // A live backend can sit behind a more specific bind (wslrelay on 127.0.0.1); exit to restart elsewhere.
+      Effect.flatMap((restart) => (restart ? handle.kill().pipe(Effect.ignore) : Effect.void)),
+    );
   });
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
@@ -996,6 +1004,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 config.value.wslRuntimeId,
               );
             }
+          }),
+          onForeignServer: Effect.fn("desktop.backendInstance.onForeignServer")(function* () {
+            if (yield* spec.relocatePort?.() ?? Effect.succeed(false)) return true;
+            yield* reportStartupFailure(
+              `Another server is answering on port ${config.value.bootstrap.port}.`,
+            );
+            return false;
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {

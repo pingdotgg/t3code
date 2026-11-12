@@ -1,3 +1,4 @@
+import * as NetService from "@t3tools/shared/Net";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,8 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopBackendPort from "./DesktopBackendPort.ts";
+import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -112,6 +115,9 @@ export const layer = Layer.effect(
     const electronApp = yield* ElectronApp.ElectronApp;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const { primaryBackendStartup } = yield* DesktopState.DesktopState;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    const net = yield* NetService.NetService;
     // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
@@ -159,6 +165,23 @@ export const layer = Layer.effect(
       },
     );
 
+    // The startup scan cannot see a listener that binds the port later; a pinned port stays put.
+    const relocatePrimaryPort = Effect.fn("desktop.backendPool.relocatePrimaryPort")(function* () {
+      if (Option.isSome(environment.configuredBackendPort)) return false;
+      const { port } = yield* serverExposure.backendConfig;
+      const next = yield* DesktopBackendPort.scanDesktopBackendPort(port + 1).pipe(
+        Effect.provideService(NetService.NetService, net),
+        Effect.option,
+      );
+      if (Option.isNone(next)) return false;
+      yield* logBackendPoolWarning("another server took the backend port; moving the backend", {
+        port,
+        nextPort: next.value,
+      });
+      yield* serverExposure.configureFromSettings({ port: next.value });
+      return true;
+    });
+
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Resolve lazily: startup loads persisted settings after pool initialization.
@@ -179,6 +202,7 @@ export const layer = Layer.effect(
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
+      relocatePort: relocatePrimaryPort,
       onStateDirOwned: () =>
         DesktopHomeOwner.readLiveHomeOwner().pipe(
           Effect.flatMap((owner) =>
