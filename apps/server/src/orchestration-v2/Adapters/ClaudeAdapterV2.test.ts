@@ -70,6 +70,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -106,6 +107,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import * as ClaudeSkills from "../../provider/Drivers/ClaudeSkills.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
@@ -13936,6 +13938,118 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "startup steer: is not offered as now before the opening prompt streams (init echo=%s)",
+    (initEcho) => {
+      const dispatcher = new Scheduler.MixedScheduler("sync").makeDispatcher();
+      return Effect.scoped(
+        Effect.gen(function* () {
+          // Skill discovery does I/O; stubbing it lets flush reach the steer offer.
+          using _skills = vi
+            .spyOn(ClaudeSkills, "discoverClaudeSkills")
+            .mockReturnValue(Effect.succeed([]));
+          const harness = yield* makeWakeHarness;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attemptId = RunAttemptId.make("attempt-startup-steer-offer");
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Show the effort level.",
+            attachments: [],
+          });
+          yield* harness.runtime.startTurn(input);
+          const promptUuid = harness.promptUuid(0);
+          for (const state of ["queued", "started"]) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "command_lifecycle",
+                command_uuid: promptUuid,
+                state,
+                uuid: `opening-${state}`,
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          }
+          if (initEcho) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "system",
+                subtype: "init",
+                uuid: "opening-init",
+                session_id: WAKE_NATIVE_SESSION,
+                user_message_uuids: [promptUuid],
+              }),
+            );
+          }
+          const steering = yield* harness.runtime
+            .steerTurn({
+              threadId: harness.threadId,
+              runId: input.runId,
+              providerThread: harness.providerThread,
+              providerTurnId: idAllocator.derive.providerTurn({
+                driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                nativeTurnId: `turn:${attemptId}`,
+              }),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: MessageId.make("startup-steer"),
+                text: "In the icons.",
+                attachments: [],
+              },
+            })
+            .pipe(Effect.forkScoped({ startImmediately: true }));
+          dispatcher.flush();
+          const prematureNowOffers = harness.offeredMessages.filter(
+            (message) => message.priority === "now",
+          );
+          // Releases an implementation that holds the steer until the prompt streams.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "stream_event",
+              uuid: "opening-first-stream",
+              session_id: WAKE_NATIVE_SESSION,
+              parent_tool_use_id: null,
+              user_message_uuid: promptUuid,
+              user_message_uuids: [promptUuid],
+              event: {
+                type: "message_start",
+                message: {
+                  id: "opening-model-message",
+                  type: "message",
+                  role: "assistant",
+                  model: "claude-sonnet-4-6",
+                  content: [],
+                  stop_reason: null,
+                  stop_sequence: null,
+                  usage: { input_tokens: 1, output_tokens: 0 },
+                },
+              },
+            }),
+          );
+          yield* Fiber.join(steering);
+          assert.lengthOf(prematureNowOffers, 0);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+          Effect.provideService(Scheduler.Scheduler, {
+            executionMode: "sync",
+            shouldYield: () => false,
+            makeDispatcher: () => dispatcher,
+          }),
+        ),
+      );
+    },
   );
 
   it.effect("buffers wake output and requests a single continuation run", () =>
