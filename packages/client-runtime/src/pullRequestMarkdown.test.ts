@@ -148,6 +148,28 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("keeps a video inside a details block within its fold", () => {
+    const body = [
+      "<details open>",
+      "<summary>Videos</summary>",
+      "",
+      "Caption one",
+      "",
+      "https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456",
+      "",
+      "Caption two",
+      "",
+      '<video src="https://example.com/b.mp4"></video>',
+      "",
+      "</details>",
+    ].join("\n");
+    const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
+    for (const segment of splitPullRequestBody(body)) {
+      if (segment.kind !== "markdown") continue;
+      expect(count(segment.text, /<details\b/giu)).toBe(count(segment.text, /<\/details\s*>/giu));
+    }
+  });
+
   it("refuses a non-http source rather than making a link out of it", () => {
     const body = '<video src="javascript:alert(1)"></video>';
     expect(splitPullRequestBody(body)).toEqual([
