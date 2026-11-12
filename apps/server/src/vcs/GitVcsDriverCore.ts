@@ -2872,7 +2872,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       const remoteName = yield* resolvePushRemoteName(cwd, branch, goneUpstream?.remoteName);
       if (!remoteName) return null;
-      const branchName = goneUpstream?.branchName ?? (yield* resolvePublishBranchName(cwd, branch));
+      // A gone local upstream still gets the full local name, as below.
+      const branchName =
+        goneUpstream?.branchName ??
+        (configuredRemoteName === "." ? branch : yield* resolvePublishBranchName(cwd, branch));
       return { remoteName, branchName, publishes: true, upstream: goneBaseUpstream };
     }
 

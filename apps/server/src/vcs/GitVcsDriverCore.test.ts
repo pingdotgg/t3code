@@ -7369,7 +7369,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           cwd,
           null,
         );
-        assert.deepInclude(localUpstreamGone, { upstreamBranch: "origin/push" });
+        assert.deepInclude(localUpstreamGone, { upstreamBranch: "origin/feature/push" });
 
         yield* git(cwd, ["push", "fork", "HEAD:refs/heads/release"]);
         yield* git(cwd, ["branch", "-u", "fork/release"]);
