@@ -126,11 +126,20 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** Ends the link only while the refused token is still its own, not one a newer link replaced. */
+  const refuse = (resolved: PeerLinks.ResolvedPeerLink) =>
+    links
+      .recordOutcome(resolved.link.environmentId, {
+        error: linkRefused.message,
+        refusedSecret: resolved.secretName,
+      })
+      .pipe(Effect.andThen(Effect.fail(linkRefused)));
+
   const openSession = Effect.fn("PeerMcpClient.openSession")(function* (
-    url: string,
-    token: string,
+    resolved: PeerLinks.ResolvedPeerLink,
     limitHeader: Record<string, string>,
   ) {
+    const { url, token } = resolved;
     const initialized = yield* post(
       url,
       token,
@@ -147,7 +156,7 @@ const make = Effect.gen(function* () {
       limitHeader,
     );
     const sessionId = initialized.headers["mcp-session-id"];
-    if (initialized.status === 401) return yield* linkRefused;
+    if (initialized.status === 401) return yield* refuse(resolved);
     if (initialized.status === 403) return yield* linkedEnvironmentsOffThere;
     if (initialized.status !== 200 || sessionId === undefined) {
       return yield* new OrchestratorMcpFailure({
@@ -205,18 +214,18 @@ const make = Effect.gen(function* () {
           },
         );
       const existing = (yield* Ref.get(sessions)).get(sessionKey);
-      const sessionId = existing ?? (yield* openSession(resolved.url, resolved.token, limitHeader));
+      const sessionId = existing ?? (yield* openSession(resolved, limitHeader));
       // The initialized session outlives a tool request, including a long wait or cancellation.
       if (existing === undefined) {
         yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, sessionId));
       }
       let response = yield* callOnce(sessionId);
       if (response.status === 404) {
-        const renewed = yield* openSession(resolved.url, resolved.token, limitHeader);
+        const renewed = yield* openSession(resolved, limitHeader);
         yield* Ref.update(sessions, (current) => new Map(current).set(sessionKey, renewed));
         response = yield* callOnce(renewed);
       }
-      if (response.status === 401) return yield* linkRefused;
+      if (response.status === 401) return yield* refuse(resolved);
       if (response.status === 403) return yield* linkedEnvironmentsOffThere;
       if (response.status !== 200) {
         return yield* new OrchestratorMcpFailure({
@@ -278,10 +287,7 @@ const make = Effect.gen(function* () {
     (effect, input) =>
       effect.pipe(
         Effect.tapError((error) =>
-          links.recordOutcome(input.environmentId, {
-            error: error.message,
-            refused: error === linkRefused,
-          }),
+          links.recordOutcome(input.environmentId, { error: error.message }),
         ),
         // A refusal is still an answer: the link works, so only this call fails.
         Effect.tap(() => links.recordOutcome(input.environmentId, { error: null })),
