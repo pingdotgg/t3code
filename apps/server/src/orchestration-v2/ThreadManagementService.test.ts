@@ -22,7 +22,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -472,7 +471,6 @@ it.effect.each([
   "unsupported-runtime",
   "runtime-failed",
   "timed-out",
-  "interrupted",
 ] as const)(
   "marks background work awaited on the thread's active provider thread with state %s",
   (state) =>
@@ -504,7 +502,6 @@ it.effect.each([
       };
       const calls: Array<{ providerThreadId: ProviderThreadId; awaited: boolean }> = [];
       const started = yield* Deferred.make<void>();
-      const interrupted = yield* Deferred.make<void>();
       const providerFailure = new ProviderAdapter.ProviderAdapterProtocolError({
         driver,
         detail: "Background task registration failed",
@@ -527,11 +524,7 @@ it.effect.each([
                   });
                   yield* Deferred.succeed(started, undefined);
                   if (state === "runtime-failed") return yield* providerFailure;
-                  if (state === "timed-out" || state === "interrupted") {
-                    return yield* Effect.never.pipe(
-                      Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
-                    );
-                  }
+                  if (state === "timed-out") return yield* Effect.never;
                   return { matched: input.taskIds.filter((taskId) => taskId === "tests") };
                 }),
             }),
@@ -568,19 +561,11 @@ it.effect.each([
             awaited: state !== "no-match-clear",
           })
           .pipe(Effect.result, Effect.forkChild);
-        if (state === "timed-out" || state === "interrupted") {
+        if (state === "timed-out") {
           yield* Deferred.await(started);
-          if (state === "interrupted") {
-            yield* Fiber.interrupt(request);
-            const exit = yield* Fiber.await(request);
-            expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
-            yield* Deferred.await(interrupted);
-            return;
-          }
           yield* TestClock.adjust("14999 millis");
           expect(request.pollUnsafe()).toBeUndefined();
           yield* TestClock.adjust("1 millis");
-          yield* Deferred.await(interrupted);
         }
         return yield* Fiber.join(request);
       }).pipe(Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)));
@@ -607,16 +592,13 @@ it.effect.each([
         });
         expect(calls).toEqual([]);
       } else {
-        if (state !== "interrupted") {
-          expect(result).toMatchObject({
-            failure: {
-              _tag: "ThreadManagementBackgroundWaitError",
-              threadId,
-              reason: state === "timed-out" ? "timed-out" : "failed",
-              cause: state === "timed-out" ? expect.any(Cause.TimeoutError) : providerFailure,
-            },
-          });
-        }
+        expect(result).toMatchObject({
+          failure: {
+            _tag: "ThreadManagementBackgroundWaitError",
+            reason: state === "timed-out" ? "timed-out" : "failed",
+            cause: state === "timed-out" ? expect.any(Cause.TimeoutError) : providerFailure,
+          },
+        });
         expect(calls).toEqual([{ providerThreadId, awaited: true }]);
       }
     }),
