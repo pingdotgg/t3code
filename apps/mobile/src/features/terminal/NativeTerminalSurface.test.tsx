@@ -16,9 +16,17 @@ const mocks = vi.hoisted(() => ({
   mounts: vi.fn(),
   unmounts: vi.fn(),
   write: vi.fn(async (_data: string, _reset: boolean) => {}),
+  paste: (_text: string) => {},
 }));
 
-function RawView({ ref: nativeRef, initialBuffer, onResize }: NativeTerminalSurfaceProps) {
+function RawView({ ref: nativeRef, initialBuffer, onResize, onPaste }: NativeTerminalSurfaceProps) {
+  useLayoutEffect(() => {
+    mocks.paste = (text) =>
+      onPaste?.({ nativeEvent: { text } } as NativeSyntheticEvent<{ text: string }>);
+    return () => {
+      mocks.paste = () => {};
+    };
+  }, [onPaste]);
   useImperativeHandle(nativeRef, () => ({ writeOutput: mocks.write }));
   useLayoutEffect(() => {
     mocks.mounts();
@@ -63,6 +71,7 @@ function setup(revision: number | null) {
   mocks.write.mockResolvedValue(undefined);
   mocks.mounts.mockClear();
   mocks.unmounts.mockClear();
+  mocks.paste = () => {};
   const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
   const container = {
     nodeType: 1,
@@ -81,6 +90,11 @@ function setup(revision: number | null) {
     async render(
       state: typeof EMPTY_TERMINAL_BUFFER_STATE,
       terminalKey = "environment:thread:term-1",
+      input: {
+        isRunning?: boolean;
+        readOnly?: boolean;
+        onPaste?: (text: string) => void;
+      } = {},
     ) {
       await act(async () => {
         root.render(
@@ -97,6 +111,7 @@ function setup(revision: number | null) {
             isRunning
             onInput={() => {}}
             onResize={() => {}}
+            {...input}
           />,
         );
       });
@@ -151,3 +166,16 @@ it.each([null, 1])(
     }
   },
 );
+
+it("forwards a native paste only while the terminal is writable and running", async () => {
+  await using harness = setup(1);
+  const pasted: string[] = [];
+  const onPaste = (text: string) => pasted.push(text);
+  await harness.render(EMPTY_TERMINAL_BUFFER_STATE, undefined, { onPaste });
+  mocks.paste("one\ntwo");
+  await harness.render(EMPTY_TERMINAL_BUFFER_STATE, undefined, { onPaste, readOnly: true });
+  mocks.paste("read-only");
+  await harness.render(EMPTY_TERMINAL_BUFFER_STATE, undefined, { onPaste, isRunning: false });
+  mocks.paste("exited");
+  expect(pasted).toEqual(["one\ntwo"]);
+});

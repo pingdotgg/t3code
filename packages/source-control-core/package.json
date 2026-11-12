@@ -27,6 +27,10 @@
       "types": "./src/server/mergeMessage.ts",
       "import": "./src/server/mergeMessage.ts"
     },
+    "./server/pullRequestUtils": {
+      "types": "./src/server/pullRequestUtils.ts",
+      "import": "./src/server/pullRequestUtils.ts"
+    },
     "./server/pullRequestChecks": {
       "types": "./src/server/pullRequestChecks.ts",
       "import": "./src/server/pullRequestChecks.ts"
@@ -49,7 +53,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

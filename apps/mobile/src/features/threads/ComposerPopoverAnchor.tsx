@@ -6,6 +6,7 @@ import { useComposerPopoverHost } from "./ComposerPopoverHost";
 
 export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   const popoverHeight = useComposerPopoverHost()?.popoverHeight;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the popover host's shared height value when the anchor unmounts
   useEffect(
     () => () => {
       popoverHeight?.set(0);

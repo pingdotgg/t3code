@@ -23,61 +23,6 @@ export function shouldUseCompactComposerFooter(
   return width !== null && width < breakpoint;
 }
 
-export function shouldUseRestingComposerLayout(input: {
-  isExistingThread: boolean;
-  isMobileViewport: boolean;
-  isScrollCollapsed: boolean;
-  hasExpandedChrome: boolean;
-  hasMultilinePrompt: boolean;
-  timelineOverflows: boolean;
-}): boolean {
-  return (
-    input.isExistingThread &&
-    !input.isMobileViewport &&
-    input.timelineOverflows &&
-    input.isScrollCollapsed &&
-    !input.hasMultilinePrompt &&
-    !input.hasExpandedChrome
-  );
-}
-
-/**
- * How much taller the empty expanded composer is than its resting row on
- * desktop widths, from the layout classes in ChatComposer: the body loses
- * 8px of top padding, the prompt clamps from min-h-17.5 (70px) to 32px, and
- * the 48px footer leaves flow.
- */
-const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
-
-/** Reserve expansion height because the timeline does not move when footer growth covers its last rows. */
-export function resolveComposerTimelineInset(input: {
-  currentInset: number;
-  overlayHeight: number;
-  isResting: boolean;
-  restingOnlyHeight?: number;
-  expandedNoticesHeight?: number;
-}): number {
-  // Expanded notices temporarily cover the timeline. Remove their growth before
-  // rounding so fractional measurements reserve exactly the collapsed height.
-  const overlayHeight = Math.ceil(input.overlayHeight - (input.expandedNoticesHeight ?? 0));
-  return input.isResting
-    ? Math.max(
-        input.currentInset,
-        overlayHeight +
-          (input.currentInset === 0
-            ? COMPOSER_RESTING_EXPANSION_MIN_PX - (input.restingOnlyHeight ?? 0)
-            : 0),
-      )
-    : overlayHeight;
-}
-
-export function overlayComposerIsResting(input: {
-  composerMounted: boolean;
-  composerReportedResting: boolean;
-}): boolean {
-  return input.composerMounted && input.composerReportedResting;
-}
-
 export function shouldAnimateComposerRestingTransition(input: {
   hasCompletedInitialLayout: boolean;
   stateChanged: boolean;
