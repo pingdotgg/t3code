@@ -2771,6 +2771,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("does not report an answer to a form OpenCode already cancelled as delivered", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("form.created", { form: colorForm }),
+        out("session.form.reply", {
+          sessionID: SESSION,
+          formID: colorForm.id,
+          answer: { q0: "Red" },
+        }),
+        // A location reload cancels open forms; the cancel event can land after T3 starts answering.
+        reply("session.form.reply", {
+          status: 409,
+          body: {
+            _tag: "FormAlreadySettledError",
+            id: colorForm.id,
+            message: "Form already settled",
+          },
+        }),
+      ]);
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const request = yield* Fiber.join(requested);
+      const answered = yield* runtime
+        .respondToRuntimeRequest({ requestId: request!.id, answers: { q0: "Red" } })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(answered));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("declines a form T3 cannot show with the reason, instead of leaving it open", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
