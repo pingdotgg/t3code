@@ -12,10 +12,10 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { Trash2Icon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { ComposerHandleContext, type ComposerHandleRef } from "../../composerHandleContext";
+import { ComposerHandleContext } from "../../composerHandleContext";
 import { useClientSettings } from "../../hooks/useSettings";
 import { releaseComposerDraftUploads } from "../../lib/composerDraftUploads";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -37,7 +37,6 @@ export default function SideChatPane(props: {
   readonly parentRef: ScopedThreadRef;
   readonly threadId: ThreadId;
   readonly parentPanel: SideChatParentPanel;
-  readonly visible: boolean;
   readonly onClose: () => void;
 }) {
   const { parentRef, threadId } = props;
@@ -48,14 +47,6 @@ export default function SideChatPane(props: {
     [parentRef, threadId],
   );
   const shell = useQuietThreadShell(threadRef);
-  const composerRef: ComposerHandleRef = useRef(null);
-  const chatReady = shell !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the embedded composer DOM after its side chat becomes visible
-  useEffect(() => {
-    if (!props.visible || !chatReady) return;
-    const frame = window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
-    return () => window.cancelAnimationFrame(frame);
-  }, [chatReady, props.visible]);
   const parent = useQuietThreadShell(parentRef);
   const snapshotLoaded = useEnvironmentShellHasSnapshot(parentRef.environmentId);
   const projection = useQuietThreadProjection(shell === null ? null : threadRef)?.projection;
@@ -177,7 +168,7 @@ export default function SideChatPane(props: {
         ) : null
       ) : (
         <BackgroundThreadContext value>
-          <ComposerHandleContext value={composerRef}>
+          <ComposerHandleContext value={null}>
             <ChatView
               environmentId={parentRef.environmentId}
               threadId={threadId}
