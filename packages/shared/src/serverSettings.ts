@@ -73,9 +73,21 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
 /** Configured instances come after every default instance, so they only win when no default qualifies. */
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],
-  isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => boolean,
+  isEnabled: (instanceId: ProviderInstanceId, driver: ProviderDriverKind, model: string) => boolean,
   options?: { readonly defaultModelSelection?: ModelSelection | null },
 ): ModelSelection | null {
+  const threadDefault = options?.defaultModelSelection;
+  // The thread default's custom model wins on its instance; the driver default still serves when that model is unusable.
+  const selectionsFor = (instanceId: ProviderInstanceId, driver: ProviderDriverKind) => {
+    const config = providerInstances[instanceId]?.config as { customModels?: unknown } | undefined;
+    const driverDefault = { instanceId, model: defaultTextGenerationModel(driver) };
+    return threadDefault?.instanceId === instanceId &&
+      readCustomModelEntries(config?.customModels).some(
+        (entry) => entry.slug === threadDefault.model,
+      )
+      ? [threadDefault, driverDefault]
+      : [driverDefault];
+  };
   const candidates = [
     ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
       (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
@@ -86,21 +98,15 @@ export function fallbackTextGenerationModelSelection(
         : [],
     ),
   ];
-  const match = candidates.find(([instanceId, driver]) => isEnabled(instanceId, driver));
-  if (match === undefined) return null;
-  const [instanceId, driver] = match;
-  const threadDefault = options?.defaultModelSelection;
-  const config = providerInstances[instanceId]?.config as { customModels?: unknown } | undefined;
-  if (
-    threadDefault?.instanceId === instanceId &&
-    readCustomModelEntries(config?.customModels).some((entry) => entry.slug === threadDefault.model)
-  ) {
-    return threadDefault;
+  for (const [instanceId, driver] of candidates) {
+    for (const selection of selectionsFor(instanceId, driver)) {
+      if (isEnabled(instanceId, driver, selection.model)) return selection;
+    }
   }
-  return { instanceId, model: defaultTextGenerationModel(driver) };
+  return null;
 }
 
-export function defaultTextGenerationModel(driver: ProviderDriverKind): string {
+function defaultTextGenerationModel(driver: ProviderDriverKind): string {
   return (
     DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
     DEFAULT_MODEL_BY_PROVIDER[driver] ??
