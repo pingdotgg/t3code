@@ -10,11 +10,26 @@ const requireUndici = NodeModule.createRequire(import.meta.url);
 export const builtinFetchUsesHttp2 = (bundledUndiciVersion: string | undefined) =>
   Number.parseInt(bundledUndiciVersion ?? "", 10) >= 8;
 
-/** Preserves the EnvHttpProxyAgent installed by --use-env-proxy / NODE_USE_ENV_PROXY. */
-export function installHttp1FetchDispatcher(): void {
+const PROXY_ENV_NAMES = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] as const;
+
+/**
+ * Whether outbound fetch should use the proxy the environment names. Node wires
+ * that up only under NODE_USE_ENV_PROXY; an explicit value for it, on or off, is
+ * the user's call and wins over this default.
+ */
+export const shouldUseEnvProxy = (env: NodeJS.ProcessEnv): boolean =>
+  env.NODE_USE_ENV_PROXY === undefined &&
+  PROXY_ENV_NAMES.some((name) => (env[name]?.trim() ?? "") !== "");
+
+/**
+ * Preserves the EnvHttpProxyAgent installed by --use-env-proxy / NODE_USE_ENV_PROXY,
+ * and installs one when the environment names a proxy Node would otherwise ignore.
+ */
+export function installHttp1FetchDispatcher(env: NodeJS.ProcessEnv = process.env): void {
   const undici = requireUndici("undici") as typeof Undici;
   // Node's agent comes from its internal undici copy, so `instanceof` against the npm class is false.
-  const usesEnvProxy = undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent";
+  const usesEnvProxy =
+    undici.getGlobalDispatcher().constructor.name === "EnvHttpProxyAgent" || shouldUseEnvProxy(env);
   undici.setGlobalDispatcher(
     usesEnvProxy
       ? new undici.EnvHttpProxyAgent({

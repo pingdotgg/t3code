@@ -16,6 +16,7 @@ import {
   builtinFetchUsesHttp2,
   ignoreMacosTypeOfServiceEinval,
   installHttp1FetchDispatcher,
+  shouldUseEnvProxy,
 } from "./outboundHttp.ts";
 
 // Non-secret, self-signed 127.0.0.1 certificate, valid until 2126; ALPN h2 requires TLS.
@@ -95,6 +96,26 @@ describe("installHttp1FetchDispatcher", () => {
         expect(yield* versionViaBuiltinFetch()).toBe("1.1");
       }),
   );
+
+  it("installs the env proxy agent when the environment names a proxy", () => {
+    Undici.setGlobalDispatcher(new Undici.Agent());
+    installHttp1FetchDispatcher({ HTTPS_PROXY: "http://127.0.0.1:9" });
+    expect(Undici.getGlobalDispatcher()).toBeInstanceOf(Undici.EnvHttpProxyAgent);
+
+    Undici.setGlobalDispatcher(new Undici.Agent());
+    installHttp1FetchDispatcher({ NODE_USE_ENV_PROXY: "0", HTTPS_PROXY: "http://127.0.0.1:9" });
+    expect(Undici.getGlobalDispatcher()).not.toBeInstanceOf(Undici.EnvHttpProxyAgent);
+  });
+
+  it("shouldUseEnvProxy requires a proxy variable and no explicit NODE_USE_ENV_PROXY", () => {
+    expect(shouldUseEnvProxy({})).toBe(false);
+    expect(shouldUseEnvProxy({ http_proxy: "http://proxy:3128" })).toBe(true);
+    expect(shouldUseEnvProxy({ HTTPS_PROXY: "  " })).toBe(false);
+    expect(shouldUseEnvProxy({ NODE_USE_ENV_PROXY: "1" })).toBe(false);
+    expect(shouldUseEnvProxy({ NODE_USE_ENV_PROXY: "0", HTTPS_PROXY: "http://proxy:3128" })).toBe(
+      false,
+    );
+  });
 });
 
 const runNode = Effect.fnUntraced(function* (args: Array<string>) {
