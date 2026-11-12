@@ -5,7 +5,10 @@ import {
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-import { readClaudeBoundaryReceipts } from "./ClaudeSavedMessageReceipts.ts";
+import {
+  readClaudeBoundaryReceipts,
+  readClaudeBoundaryReceiptTail,
+} from "./ClaudeSavedMessageReceipts.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
   dynamicToolTitle,
@@ -4815,7 +4818,7 @@ interface ClaudeLiveQueryContext {
 
 interface ClaudeBoundaryBatch {
   readonly transcriptPath: string;
-  readonly transcriptOffset: number;
+  transcriptOffset: number;
   readonly context: ActiveClaudeTurnContext;
   readonly offers: ReadonlyArray<ProviderContinuationRequests.AgentMessageOffer>;
   readonly saved: Set<string>;
@@ -11092,36 +11095,55 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         };
 
         const reconcileBoundaryReceipts = Effect.fn("ClaudeAdapterV2.reconcileBoundaryReceipts")(
-          function* (live: ClaudeLiveQueryContext) {
-            const offers = live.boundaryBatches.flatMap((batch) =>
+          function* (live: ClaudeLiveQueryContext, scope: "appended" | "ended") {
+            const unsaved = (batch: ClaudeBoundaryBatch) =>
               batch.offers.filter(
                 (offer) => !batch.saved.has(offer.id) && !batch.withdrawn.has(offer.id),
-              ),
-            );
-            if (offers.length === 0) return;
-            const pendingBatches = live.boundaryBatches.filter((batch) =>
-              batch.offers.some(
-                (offer) => !batch.saved.has(offer.id) && !batch.withdrawn.has(offer.id),
-              ),
-            );
-            const saved = yield* readClaudeBoundaryReceipts({
-              transcriptPath: pendingBatches[0]!.transcriptPath,
-              offset: Math.min(...pendingBatches.map((batch) => batch.transcriptOffset)),
-              projectsDirectory: path.join(homePath, "projects"),
-              nativeThreadId: live.nativeThreadId,
-              offers,
-            }).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-            );
+              );
+            const pending = live.boundaryBatches.filter((batch) => unsaved(batch).length > 0);
+            const saved = new Set<string>();
+            const nextOffsets = new Map<string, number>();
+            if (scope === "appended") {
+              for (const transcriptPath of new Set(pending.map((batch) => batch.transcriptPath))) {
+                const batches = pending.filter((batch) => batch.transcriptPath === transcriptPath);
+                const tail = yield* readClaudeBoundaryReceiptTail({
+                  transcriptPath,
+                  offset: Math.min(...batches.map((batch) => batch.transcriptOffset)),
+                  nativeThreadId: live.nativeThreadId,
+                  offers: batches.flatMap(unsaved),
+                }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+                for (const id of tail.saved) saved.add(id);
+                nextOffsets.set(transcriptPath, tail.nextOffset);
+              }
+            } else if (pending.length > 0) {
+              // The tail read trusts its offset; a rewritten transcript needs one full read.
+              const history = yield* readClaudeBoundaryReceipts({
+                projectsDirectory: path.join(homePath, "projects"),
+                nativeThreadId: live.nativeThreadId,
+                offers: pending.flatMap(unsaved),
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              );
+              for (const id of history) saved.add(id);
+            }
             yield* live.boundaryLock.withPermits(1)(
               Effect.gen(function* () {
                 for (const batch of live.boundaryBatches) {
                   for (const offer of batch.offers)
                     if (saved.has(offer.id)) batch.saved.add(offer.id);
+                  batch.transcriptOffset =
+                    nextOffsets.get(batch.transcriptPath) ?? batch.transcriptOffset;
                   yield* flushBoundaryReceipts(batch);
                 }
                 pruneBoundaryBatches(live.boundaryBatches);
+                if (scope === "ended") {
+                  // An offer still unconfirmed here stays queued as Unconfirmed; recovery owns it.
+                  for (let index = live.boundaryBatches.length - 1; index >= 0; index--) {
+                    if (!live.boundaryBatches[index]!.accepting)
+                      live.boundaryBatches.splice(index, 1);
+                  }
+                }
               }),
             );
           },
@@ -11172,21 +11194,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             if (message.type === "result") {
               for (const batch of liveQuery.boundaryBatches) batch.accepting = false;
-            }
-            // Transcript writes can finish after started; complete root frames retry without per-delta I/O.
-            if (
-              message.type === "result" ||
-              ((lifecycle?.state === "started" ||
+              yield* reconcileBoundaryReceipts(liveQuery, "ended");
+            } else if (
+              // Transcript writes can finish after started; complete root frames retry without per-delta I/O.
+              (lifecycle?.state === "started" ||
                 (message.type !== "stream_event" && isClaudeRootTurnFrame(message))) &&
-                liveQuery.boundaryBatches.some(
-                  (batch) =>
-                    batch.reserved &&
-                    batch.offers.some(
-                      (offer) => !batch.saved.has(offer.id) && !batch.withdrawn.has(offer.id),
-                    ),
-                ))
+              liveQuery.boundaryBatches.some(
+                (batch) =>
+                  batch.reserved &&
+                  batch.offers.some(
+                    (offer) => !batch.saved.has(offer.id) && !batch.withdrawn.has(offer.id),
+                  ),
+              )
             ) {
-              yield* reconcileBoundaryReceipts(liveQuery);
+              yield* reconcileBoundaryReceipts(liveQuery, "appended");
             }
           }
           // The API answering again is recovery; a long text or tool input block emits nothing
@@ -12380,7 +12401,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
-                yield* reconcileBoundaryReceipts(context);
+                for (const batch of context.boundaryBatches) batch.accepting = false;
+                yield* reconcileBoundaryReceipts(context, "ended");
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&

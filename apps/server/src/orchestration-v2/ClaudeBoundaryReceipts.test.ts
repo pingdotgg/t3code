@@ -13,7 +13,10 @@ import {
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
-import { readClaudeBoundaryReceipts } from "./Adapters/ClaudeSavedMessageReceipts.ts";
+import {
+  readClaudeBoundaryReceipts,
+  readClaudeBoundaryReceiptTail,
+} from "./Adapters/ClaudeSavedMessageReceipts.ts";
 import { makeClaudeBoundaryReceiptRecovery } from "./ClaudeBoundaryReceipts.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -174,23 +177,31 @@ it.layer(NodeServices.layer)("Claude boundary saved history", (it) => {
         ],
       });
       const transcriptPath = path.join(project, "tail.jsonl");
-      const before = `${encodeLine(entry({ type: "queued_command", source_uuid: "before" }))}\n`;
-      const after = `${encodeLine(entry({ type: "queued_command", source_uuid: "after" }))}\n`;
-      yield* fs.writeFileString(transcriptPath, before);
-      const offset = Number((yield* fs.stat(transcriptPath)).size);
-      yield* fs.writeFileString(transcriptPath, before + after);
+      const receipt = (id: string) =>
+        encodeLine(entry({ type: "queued_command", source_uuid: id }));
+      const before = `${receipt("before")}\n`;
+      const after = `${receipt("after")}\n`;
+      const offset = new TextEncoder().encode(before).length;
       const readTail = (start: number) =>
-        readClaudeBoundaryReceipts({
-          projectsDirectory: directory,
+        readClaudeBoundaryReceiptTail({
           nativeThreadId: "native-session",
           transcriptPath,
           offset: start,
-          offers: [{ id: "before" }, { id: "after" }],
-        }).pipe(Effect.map((receipts) => [...receipts]));
-      assert.deepEqual(yield* readTail(offset), ["after"]);
-      assert.deepEqual(yield* readTail(offset - 1), ["before", "after"]);
+          offers: [{ id: "before" }, { id: "after" }, { id: "late" }],
+        }).pipe(Effect.map((tail) => ({ saved: [...tail.saved], nextOffset: tail.nextOffset })));
+      const torn = receipt("late");
+      yield* fs.writeFileString(transcriptPath, before + after + torn.slice(0, 20));
+      const appended = {
+        saved: ["after"],
+        nextOffset: new TextEncoder().encode(before + after).length,
+      };
+      assert.deepEqual(yield* readTail(offset), appended);
+      // A line that straddles the offset began before the handoff, so it is not re-read.
+      assert.deepEqual(yield* readTail(offset - 5), appended);
+      yield* fs.writeFileString(transcriptPath, `${before}${after}${torn}\n`);
+      assert.deepEqual((yield* readTail(appended.nextOffset)).saved, ["late"]);
       yield* fs.writeFileString(transcriptPath, after);
-      assert.deepEqual(yield* readTail(offset + 1000), ["after"]);
+      assert.deepEqual((yield* readTail(offset + 1000)).saved, ["after"]);
       assert.deepEqual([...saved], ["saved"]);
       assert.deepEqual(
         [
