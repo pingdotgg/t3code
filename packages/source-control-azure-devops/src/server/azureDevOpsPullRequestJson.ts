@@ -1,3 +1,7 @@
+import {
+  trimOptionalString as trimmed,
+  normalizeRefName,
+} from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -123,15 +127,6 @@ export interface AzureDevOpsPullRequest {
   readonly location: AzureDevOpsRepositoryLocation | null;
   readonly autoMergeEnabled: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
-}
-
-function trimmed(value: string | null | undefined): string | null {
-  const text = value?.trim() ?? "";
-  return text.length > 0 ? text : null;
-}
-
-function normalizeRefName(refName: string): string {
-  return refName.trim().replace(/^refs\/heads\//, "");
 }
 
 /** Logins must match the email from `az account show`. */
@@ -303,7 +298,7 @@ export function decodeThreadsJson(
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
-    const path = trimmed(thread.threadContext?.filePath);
+    const path = toRepositoryPath(thread.threadContext?.filePath);
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       if (

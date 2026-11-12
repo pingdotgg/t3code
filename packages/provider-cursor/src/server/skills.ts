@@ -14,9 +14,11 @@ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 const HAS_SKILL_MENTION_PATTERN = new RegExp(SKILL_MENTION_PATTERN.source, "u");
+const SLASH_SKILL_PATTERN = /(?:^|\s)\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 const MAX_SKILL_DEPTH = 10;
 const MAX_SKILL_BYTES = ByteSize.bytes(1_000_000);
 const MAX_SKILL_SCAN_ENTRIES = 10_000;
+const MAX_SKILL_SCAN_STATS = 100_000;
 const MAX_SKILL_SCAN_BYTES = ByteSize.bytes(8_000_000);
 
 interface CursorSkillFrontmatter {
@@ -29,6 +31,7 @@ interface CursorSkillFrontmatter {
 
 interface CursorSkillScanBudget {
   remainingEntries: number;
+  remainingStats: number;
   remainingBytes: bigint;
   exhausted: boolean;
   incomplete: boolean;
@@ -153,6 +156,11 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       resolvedDirectory === rootDirectory ||
       resolvedDirectory.startsWith(`${rootDirectory}${path.sep}`);
 
+    if (input.budget.remainingStats === 0) {
+      input.budget.exhausted = true;
+      return;
+    }
+    input.budget.remainingStats -= 1;
     const skillPath = path.join(directory, "SKILL.md");
     const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
     if (skillInfo?.type === "File") {
@@ -189,17 +197,25 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       return;
     }
     for (const entry of [...entries].sort()) {
+      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
+      if (entry === "node_modules") continue;
+      // Files spend no directory budget, so a separate cap keeps a huge file tree bounded.
+      if (input.budget.remainingStats === 0) {
+        input.budget.exhausted = true;
+        return;
+      }
+      input.budget.remainingStats -= 1;
+      const child = path.join(directory, entry);
+      const info = yield* orUndefined(fileSystem.stat(child), input.budget);
+      // Only directories can hold skills, so only they spend the budget: a skill
+      // shipping many ordinary files must not hide its siblings.
+      if (info?.type !== "Directory") continue;
+      if (depth >= MAX_SKILL_DEPTH) continue;
       if (input.budget.remainingEntries === 0) {
         input.budget.exhausted = true;
         return;
       }
       input.budget.remainingEntries -= 1;
-      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
-      if (entry === "node_modules") continue;
-      const child = path.join(directory, entry);
-      const info = yield* orUndefined(fileSystem.stat(child), input.budget);
-      if (info?.type !== "Directory") continue;
-      if (depth >= MAX_SKILL_DEPTH) continue;
       yield* visit(child, depth + 1);
     }
   });
@@ -233,6 +249,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
+    remainingStats: MAX_SKILL_SCAN_STATS,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
     exhausted: false,
     incomplete: false,
@@ -288,4 +305,22 @@ export function rewriteCursorSkillMentions(
   return prompt.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
     skillNames.has(name) ? `${prefix}/${name}` : match,
   );
+}
+
+/** Names invoked as `/name`, the form Cursor uses and `rewriteCursorSkillMentions` produces. */
+export function cursorSlashSkillNames(prompt: string): ReadonlySet<string> {
+  return new Set(Array.from(prompt.matchAll(SLASH_SKILL_PATTERN), (match) => match[1] ?? ""));
+}
+
+/** Cursor hides `disable-model-invocation` skills from the model, so the prompt carries them. */
+export function appendCursorInvokedSkills(
+  prompt: string,
+  skills: ReadonlyArray<{ readonly name: string; readonly contents: string }>,
+): string {
+  if (skills.length === 0) return prompt;
+  const blocks = skills.map(
+    (skill) =>
+      `<skill name="${skill.name}">\n${skill.contents.replace(FRONTMATTER_PATTERN, "").trim()}\n</skill>`,
+  );
+  return `${prompt}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
 }

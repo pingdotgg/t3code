@@ -4,13 +4,15 @@
   "type": "module",
   "scripts": {
     "test": "vp test run --config ../../vite.config.ts --dir .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "smoke": "node scripts/smoke.ts",
     "deploy": "alchemy deploy --stage prod",
     "writers": "node scripts/manage.ts"
   },
   "dependencies": {
-    "alchemy": "2.0.0-beta.80",
+    "@alchemy.run/axiom": "catalog:",
+    "@alchemy.run/cloudflare": "catalog:",
+    "alchemy": "catalog:",
     "effect": "catalog:",
     "jose": "catalog:"
   },
@@ -19,7 +21,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "typescript": "catalog:",
     "vite-plus": "catalog:"
   }
 }

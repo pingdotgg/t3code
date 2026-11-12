@@ -4,7 +4,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentQuery } from "./query";
@@ -33,12 +32,9 @@ const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
 export function useDeviceHubAccess(environmentId: EnvironmentId, hostId: string, viewer: string) {
   const prepared = usePreparedConnection(environmentId);
   const query = useEnvironmentQuery(deviceHubAccessAtom(environmentId)(viewer));
-  const access = useMemo(
-    () =>
-      query.data && query.error === null && Option.isSome(prepared)
-        ? { ...query.data, query: { ...query.data.query, hostId } }
-        : null,
-    [query.data, query.error, prepared, hostId],
-  );
+  const access =
+    query.data && query.error === null && Option.isSome(prepared)
+      ? { ...query.data, query: { ...query.data.query, hostId } }
+      : null;
   return { access, error: query.error, refresh: query.refresh };
 }

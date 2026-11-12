@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayEntry, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -99,8 +100,12 @@ function normalizeEntries(input: {
       .replaceAll(input.workspace, "<workspace>")
       .replaceAll(home.length > 1 ? home : "\0", "~")
       .replace(ISO_TIMESTAMP_PATTERN, (iso) =>
-        DateTime.formatIso(
-          DateTime.makeUnsafe(shiftTime(DateTime.toEpochMillis(DateTime.makeUnsafe(iso)))),
+        pipe(
+          DateTime.makeUnsafe(iso),
+          DateTime.toEpochMillis,
+          shiftTime,
+          DateTime.makeUnsafe,
+          DateTime.formatIso,
         ),
       )
       .replace(UUID_PATTERN, (uuid) => {

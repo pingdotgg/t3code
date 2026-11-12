@@ -3,27 +3,33 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "scenarios": "E2E_TELEMETRY_DISABLED=1 e2e run",
     "test": "vp test run --config ../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@e2e-dev/mobile": "0.12.6",
+    "@e2e-dev/web": "0.15.5",
     "@effect/platform-node": "catalog:",
     "@electron/asar": "^4.3.0",
     "@electron/osx-sign": "2.7.0",
+    "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
-    "agent-device": "0.21.31",
+    "agent-device": "0.21.36",
+    "e2e": "0.23.0",
     "effect": "catalog:",
+    "playwright-core": "1.64.1",
     "plist": "catalog:",
     "pngjs": "7.0.0",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/plist": "catalog:",
     "@types/pngjs": "6.0.5",
     "esbuild": "0.28.2",
-    "typescript": "catalog:",
+    "postject": "1.0.0-alpha.6",
     "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:"
   }
