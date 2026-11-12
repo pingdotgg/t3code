@@ -217,10 +217,10 @@ export const LONG_TURN_THREAD_ID = ThreadId.make("transfer-budget-long-turn");
 export const LONG_TURN_WORK_ROWS = 900;
 
 /**
- * Three short user turns, then one agent turn far longer than a cold-open
- * window, with the item kinds a long agent run produces. One batch per turn.
- * Run, node, provider and item IDs follow the composite shapes the Claude
- * adapter stores, and every assistant message has its record, as real threads do.
+ * Three short user turns, then one agent turn far longer than a cold-open window, with the item
+ * kinds a long agent run produces. One batch per turn; the last batch only finishes the long turn.
+ * Run, node, provider and item IDs follow the composite shapes the Claude adapter stores, and
+ * every assistant message has its record, as real threads do.
  */
 export function longTurnThreadBatches(
   provider: ProviderDriverKind,
@@ -434,12 +434,14 @@ export function longTurnThreadBatches(
     return events;
   };
 
+  const longTurn = turn(3, LONG_TURN_WORK_ROWS);
   return [
     [threadCreated(provider, threadId)],
     turn(0, 4),
     turn(1, 4),
     turn(2, 4),
-    turn(3, LONG_TURN_WORK_ROWS),
+    longTurn.slice(0, -1),
+    longTurn.slice(-1),
   ];
 }
 
