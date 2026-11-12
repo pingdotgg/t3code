@@ -4,6 +4,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -223,6 +224,83 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   return skills;
 });
 
+const CURSOR_PLUGIN_MANIFESTS = [
+  ".cursor-plugin/plugin.json",
+  ".claude-plugin/plugin.json",
+  "plugin.json",
+];
+const decodeCursorPluginManifest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      skills: Schema.optional(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+    }),
+  ),
+);
+
+// Mirrors `@cursor/sdk`'s loader: local plugins sit in `plugins/local/<name>`, installed
+// marketplace and team plugins in `plugins/cache/<marketplace>/<plugin>/<version>` once
+// `.cache-complete` exists. A manifest `skills` field overrides the default `skills/` folder.
+const listCursorPluginSkillDirectories = Effect.fn("listCursorPluginSkillDirectories")(function* (
+  userHome: string,
+  budget: CursorSkillScanBudget,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const subdirectories = Effect.fn("listCursorPluginSubdirectories")(function* (directory: string) {
+    const children: string[] = [];
+    const entries = yield* orUndefined(fileSystem.readDirectory(directory), budget);
+    for (const entry of [...(entries ?? [])].sort()) {
+      if (entry.startsWith(".")) continue;
+      if (budget.remainingStats === 0) {
+        budget.exhausted = true;
+        break;
+      }
+      budget.remainingStats -= 1;
+      const child = path.join(directory, entry);
+      const info = yield* orUndefined(fileSystem.stat(child), budget);
+      if (info?.type === "Directory") children.push(child);
+    }
+    return children;
+  });
+  const manifestSkillPaths = Effect.fn("readCursorPluginManifestSkills")(function* (
+    pluginRoot: string,
+  ) {
+    for (const candidate of CURSOR_PLUGIN_MANIFESTS) {
+      const manifestPath = path.join(pluginRoot, candidate);
+      const info = yield* orUndefined(fileSystem.stat(manifestPath));
+      if (info?.type !== "File" || info.size > MAX_SKILL_BYTES) continue;
+      const contents = yield* orUndefined(fileSystem.readFileString(manifestPath));
+      if (contents === undefined) continue;
+      const skills = Option.getOrUndefined(decodeCursorPluginManifest(contents))?.skills;
+      return typeof skills === "string" ? [skills] : skills;
+    }
+    return undefined;
+  });
+
+  const pluginsDirectory = path.join(userHome, ".cursor", "plugins");
+  const pluginRoots = yield* subdirectories(path.join(pluginsDirectory, "local"));
+  for (const marketplace of yield* subdirectories(path.join(pluginsDirectory, "cache"))) {
+    for (const plugin of yield* subdirectories(marketplace)) {
+      for (const version of yield* subdirectories(plugin)) {
+        const marker = yield* orUndefined(fileSystem.stat(path.join(version, ".cache-complete")));
+        if (marker?.type === "File") pluginRoots.push(version);
+      }
+    }
+  }
+
+  const directories: string[] = [];
+  for (const pluginRoot of pluginRoots) {
+    if (budget.exhausted) break;
+    for (const entry of (yield* manifestSkillPaths(pluginRoot)) ?? ["skills"]) {
+      const target = path.resolve(pluginRoot, entry);
+      const relative = path.relative(pluginRoot, target);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+      directories.push(path.basename(target) === "SKILL.md" ? path.dirname(target) : target);
+    }
+  }
+  return directories;
+});
+
 const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -254,11 +332,21 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     incomplete: false,
   };
   const scannedRoots = new Set<string>();
-  for (const root of roots) {
-    if (budget.exhausted) break;
+  const scan = Effect.fn("scanCursorSkillRoot")(function* (root: (typeof roots)[number]) {
     const skills = yield* discoverSkillsInRoot({ ...root, budget, scannedRoots });
     for (const skill of skills) {
       if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
+    }
+  });
+  for (const root of roots) {
+    if (budget.exhausted) break;
+    yield* scan(root);
+  }
+  // Plugins come last so same-named folder and built-in skills win.
+  if (!budget.exhausted) {
+    for (const directory of yield* listCursorPluginSkillDirectories(userHome, budget)) {
+      if (budget.exhausted) break;
+      yield* scan({ directory, scope: "user" });
     }
   }
   return {
