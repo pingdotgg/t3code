@@ -891,6 +891,14 @@ export const OrchestrationV2RemoteTaskChild = Schema.Struct({
 });
 export type OrchestrationV2RemoteTaskChild = typeof OrchestrationV2RemoteTaskChild.Type;
 
+/** What the provider last reported for one subagent run; workflow coordinators keep theirs on `workflow`. */
+export const OrchestrationV2SubagentUsage = Schema.Struct({
+  totalTokens: NonNegativeInt,
+  toolCalls: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentUsage = typeof OrchestrationV2SubagentUsage.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -923,6 +931,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
     "interrupted",
   ]),
   progress: Schema.optional(Schema.String),
+  usage: Schema.optional(OrchestrationV2SubagentUsage),
   workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),

@@ -165,6 +165,13 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     ]);
     expect(untitled?.title).toBe(`${"a".repeat(76)}...`);
   });
+
+  it("carries a plain subagent's reported usage", () => {
+    const [plain] = projectedSubagentsToRuntime([
+      subagent({ usage: { totalTokens: 8707, toolCalls: 1 } }),
+    ]);
+    expect(plain?.usage).toEqual({ totalTokens: 8707, toolUses: 1 });
+  });
 });
 
 describe("deriveWorkflowGroups over a dynamic workflow", () => {

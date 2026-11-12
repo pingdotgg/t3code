@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2SubagentUsage,
   OrchestrationV2SubagentWorkflow,
   OrchestrationV2WorkflowAgent,
   OrchestrationV2WorkflowPhase,
@@ -182,5 +183,17 @@ export function mergeClaudeWorkflowProgress(input: {
     ...optional("totalTokens", count(field(reported, "total_tokens")) ?? previous?.totalTokens),
     ...optional("toolCalls", count(field(reported, "tool_uses")) ?? previous?.toolCalls),
     ...optional("durationMs", count(field(reported, "duration_ms")) ?? previous?.durationMs),
+  };
+}
+
+/** A task frame's `usage`, or undefined when it carries none. */
+export function claudeTaskUsage(message: unknown): OrchestrationV2SubagentUsage | undefined {
+  const reported = field(message, "usage");
+  const totalTokens = count(field(reported, "total_tokens"));
+  if (totalTokens === undefined) return undefined;
+  return {
+    totalTokens,
+    ...optional("toolCalls", count(field(reported, "tool_uses"))),
+    ...optional("durationMs", count(field(reported, "duration_ms"))),
   };
 }

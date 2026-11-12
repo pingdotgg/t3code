@@ -20,6 +20,7 @@ import {
 } from "../workflowAgentTranscript.ts";
 import {
   CLAUDE_WORKFLOW_TASK_TYPE,
+  claudeTaskUsage,
   hasClaudeWorkflowSnapshot,
   mergeClaudeWorkflowProgress,
   parseClaudeWorkflowRunHandles,
@@ -7345,9 +7346,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existingSubagent === undefined
               ? undefined
               : isReopen
-                ? (({ progress: _staleProgress, ...rest }) => ({ ...rest, result: null }))(
-                    existingSubagent.task,
-                  )
+                ? (({ progress: _staleProgress, usage: _staleUsage, ...rest }) => ({
+                    ...rest,
+                    result: null,
+                  }))(existingSubagent.task)
                 : existingSubagent.task;
           const workflow = mergeClaudeWorkflowProgress({
             previous: priorTask?.workflow,
@@ -7361,6 +7363,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             workflow === undefined
               ? undefined
               : withWorkflowMemberThreadIds(workflow, childThreadId);
+          const usage =
+            workflowWithThreads === undefined ? claudeTaskUsage(input.workflowFrame) : undefined;
           // Unstated effort stays unknown: a custom agent definition may override the owner's.
           const effort = existingSubagent === undefined ? input.effort : existingSubagent.effort;
           const model = input.model ?? priorTask?.model ?? null;
@@ -7407,6 +7411,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
               : {}),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
+            ...(usage === undefined ? {} : { usage }),
             ...(workflowWithThreads === undefined ? {} : { workflow: workflowWithThreads }),
             ...(input.result === undefined ? {} : { result: input.result }),
             ...(isReopen ? { startedAt: now } : {}),
@@ -9140,7 +9145,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (registered === undefined || registered.task.status === "running") {
                 return current;
               }
-              const { progress: _staleProgress, ...priorTask } = registered.task;
+              const {
+                progress: _staleProgress,
+                usage: _staleUsage,
+                ...priorTask
+              } = registered.task;
               return new Map(current).set(message.task_id, {
                 ...registered,
                 confirmedOutcome: undefined,
@@ -10467,7 +10476,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.workflow !==
               undefined;
             if (
-              (carriesWorkflowTelemetry || (progress.length > 0 && !isWorkflowCoordinator)) &&
+              (carriesWorkflowTelemetry ||
+                ((progress.length > 0 || claudeTaskUsage(message) !== undefined) &&
+                  !isWorkflowCoordinator)) &&
               !context.ignoredTaskIds.has(message.task_id) &&
               !isBackgroundTask
             ) {
