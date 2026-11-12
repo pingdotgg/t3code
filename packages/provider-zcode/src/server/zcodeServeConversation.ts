@@ -235,32 +235,37 @@ const permissionOptions = (payload: unknown): ReadonlyArray<PermissionOption> =>
   });
 };
 
-interface UserInputView {
+interface UserInputQuestionView {
+  readonly header: string;
   readonly prompt: string;
   readonly inputType: "text" | "choice";
   readonly choices: ReadonlyArray<string>;
 }
 
-const userInputView = (payload: unknown): UserInputView => {
-  const questions = field(payload, "questions");
-  const question = Array.isArray(questions) ? questions[0] : undefined;
-  const questionOptions = field(question, "options");
+const questionLabels = (candidates: unknown): ReadonlyArray<string> =>
+  Array.isArray(candidates)
+    ? candidates.flatMap((option): Array<string> => {
+        const label = text(option, "label");
+        return label === undefined ? [] : [label];
+      })
+    : [];
+
+/** Every question in the daemon's AskUserQuestion payload, preserving order. */
+const userInputQuestions = (payload: unknown): ReadonlyArray<UserInputQuestionView> => {
+  const raw = field(payload, "questions");
+  const entries = Array.isArray(raw) && raw.length > 0 ? raw : [undefined];
   const flatOptions = field(payload, "options");
-  const labels = (candidates: unknown): ReadonlyArray<string> =>
-    Array.isArray(candidates)
-      ? candidates.flatMap((option): Array<string> => {
-          const label = text(option, "label");
-          return label === undefined ? [] : [label];
-        })
-      : [];
-  const choices = labels(questionOptions ?? flatOptions);
-  const freeText =
-    field(payload, "freeText") === true || field(question, "multiSelect") !== undefined;
-  return {
-    prompt: text(question, "question") ?? text(payload, "prompt") ?? "The agent asked a question",
-    inputType: freeText || choices.length === 0 ? "text" : "choice",
-    choices,
-  };
+  return entries.map((entry, index) => {
+    const choices = questionLabels(field(entry, "options") ?? flatOptions);
+    const freeText =
+      field(payload, "freeText") === true || field(entry, "multiSelect") !== undefined;
+    return {
+      header: text(entry, "header") ?? `Question ${index + 1}`,
+      prompt: text(entry, "question") ?? text(payload, "prompt") ?? "The agent asked a question",
+      inputType: freeText || choices.length === 0 ? "text" : "choice",
+      choices,
+    };
+  });
 };
 
 /**
@@ -299,14 +304,11 @@ const interactionEvents = (
       },
     });
   } else if (kind === "userInput") {
-    const view = userInputView(payload);
     events.push({
       type: "userInput.requested",
       payload: {
         requestId: interactionId,
-        prompt: view.prompt,
-        inputType: view.inputType,
-        choices: view.choices,
+        questions: userInputQuestions(payload),
       },
     });
     events.push({
@@ -319,6 +321,42 @@ const interactionEvents = (
   }
   state.announcedInteractions.add(interactionId);
   return events;
+};
+
+/**
+ * Translates a session-layer answer into the daemon's `resolveInteraction` shape.
+ * Questions are answered by their prompt text in the daemon's answers map.
+ */
+export const interactionAnswer = (
+  interaction: ZcodeRecord | undefined,
+  result: unknown,
+): ZcodeRecord | undefined => {
+  const wanted = Predicate.isObject(result) ? result : {};
+  const optionId = text(wanted, "optionId");
+  if (optionId !== undefined) return { optionId };
+  if (field(wanted, "cancelled") === true) return { action: "cancel" };
+  const answers = field(wanted, "answers");
+  if (Predicate.isObject(answers)) return { action: "accept", content: { answers } };
+  const value = text(wanted, "value");
+  if (value !== undefined) {
+    const payload = field(interaction ?? {}, "payload");
+    const questions = field(payload, "questions");
+    const question = Array.isArray(questions) ? questions[0] : undefined;
+    // AskUserQuestion interactions resolve through the elicitation path: the daemon expects
+    // the tool's answers map, not a permission option id.
+    const questionText = text(question, "question");
+    if (questionText !== undefined) {
+      return { action: "accept", content: { answers: { [questionText]: value } } };
+    }
+    const candidates = field(payload, "options");
+    const match = Array.isArray(candidates)
+      ? candidates.find((candidate) => text(candidate, "label") === value)
+      : undefined;
+    const matchedId = text(match, "optionId") ?? text(match, "value");
+    return matchedId === undefined ? { freeText: value } : { optionId: matchedId };
+  }
+  if (text(wanted, "decision") === "deny") return { action: "decline" };
+  return undefined;
 };
 
 const interactionResolvedEvents = (
@@ -336,14 +374,12 @@ const interactionResolvedEvents = (
 };
 
 const turnOutputTokens = (state: ZcodeConversationState): number | undefined => {
-  let best: { rowId: number; tokens: number } | undefined;
+  let latest: { rowId: number; row: ZcodeRecord } | undefined;
   for (const [rowId, row] of state.rows) {
     if (text(row, "kind") !== "turnHeader") continue;
-    const tokens = number(row, "outputTokens");
-    if (tokens === undefined) continue;
-    if (best === undefined || rowId > best.rowId) best = { rowId, tokens };
+    if (latest === undefined || rowId > latest.rowId) latest = { rowId, row };
   }
-  return best?.tokens;
+  return latest === undefined ? undefined : number(latest.row, "outputTokens");
 };
 
 const controlEvents = (

@@ -7,7 +7,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
@@ -21,6 +20,7 @@ import { zcodeChannelUrl, connectZcodeServer } from "./zcodeServeDaemon.ts";
 import {
   applyConversationPayload,
   initialConversationState,
+  interactionAnswer,
   type ZcodeConversationState,
 } from "./zcodeServeConversation.ts";
 import { makeZcodeChannelClient, type ZcodeChannelClient } from "./zcodeServeProtocol.ts";
@@ -89,15 +89,6 @@ const resolveProjectId = Effect.fn("ZcodeServe.resolveProject")(function* (
   }
   return id;
 });
-
-const isZcodeProtocolError = Schema.is(ZcodeProtocolError);
-
-const errorMessage = (error: unknown): string =>
-  isZcodeProtocolError(error)
-    ? (error.detail ?? error.operation)
-    : error instanceof Error
-      ? error.message
-      : String(error);
 
 /** The daemon advertises its session model on the snapshot; the session layer only needs it as a default. */
 const availableModelDescriptors = (
@@ -254,49 +245,24 @@ export const makeZcodeServeConnection = Effect.fn("ZcodeServeConnection.make")(f
   });
 
   /** Translates a session-layer answer into the daemon's `resolveInteraction` shape. */
-  const interactionAnswer = (
-    interaction: ZcodeRecord | undefined,
-    result: unknown,
-  ): ZcodeRecord | undefined => {
-    const wanted = Predicate.isObject(result) ? result : {};
-    const optionId = recordString(wanted, "optionId");
-    if (optionId !== undefined) return { optionId };
-    if (recordField(wanted, "cancelled") === true) return { action: "cancel" };
-    const value = recordString(wanted, "value");
-    if (value !== undefined) {
-      const payload = recordField(interaction ?? {}, "payload");
-      const questions = recordField(payload, "questions");
-      const question = Array.isArray(questions) ? questions[0] : undefined;
-      // AskUserQuestion interactions resolve through the elicitation path: the daemon expects
-      // the tool's answers map, not a permission option id.
-      const questionText = recordString(question, "question");
-      if (questionText !== undefined) {
-        return { action: "accept", content: { answers: { [questionText]: value } } };
-      }
-      const candidates = recordField(payload, "options");
-      const match = Array.isArray(candidates)
-        ? candidates.find((candidate) => recordString(candidate, "label") === value)
-        : undefined;
-      const matchedId = recordString(match, "optionId") ?? recordString(match, "value");
-      return matchedId === undefined ? { freeText: value } : { optionId: matchedId };
-    }
-    if (recordString(wanted, "decision") === "deny") return { action: "decline" };
-    return undefined;
-  };
-
   const respond = Effect.fnUntraced(function* (id: string, result: unknown) {
     const interaction = conversation.pendingInteractions.get(id);
     const answer = interactionAnswer(interaction, result);
     if (answer === undefined || sessionId === undefined) return;
-    conversation.pendingInteractions.delete(id);
     yield* commitCommand("resolveInteraction", sessionId, {
       interactionId: id,
       answer,
     }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("ZCode interaction answer failed.", { detail: errorMessage(error) }),
+      Effect.onError(() =>
+        Effect.sync(() => {
+          // A resubscribe may surface the still-pending interaction again.
+          conversation.announcedInteractions.delete(id);
+        }),
       ),
     );
+    // Only forget the interaction once the daemon accepted the answer; a failed resolve must
+    // keep it pending so the UI can retry instead of silently dropping the request.
+    conversation.pendingInteractions.delete(id);
   });
 
   const request = Effect.fn("ZcodeServe.request")(function* (

@@ -22,6 +22,7 @@ const TOKEN_FILE = "ingress-token";
 const STATUS_READY = "ready";
 const STARTUP_TIMEOUT = Duration.seconds(30);
 const STARTUP_POLL = Duration.millis(250);
+const PROBE_TIMEOUT = Duration.seconds(2);
 
 const ZcodeServerStatus = Schema.Struct({
   state: Schema.String,
@@ -70,6 +71,22 @@ const readIngressToken = Effect.fn("ZcodeServe.readIngressToken")(function* (
 
 export const zcodeChannelUrl = (status: ZcodeServerStatus, token: string): string =>
   `ws://${status.host}:${status.port}/ws/host?token=${encodeURIComponent(token)}`;
+
+/** A saved `ready` status outlives a crashed daemon, so probe its HTTP endpoint before trusting it. */
+const zcodeServerResponds = Effect.fn("ZcodeServe.probe")(function* (
+  httpClient: HttpClient.HttpClient,
+  status: ZcodeServerStatus,
+) {
+  const request = HttpClientRequest.get(`http://${status.host}:${status.port}/api/server-info`);
+  return yield* httpClient.execute(request).pipe(
+    Effect.timeoutOption(PROBE_TIMEOUT),
+    Effect.map(
+      (response) =>
+        Option.isSome(response) && response.value.status >= 200 && response.value.status < 300,
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+});
 
 const issueZcodeHostCapability = Effect.fn("ZcodeServe.issueHostCapability")(function* (
   httpClient: HttpClient.HttpClient,
@@ -140,6 +157,7 @@ const ensureZcodeServer = Effect.fn("ZcodeServe.ensure")(function* (input: {
   readonly settings: { readonly binaryPath: string; readonly launchArgs: string };
   readonly environment: NodeJS.ProcessEnv;
   readonly fileSystem: FileSystem.FileSystem;
+  readonly httpClient: HttpClient.HttpClient;
 }) {
   const serverRoot = zcodeServerRoot(input.environment);
   if (serverRoot === undefined) {
@@ -149,7 +167,12 @@ const ensureZcodeServer = Effect.fn("ZcodeServe.ensure")(function* (input: {
     });
   }
   const running = yield* readZcodeServerStatus(input.fileSystem, serverRoot);
-  if (Option.isSome(running)) return { serverRoot, status: running.value };
+  if (Option.isSome(running)) {
+    if (yield* zcodeServerResponds(input.httpClient, running.value)) {
+      return { serverRoot, status: running.value };
+    }
+    yield* Effect.logDebug("Ignoring a stale zcode server status.", { serverRoot });
+  }
 
   const launchCommand = yield* resolveZcodeLaunchCommand(
     input.settings,
@@ -169,7 +192,9 @@ const ensureZcodeServer = Effect.fn("ZcodeServe.ensure")(function* (input: {
   const started = yield* Effect.gen(function* () {
     for (;;) {
       const status = yield* readZcodeServerStatus(input.fileSystem, serverRoot);
-      if (Option.isSome(status)) return status.value;
+      if (Option.isSome(status)) {
+        if (yield* zcodeServerResponds(input.httpClient, status.value)) return status.value;
+      }
       yield* Effect.sleep(STARTUP_POLL);
     }
   }).pipe(Effect.timeoutOption(STARTUP_TIMEOUT));

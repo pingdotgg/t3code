@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   applyConversationPayload,
   initialConversationState,
+  interactionAnswer,
   type ZcodeConversationState,
 } from "./zcodeServeConversation.ts";
 
@@ -396,9 +397,14 @@ describe("applyConversationPayload", () => {
           type: "userInput.requested",
           payload: {
             requestId: "int_2",
-            prompt: "Proceed with the migration?",
-            inputType: "choice",
-            choices: ["Yes", "No"],
+            questions: [
+              {
+                header: "Confirm",
+                prompt: "Proceed with the migration?",
+                inputType: "choice",
+                choices: ["Yes", "No"],
+              },
+            ],
           },
         },
         {
@@ -432,9 +438,14 @@ describe("applyConversationPayload", () => {
           type: "userInput.requested",
           payload: {
             requestId: "int_3",
-            prompt: "Explain the change",
-            inputType: "text",
-            choices: [],
+            questions: [
+              {
+                header: "Question 1",
+                prompt: "Explain the change",
+                inputType: "text",
+                choices: [],
+              },
+            ],
           },
         },
         {
@@ -445,6 +456,76 @@ describe("applyConversationPayload", () => {
           },
         },
       ],
+    );
+  });
+
+  it("keeps every question in a multi-question user input request", () => {
+    const state = initialConversationState();
+    const events = deltas(state, [
+      {
+        op: "state.updated",
+        patch: {
+          pendingInteractions: [
+            {
+              interactionId: "int_4",
+              kind: "userInput",
+              payload: {
+                questions: [
+                  {
+                    header: "Confirm",
+                    question: "Proceed with the migration?",
+                    options: [{ label: "Yes" }, { label: "No" }],
+                  },
+                  {
+                    header: "Details",
+                    question: "Which database?",
+                    options: [{ label: "SQLite" }, { label: "Postgres" }],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    assert.deepEqual(events[0], {
+      type: "userInput.requested",
+      payload: {
+        requestId: "int_4",
+        questions: [
+          {
+            header: "Confirm",
+            prompt: "Proceed with the migration?",
+            inputType: "choice",
+            choices: ["Yes", "No"],
+          },
+          {
+            header: "Details",
+            prompt: "Which database?",
+            inputType: "choice",
+            choices: ["SQLite", "Postgres"],
+          },
+        ],
+      },
+    });
+    assert.deepEqual(interactionAnswer(undefined, { answers: { "Which database?": "SQLite" } }), {
+      action: "accept",
+      content: { answers: { "Which database?": "SQLite" } },
+    });
+  });
+
+  it("does not reuse an older turn header's token count", () => {
+    const state = initialConversationState();
+    deltas(state, [{ op: "state.updated", patch: { control: { phase: "running" } } }]);
+    deltas(state, [
+      { op: "row.upserted", row: { rowId: 1, kind: "turnHeader", outputTokens: 31 } },
+      { op: "row.upserted", row: { rowId: 4, kind: "turnHeader" } },
+    ]);
+
+    assert.deepEqual(
+      deltas(state, [{ op: "state.updated", patch: { control: { phase: "completedSuccess" } } }]),
+      [{ type: "turn.completed", payload: { resultType: "success" } }],
     );
   });
 });

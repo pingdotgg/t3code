@@ -61,7 +61,10 @@ export interface ZcodeConnection {
     params: ZcodeRecord,
     timeoutMs?: number,
   ) => Effect.Effect<unknown, ZcodeProtocolError | ZcodeProtocolTimeoutError>;
-  readonly respond: (id: string, result: unknown) => Effect.Effect<void, ZcodeProtocolError>;
+  readonly respond: (
+    id: string,
+    result: unknown,
+  ) => Effect.Effect<void, ZcodeProtocolError | ZcodeProtocolTimeoutError>;
   readonly events: Queue.Queue<ZcodeRecord, ZcodeProtocolError>;
   readonly exited: Effect.Effect<number, ZcodeProtocolError>;
   readonly terminate: Effect.Effect<void>;

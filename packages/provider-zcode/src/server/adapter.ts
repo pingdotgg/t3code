@@ -357,11 +357,13 @@ interface ZcodePendingApproval {
 
 interface ZcodePendingQuestion {
   readonly nativeRequestId: string;
-  readonly questionId: string;
   runtimeRequest: OrchestrationV2RuntimeRequest;
   readonly node: OrchestrationV2ExecutionNode;
   readonly turnItem: OrchestrationV2TurnItem;
-  answer: { readonly value: string } | { readonly cancelled: true } | null;
+  answer:
+    | { readonly answers: Readonly<Record<string, string | ReadonlyArray<string>>> }
+    | { readonly cancelled: true }
+    | null;
 }
 
 interface ZcodeAwaitingRequest {
@@ -759,6 +761,9 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         if (existing !== undefined) {
           const name = zcodeRecordString(payload, "toolName");
           if (name !== undefined) existing.name = name;
+          // The daemon may send the tool input only in a later update; keep the newest one.
+          const input = zcodeRecordField(payload, "input");
+          if (input !== undefined) existing.input = input;
           return existing;
         }
         const state: ZcodeToolState = {
@@ -935,7 +940,6 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         if (questions !== undefined) {
           pendingQuestions.set(String(requestId), {
             nativeRequestId,
-            questionId: questions[0]?.id ?? nativeRequestId,
             runtimeRequest,
             node,
             turnItem,
@@ -1122,7 +1126,8 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
       const answeredPermissions = new Map<string, ZcodeRecord>();
       const answeredUserInputs = new Map<
         string,
-        { readonly value: string } | { readonly cancelled: true }
+        | { readonly answers: Readonly<Record<string, string | ReadonlyArray<string>>> }
+        | { readonly cancelled: true }
       >();
 
       const handleSessionEvent = Effect.fnUntraced(function* (
@@ -1320,30 +1325,38 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
           case "userInput.requested": {
             const nativeRequestId = zcodeRecordString(payload, "requestId");
             if (nativeRequestId === undefined) return;
-            const prompt = zcodeRecordString(payload, "prompt") ?? "The agent asked a question";
-            const inputType = zcodeRecordString(payload, "inputType") ?? "text";
-            const choices = (zcodeRecordArray(payload, "choices") ?? []).filter(
-              (choice): choice is string => typeof choice === "string" && choice.length > 0,
+            const views = zcodeRecordArray(payload, "questions") ?? [];
+            const questions = views.flatMap(
+              (view, index): Array<OrchestrationV2UserInputQuestion> => {
+                const prompt = zcodeRecordString(view, "prompt");
+                if (prompt === undefined) return [];
+                const inputType = zcodeRecordString(view, "inputType") ?? "text";
+                const choices = (zcodeRecordArray(view, "choices") ?? []).filter(
+                  (choice): choice is string => typeof choice === "string" && choice.length > 0,
+                );
+                return [
+                  {
+                    id: `${nativeRequestId}:${index}`,
+                    header: zcodeRecordString(view, "header") ?? `Question ${index + 1}`,
+                    question: prompt,
+                    options: choices.map((choice) => ({
+                      label: choice,
+                      description: choice,
+                      value: choice,
+                    })),
+                    // Free-text asks keep a custom answer even with preset choices.
+                    ...(inputType === "text" || choices.length === 0
+                      ? { allowCustomAnswer: true }
+                      : {}),
+                  },
+                ];
+              },
             );
+            if (questions.length === 0) return;
             yield* emitRuntimeRequestShell(
               nativeRequestId,
               "user_input",
-              [
-                {
-                  id: nativeRequestId,
-                  header: "Question",
-                  question: prompt,
-                  options: choices.map((choice) => ({
-                    label: choice,
-                    description: choice,
-                    value: choice,
-                  })),
-                  // Free-text asks keep a custom answer even with preset choices.
-                  ...(inputType === "text" || choices.length === 0
-                    ? { allowCustomAnswer: true }
-                    : {}),
-                },
-              ],
+              questions,
               undefined,
               state,
               turn,
@@ -2153,11 +2166,22 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
               return;
             }
             const pendingQuestion = question!;
-            const answerValue = requestInput.answers?.[pendingQuestion.questionId];
+            const answers = requestInput.answers ?? {};
+            const answered: Array<[string, string | ReadonlyArray<string>]> = [];
+            if (pendingQuestion.turnItem.type === "user_input_request") {
+              for (const item of pendingQuestion.turnItem.questions) {
+                const raw = answers[item.id];
+                const values = (Array.isArray(raw) ? raw : [raw]).filter(
+                  (value): value is string => typeof value === "string" && value.length > 0,
+                );
+                if (values.length === 0) continue;
+                answered.push([item.question, values.length === 1 ? values[0]! : values]);
+              }
+            }
             pendingQuestion.answer =
-              requestInput.decision === "cancel" || typeof answerValue !== "string"
+              requestInput.decision === "cancel" || answered.length === 0
                 ? { cancelled: true }
-                : { value: answerValue };
+                : { answers: Object.fromEntries(answered) };
             pendingQuestions.delete(key);
             answeredUserInputs.set(pendingQuestion.nativeRequestId, pendingQuestion.answer);
             for (const [respondId, awaiting] of awaitingUserInputRequests) {
