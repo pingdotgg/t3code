@@ -17,9 +17,14 @@ vi.mock("react-native-keyboard-controller/src/bindings", () => ({
   },
   KeyboardControllerNative: { dismiss: () => {} },
 }));
+vi.mock("react-native-keyboard-controller", async () => ({
+  ...(await import("react-native-keyboard-controller/src/module")),
+  ...(await import("react-native-keyboard-controller/src/bindings")),
+}));
 
 import { useKeyboardState } from "react-native-keyboard-controller/src/hooks/useKeyboardState";
 import { KeyboardController } from "react-native-keyboard-controller/src/module";
+import { useSoftKeyboardShowing } from "./useSoftKeyboardShowing";
 
 function emit(name: string, height: number) {
   const event: KeyboardEventData = {
@@ -37,7 +42,8 @@ function emit(name: string, height: number) {
 
 function KeyboardState() {
   const { isVisible, height } = useKeyboardState();
-  return <output>{JSON.stringify({ isVisible, height })}</output>;
+  const softShowing = useSoftKeyboardShowing();
+  return <output>{JSON.stringify({ isVisible, height, softShowing })}</output>;
 }
 
 // The library keeps keyboard state at module scope; every test starts and ends hidden.
@@ -65,7 +71,11 @@ it("reports the keyboard shown after Android repairs the IME inset without keybo
     isVisible: KeyboardController.isVisible(),
     height: KeyboardController.state().height,
     hook: JSON.parse(screen.container.textContent ?? ""),
-  }).toEqual({ isVisible: true, height: 376, hook: { isVisible: true, height: 376 } });
+  }).toEqual({
+    isVisible: true,
+    height: 376,
+    hook: { isVisible: true, height: 376, softShowing: true },
+  });
 });
 
 it("waits for the native hide before dismiss resolves after a didShow-only repair", async () => {
