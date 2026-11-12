@@ -6076,6 +6076,103 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("keeps the agent alive when native ACP cancellation outlasts the cancel timeout", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const native: { current?: AcpSessionRuntime.AcpSessionRuntime["Service"] } = {};
+      const instanceId = ProviderInstanceId.make("acp-slow-native-cancel");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            environment: { T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1" },
+            protocolEvents,
+            cancelBehavior: "wait-for-prompt",
+            wrapRuntime: (runtime) => {
+              native.current = runtime;
+              return runtime;
+            },
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-slow-native-cancel");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-acp-slow-native-cancel"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+      const started = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        started.type !== "turn_item.updated" ||
+        started.turnItem.providerTurnId === null ||
+        native.current === undefined
+      ) {
+        return yield* Effect.die("Expected the native cancellable command");
+      }
+      const providerTurnId = started.turnItem.providerTurnId;
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId })
+        .pipe(Effect.forkScoped);
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "incoming" &&
+            typeof event.payload === "string" &&
+            event.payload.includes("native-cancel-received"),
+        ),
+        Stream.runHead,
+      );
+      // Antigravity can take longer than the runtime's cancel timeout to wind a tool down.
+      yield* TestClock.adjust("16 seconds");
+      yield* native.current.request("_test/finish-cancel", {});
+      yield* Fiber.await(interrupt);
+      const terminal = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
+          ),
+          Stream.runHead,
+        ),
+      );
+      assert.equal(terminal.type === "turn.terminal" && terminal.status, "interrupted");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("cancels pending permission requests while interrupting an ACP turn", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
