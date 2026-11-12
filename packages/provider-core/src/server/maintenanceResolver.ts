@@ -1111,7 +1111,12 @@ function deriveVersionAdvisory(input: {
   readonly currentVersion: string | null;
   readonly latestVersion: string | null;
   readonly capabilities: ProviderMaintenanceCapabilities;
+  readonly brokenInstall: boolean;
 }): Pick<ServerProviderVersionAdvisory, "status" | "message"> {
+  // An install that cannot report a version (e.g. a missing platform binary) is fixed by reinstalling.
+  if (input.brokenInstall && input.latestVersion) {
+    return { status: "behind_latest", message: PROVIDER_UPDATE_ACTION_TOAST_MESSAGE };
+  }
   if (!input.currentVersion) {
     return { status: "unknown", message: null };
   }
@@ -1141,6 +1146,7 @@ export function createProviderVersionAdvisory(input: {
   readonly latestVersion?: string | null;
   readonly checkedAt?: string | null;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly brokenInstall?: boolean;
 }): ServerProviderVersionAdvisory {
   const capabilities =
     input.maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(input.driver);
@@ -1149,6 +1155,7 @@ export function createProviderVersionAdvisory(input: {
     currentVersion: input.currentVersion,
     latestVersion,
     capabilities,
+    brokenInstall: input.brokenInstall === true,
   });
 
   return {
@@ -1250,11 +1257,16 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
     maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
   const currentVersion =
     snapshot.installedVersion !== undefined ? snapshot.installedVersion : snapshot.version;
+  const brokenInstall =
+    snapshot.installed &&
+    snapshot.status === "error" &&
+    !currentVersion &&
+    capabilities.update !== null;
   const shouldResolveLatestVersion =
     options?.enableProviderUpdateChecks !== false &&
     snapshot.enabled &&
     snapshot.installed &&
-    Boolean(currentVersion);
+    (Boolean(currentVersion) || brokenInstall);
   if (!shouldResolveLatestVersion) {
     return {
       ...snapshot,
@@ -1276,6 +1288,7 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
       latestVersion,
       checkedAt: DateTime.formatIso(yield* DateTime.now),
       maintenanceCapabilities: capabilities,
+      brokenInstall,
     }),
   };
 });

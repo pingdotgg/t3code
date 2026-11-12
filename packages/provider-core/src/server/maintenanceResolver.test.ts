@@ -339,6 +339,42 @@ it.layer(
     ),
   );
 
+  it.effect("offers a reinstall when an owned install fails to start without a version", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      {
+        ...installedPackageToolProvider,
+        version: null,
+        status: "error",
+        message: "Error: Missing optional dependency @example/package-tool-linux-x64.",
+      },
+      makeProviderMaintenanceCapabilities({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        updateExecutable: "npm",
+        updateArgs: ["install", "-g", "@example/package-tool@latest"],
+        updateLockKey: "npm-global:/opt/node",
+      }),
+    ).pipe(
+      Effect.provideServiceEffect(
+        ProviderLatestVersions.ProviderLatestVersions,
+        ProviderLatestVersions.make([["@example/package-tool", "1.2.0"]]),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("the latest version is cached")),
+      ),
+      Effect.map((provider) => {
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: null,
+          latestVersion: "1.2.0",
+          updateCommand: "npm install -g @example/package-tool@latest",
+          canUpdate: true,
+        });
+      }),
+    ),
+  );
+
   it.effect.each([
     { install: "native", stdout: '"1.2.0"', exitCode: 0, latest: "1.2.0" },
     { install: "manual", stdout: '["1.2.0"]', exitCode: 0, latest: "1.2.0" },
