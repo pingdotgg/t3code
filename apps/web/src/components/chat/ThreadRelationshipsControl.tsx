@@ -157,10 +157,17 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
 }) {
   const [expanded, setExpanded] = useState(false);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
+  const [previousVisibleCount, setPreviousVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
   const previousRows = props.previousRows ?? [];
   const previousSet = new Set<Row>(previousRows);
-  const rows = expanded ? props.rows : props.rows.filter((row) => !previousSet.has(row));
-  const { visibleRows, hiddenCount } = resolveThreadLineageWindow(rows, visibleCount);
+  // Previous agents keep their own window so expanding them always reveals rows.
+  const current = resolveThreadLineageWindow(
+    props.rows.filter((row) => !previousSet.has(row)),
+    visibleCount,
+  );
+  const previous = resolveThreadLineageWindow(expanded ? previousRows : [], previousVisibleCount);
+  const shownSet = new Set<Row>([...current.visibleRows, ...previous.visibleRows]);
+  const visibleRows = props.rows.filter((row) => shownSet.has(row));
   const failedCount = previousRows.filter((row) => {
     const status = lineageRowStatus(row);
     return status === "failed" || status === "error";
@@ -168,10 +175,14 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   if (props.rows.length === 0) return null;
   return (
     <div>
-      {rows.length > 0 ? (
+      {visibleRows.length > 0 ? (
         <ThreadLineageRowList
-          hiddenCount={hiddenCount}
-          onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
+          hiddenCount={current.hiddenCount > 0 ? current.hiddenCount : previous.hiddenCount}
+          onShowMore={() =>
+            (current.hiddenCount > 0 ? setVisibleCount : setPreviousVisibleCount)(
+              (count) => count + THREAD_LINEAGE_PAGE_COUNT,
+            )
+          }
         >
           {props.children(visibleRows)}
         </ThreadLineageRowList>
