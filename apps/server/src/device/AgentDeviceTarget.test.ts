@@ -400,6 +400,44 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       ),
   );
 
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "tells the agent the shell cannot reach the runtime when access to it is denied",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-denied-" });
+        const runtimeDir = path.join(dir, "runtime");
+        yield* fs.makeDirectory(runtimeDir);
+        const runtime = path.join(runtimeDir, "node");
+        yield* fs.writeFileString(runtime, "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(runtime, 0o755);
+        const command = yield* bindAgentDeviceLauncher({
+          entryPath: path.join(dir, "cli.mjs"),
+          stateDir: dir,
+          session: "t3-a",
+          targetArgs: ["--config", "/h.json", "--session", "t3-a"],
+        }).pipe(Effect.provideService(HostProcess.ExecutablePath, runtime));
+        // A sandboxed shell sees the runtime but may not read it, like Windows' access denied.
+        yield* Effect.acquireRelease(fs.chmod(runtimeDir, 0o000), () =>
+          fs.chmod(runtimeDir, 0o755).pipe(Effect.orDie),
+        );
+        const failure = yield* Effect.promise(() =>
+          exec(command, ["snapshot"]).then(
+            () => ({ code: 0, stderr: "" }),
+            (error: { code: number; stderr: string }) => error,
+          ),
+        );
+        expect(failure.code).toBe(1);
+        expect(failure.stderr).not.toContain("moved or updated its runtime");
+        expect(failure.stderr).toContain("sandbox");
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.IsExecutable, false),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+  );
+
   it.effect("runs two hosts concurrently and only updates the reconnected host", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
