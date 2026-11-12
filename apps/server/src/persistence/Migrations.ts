@@ -96,7 +96,7 @@ import Migration0085 from "./Migrations/085_TurnItemCounts.ts";
 import Migration0086 from "./Migrations/086_QueuedTurnInputIndex.ts";
 import Migration0087 from "./Migrations/087_ProjectionProjectsCustomTitle.ts";
 import Migration0088 from "./Migrations/088_TurnItemTypeStatusIndex.ts";
-import Migration0089 from "./Migrations/081_SubagentLineageIndex.ts";
+import Migration0089 from "./Migrations/089_SubagentLineageIndex.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
