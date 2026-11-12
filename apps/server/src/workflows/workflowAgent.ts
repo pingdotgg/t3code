@@ -18,6 +18,8 @@ import { type AgentModel, AgentResult, AgentTurn, WorkflowAgents } from "./Workf
 /** A thread an agent step ran in, to hand to a later step that should continue it. */
 export interface AgentThread {
   readonly threadId: string;
+  /** The linked environment it is in. Absent for this one. */
+  readonly environment?: string | undefined;
 }
 
 const CORRECTIONS = 2;
@@ -25,7 +27,8 @@ const CORRECTIONS = 2;
 /**
  * An agent doing one job in a thread a person can open. With `output` it returns data the server
  * checked against that schema; without, its last message. It starts a thread in `project`, or
- * continues `thread`. A turn that dies is tried once more, then the run pauses at this step.
+ * continues `thread`. `environment` names a linked environment to start it in; a continued thread
+ * stays where it is. A turn that dies is tried once more, then the run pauses at this step.
  */
 export const agent = Effect.fn("workflow.agent")(function* <A = string, I = string>(
   name: string,
@@ -34,6 +37,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
     readonly output?: Schema.Codec<A, I>;
     readonly model?: AgentModel;
     readonly project?: string;
+    readonly environment?: string;
     readonly thread?: AgentThread;
   },
 ): Effect.fn.Return<{ readonly value: A; readonly thread: AgentThread }, StepFailed, InRun> {
@@ -42,7 +46,11 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
   const outputSchema = options.output === undefined ? undefined : jsonSchemaOf(options.output);
   const outputCodec = options.output === undefined ? undefined : Schema.toCodecJson(options.output);
   const decodeOutput = outputCodec === undefined ? undefined : Schema.decodeEffect(outputCodec);
-  const start = (key: string, prompt: string, thread: string | undefined) =>
+  const threadOf = (turn: AgentTurn): AgentThread => ({
+    threadId: turn.threadId,
+    ...(turn.environment === undefined ? {} : { environment: turn.environment }),
+  });
+  const start = (key: string, prompt: string, thread: AgentThread | undefined) =>
     agents
       .start({
         key: `${run.runId}/${name}/${key}`,
@@ -51,9 +59,14 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
         outputSchema,
         model: options.model,
         project: options.project,
-        thread,
+        environment: thread === undefined ? options.environment : thread.environment,
+        thread: thread?.threadId,
       })
-      .pipe(Effect.tap((turn) => run.store.stepThread(run.runId, name, turn.threadId)));
+      .pipe(
+        Effect.tap((turn) =>
+          run.store.stepThread(run.runId, name, turn.threadId, turn.environment ?? null),
+        ),
+      );
   const done = (round: number) =>
     journaled(
       run,
@@ -74,7 +87,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       AgentTurn,
       Effect.andThen(
         run.store.stepStarted(run.runId, name, "agent"),
-        start(`${round}`, options.brief, options.thread?.threadId),
+        start(`${round}`, options.brief, options.thread),
       ),
     );
     let problem = "";
@@ -97,7 +110,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
       }
       if (decodeOutput === undefined) {
         yield* done(round);
-        return { value: result.reply as A, thread: { threadId: turn.threadId } };
+        return { value: result.reply as A, thread: threadOf(turn) };
       }
       const decoded =
         result.output === undefined
@@ -108,7 +121,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
             );
       if (Result.isSuccess(decoded)) {
         yield* done(round);
-        return { value: decoded.success, thread: { threadId: turn.threadId } };
+        return { value: decoded.success, thread: threadOf(turn) };
       }
       problem = `the agent did not return a result: ${decoded.failure}`;
       if (correction >= CORRECTIONS) break;
@@ -121,7 +134,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
         start(
           `${round}/correct/${correction}`,
           "Your turn ended without a submitted result. Do not redo the work: call `t3_submit_output` now with the result of what you did.",
-          turn.threadId,
+          threadOf(turn),
         ),
       );
     }

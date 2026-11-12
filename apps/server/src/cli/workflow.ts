@@ -42,7 +42,9 @@ const printRun = Effect.fn("cli.workflow.printRun")(function* (
     yield* Console.log(
       `  ${step.status.padEnd(9)}  ${step.kind.padEnd(5)}  ${step.name}${
         step.attempts > 1 ? `  (${step.attempts} tries)` : ""
-      }${step.detail === null ? "" : `  ${step.detail}`}`,
+      }${step.environmentId === null ? "" : `  in ${step.environmentId}`}${
+        step.detail === null ? "" : `  ${step.detail}`
+      }`,
     );
   }
   if (result.run.result !== null) yield* printJson(result.run.result);

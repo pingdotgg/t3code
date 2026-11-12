@@ -37,6 +37,8 @@ export const WorkflowStep = Schema.Struct({
   detail: Schema.NullOr(Schema.String),
   /** The thread an agent step ran in. */
   threadId: Schema.NullOr(Schema.String),
+  /** The linked environment that thread is in; null when it is this one. */
+  environmentId: Schema.NullOr(Schema.String),
   startedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
 });
