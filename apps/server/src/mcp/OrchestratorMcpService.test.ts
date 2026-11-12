@@ -3713,6 +3713,11 @@ describe("OrchestratorMcpService provider resolution", () => {
       );
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        assert.deepEqual((yield* service.capabilities(scope)).fallback, {
+          providerInstanceId: claudeInstanceId,
+          model: fallback.model,
+          active: true,
+        });
         yield* service.delegateTask(scope, { task: "Review the change.", mode: "async" });
         assert.deepEqual(commands[0]?.modelSelection, fallback);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));

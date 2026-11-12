@@ -1320,6 +1320,28 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const implicitFallbackSelection = (input: {
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly settings: Effect.Success<typeof serverSettings.getSettings>;
+    readonly orchestrationCapableInstanceIds: ReadonlySet<string>;
+    readonly now: number;
+  }) => {
+    const { selection, fallback } = resolveNewThreadModelSelection({
+      defaultSelection: input.parent.thread.modelSelection,
+      fallbackSelection: input.settings.fallbackModelSelection,
+      providers: input.providers,
+      settings: input.settings,
+      projectId: input.parent.thread.projectId,
+      now: input.now,
+    });
+    return fallback !== null &&
+      selection !== null &&
+      input.orchestrationCapableInstanceIds.has(selection.instanceId)
+      ? selection
+      : null;
+  };
+
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
@@ -1338,19 +1360,14 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
-      const { selection, fallback } = resolveNewThreadModelSelection({
-        defaultSelection: input.parent.thread.modelSelection,
-        fallbackSelection: settings.fallbackModelSelection,
+      const selection = implicitFallbackSelection({
+        parent: input.parent,
         providers: input.providers,
         settings,
-        projectId: input.parent.thread.projectId,
+        orchestrationCapableInstanceIds,
         now: yield* Clock.currentTimeMillis,
       });
-      if (
-        fallback !== null &&
-        selection !== null &&
-        orchestrationCapableInstanceIds.has(selection.instanceId)
-      ) {
+      if (selection !== null) {
         target = {
           ...target,
           providerInstanceId: selection.instanceId,
@@ -2364,10 +2381,28 @@ const make = Effect.gen(function* () {
       );
       const inherited = parent?.thread.modelSelection;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
+      const fallback = settings.fallbackModelSelection;
       return {
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: inherited?.instanceId ?? null,
         inheritedModel: inherited?.model ?? null,
+        ...(fallback === null
+          ? {}
+          : {
+              fallback: {
+                providerInstanceId: fallback.instanceId,
+                model: fallback.model,
+                active:
+                  parent !== undefined &&
+                  implicitFallbackSelection({
+                    parent,
+                    providers,
+                    settings,
+                    orchestrationCapableInstanceIds,
+                    now: yield* Clock.currentTimeMillis,
+                  }) !== null,
+              },
+            }),
         inheritedOptions:
           knownOptions(
             inherited?.options,
