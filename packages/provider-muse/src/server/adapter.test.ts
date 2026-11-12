@@ -1723,6 +1723,38 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("keeps a backgrounded monitor tool call pending after its turn ends", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("item/started", {
+        turnId: turn.nativeId,
+        item: {
+          itemId: "monitor-call",
+          kind: "toolCall",
+          tool: "monitor",
+          revision: 1,
+          status: "inProgress",
+          background: true,
+          turnId: turn.nativeId,
+        },
+      });
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      const roster = harness.allEvents.findLast(
+        (event) => event.type === "provider_thread.updated",
+      );
+      assert.deepStrictEqual(
+        roster?.type === "provider_thread.updated"
+          ? (roster.providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId)
+          : [],
+        ["monitor-call"],
+      );
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("ends a compaction whose item names the held wake as its run", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
