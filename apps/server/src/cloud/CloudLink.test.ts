@@ -24,6 +24,7 @@ import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
+  CLOUD_HOST_CLOCK_BEHIND,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
@@ -101,9 +102,12 @@ const withService = <A, E>(
                 }),
               )
             : Effect.sync(() => void stored.set(name, value)),
+        create: (name, value) => Effect.sync(() => void stored.set(name, value)),
+        remove: (name) => Effect.sync(() => void stored.delete(name)),
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+        getDescriptor: Effect.succeed({} as never),
       }),
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
       Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
@@ -135,8 +139,13 @@ const withService = <A, E>(
     }).pipe(
       Effect.provide(
         CloudLink.layer.pipe(
-          // These tests never sign proofs; the mocked secret store cannot create a key pair.
-          Layer.provide(Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({ publicKey: "" })),
+          // The mocked secret store cannot create a key pair, so responses carry a fixed proof.
+          Layer.provide(
+            Layer.mock(EnvironmentKeys.EnvironmentSigningKey)({
+              publicKey: "",
+              sign: () => Effect.succeed("signed"),
+            }),
+          ),
           Layer.provide(layerDependencies),
         ),
       ),
@@ -275,24 +284,26 @@ it.effect(
   () => {
     const keys = NodeCrypto.generateKeyPairSync("ed25519");
     const b64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-    // The test clock is at 0, so a proof issued at 90 is what a host 90 seconds slow receives.
     const header = b64({ alg: "EdDSA", typ: "t3-cloud-health+jwt" });
-    const payload = b64({
-      iss: "https://relay.test",
-      aud: "t3-env:environment-1",
-      sub: "user-1",
-      jti: "jti-1",
-      iat: 90,
-      exp: 210,
-      environmentId: "environment-1",
-      nonce: "nonce-1",
-      scope: ["environment:status"],
-    });
-    const signature = NodeCrypto.sign(
-      null,
-      Buffer.from(`${header}.${payload}`),
-      keys.privateKey,
-    ).toString("base64url");
+    const healthProof = (iat: number) => {
+      const payload = b64({
+        iss: "https://relay.test",
+        aud: "t3-env:environment-1",
+        sub: "user-1",
+        jti: `jti-${iat}`,
+        iat,
+        exp: iat + 120,
+        environmentId: "environment-1",
+        nonce: `nonce-${iat}`,
+        scope: ["environment:status"],
+      });
+      const signature = NodeCrypto.sign(
+        null,
+        Buffer.from(`${header}.${payload}`),
+        keys.privateKey,
+      ).toString("base64url");
+      return { proof: `${header}.${payload}.${signature}` } as never;
+    };
     return withService(
       {
         secrets: [
@@ -304,13 +315,17 @@ it.effect(
           [CLOUD_LINKED_USER_ID, encode("user-1")],
         ],
       },
-      ({ link }) =>
+      ({ link, stored }) =>
         Effect.gen(function* () {
-          const error = yield* link
-            .answerHealthRequest({ proof: `${header}.${payload}.${signature}` } as never)
-            .pipe(Effect.flip);
+          // The test clock is at 0, so a proof issued at 90 is what a host 90 seconds slow receives.
+          const error = yield* link.answerHealthRequest(healthProof(90)).pipe(Effect.flip);
 
           assert.match(error.message, /clock/i);
+          assert.isTrue(stored.has(CLOUD_HOST_CLOCK_BEHIND));
+
+          // After the clock is synced, the next accepted request clears what `t3 connect status` shows.
+          yield* link.answerHealthRequest(healthProof(0));
+          assert.isFalse(stored.has(CLOUD_HOST_CLOCK_BEHIND));
         }),
     );
   },
