@@ -14,6 +14,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
 }));
 
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerSpeechButton } from "./ComposerSpeechButton";
 
 function setup() {
   return {
@@ -28,12 +29,108 @@ function setup() {
     isEnvironmentUnavailable: false,
     isPreparingWorktree: false,
     hasSendableContent: false,
+    compactBeforeSendTokens: 436_000,
+    onToggleKeepFullHistory: vi.fn(),
     onPreviousPendingQuestion: vi.fn(),
     onInterrupt: vi.fn(),
     onResume: vi.fn(),
     onSubmitMessage: vi.fn(),
   } satisfies ComponentProps<typeof ComposerPrimaryActions>;
 }
+
+it.each([false, true])(
+  "keeps dictation finish, cancel and turn stop separate (running: %s)",
+  async (running) => {
+    const props = setup();
+    const onStop = vi.fn();
+    const onCancel = vi.fn();
+    const onStart = vi.fn();
+    const onSkipPostProcessing = vi.fn();
+    const controls = (
+      phase: "idle" | "preparing" | "recording" | "transcribing" | "post-processing",
+    ) => (
+      <ComposerPrimaryActions
+        {...props}
+        isRunning={running}
+        canInterrupt={running}
+        voiceInputActive={phase !== "idle"}
+        hasSendableContent={phase !== "idle"}
+        renderSpeechAction={(inPill) => (
+          <ComposerSpeechButton
+            inPill={inPill}
+            state={{ phase, error: null, errorAction: null }}
+            shortcutLabel="Ctrl+Alt+V"
+            onStart={onStart}
+            dictation={{ level: 0.5, onStop, onCancel, onSkipPostProcessing }}
+          />
+        )}
+      />
+    );
+    await using screen = await render(controls("idle"));
+    await act(() =>
+      (
+        screen.getByRole("button", { name: "Start voice input" }).element() as HTMLButtonElement
+      ).click(),
+    );
+    expect(onStart).toHaveBeenCalledOnce();
+    await screen.rerender(controls("recording"));
+    expect(screen.container.querySelectorAll('[aria-label="Finish voice input"]')).toHaveLength(1);
+    expect(screen.container.querySelector('[aria-label="Stop voice input"]')).toBeNull();
+    await act(() =>
+      (
+        screen.getByRole("button", { name: "Finish voice input" }).element() as HTMLButtonElement
+      ).click(),
+    );
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(props.onInterrupt).not.toHaveBeenCalled();
+    for (const phase of ["recording", "preparing", "transcribing", "post-processing"] as const) {
+      await screen.rerender(controls(phase));
+      expect(screen.container.querySelector('[aria-label^="Compact 436k"]')).toBeNull();
+      expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
+      await act(() =>
+        (
+          screen.getByRole("button", { name: "Cancel voice input" }).element() as HTMLButtonElement
+        ).click(),
+      );
+      if (phase === "preparing" || phase === "transcribing") {
+        expect(
+          screen
+            .getByRole("button", {
+              name: phase === "preparing" ? "Preparing voice input" : "Transcribing",
+            })
+            .element(),
+        ).toHaveAttribute("aria-disabled", "true");
+      }
+      if (running) {
+        await expect.element(screen.getByRole("button", { name: "Stop generation" })).toBeEnabled();
+      }
+    }
+    expect(onCancel).toHaveBeenCalledTimes(4);
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(props.onSubmitMessage).not.toHaveBeenCalled();
+    await screen.rerender(controls("post-processing"));
+    await act(() =>
+      (
+        screen.getByRole("button", { name: "Skip post-processing" }).element() as HTMLButtonElement
+      ).click(),
+    );
+    expect(onSkipPostProcessing).toHaveBeenCalledOnce();
+    if (running) {
+      await act(() =>
+        (
+          screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
+        ).click(),
+      );
+      expect(props.onInterrupt).toHaveBeenCalledOnce();
+      await expect
+        .element(screen.getByRole("button", { name: "Stopping", exact: true }))
+        .toBeDisabled();
+      await expect
+        .element(screen.getByRole("button", { name: "Cancel voice input" }))
+        .toBeEnabled();
+    }
+  },
+);
 
 it.each([false, true])(
   "keeps repeat clicks away from Resume and Send (draft: %s)",
@@ -76,8 +173,22 @@ it.each([false, true])(
     });
     expect(props.onResume).not.toHaveBeenCalled();
     expect(props.onSubmitMessage).not.toHaveBeenCalled();
+    expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
+    const compactToggle = screen.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Compact 436k tokens of history before sending"]',
+    );
+    if (draft) {
+      expect(compactToggle).toHaveAttribute("aria-pressed", "true");
+      expect(compactToggle?.closest("[data-composer-send-pill]")).toContainElement(
+        screen.getByRole("button", { name: "Stopped", exact: true }).element(),
+      );
+      await act(() => compactToggle?.click());
+      expect(props.onToggleKeepFullHistory).toHaveBeenCalledOnce();
+    } else {
+      expect(compactToggle).toBeNull();
+    }
     const action = screen
-      .getByRole("button", { name: draft ? "Submit message" : "Resume thread" })
+      .getByRole("button", { name: draft ? "Compact and send" : "Resume thread" })
       .element() as HTMLButtonElement;
     await act(() => action.click());
     expect(draft ? props.onSubmitMessage : props.onResume).toHaveBeenCalledTimes(1);

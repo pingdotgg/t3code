@@ -13,7 +13,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { FolderOpen, SearchIcon, ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type Ref, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
@@ -41,6 +41,8 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { isMacPlatform } from "~/lib/utils";
+import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
 import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
 import { resolveDiffPathForWorkspace } from "~/diffFileActions";
@@ -66,6 +68,7 @@ interface FileBrowserPanelProps {
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
+  answersPanelFind?: boolean;
 }
 
 function treePath(entry: ProjectEntry): string {
@@ -93,12 +96,16 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
-function FileSearchField(props: {
+function FileSearchField({
+  ref,
+  ...props
+}: {
   ariaLabel: string;
   name: string;
   onClose: () => void;
   onOpenMatch: () => void;
   onValueChange: (value: string) => void;
+  ref: Ref<HTMLInputElement>;
   value: string;
 }) {
   return (
@@ -110,6 +117,7 @@ function FileSearchField(props: {
         <SearchIcon aria-hidden className="size-3.5" />
       </InputGroupAddon>
       <InputGroupInput
+        ref={ref}
         type="search"
         name={props.name}
         size="sm"
@@ -177,6 +185,7 @@ export default function FileBrowserPanel({
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
+  answersPanelFind = false,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
@@ -347,6 +356,20 @@ export default function FileBrowserPanel({
     setQuery("");
     search.close();
   };
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const focusSearch = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+  const onPanelAction = useEffectEvent((action: PreviewAction) => {
+    // Hidden panel tabs stay mounted; only the visible Files tab answers.
+    if (action === "find" && searchInputRef.current?.getClientRects().length) focusSearch();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the panel find command, which fires while focus is anywhere in the right panel
+  useEffect(() => {
+    if (!answersPanelFind) return;
+    return subscribePreviewAction(onPanelAction);
+  }, [answersPanelFind]);
   const expandedPathsRef = useRef(new Set<string>());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
   useEffect(() => {
@@ -590,6 +613,13 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
+      onKeyDown={(event) => {
+        const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+        if (!isModPressed || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f")
+          return;
+        event.preventDefault();
+        focusSearch();
+      }}
     >
       <div
         ref={chromeRef}
@@ -605,6 +635,7 @@ export default function FileBrowserPanel({
           data-surface-subheader
         >
           <FileSearchField
+            ref={searchInputRef}
             name="project-files-search"
             ariaLabel={`Search ${projectName} files`}
             value={search.value}
