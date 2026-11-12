@@ -154,8 +154,16 @@ export function isAutoSettlementCandidate(
   // A guest is waiting on the owner; settling would hide the Request.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   if (thread.activityRunStatus != null) return false;
-  // A usage limit interrupts the work; settling would hide Resume at reset.
-  if (thread.status === "failed" && thread.lastErrorClass === "usage_limit") return false;
+  // A usage limit interrupts the work; settling would hide Resume at reset. Only subagents with
+  // armed recovery are held: the store returns them once their parent is put away.
+  if (
+    thread.status === "failed" &&
+    thread.lastErrorClass === "usage_limit" &&
+    (thread.lineage.relationshipToParent !== "subagent" ||
+      (thread.limitRecovery?.runId === thread.latestRunId && thread.limitRecovery.autoResume))
+  ) {
+    return false;
+  }
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.

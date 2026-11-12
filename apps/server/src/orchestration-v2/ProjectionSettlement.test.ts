@@ -393,6 +393,30 @@ it.effect(
         yield* createRun(providerFailed, "failed"),
         "provider_error",
       );
+      // A subagent of a settled parent still settles for cleanup unless recovery is armed.
+      const putAwayParent = yield* createThread("put-away-parent", { settledOverride: "settled" });
+      const childOf = () => ({
+        lineage: {
+          parentThreadId: putAwayParent,
+          relationshipToParent: "subagent" as const,
+          rootThreadId: putAwayParent,
+        },
+      });
+      const abandonedLimited = yield* createThread("abandoned-limited", childOf());
+      yield* createFailure(
+        abandonedLimited,
+        yield* createRun(abandonedLimited, "failed"),
+        "usage_limit",
+      );
+      const armedChild = yield* createThread("armed-child", {
+        ...childOf(),
+        limitRecovery: {
+          runId: RunId.make("run:thread:settlement:armed-child:1"),
+          resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+          autoResume: true,
+        },
+      });
+      yield* createFailure(armedChild, yield* createRun(armedChild, "failed"), "usage_limit");
       const background = yield* createThread("idle-background");
       yield* createItem(background, yield* createRun(background), "idle");
       const persistent = yield* createThread("persistent-monitor");
@@ -440,6 +464,7 @@ it.effect(
           woke,
           providerFailed,
           sessionErrorAfterLimit,
+          abandonedLimited,
           background,
           persistent,
           rolledBack,
