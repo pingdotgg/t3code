@@ -6263,3 +6263,14 @@ body {
     transition: none;
   }
 }
+
+/* The joined tab's shape (PaneTabs.tsx), drawn only by the connected pane tabs. */
+[data-pane-join] {
+  display: none;
+}
+
+/* The labels' colors the joined tab's motion fades between. */
+[data-layout-tab-strip] {
+  --pane-tab-idle-color: var(--muted-foreground);
+  --pane-tab-active-color: var(--strong-foreground);
+}
