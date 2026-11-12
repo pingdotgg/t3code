@@ -19,6 +19,7 @@ import {
 import { GitBranchIcon } from "lucide-react";
 import {
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useOptimistic,
   useState,
@@ -267,11 +268,15 @@ export function BranchToolbarBranchSelector({
   });
   const refs = branchRefState.refs;
   const isProjectCloneDone = useProjectClone(activeProjectRef)?.phase === "done";
+  // An Effect Event: refreshStatus is a new closure each render, and its settlement re-renders us.
+  const refreshClonedBranchStatus = useEffectEvent((target: EnvironmentId, cwd: string) => {
+    void refreshStatus({ environmentId: target, input: { cwd, localOnly: true } });
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refs listed while the project was cloning are empty; refetch them from the server once the clone lands
   useEffect(() => {
     if (!isProjectCloneDone || branchCwd === null) return;
-    void refreshStatus({ environmentId, input: { cwd: branchCwd, localOnly: true } });
-  }, [branchCwd, environmentId, isProjectCloneDone, refreshStatus]);
+    refreshClonedBranchStatus(environmentId, branchCwd);
+  }, [branchCwd, environmentId, isProjectCloneDone]);
   const branchByName = new Map(refs.map((refName) => [refName.name, refName] as const));
   const normalizedBranchQuery = trimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
