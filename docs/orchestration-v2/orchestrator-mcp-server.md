@@ -430,10 +430,10 @@ wakes early only when it has a pending request or fails after snoozing. Complete
 runs, background wakes, and delegated completions keep it snoozed.
 
 They also report `blockedOnThreadWait` and `pendingBackgroundTasks`, the shell
-fields behind the sidebar's Waiting label, so an agent can tell a `completed`
-thread that still waits on background work from one that is done. A subagent or
-`background_task` holds the thread. A command or monitor holds it only with
-`awaited: true`, since agents often leave a dev server running.
+fields behind the sidebar's Waiting label, so an agent can see what a thread
+still waits on after its run completed. A subagent or `background_task` holds
+the thread. A command or monitor holds it only with `awaited: true`, since agents
+often leave a dev server running.
 
 ### `t3_thread_update`
 
