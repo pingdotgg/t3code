@@ -498,10 +498,13 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
     .join("\n");
 
 /** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
-const settleOpenCode2Catalog = <E>(list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>) =>
+const settleOpenCode2Catalog = <E>(
+  list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  first?: ReadonlyArray<OpenCode2Model>,
+) =>
   Effect.suspend(() => {
-    let previous: string | undefined;
-    return list.pipe(
+    let previous = first && first.length > 0 ? catalogFingerprint(first) : undefined;
+    return (first ? Effect.delay(list, "250 millis") : list).pipe(
       Effect.repeat({
         until: (models) => {
           const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
@@ -523,17 +526,23 @@ export const makeOpenCode2ModelLoader = <E>(
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
     return Effect.suspend(() => {
       let latest: ReadonlyArray<OpenCode2Model> = [];
-      return settleOpenCode2Catalog(
-        list.pipe(
-          Effect.tap((models) =>
-            Effect.sync(() => {
-              if (models.length > 0) latest = models;
-            }),
+      const tracked = list.pipe(
+        Effect.tap((models) =>
+          Effect.sync(() => {
+            if (models.length > 0) latest = models;
+          }),
+        ),
+      );
+      // The first read can include a cold server start, so only settling shares the budget.
+      return tracked.pipe(
+        Effect.flatMap((first) =>
+          settleOpenCode2Catalog(tracked, first).pipe(
+            Effect.timeoutOption(OPENCODE_2_CATALOG_SETTLE_TIMEOUT),
           ),
         ),
-      ).pipe(
-        Effect.catch((error) => (latest.length > 0 ? Effect.succeed(latest) : Effect.fail(error))),
-        Effect.timeoutOption(OPENCODE_2_CATALOG_SETTLE_TIMEOUT),
+        Effect.catch((error) =>
+          latest.length > 0 ? Effect.succeedSome(latest) : Effect.fail(error),
+        ),
         Effect.map((loaded) => {
           // Fresh progress may still be partial, but a warm cache must not freeze slow catalogs.
           if (loaded._tag === "Some") lastLoaded = loaded.value;

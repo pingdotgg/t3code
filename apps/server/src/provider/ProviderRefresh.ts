@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
+import * as NodeCrypto from "node:crypto";
 import {
   ProviderSetupError,
   type WsServerRefreshProvidersRpc,
@@ -51,24 +53,41 @@ function workspaceSnapshotOrCatalog(
   ];
 }
 
-// On-demand catalog clients read full entries from the cwd snapshot they fetch. Names still
-// change the config when the machine catalog does, so the client refetches, and skill names
-// and labels keep skill links working where no snapshot is fetched.
+// What an on-demand catalog client keeps of the machine catalog: full entries come from the
+// cwd snapshot it fetches, and skill names and labels keep skill links working without one.
+function machineCatalogNames(provider: Pick<ServerProvider, "slashCommands" | "skills">) {
+  return {
+    slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
+    skills: provider.skills.map(({ description: _d, shortDescription: _s, ...skill }) => skill),
+  };
+}
+
+// Stable across restarts, so a client's cached lists stay current until the catalog changes.
+// It covers the full entries: a changed description or input hint must reach the client too.
+const machineCatalogDigest = (provider: Pick<ServerProvider, "slashCommands" | "skills">) =>
+  NodeCrypto.createHash("sha256")
+    .update(JSON.stringify([provider.slashCommands, provider.skills]))
+    .digest("hex")
+    .slice(0, 16);
+
+// Names, or the digest that stands for them, still change the config when the machine catalog
+// does, so the client refetches its cwd snapshot.
 export function withoutWorkspaceSnapshots(
   providers: ReadonlyArray<ServerProvider>,
   catalogsPerCwd: ReadonlySet<string> = new Set(),
+  catalogDigests = false,
 ): ServerProvider[] {
-  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) =>
-    catalogsPerCwd.has(provider.instanceId)
+  return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => {
+    if (!catalogsPerCwd.has(provider.instanceId)) return provider;
+    return catalogDigests
       ? {
           ...provider,
-          slashCommands: provider.slashCommands.map(({ name }) => ({ name })),
-          skills: provider.skills.map(
-            ({ description: _d, shortDescription: _s, ...skill }) => skill,
-          ),
+          slashCommands: [],
+          skills: [],
+          catalogDigest: machineCatalogDigest(provider),
         }
-      : provider,
-  );
+      : { ...provider, ...machineCatalogNames(provider) };
+  });
 }
 
 const make = Effect.gen(function* () {
@@ -167,6 +186,12 @@ const make = Effect.gen(function* () {
       }
     }
     const serverTime = yield* Clock.currentTimeMillis;
+    if (
+      input.omitProviders === true &&
+      (input.instanceId === undefined || input.cwd === undefined)
+    ) {
+      return { providers: [], serverTime };
+    }
     if (input.workspaceSnapshotsOnDemand !== true) return { providers, serverTime };
     const commandProviders =
       input.usageLimitsCommand === true
@@ -183,14 +208,21 @@ const make = Effect.gen(function* () {
       serverTime,
       providers: commandProviders
         .filter((provider) => provider.instanceId === instanceId)
-        .map((provider) => ({
-          ...provider,
-          // Callers read only the cwd snapshot; the config stream carries the rest.
-          models: [],
-          slashCommands: [],
-          skills: [],
-          workspaceSnapshots: workspaceSnapshotOrCatalog(provider, cwd, catalogOnDemand),
-        })),
+        .map((provider) => {
+          const catalog =
+            catalogOnDemand && input.machineCatalog === true
+              ? machineCatalogNames(provider)
+              : undefined;
+          return {
+            ...provider,
+            // Callers read only the cwd snapshot; the config stream carries the rest.
+            models: [],
+            slashCommands: catalog?.slashCommands ?? [],
+            skills: catalog?.skills ?? [],
+            ...(catalog === undefined ? {} : { catalogDigest: machineCatalogDigest(provider) }),
+            workspaceSnapshots: workspaceSnapshotOrCatalog(provider, cwd, catalogOnDemand),
+          };
+        }),
     };
   });
   return ProviderRefresh.of({ refresh });

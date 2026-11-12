@@ -9,6 +9,7 @@ import {
   ContextTransferId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextHandoffId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -55,6 +56,7 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+import { buildBoundedThreadStreamSnapshot } from "./ThreadStream.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
@@ -741,6 +743,37 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n");
       assert.include(plan, `USING INDEX sqlite_autoindex_orchestration_v2_projection_${table}_1`);
     }
+    // The filters every command reads with seek the rows they keep, not every row of the thread.
+    const command = traceSqlStatements();
+    yield* store
+      .getThreadRecords(threadId, ["nodes", "subagents", "turnItems", "contextTransfers"], {
+        turnItemTypes: ["user_message", "error"],
+        omitSettledLeafNodes: true,
+        omitSettledSubagents: true,
+        contextTransferStatuses: ["pending"],
+      })
+      .pipe(Effect.withTracer(command.tracer));
+    for (const [table, seeks] of [
+      ["turn_items", ["USING INDEX orchestration_v2_projection_turn_items_conversation_idx"]],
+      ["nodes", ["nodes_settled_leaf_idx (thread_id=? AND <expr>=?)"]],
+      ["subagents", ["USING COVERING INDEX orchestration_v2_projection_subagents_settled_idx"]],
+      [
+        "context_transfers",
+        [
+          "source_thread_status_idx (source_thread_id=? AND status=?)",
+          "target_thread_idx (target_thread_id=? AND status=?)",
+        ],
+      ],
+    ] as const) {
+      const query = command.statements.find((statement) =>
+        statement.includes(`FROM orchestration_v2_projection_${table}`),
+      );
+      assert.isDefined(query);
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+        .map((row) => row.detail)
+        .join("\n");
+      for (const seek of seeks) assert.include(plan, seek);
+    }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],
@@ -828,6 +861,16 @@ it.effect("record reads filter notification sources without dropping matching me
       plan.some((detail) => detail.includes("turn_items_user_message_idx")),
       plan.join("\n"),
     );
+    // With every user item loaded, the items give the order and the lookup does not run.
+    const withItems = traceSqlStatements();
+    const ordered = yield* store
+      .getThreadRecords(threadId, ["messages", "turnItems"], {
+        messageRoles: ["user"],
+        turnItemTypes: ["user_message"],
+      })
+      .pipe(Effect.withTracer(withItems.tracer));
+    assert.deepEqual(ordered.messages, userMessages.messages);
+    assert.isFalse(withItems.statements.some((statement) => statement.includes("MIN(ordinal)")));
     assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
@@ -2550,6 +2593,142 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
     }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("SQL snapshot windows leave handoff bodies in SQLite without changing the wire", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-window");
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:handoff-window"),
+        title: "Handoff window",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const providerThreadId = ProviderThreadId.make("provider-thread:handoff-window");
+    const earlierItemId = TurnItemId.make("item:handoff-window:earlier");
+    const handoff = (id: string, status: "ready" | "superseded") => ({
+      id: ContextHandoffId.make(`handoff:handoff-window:${id}`),
+      transferId: null,
+      threadId,
+      targetRunId: RunId.make("run:handoff-window"),
+      fromProviderThreadIds: [providerThreadId],
+      toProviderThreadId: providerThreadId,
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "full_thread_summary" as const,
+      status,
+      summaryMessageId: null,
+      summaryText: `Summary ${id}`,
+      history: {
+        messages: [
+          {
+            role: "user" as const,
+            text: "Earlier request ".repeat(1_000),
+            threadId,
+            runId: null,
+            itemId: earlierItemId,
+            providerThreadId,
+            status: "completed",
+            kind: "user_message",
+          },
+        ],
+        coverage: "full",
+        omittedItems: 0,
+      },
+      delivery: { nativeThreadId: "native", status: "injected" as const, itemIds: [earlierItemId] },
+      createdByProviderInstanceId: providerInstanceId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    // The window keeps a ready handoff and one its rows show; the third is outside it.
+    const handoffs = [
+      handoff("ready", "ready"),
+      handoff("shown", "superseded"),
+      handoff("old", "superseded"),
+    ];
+    for (const payload of handoffs) {
+      yield* store.apply({
+        id: EventId.make(`event:${payload.id}`),
+        type: "context-handoff.updated",
+        threadId,
+        occurredAt: now,
+        payload,
+      });
+    }
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:item"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:handoff-window:handoff"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "handoff",
+        contextHandoffId: handoffs[1]!.id,
+        fromProviderThreadIds: [providerThreadId],
+        toProviderThreadId: providerThreadId,
+        fromProviderInstanceIds: [providerInstanceId],
+        toProviderInstanceId: providerInstanceId,
+        strategy: "full_thread_summary",
+      },
+    });
+
+    const window = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 10 });
+    const windowHandoffs = window.projection.contextHandoffs;
+    assert.deepEqual(
+      windowHandoffs.map((row) => row.id),
+      [handoffs[0]!.id, handoffs[1]!.id],
+    );
+    for (const row of windowHandoffs) {
+      assert.isUndefined(row.history);
+      assert.isUndefined(row.delivery);
+    }
+    const full = yield* store.getThreadSnapshot(threadId);
+    assert.deepEqual(full.projection.contextHandoffs, handoffs);
+    assert.deepEqual(
+      buildBoundedThreadStreamSnapshot(window),
+      buildBoundedThreadStreamSnapshot({
+        ...window,
+        projection: { ...window.projection, contextHandoffs: handoffs.slice(0, 2) },
+      }),
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

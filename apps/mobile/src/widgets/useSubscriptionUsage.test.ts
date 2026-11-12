@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -44,6 +45,18 @@ vi.mock("../state/presentation", async () => {
   };
 });
 
+vi.mock("../state/shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  return {
+    environmentShell: {
+      stateValueAtom: Atom.family((_id: string) =>
+        Atom.make({ status: "synchronizing", error: Option.none<string>() }),
+      ),
+    },
+  };
+});
+
 vi.mock("../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
@@ -73,6 +86,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentPresentations } from "../state/presentation";
 import { environmentIdsKey, limitsAutoRefreshSetAtom } from "../features/usage/usageLimitsRefresh";
+import { environmentShell } from "../state/shell";
 import { installSubscriptionUsageRefresh } from "./useSubscriptionUsage";
 
 const registry = appAtomRegistry as AtomRegistry.AtomRegistry;
@@ -83,8 +97,16 @@ const presentationsAtom = environmentPresentations.presentationsAtom as unknown 
   Map<string, { connection: { phase: string } }>
 >;
 
+const shellAtom = (environmentId: EnvironmentId) =>
+  environmentShell.stateValueAtom(environmentId) as unknown as Atom.Writable<{
+    status: string;
+    error: Option.Option<string>;
+  }>;
+
 const connected = EnvironmentId.make("env-connected");
 const connecting = EnvironmentId.make("env-connecting");
+const syncing = EnvironmentId.make("env-syncing");
+const failed = EnvironmentId.make("env-failed");
 
 describe("installSubscriptionUsageRefresh", () => {
   it("refreshes active connections and shares the remaining quota lifetime with Limits", async () => {
@@ -97,8 +119,13 @@ describe("installSubscriptionUsageRefresh", () => {
       new Map([
         [connected, { connection: { phase: "connected" } }],
         [connecting, { connection: { phase: "connecting" } }],
+        [syncing, { connection: { phase: "connected" } }],
+        [failed, { connection: { phase: "connected" } }],
       ]),
     );
+    registry.set(shellAtom(connected), { status: "live", error: Option.none() });
+    // A shell that failed never goes live; its quotas still refresh.
+    registry.set(shellAtom(failed), { status: "cached", error: Option.some("Shell failed") });
 
     const dispose = installSubscriptionUsageRefresh();
     let unmount: (() => void) | undefined;
@@ -109,14 +136,17 @@ describe("installSubscriptionUsageRefresh", () => {
       fixture.appState = "active";
       for (const listener of fixture.appStateListeners) listener();
       await vi.advanceTimersByTimeAsync(0);
-      expect(fixture.refreshed).toEqual([connected]);
+      expect(fixture.refreshed).toEqual([connected, failed]);
+      registry.set(shellAtom(syncing), { status: "live", error: Option.none() });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fixture.refreshed).toEqual([connected, failed, syncing]);
 
       await vi.advanceTimersByTimeAsync(4 * 60_000);
       unmount = registry.mount(limitsAutoRefreshSetAtom(environmentIdsKey([connected])));
       await vi.advanceTimersByTimeAsync(0);
-      expect(fixture.refreshed).toEqual([connected]);
+      expect(fixture.refreshed).toEqual([connected, failed, syncing]);
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(fixture.refreshed).toEqual([connected, connected]);
+      expect(fixture.refreshed).toEqual([connected, failed, syncing, connected]);
     } finally {
       unmount?.();
       dispose();
