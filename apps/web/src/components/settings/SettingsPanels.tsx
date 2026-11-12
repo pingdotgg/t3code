@@ -997,6 +997,31 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...setting("terminal-close-confirmation")}
+          description={<T>Ask before closing terminals and stopping their running processes.</T>}
+          resetAction={
+            settings.confirmTerminalClose !== DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose ? (
+              <SettingResetButton
+                label="terminal close confirmation"
+                onClick={() =>
+                  updateSettings({
+                    confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.confirmTerminalClose}
+              onCheckedChange={(checked) =>
+                updateSettings({ confirmTerminalClose: Boolean(checked) })
+              }
+              aria-label={gt("Confirm terminal closing")}
+            />
+          }
+        />
         {isElectron ? (
           <SettingsRow
             {...setting("quit-confirmation")}
@@ -1862,31 +1887,6 @@ export function ThreadsSettingsPanel() {
                 updateSettings({ snoozeLimitedThreads: Boolean(checked) })
               }
               aria-label="Snooze until limits reset"
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("terminal-close-confirmation")}
-          description="Ask before closing terminals and stopping their running processes."
-          resetAction={
-            settings.confirmTerminalClose !== DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose ? (
-              <SettingResetButton
-                label="terminal close confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmTerminalClose}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmTerminalClose: Boolean(checked) })
-              }
-              aria-label="Confirm terminal closing"
             />
           }
         />

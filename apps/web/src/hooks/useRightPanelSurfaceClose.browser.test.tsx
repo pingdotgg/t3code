@@ -63,7 +63,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => false,
 }));
 
-function setup() {
+function setup(mode: "single" | "all") {
   fixture.allowed = new Set(["environment-a", "environment-b"]);
   fixture.sessions = new Map();
   fixture.failClose = false;
@@ -89,22 +89,32 @@ function setup() {
   });
   fixture.confirm = () => confirmation;
   function Harness({ threadRef }: { threadRef: ScopedThreadRef }) {
-    const { closeSurface } = useRightPanelSurfaceClose({
+    const { closeSurface, closeAllSurfaces } = useRightPanelSurfaceClose({
       threadRef,
       terminalLabelsById: new Map(),
     });
-    return <button onClick={() => closeSurface(surface)}>Close original terminal</button>;
+    return (
+      <button onClick={() => (mode === "all" ? closeAllSurfaces() : closeSurface(surface))}>
+        Close original terminal
+      </button>
+    );
   }
   return { original, other, Harness, resolve };
 }
 
-it.each([false, true])(
-  "keeps a pending close on its original environment and thread, fallback=%s",
-  async (failClose) => {
-    const { original, other, Harness, resolve } = setup();
+it.each([
+  { mode: "single", failClose: false },
+  { mode: "single", failClose: true },
+  { mode: "all", failClose: false },
+  { mode: "all", failClose: true },
+] as const)(
+  "keeps a pending $mode close on its original environment and thread, fallback=$failClose",
+  async ({ mode, failClose }) => {
+    const { original, other, Harness, resolve } = setup(mode);
     fixture.failClose = failClose;
     await using screen = await render(<Harness threadRef={original} />);
     await screen.getByRole("button").click();
+    expect(fixture.sessions.size).toBe(2);
     await screen.rerender(<Harness threadRef={other} />);
     await act(async () => {
       resolve(true);
@@ -118,12 +128,18 @@ it.each([false, true])(
   },
 );
 
-it.each(["cancel", "revoked"])(
-  "leaves both sessions intact when confirmation is %s",
-  async (outcome) => {
-    const { original, other, Harness, resolve } = setup();
+it.each([
+  { mode: "single", outcome: "cancel" },
+  { mode: "single", outcome: "revoked" },
+  { mode: "all", outcome: "cancel" },
+  { mode: "all", outcome: "revoked" },
+] as const)(
+  "leaves both sessions intact when $mode confirmation is $outcome",
+  async ({ mode, outcome }) => {
+    const { original, other, Harness, resolve } = setup(mode);
     await using screen = await render(<Harness threadRef={original} />);
     await screen.getByRole("button").click();
+    expect(fixture.sessions.size).toBe(2);
     await screen.rerender(<Harness threadRef={other} />);
     if (outcome === "revoked") fixture.allowed.delete(original.environmentId);
     await act(async () => {
