@@ -1723,6 +1723,33 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("runs a background wake at the thread's reasoning effort", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+      );
+      const previous = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: previous.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      // Muse launches the wake itself, so only the session default reaches it.
+      yield* fake.emit("turn/started", { turnId: "background-wake" });
+      yield* Deferred.await(offered);
+      const sessionEffort = fake.calls.findLast(
+        (call) => call.method === "session/setReasoningEffort",
+      );
+      assert.strictEqual(sessionEffort?.params.reasoningEffort, "max");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("ends a compaction whose item names the held wake as its run", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
