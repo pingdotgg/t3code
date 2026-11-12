@@ -2,14 +2,16 @@
 // Screencasts ignore emulated device scale; real 2x keeps captures sharp.
 // --disable-gpu uses cheaper software compositing while preserving SwiftShader WebGL.
 import {
+  BrowserProfile,
+  BrowserProfileId,
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   FILL_PREVIEW_VIEWPORT,
   findBrowserProfile,
   INCOGNITO_BROWSER_PROFILE_ID,
+  isBuiltInBrowserProfileId,
   resolveBrowserProfiles,
-  type BrowserProfile,
   type PreviewReportProfilesInput,
   PREVIEW_AUTOMATION_SERVER_OPERATIONS,
   PreviewViewportSetting as PreviewViewportSettingSchema,
@@ -46,6 +48,7 @@ import {
   type PreviewAppearancePreference,
 } from "@t3tools/contracts";
 import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
@@ -54,12 +57,15 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { constVoid } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -90,6 +96,12 @@ import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
+// Each client's report is capped, but the saved catalog is their union, so it has no cap.
+const SavedProfilesJson = Schema.fromJsonString(
+  Schema.Struct({ profiles: Schema.Array(BrowserProfile), defaultProfileId: BrowserProfileId }),
+);
+const decodeSavedProfiles = Schema.decodeUnknownEffect(SavedProfilesJson);
+const encodeSavedProfiles = Schema.encodeSync(SavedProfilesJson);
 const RENDER_SCALE = 2;
 // Chromium allows three unacked frames, so 100 ms pacing caps viewers near 30 fps.
 const SCREENCAST_ACK_PACE_MS = 100;
@@ -101,6 +113,8 @@ const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
+const RECORDING_BINARY_EXPORT_MIN_BYTES = 8 * 1024 * 1024;
+const RECORDING_DOWNLOAD_TIMEOUT_MS = 5_000;
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
@@ -294,6 +308,7 @@ interface EncoderWindow {
     frame(data: string, width: number): Promise<boolean>;
     stop(): Promise<{ mimeType: string | null; count: number; bytes: number }>;
     chunk(index: number): Promise<string>;
+    download(): void;
   };
 }
 
@@ -1599,12 +1614,55 @@ const make = Effect.gen(function* () {
         ? ("agent" as const)
         : ("unclaimed" as const);
 
+  const resolveReportedProfiles = (input: PreviewReportProfilesInput) => {
+    const profiles = resolveBrowserProfiles(input.profiles);
+    return {
+      profiles,
+      defaultProfileId:
+        findBrowserProfile(profiles, input.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+    };
+  };
+
+  // Clients report profiles only when they connect, so the catalog at the last report is
+  // kept on disk for agents and scheduled tasks that open a profile after a restart.
+  const savedProfilesPath = NodePath.join(
+    config.stateDir,
+    "server-browser",
+    "reported-profiles.json",
+  );
+  const fileServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  const saveProfilesLock = yield* Semaphore.make(1);
+  let savedProfiles = yield* (yield* FileSystem.FileSystem).readFileString(savedProfilesPath).pipe(
+    Effect.tapError((cause) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.void
+        : Effect.logWarning("failed to read saved browser profiles", {
+            path: savedProfilesPath,
+            cause,
+          }),
+    ),
+    Effect.orElseSucceed(() => ""),
+  );
   const reportsByClient = new Map<number, PreviewReportProfilesInput>();
   let nextClient = 0;
   let reportedProfiles: {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
-  } | null = null;
+  } | null = yield* decodeSavedProfiles(savedProfiles).pipe(
+    Effect.map(resolveReportedProfiles),
+    Effect.tapError((cause) =>
+      savedProfiles === ""
+        ? Effect.void
+        : Effect.logWarning("ignoring invalid saved browser profiles", {
+            path: savedProfilesPath,
+            cause,
+          }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+  // Only reports change what is saved, so the order clients disconnect in at shutdown,
+  // even while a save waits for the lock, cannot shrink the saved catalog.
+  let catalogToSave = reportedProfiles;
   // Agent recordings encode here, so they need the client's Browser recording frame rate. The
   // last report outlives the client, which lets agents record while no client is connected.
   let recordingFrameRate = DEFAULT_BROWSER_RECORDING_FRAME_RATE;
@@ -1620,13 +1678,31 @@ const make = Effect.gen(function* () {
       latest = report;
     }
     if (latest === undefined) return;
-    const profiles = resolveBrowserProfiles([...byId.values()]);
-    reportedProfiles = {
-      profiles,
-      defaultProfileId:
-        findBrowserProfile(profiles, latest.defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID,
-    };
+    reportedProfiles = resolveReportedProfiles({
+      profiles: [...byId.values()],
+      defaultProfileId: latest.defaultProfileId,
+    });
   };
+
+  const saveReportedProfiles = Effect.fn("ServerBrowser.saveReportedProfiles")(function* () {
+    if (catalogToSave === null) return;
+    const contents = encodeSavedProfiles({
+      profiles: catalogToSave.profiles.filter((profile) => !isBuiltInBrowserProfileId(profile.id)),
+      defaultProfileId: catalogToSave.defaultProfileId,
+    });
+    if (contents === savedProfiles) return;
+    yield* writeFileStringAtomically({ filePath: savedProfilesPath, contents }).pipe(
+      Effect.provideContext(fileServices),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          savedProfiles = contents;
+        }),
+      ),
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to save reported browser profiles", { cause }),
+      ),
+    );
+  }, saveProfilesLock.withPermits(1));
 
   const profileReporter: ServerBrowser["Service"]["profileReporter"] = Effect.acquireRelease(
     Effect.sync(() => nextClient++),
@@ -1645,7 +1721,13 @@ const make = Effect.gen(function* () {
             reportsByClient.delete(client);
             reportsByClient.set(client, input);
             rebuildReportedProfiles();
-          }),
+            catalogToSave = reportedProfiles;
+          }).pipe(
+            Effect.andThen(saveReportedProfiles),
+            // A disconnect, even while an earlier save holds the lock, must not drop this
+            // report's save or leave the saved-content cache stale.
+            Effect.uninterruptible,
+          ),
     ),
   );
 
@@ -1920,8 +2002,6 @@ const make = Effect.gen(function* () {
           message: "No recording is active for this tab.",
         });
       }
-      let mimeType: string | null;
-      const chunks: Array<Buffer> = [];
       try {
         await recording.session.send("Page.stopScreencast").catch(constVoid);
         await Promise.all(recording.framesInFlight);
@@ -1945,50 +2025,72 @@ const make = Effect.gen(function* () {
               .catch(constVoid);
           }
         }
-        const stopped = await recording.encoder.evaluate(() =>
+        const { mimeType, count, bytes } = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
         );
-        mimeType = stopped.mimeType;
         // Checked before the transfer so an oversized video never lands in this process.
-        if (stopped.bytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+        if (bytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
           throw new ServerBrowserPage.ServerBrowserOperationError({
             tag: "PreviewAutomationRecordingTooLargeError",
             message: "The recording is larger than the attachment limit.",
           });
         }
-        for (let index = 0; index < stopped.count; index += 1) {
-          const chunk = await recording.encoder.evaluate(
-            (chunkIndex) => (globalThis as unknown as EncoderWindow).__t3Recorder.chunk(chunkIndex),
-            index,
-          );
-          chunks.push(Buffer.from(chunk, "base64"));
+        if (!mimeType || bytes === 0) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: "The recording captured no frames.",
+          });
         }
+        const extension = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
+        const pendingId = `${PENDING_ATTACHMENT_THREAD_SEGMENT}-${NodeCrypto.randomUUID()}-${extension}`;
+        const path = NodePath.join(config.attachmentsDir, `${pendingId}.${extension}`);
+        await NodeFSP.mkdir(config.attachmentsDir, { recursive: true });
+        if (bytes >= RECORDING_BINARY_EXPORT_MIN_BYTES) {
+          const stagedPath = `${path}.partial`;
+          try {
+            const [download] = await Promise.all([
+              recording.encoder.waitForEvent("download", {
+                timeout: RECORDING_DOWNLOAD_TIMEOUT_MS,
+              }),
+              recording.encoder.evaluate(() =>
+                (globalThis as unknown as EncoderWindow).__t3Recorder.download(),
+              ),
+            ]);
+            await download.saveAs(stagedPath);
+            if ((await NodeFSP.stat(stagedPath)).size !== bytes) {
+              throw new Error("The recording download is incomplete.");
+            }
+            await NodeFSP.rename(stagedPath, path);
+          } finally {
+            await NodeFSP.rm(stagedPath, { force: true }).catch(constVoid);
+          }
+        } else {
+          const chunks: Array<Buffer> = [];
+          for (let index = 0; index < count; index += 1) {
+            const chunk = await recording.encoder.evaluate(
+              (chunkIndex) =>
+                (globalThis as unknown as EncoderWindow).__t3Recorder.chunk(chunkIndex),
+              index,
+            );
+            chunks.push(Buffer.from(chunk, "base64"));
+          }
+          const data = Buffer.concat(chunks);
+          if (data.byteLength !== bytes) throw new Error("The recording transfer is incomplete.");
+          await NodeFSP.writeFile(path, data);
+        }
+        return {
+          id: pendingId,
+          tabId: tab.tabId,
+          path,
+          mimeType: mimeType.split(";")[0]!,
+          sizeBytes: bytes,
+          createdAt: new Date().toISOString(),
+          uploadedAttachmentId: pendingId,
+        };
       } finally {
         await recording.encoder.close().catch(constVoid);
         tab.recording = null;
       }
-      const data = Buffer.concat(chunks);
-      if (!mimeType || data.byteLength === 0) {
-        throw new ServerBrowserPage.ServerBrowserOperationError({
-          tag: "PreviewAutomationExecutionError",
-          message: "The recording captured no frames.",
-        });
-      }
-
-      const extension = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
-      const pendingId = `${PENDING_ATTACHMENT_THREAD_SEGMENT}-${NodeCrypto.randomUUID()}-${extension}`;
-      const path = NodePath.join(config.attachmentsDir, `${pendingId}.${extension}`);
-      await NodeFSP.mkdir(config.attachmentsDir, { recursive: true });
-      await NodeFSP.writeFile(path, data);
-      return {
-        id: pendingId,
-        tabId: tab.tabId,
-        path,
-        mimeType: mimeType.split(";")[0]!,
-        sizeBytes: data.byteLength,
-        createdAt: new Date().toISOString(),
-        uploadedAttachmentId: pendingId,
-      };
     });
 
   let pointerSequence = 0;
@@ -2276,10 +2378,10 @@ const make = Effect.gen(function* () {
     const tab = await requireTab(request);
     // Closing must unblock an action waiting on a dialog, without queueing behind it.
     if (request.operation === "close") {
-      if (tab.control.agentId !== request.agentSessionId)
+      if (tab.control.agentId === null)
         throw new BrowserControlInterrupted({
-          message: "Only the agent session that opened this tab can close it.",
-          reason: "agentMismatch",
+          message: "This tab has no agent owner. Ask the user to close it in the browser panel.",
+          reason: "unclaimedTab",
         });
       if (tab.control.controller !== null)
         throw new BrowserControlInterrupted({
