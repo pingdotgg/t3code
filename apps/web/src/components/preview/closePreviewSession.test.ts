@@ -1,9 +1,11 @@
 import type {
+  EnvironmentId,
   PreviewCloseInput,
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import * as NodeAssert from "node:assert";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -13,8 +15,19 @@ import {
 } from "~/previewStateStore";
 
 import { useClosedViewStore } from "~/closedViewStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 import { closePreviewSession } from "./closePreviewSession";
+
+vi.mock("~/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/env")>()),
+  isElectron: true,
+}));
+vi.mock("~/state/primaryEnvironment", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/primaryEnvironment")>()),
+  primaryEnvironmentIdAtom: Atom.make<EnvironmentId | null>(null),
+}));
 
 const threadRef = {
   environmentId: "local" as ScopedThreadRef["environmentId"],
@@ -34,8 +47,16 @@ const snapshot: PreviewSessionSnapshot = {
   updatedAt: "2026-06-18T19:00:00.000Z",
 };
 
+const setPrimaryEnvironment = (environmentId: EnvironmentId | null) => {
+  NodeAssert.ok(
+    Atom.isWritable<EnvironmentId | null, EnvironmentId | null>(primaryEnvironmentIdAtom),
+  );
+  appAtomRegistry.set(primaryEnvironmentIdAtom, environmentId);
+};
+
 beforeEach(() => {
   resetPreviewStateForTests();
+  setPrimaryEnvironment(null);
   useClosedViewStore.setState({ entries: [] });
 });
 
@@ -68,5 +89,21 @@ describe("closePreviewSession", () => {
       { kind: "browser", threadRef, snapshot },
     ]);
     expect(closePreview).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
+  });
+
+  it("keeps a tab this desktop renders mounted until the server closes it", async () => {
+    setPrimaryEnvironment(threadRef.environmentId);
+    const desktopSnapshot = { ...snapshot, runtime: "server" as const };
+    applyPreviewServerSnapshot(threadRef, desktopSnapshot);
+
+    const closing = closePreviewSession({
+      closePreview: async () => AsyncResult.success(undefined),
+      snapshot: desktopSnapshot,
+      tabId: desktopSnapshot.tabId,
+      threadRef,
+    });
+
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({ "tab-1": desktopSnapshot });
+    await closing;
   });
 });

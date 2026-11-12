@@ -1548,44 +1548,50 @@ it.live("closing a tab force-closes a page that never finishes unloading", () =>
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("closing a desktop tab waits for its page to unload before the desktop removes it", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker } = yield* ready;
-      const manager = yield* Manager.PreviewManager;
-      desktopRendersNext = true;
-      const opened = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "open",
-        input: { reuseExistingTab: false, open: false },
-      });
-      const tabId = PreviewTabId.make(opened.tabId!);
-      const { context, browser } = desktopConnections[0]!;
-      const page = context.page;
-      // The desktop removes the webview once the session closes, dropping an unload in progress.
-      const events = yield* manager.subscribeEvents;
-      const sessionClosed = Promise.withResolvers<void>();
-      yield* Effect.gen(function* () {
-        while ((yield* PubSub.take(events)).type !== "closed");
-        page.removed = true;
-        sessionClosed.resolve();
-      }).pipe(Effect.forkScoped);
-      page.beforeUnload = "listen";
-      page.unloadGate = Promise.withResolvers<void>();
-      const closing = yield* broker
-        .invoke({ scope, tabId, operation: "close", input: {} })
-        .pipe(Effect.forkScoped);
-      // The page finishes unloading once the server listens for it, or too late if it never does.
-      yield* Effect.promise(() =>
-        Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
-      );
-      expect(browser.close).not.toHaveBeenCalled();
-      page.unloadGate.resolve();
-      yield* Fiber.join(closing);
-      expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
-      expect(browser.close).toHaveBeenCalledTimes(1);
-    }),
-  ).pipe(Effect.provide(layer)),
+it.live.each(["agent" as const, "client" as const])(
+  "%s closing a desktop tab waits for its page to unload before the desktop removes it",
+  (closer) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, browser: serverBrowser } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        desktopRendersNext = true;
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { reuseExistingTab: false, open: false },
+        });
+        const tabId = PreviewTabId.make(opened.tabId!);
+        const { context, browser } = desktopConnections[0]!;
+        const page = context.page;
+        // The desktop removes the webview once the session closes, dropping an unload in progress.
+        const events = yield* manager.subscribeEvents;
+        const sessionClosed = Promise.withResolvers<void>();
+        yield* Effect.gen(function* () {
+          while ((yield* PubSub.take(events)).type !== "closed");
+          page.removed = true;
+          sessionClosed.resolve();
+        }).pipe(Effect.forkScoped);
+        page.beforeUnload = "listen";
+        page.unloadGate = Promise.withResolvers<void>();
+        const closing = yield* (
+          closer === "agent"
+            ? broker.invoke({ scope, tabId, operation: "close", input: {} })
+            : serverBrowser.close({ threadId: scope.thread.threadId, tabId })
+        ).pipe(Effect.forkScoped);
+        // The page finishes unloading once the server listens for it, or too late if it never does.
+        yield* Effect.promise(() =>
+          Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
+        );
+        expect(browser.close).not.toHaveBeenCalled();
+        page.unloadGate.resolve();
+        yield* Fiber.join(closing);
+        expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+        expect(browser.close).toHaveBeenCalledTimes(1);
+        const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+        expect(sessions.map((session) => session.tabId)).not.toContain(tabId);
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("closing a tab with an unsaved-changes guard still closes it", () =>

@@ -39,6 +39,8 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
   PreviewClearProfileError,
+  type PreviewCloseInput,
+  type PreviewError,
   type PreviewEvent,
   type PreviewNavStatus,
   type PreviewSessionSnapshot,
@@ -290,6 +292,8 @@ export class ServerBrowser extends Context.Service<
     }) => Effect.Effect<Option.Option<{ readonly path: string; readonly fileName: string }>>;
 
     readonly clearProfile: (profileId: string) => Effect.Effect<void, PreviewClearProfileError>;
+    /** Closes preview sessions after the desktop pages among them unload. */
+    readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
 
     readonly profileReporter: Effect.Effect<ProfileReporter, never, Scope.Scope>;
   }
@@ -378,6 +382,7 @@ interface ServerTab {
   loading: boolean;
   loadError: PreviewAutomationLoadError | undefined;
   closing: boolean;
+  unload: Promise<void> | null;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   navigationGeneration: number;
@@ -830,6 +835,16 @@ const make = Effect.gen(function* () {
     clearTimeout(timeout);
   };
 
+  // A pending dialog would block the unload from running at all.
+  const unloadDesktopTab = (tab: ServerTab) => {
+    void tab.control.close().catch(constVoid);
+    if (tab.unload === null && tab.desktop && tab.dialog === null) {
+      tab.closing = true;
+      tab.unload = unloadDesktopPage(tab.page);
+    }
+    return tab.unload ?? Promise.resolve();
+  };
+
   const dropTab = (tab: ServerTab, closeSession: boolean) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
@@ -1008,6 +1023,7 @@ const make = Effect.gen(function* () {
       loading: false,
       loadError: undefined,
       closing: false,
+      unload: null,
       recording: null,
       recordingStart: null,
       initialNavigation: null,
@@ -2445,11 +2461,7 @@ const make = Effect.gen(function* () {
           message: "A human controls this tab.",
           reason: "humanControl",
         });
-      void tab.control.close().catch(constVoid);
-      if (tab.desktop && tab.dialog === null) {
-        tab.closing = true;
-        await unloadDesktopPage(tab.page);
-      }
+      await unloadDesktopTab(tab);
       await runPromise(manager.close({ threadId: tab.threadId, tabId: tab.tabId }));
       dropTab(tab, false);
       return {};
@@ -3200,9 +3212,21 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  const close = Effect.fn("ServerBrowser.close")(function* (input: PreviewCloseInput) {
+    const closing = [...tabs.values()].filter(
+      (tab) =>
+        tab.desktop !== null &&
+        tab.threadId === input.threadId &&
+        (input.tabId === undefined || tab.tabId === input.tabId),
+    );
+    yield* Effect.promise(() => Promise.all(closing.map(unloadDesktopTab)));
+    yield* manager.close(input);
+  });
+
   return ServerBrowser.of({
     attachViewer,
     clearProfile,
+    close,
     profileReporter,
     openDownload,
     answerFileChooser,
