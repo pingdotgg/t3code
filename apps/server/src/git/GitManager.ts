@@ -86,6 +86,7 @@ import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { isNonRepositoryGitStderr } from "../vcs/GitVcsDriverCore.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -198,7 +199,7 @@ type GitActionProgressPayload = StripProgressContext<GitActionProgressEvent>;
 type GitActionProgressEmitter = (event: GitActionProgressPayload) => Effect.Effect<void, never>;
 
 function isNotGitRepositoryError(error: GitCommandError): boolean {
-  return error.message.toLowerCase().includes("not a git repository");
+  return isNonRepositoryGitStderr(error.message);
 }
 
 interface OpenPrInfo {
@@ -574,9 +575,10 @@ function headBranchProbe(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
   state: "open" | "all",
+  defaultBranchHeadSelector?: string,
 ) {
   return (
-    provider.headBranchProbe?.({ headSelectors, state }) ?? {
+    provider.headBranchProbe?.({ headSelectors, state, defaultBranchHeadSelector }) ?? {
       headSelectors,
       limit: state === "open" ? 1 : 20,
     }
@@ -1265,7 +1267,7 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
         if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
@@ -1479,9 +1481,9 @@ export const make = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
-  // Whether the remote's host creates change requests in the only remote. A host's tools can let
-  // configuration outside the remotes name another repository; the remote itself otherwise.
-  const targetsOnlyRemote = Effect.fn("targetsOnlyRemote")(function* (
+  // Whether the remote's host creates change requests in this remote's repository. A host's tools
+  // can let configuration, such as gh's default repository, name another one.
+  const targetsRemote = Effect.fn("targetsRemote")(function* (
     cwd: string,
     remoteName: string,
     remote: { readonly remoteUrl: string | null; readonly repositoryNameWithOwner: string | null },
@@ -1616,15 +1618,20 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => 0),
         )) === 1 &&
-      (yield* targetsOnlyRemote(cwd, remoteName, remoteRepository));
+      (yield* targetsRemote(cwd, remoteName, remoteRepository));
     const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
 
     const isCrossRepository =
-      remoteRepository.repositoryNameWithOwner !== null &&
+      (remoteRepository.repositoryNameWithOwner !== null &&
       originRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
           originRepository.repositoryNameWithOwner.toLowerCase()
-        : isForeignRemote && remoteRepository.repositoryNameWithOwner !== null;
+        : isForeignRemote && remoteRepository.repositoryNameWithOwner !== null) ||
+      // A fork as origin, with the host targeting another remote such as upstream.
+      (remoteName !== null &&
+        !isOnlyRemote &&
+        remoteRepository.repositoryNameWithOwner !== null &&
+        !(yield* targetsRemote(cwd, remoteName, remoteRepository)));
 
     const ownerHeadSelector =
       remoteRepository.ownerLogin && headBranch.length > 0
@@ -1920,11 +1927,19 @@ export const make = Effect.gen(function* () {
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
     cwd: string,
     headContext: BranchHeadContext,
+    defaultBranch: string | null,
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
     const provider = yield* sourceControlProvider(cwd);
-    const probe = headBranchProbe(provider, headContext.headSelectors, "all");
+    const probe = headBranchProbe(
+      provider,
+      headContext.headSelectors,
+      "all",
+      headContext.headBranch === defaultBranch && headContext.headRepositoryOwnerLogin
+        ? `${headContext.headRepositoryOwnerLogin}:${defaultBranch}`
+        : undefined,
+    );
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
