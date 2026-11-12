@@ -149,6 +149,8 @@ export const AcpRegistrySession = Schema.Struct({
   title: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_024))),
   updatedAt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
   importedThreadId: Schema.NullOr(ThreadId),
+  /** The imported thread still lacks the session's history, so importing again copies it. */
+  nativeHistoryPending: Schema.optionalKey(Schema.Boolean),
 });
 export type AcpRegistrySession = typeof AcpRegistrySession.Type;
 
@@ -277,6 +279,10 @@ export const AcpRegistryProbeResult = Schema.Struct({
   models: Schema.Array(AcpRegistryProbeModel).check(Schema.isMaxLength(256)),
   currentModelId: Schema.NullOr(AcpRegistryProbeText),
   configOptions: Schema.Array(ProviderOptionDescriptor).check(Schema.isMaxLength(16)),
+  // configOptions ids that describe only the current model (ACP thought_level / model_config).
+  modelOptionIds: Schema.optionalKey(
+    Schema.Array(AcpRegistryProbeText).check(Schema.isMaxLength(16)),
+  ),
   sessionManagement: Schema.Struct({
     canList: Schema.Boolean,
     canLoad: Schema.Boolean,
