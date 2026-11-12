@@ -20,6 +20,7 @@ import {
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parsePullRequestUrl } from "../shared/definition.ts";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
@@ -79,7 +80,7 @@ const cliDiscovery = {
     const failure = cliFailure(input.stderr) ?? cliFailure(input.stdout);
     if (failure)
       return providerAuth({
-        // Only a refusal says the login is gone; a forbidden or offline answer says nothing.
+        // Forbidden/offline responses do not establish that a login is gone.
         status:
           failure.code === "AUTHENTICATION_REQUIRED" || failure.status === 401
             ? "unauthenticated"
@@ -108,12 +109,32 @@ export const makeDiscovery = Effect.gen(function* () {
     installHint: cliDiscovery.installHint,
     probe: (cwd: string) =>
       credentials.cliEnv(AUTH_HOST).pipe(
+        Effect.result,
         Effect.flatMap((env) =>
           probeSourceControlProvider({
             cwd,
             spec: cliDiscovery,
-            process: { run: (input) => process.run({ ...input, env: { ...input.env, ...env } }) },
-          }),
+            process: {
+              run: (input) =>
+                process.run({
+                  ...input,
+                  env: { ...input.env, ...(Result.isSuccess(env) ? env.success : {}) },
+                }),
+            },
+          }).pipe(
+            Effect.map((item) =>
+              Result.isSuccess(env)
+                ? item
+                : {
+                    ...item,
+                    auth: providerAuth({
+                      status: "unauthenticated",
+                      host: AUTH_HOST,
+                      detail: env.failure.message,
+                    }),
+                  },
+            ),
+          ),
         ),
       ),
     refineUnknownRemote: () => Effect.succeed(null),
@@ -165,7 +186,7 @@ const cloneUrls = (target: Target) => ({
 });
 
 const isSshRemote = (remoteUrl: string | undefined) =>
-  remoteUrl !== undefined && (/^ssh:\/\//iu.test(remoteUrl) || /^[^/:]+@[^/:]+:/u.test(remoteUrl));
+  remoteUrl !== undefined && isSshRemoteUrl(remoteUrl);
 
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
@@ -314,7 +335,7 @@ export const make = Effect.gen(function* () {
           );
           for (const pull of page.items) {
             if (pull.sourceBranch !== branch || items.length >= limit) continue;
-            // List rows omit fork identity, so only the branch's own rows are read in full.
+            // List rows omit fork identity; read matching branches in full.
             const detail = yield* getPull({
               cwd: input.cwd,
               reference: `https://${target.host}/${target.repository}/pulls/${pull.number}`,
@@ -451,7 +472,7 @@ export const make = Effect.gen(function* () {
       );
       return repository.defaultBranch;
     }),
-    // `cafe` has no forced checkout, so the branch is fetched and switched to with git.
+    // `cafe` has no forced checkout.
     checkoutChangeRequest: Effect.fn("GitCafeSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
         const pull = yield* getPull(input);
@@ -492,8 +513,10 @@ export const make = Effect.gen(function* () {
             yield* git.execute({
               operation: "GitCafeSourceControlProvider.checkoutChangeRequest",
               cwd: input.cwd,
+              // The upstream is recorded next, through the host's serialized config write.
               args: [
                 "checkout",
+                "--no-track",
                 "-B",
                 localBranch,
                 `refs/remotes/${remoteName}/${pull.headRefName}`,

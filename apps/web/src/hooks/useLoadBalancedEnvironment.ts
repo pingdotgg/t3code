@@ -12,7 +12,6 @@ const HOST_RESOURCES_FRESH_MS = 15_000;
 // Keyed by content: callers derive the list every render.
 const hostResourcesAtom = Atom.family((environmentIdsKey: string) =>
   Atom.make((get) => {
-    // Staleness is judged when a snapshot is read, which keeps render pure.
     const evaluatedAt = Date.now();
     const resources = (
       environmentIdsKey === "" ? [] : (environmentIdsKey.split("\n") as EnvironmentId[])

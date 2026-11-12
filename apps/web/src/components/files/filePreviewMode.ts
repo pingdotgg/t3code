@@ -7,7 +7,8 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
   return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
 }
 
-export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
+export const isMarkdownPreviewFile = (path: string): boolean =>
+  /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 
 export function filePreviewReadErrorMessage(error: ProjectReadFileError): string {
   switch (error.failure) {
@@ -37,23 +38,6 @@ export function shouldShowFileExplorer(input: {
     return false;
   }
   return input.explorerOpen || input.relativePath === null;
-}
-
-export function setMarkdownTaskChecked(
-  markdown: string,
-  markerOffset: number,
-  checked: boolean,
-): string {
-  if (
-    markerOffset < 0 ||
-    markdown[markerOffset] !== "[" ||
-    !/[ xX]/.test(markdown[markerOffset + 1] ?? "") ||
-    markdown[markerOffset + 2] !== "]"
-  ) {
-    return markdown;
-  }
-
-  return `${markdown.slice(0, markerOffset + 1)}${checked ? "x" : " "}${markdown.slice(markerOffset + 2)}`;
 }
 
 /**

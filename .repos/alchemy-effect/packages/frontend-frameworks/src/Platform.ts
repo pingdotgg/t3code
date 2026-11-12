@@ -39,5 +39,4 @@ const NodeServices = {
   ),
 };
 
-export const PlatformServices =
-  typeof Bun === "undefined" ? NodeServices.layer : BunServices.layer;
+export const PlatformServices = typeof Bun === "undefined" ? NodeServices.layer : BunServices.layer;

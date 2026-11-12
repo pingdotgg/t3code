@@ -22,8 +22,6 @@ const published = { checkedAt, windows: [session, weekly] };
 
 describe("applyUsageLimitsUpdate", () => {
   it("returns the published object itself when no window moved", () => {
-    // Codex repeats the same numbers beside every token-usage tick; the
-    // ingestion path relies on identity to skip the publish.
     const next = applyUsageLimitsUpdate({
       previous: published,
       checkedAt: "2026-09-03T12:00:05.000Z",
@@ -35,6 +33,29 @@ describe("applyUsageLimitsUpdate", () => {
       },
     });
     expect(next).toBe(published);
+    const scoped = { checkedAt, windows: [{ ...weekly, modelIds: ["opencode/a"] }] };
+    const providerScoped = { checkedAt, windows: [{ ...weekly, providerIds: ["opencode"] }] };
+    expect(
+      applyUsageLimitsUpdate({
+        previous: providerScoped,
+        checkedAt,
+        update: { windows: [{ ...weekly, providerIds: ["console-custom"] }] },
+      })?.windows[0]?.providerIds,
+    ).toEqual(["console-custom"]);
+    expect(
+      applyUsageLimitsUpdate({
+        previous: scoped,
+        checkedAt,
+        update: { windows: [{ ...weekly, modelIds: ["opencode/a"] }] },
+      }),
+    ).toBe(scoped);
+    expect(
+      applyUsageLimitsUpdate({
+        previous: scoped,
+        checkedAt,
+        update: { windows: [{ ...weekly, modelIds: ["opencode/b"] }] },
+      })?.windows[0]?.modelIds,
+    ).toEqual(["opencode/b"]);
   });
 
   it("upserts by id and keeps the reset a percent-only update omits", () => {

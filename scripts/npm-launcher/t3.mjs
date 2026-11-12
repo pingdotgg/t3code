@@ -1,10 +1,5 @@
 #!/usr/bin/env node
-// The `t3` npm package. Downloads this version's CLI archive from the GitHub
-// Release into <T3 home>/runtime/versions/<version> (the folder the install
-// scripts and `t3 update` use), verifies it against the release's SHA256SUMS,
-// then runs it. `dist/bin.mjs` re-enters here for background services
-// installed before 0.0.41, which start the npm package with Node and talk to
-// it over an IPC channel.
+// Share the installer's runtime cache; pre-0.0.41 services re-enter here over IPC.
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -25,8 +20,20 @@ function t3Home() {
   return path.resolve(raw);
 }
 
+const isTransient = (status) => status === 408 || status === 429 || status >= 500;
+
 async function get(url) {
-  const response = await fetch(url);
+  let response;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      response = await fetch(url);
+      if (attempt === 4 || !isTransient(response.status)) break;
+      await response.body?.cancel();
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
+  }
   if (response.status === 404) {
     throw new Error(
       `${url} does not exist yet. If ${version} was just released, try again in a few minutes.`,
@@ -36,7 +43,6 @@ async function get(url) {
   return response;
 }
 
-/** Downloads `url` to `file` and returns its sha256, showing progress on a terminal. */
 async function download(url, file) {
   const response = await get(url);
   const total = Number(response.headers.get("content-length")) || 0;
@@ -80,8 +86,7 @@ async function install(dir, key) {
     .find((m) => m && m[2] === archive);
   if (!line) throw new Error(`${archive} is not listed in the release's SHA256SUMS`);
 
-  // Extract beside the final folder and rename it into place, so an
-  // interrupted download never leaves a half-installed version behind.
+  // Stage beside the destination and rename atomically to avoid half-installed versions.
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const staging = fs.mkdtempSync(`${dir}.staging-`);
   try {
@@ -97,6 +102,24 @@ async function install(dir, key) {
     });
     if (extract.status !== 0) throw new Error(`could not extract ${archive}`);
     fs.rmSync(file);
+    const validate = spawnSync(
+      path.join(staging, process.platform === "win32" ? "t3.exe" : "t3"),
+      ["--version"],
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+        encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      },
+    );
+    if (validate.status !== 0) {
+      throw executableError(
+        key,
+        validate.error?.message ||
+          validate.stderr?.trim() ||
+          `--version exited with ${validate.signal || validate.status}`,
+      );
+    }
     fs.writeFileSync(path.join(staging, ".install-complete"), `${version}\n`);
     publish(staging, dir);
   } finally {
@@ -112,21 +135,40 @@ const isComplete = (dir) => {
   }
 };
 
-/**
- * Moves a finished staging folder to `dir`. Rename never replaces an existing
- * folder, so a complete install another launcher (or `t3 update`) published
- * first is kept, never deleted from under a running process. Only a folder
- * without the completion marker, left by an interrupted older installer, is
- * cleared before trying again.
- */
+/** Preserve concurrently published complete installs; replace only incomplete folders without the completion marker. */
 function publish(staging, dir) {
   try {
     fs.renameSync(staging, dir);
+    return;
   } catch (error) {
     if (isComplete(dir)) return;
     if (!fs.existsSync(dir)) throw error;
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.renameSync(staging, dir);
+  }
+  const lock = `${dir}.lock`;
+  try {
+    fs.mkdirSync(lock);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    throw new Error(
+      `another t3 is installing ${version}. If none is running, delete ${lock} and try again.`,
+      { cause: error },
+    );
+  }
+  const stale = `${staging}.stale`;
+  try {
+    // A peer may have published between our marker check and taking the lock.
+    if (isComplete(dir)) return;
+    // Move it aside rather than deleting in place: once the folder is empty, a
+    // peer's first rename can land in it.
+    fs.renameSync(dir, stale);
+    try {
+      fs.renameSync(staging, dir);
+    } catch (error) {
+      if (!isComplete(dir)) throw error;
+    }
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+    fs.rmSync(stale, { recursive: true, force: true });
   }
 }
 
@@ -141,9 +183,7 @@ async function main() {
   const dir = path.join(t3Home(), "runtime", "versions", version);
   if (!isComplete(dir)) await install(dir, key);
 
-  // A service launcher talks to its server over IPC; pass that channel and
-  // signals through. In a terminal, Ctrl-C already reaches the child directly,
-  // so forwarding SIGINT too would deliver it twice.
+  // Service IPC and signals must reach the child; terminal Ctrl-C already does, so do not forward SIGINT twice.
   const ipc = process.send !== undefined;
   const child = spawn(
     path.join(dir, process.platform === "win32" ? "t3.exe" : "t3"),
@@ -162,9 +202,18 @@ async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => (ipc || signal !== "SIGINT") && child.kill(signal));
   }
-  child.on("error", (error) => fail(error));
+  child.on("error", (error) => fail(executableError(key, error.message)));
   child.on("exit", (code, signal) =>
     process.exit(code ?? 128 + (os.constants.signals[signal] || 1)),
+  );
+}
+
+function executableError(key, detail) {
+  return new Error(
+    `could not run T3 Code ${version} for ${key}: ${detail}` +
+      (process.platform === "linux"
+        ? "\nThe Linux release requires glibc; musl-based systems such as Alpine are not supported. Use a glibc-based Linux environment."
+        : ""),
   );
 }
 

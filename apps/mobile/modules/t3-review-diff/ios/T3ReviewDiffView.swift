@@ -340,7 +340,9 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   private var pendingScrollAnimated = false
   private var isProgrammaticScrollActive = false
   private var rowsDecodeGeneration = 0
+  private var rowsDecodeCancellation: ReviewDiffRowPreparation?
   private var tokensDecodeGeneration = 0
+  private var tokensDecodeCancellation: ReviewDiffRowPreparation?
 
   let onDebug = EventDispatcher()
   let onVisibleFileChange = EventDispatcher()
@@ -387,6 +389,11 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     scrollView.addSubview(contentView)
   }
 
+  deinit {
+    rowsDecodeCancellation?.cancel()
+    tokensDecodeCancellation?.cancel()
+  }
+
   public override func layoutSubviews() {
     super.layoutSubviews()
     let anchor = contentView.viewportWidth != bounds.width ? contentView.viewportRowAnchor() : nil
@@ -426,10 +433,15 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
 
   func setRowsJson(_ rowsJson: String) {
     contentView.cancelRowPreparation()
+    rowsDecodeCancellation?.cancel()
+    let cancellation = ReviewDiffRowPreparation()
+    rowsDecodeCancellation = cancellation
     rowsDecodeGeneration += 1
     let generation = rowsDecodeGeneration
 
     payloadDecodeQueue.async { [weak self] in
+      // Check weak liveness without retaining the view or reading its UIKit state.
+      guard !cancellation.isCancelled, self != nil else { return }
       guard let data = rowsJson.data(using: .utf8) else {
         return
       }
@@ -475,10 +487,15 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   }
 
   func setTokensJson(_ tokensJson: String) {
+    tokensDecodeCancellation?.cancel()
+    let cancellation = ReviewDiffRowPreparation()
+    tokensDecodeCancellation = cancellation
     tokensDecodeGeneration += 1
     let generation = tokensDecodeGeneration
 
     payloadDecodeQueue.async { [weak self] in
+      // Entered decoding may finish; only skip full payloads already obsolete in the queue.
+      guard !cancellation.isCancelled, self != nil else { return }
       guard let data = tokensJson.data(using: .utf8) else {
         return
       }
@@ -601,8 +618,11 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     self.contentResetKey = contentResetKey
     lastVisibleRangeDebugKey = ""
     contentView.cancelRowPreparation()
+    rowsDecodeCancellation?.cancel()
+    rowsDecodeCancellation = nil
     rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
+    tokensDecodeCancellation?.cancel()
     contentView.tokensByRowId = [:]
     rows = []
     contentView.rows = []
@@ -894,7 +914,6 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     onPullToRefresh([:])
   }
 
-  /// Driven from JS: set to false once the reload completes to dismiss the spinner.
   func setRefreshing(_ refreshing: Bool) {
     if refreshing {
       if !pullRefreshControl.isRefreshing {
@@ -1141,7 +1160,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
   var viewportWidth: CGFloat = 0 {
     didSet {
-      // Wrapped rows take their height from the width, so a new width is a new layout.
       if style.wordWrap, viewportWidth != oldValue {
         rebuildRowLayout()
       }
@@ -1167,9 +1185,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   private var tokenColorsByHex: [String: UIColor] = [:]
   private var tokenAttributedStringsByRowId: [String: NSAttributedString] = [:]
   private var codeCharacterWidth: CGFloat = 8
-  /// Columns per visual line while word wrap is on; nil while code rows pan horizontally.
   private var codeWrapColumns: Int?
-  /// Text geometry survives comment height changes; width, font, and content invalidate it.
   private var codeLayoutsByRowId: [String: ReviewDiffCodeLayout] = [:]
   private var codeLayoutWidth: CGFloat?
   private var codeLayoutFont: UIFont?
@@ -1223,7 +1239,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     ceil(codeFont.lineHeight)
   }
 
-  /// Wrapped rows fill the code viewport; unwrapped rows keep one line and scroll horizontally.
   private func codeLayoutWidthLimit(font: UIFont) -> CGFloat? {
     guard style.wordWrap else { return ReviewDiffCodeLayout.unboundedWidth }
     let width = viewportWidth - codeStartX - style.codePadding
@@ -1914,8 +1929,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
 
   private func maxHorizontalOffset(for target: (fileId: String, kind: ReviewDiffHorizontalPanKind)) -> CGFloat {
     if target.kind == .fileHeaderPath,
-       let row = rows.first(where: { resolvedFileId(for: $0) == target.fileId && $0.kind == "file" }) {
-      return maxHeaderPathOffset(for: row)
+       let rowIndex = fileHeaderRowIndex(forFileId: target.fileId) {
+      return maxHeaderPathOffset(for: rows[rowIndex])
     }
     if codeWrapColumns != nil {
       return 0
@@ -2483,7 +2498,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let horizontalOffset = horizontalOffset(for: fileId)
     let contentWidth = contentWidth(for: fileId)
     let change = row.change ?? "context"
-    // Wrapped rows keep the line number and first code line in the first row-height band.
     let layout = codeLayoutsByRowId[row.id]
     let firstLineHeight = layout?.firstLineHeight
       ?? (row.content != nil && codeLayoutWidth != nil ? codeFont.lineHeight : 0)
@@ -2582,7 +2596,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     context.restoreGState()
   }
 
-  /// Draws the segment starting at each of the row's line starts on its own visual line.
   private func drawCodeLines(
     length: Int,
     lineStarts: ReviewDiffCodeLineStarts,
@@ -2612,7 +2625,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
-    // Keep the diff and syntax colors intact; selection lives in the gutter.
     theme.hunkText.withAlphaComponent(0.95).setFill()
     context.fill(CGRect(x: 0, y: rect.minY, width: style.changeBarWidth, height: rect.height))
   }
@@ -2648,7 +2660,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
         continue
       }
 
-      // A wrapped row splits the highlight at each visual line boundary.
       for (line, lineStart) in lineStarts.enumerated() {
         let lineEnd = line + 1 < lineStarts.count ? lineStarts[line + 1] : Int.max
         let start = max(range.start, lineStart)

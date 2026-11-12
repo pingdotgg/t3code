@@ -2,9 +2,10 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getFileViewedRange,
   isFileDiffCollapsed,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  withFileDiffFold,
 } from "./pullRequestDiff.logic";
 
 function fileWithHunks(
@@ -42,15 +43,44 @@ describe("isLineInFileDiff", () => {
 describe("isFileDiffCollapsed", () => {
   // regression: #9174 diffs now expand by default; a reader's fold must survive new slices
   it("keeps a file the reader folded closed as the next slice arrives", () => {
-    const toggled = new Set(["b.ts"]);
-    expect(isFileDiffCollapsed("b.ts", null, toggled)).toBe(true);
-    expect(isFileDiffCollapsed("c.ts", null, toggled)).toBe(false);
+    const choices = new Map([["b.ts", true]]);
+    expect(isFileDiffCollapsed("b.ts", "expanded", choices)).toBe(true);
+    expect(isFileDiffCollapsed("c.ts", "expanded", choices)).toBe(false);
+  });
+
+  it("folds a file marked Viewed when the Code tab mounts again with no fold choices", () => {
+    expect(isFileDiffCollapsed("a.ts", "expanded", new Map(), true)).toBe(true);
+    expect(isFileDiffCollapsed("a.ts", "expanded", new Map(), false)).toBe(false);
+  });
+
+  it("keeps a reader's choice when the file's Viewed mark loads later", () => {
+    const choices = new Map([["a.ts", false]]);
+    expect(isFileDiffCollapsed("a.ts", "expanded", choices, false)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", "expanded", choices, true)).toBe(false);
   });
 });
 
-describe("toggleFileDiffFoldForViewed", () => {
-  it("moves against whatever the toolbar last asked for", () => {
-    expect([...toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set())]).toEqual(["a.ts"]);
-    expect(toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set()).size).toBe(0);
+describe("withFileDiffFold", () => {
+  it("records an absolute choice and keeps the same map when nothing changes", () => {
+    const folded = withFileDiffFold(new Map(), "a.ts", true);
+    expect(folded.get("a.ts")).toBe(true);
+    expect(withFileDiffFold(folded, "a.ts", true)).toBe(folded);
+    expect(withFileDiffFold(folded, "a.ts", false).get("a.ts")).toBe(false);
+  });
+});
+
+describe("getFileViewedRange", () => {
+  const files = ["c.ts", "a.ts", "b.ts", "d.ts"].map((fileKey) => ({ fileKey }));
+
+  it("includes both endpoints in displayed order in either direction", () => {
+    expect(getFileViewedRange(files, "b.ts", "c.ts")).toEqual(files.slice(0, 3));
+    expect(getFileViewedRange(files, "c.ts", "b.ts")).toEqual(files.slice(0, 3));
+    expect(getFileViewedRange(files, "a.ts", "a.ts")).toEqual([files[1]]);
+  });
+
+  it("changes only the clicked file without a current anchor", () => {
+    expect(getFileViewedRange(files, "a.ts", null)).toEqual([files[1]]);
+    expect(getFileViewedRange(files, "a.ts", "removed.ts")).toEqual([files[1]]);
+    expect(getFileViewedRange(files, "removed.ts", "a.ts")).toEqual([]);
   });
 });

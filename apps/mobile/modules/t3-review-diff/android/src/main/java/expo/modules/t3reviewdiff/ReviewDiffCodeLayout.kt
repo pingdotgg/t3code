@@ -15,7 +15,6 @@ import android.text.style.UnderlineSpan
 import kotlin.math.ceil
 import kotlin.math.max
 
-/** Text layout is independent of comment heights and vertical row offsets. */
 internal class CodeLines(
   val starts: IntArray,
   val height: Int,

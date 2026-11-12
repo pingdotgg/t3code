@@ -3,6 +3,7 @@ import { MCP_APP_PROTOCOL_VERSION, type McpAppReference } from "@t3tools/shared/
 import * as Base64 from "effect/encoding/Base64";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const MAX_PENDING_REQUESTS = 16;
@@ -71,7 +72,12 @@ export interface McpAppCallToolResult {
   readonly _meta?: unknown;
 }
 
-export class McpAppHostRefusal extends Error {}
+export class McpAppHostRefusal extends Schema.TaggedError<McpAppHostRefusal>()(
+  "McpAppHostRefusal",
+  { message: Schema.String },
+) {}
+
+const isMcpAppHostRefusal = Schema.is(McpAppHostRefusal);
 
 export interface McpAppHostOptions {
   readonly app: McpAppReference;
@@ -113,11 +119,11 @@ export interface McpAppHost {
   readonly dispose: () => void;
 }
 
-function jsonBytes(value: unknown): number {
+function stringifyJson(value: unknown): string | undefined {
   try {
-    return encoder.encode(JSON.stringify(value) ?? "").byteLength;
+    return JSON.stringify(value);
   } catch {
-    return Number.POSITIVE_INFINITY;
+    return undefined;
   }
 }
 
@@ -141,7 +147,7 @@ function normalizeMcpAppToolResult(result: McpAppCallToolResult): McpAppCallTool
 }
 
 const errorMessage = (error: unknown) =>
-  error instanceof McpAppHostRefusal
+  isMcpAppHostRefusal(error)
     ? error.message
     : error instanceof Error && error.message.trim() !== ""
       ? error.message
@@ -342,7 +348,7 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           options.downloadFile(files).then(
             () => ({}),
             (error: unknown) =>
-              error instanceof McpAppHostRefusal ? { isError: true } : Promise.reject(error),
+              isMcpAppHostRefusal(error) ? { isError: true } : Promise.reject(error),
           ),
         );
         return;
@@ -389,10 +395,14 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   const hostHandle: McpAppHost = {
     receive: (data) => {
       if (disposed || !Predicate.isObject(data) || data.jsonrpc !== "2.0") return;
-      if (jsonBytes(data) > MAX_MESSAGE_BYTES) {
-        if (isId(data.id) && typeof data.method === "string") {
-          fail(data.id, -32600, "Message too large.");
-        }
+      const requestId = isId(data.id) && typeof data.method === "string" ? data.id : undefined;
+      const json = stringifyJson(data);
+      if (json === undefined) {
+        if (requestId !== undefined) fail(requestId, -32602, "Params must be JSON.");
+        return;
+      }
+      if (encoder.encode(json).byteLength > MAX_MESSAGE_BYTES) {
+        if (requestId !== undefined) fail(requestId, -32600, "Message too large.");
         return;
       }
       const method = data.method;
@@ -400,13 +410,23 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         if (isId(data.id) && ("result" in data || "error" in data)) handleResponse(data.id);
         return;
       }
-      const params = Predicate.isObject(data.params) ? data.params : {};
+      // postMessage keeps undefined, which the RPC's JSON codec rejects; pass on the JSON form.
+      const { params: jsonParams }: { params?: unknown } = JSON.parse(json);
+      const params = Predicate.isObject(jsonParams) ? jsonParams : {};
       if (isId(data.id)) handleRequest(data.id, method, params);
       else handleNotification(method, params);
     },
     setToolCall: (call) => {
-      toolCall ??= call;
-      sendToolCall();
+      // A running call has no result yet; only its completion may replace it.
+      if (toolCall === undefined || !toolCallSent) {
+        if (toolCall?.result === undefined) toolCall = call;
+        sendToolCall();
+        return;
+      }
+      if (toolCall.result !== undefined || call.result === undefined) return;
+      // The app already has this call's input; it only needs the result.
+      toolCall = { arguments: toolCall.arguments, result: call.result };
+      notify("ui/notifications/tool-result", normalizeMcpAppToolResult(call.result));
     },
     updateHostContext: () => {
       // The spec forbids messages before the app finishes initializing; it
