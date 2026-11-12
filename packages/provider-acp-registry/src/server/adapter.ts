@@ -270,6 +270,28 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
             ),
+          // A new Copilot session starts at its own effort, not the one the composer shows.
+          ...(isCopilot
+            ? {
+                unsetOptionDefaults: runtimeCoordinator
+                  .getLiveConfiguration(options.instanceId)
+                  .pipe(
+                    Effect.map(
+                      Option.match({
+                        onNone: () => [],
+                        onSome: ({ configOptions }) =>
+                          configOptions.flatMap((descriptor) =>
+                            descriptor.type === "select" &&
+                            descriptor.role === "reasoning" &&
+                            descriptor.currentValue !== undefined
+                              ? [{ id: descriptor.id, value: descriptor.currentValue }]
+                              : [],
+                          ),
+                      }),
+                    ),
+                  ),
+              }
+            : {}),
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,

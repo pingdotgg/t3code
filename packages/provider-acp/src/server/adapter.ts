@@ -376,6 +376,8 @@ export interface AcpAdapterV2Flavor {
   readonly customModels?: ReadonlyArray<string>;
   /** The agent may run another model than session/new reports, so the model is always written. */
   readonly alwaysSetModel?: boolean;
+  /** Values the client shows for options a new session's selection leaves unset. */
+  readonly unsetOptionDefaults?: Effect.Effect<NonNullable<ModelSelection["options"]>>;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   /**
    * The agent advertises its model option only after `session/new` returns
@@ -7255,6 +7257,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           modelSelection: ModelSelection,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          newSession = false,
         ) {
           yield* Ref.set(activeSelection, null);
           yield* validateModelSelection(modelSelection);
@@ -7347,13 +7350,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 : undefined;
             return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
           };
-          const optionSelections = (modelSelection.options ?? []).flatMap((selection) => {
-            if (flavor.ownedModelOptionIds?.includes(selection.id) === true) return [];
-            if (!withinCeiling(selection)) return [];
-            return [
-              selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
-            ];
-          });
+          const explicitSelections = modelSelection.options ?? [];
+          const implicitSelections =
+            newSession && flavor.unsetOptionDefaults !== undefined
+              ? (yield* flavor.unsetOptionDefaults).filter(
+                  (implicit) =>
+                    !explicitSelections.some((selection) => selection.id === implicit.id),
+                )
+              : [];
+          const optionSelections = [...explicitSelections, ...implicitSelections].flatMap(
+            (selection) => {
+              if (flavor.ownedModelOptionIds?.includes(selection.id) === true) return [];
+              if (!withinCeiling(selection)) return [];
+              return [
+                selection.value === ACP_EMPTY_OPTION_VALUE
+                  ? { ...selection, value: "" }
+                  : selection,
+              ];
+            },
+          );
           const availableConfigIds = new Set(configOptions.map((option) => option.id));
           const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
             ACP_SESSION_MODE_OPTION_ID,
@@ -7505,7 +7520,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
-        yield* configureSession(started, input.modelSelection, input.runtimePolicy);
+        yield* configureSession(
+          started,
+          input.modelSelection,
+          input.runtimePolicy,
+          started.sessionId !== input.initialNativeThreadId,
+        );
         yield* Ref.set(activeSelection, input.modelSelection);
         yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);
         const createdAt = yield* DateTime.now;
