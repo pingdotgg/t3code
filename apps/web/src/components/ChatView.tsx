@@ -4016,6 +4016,7 @@ export default function ChatView(props: ChatViewProps) {
       <RevertConfirmHost
         threadKey={routeThreadKey}
         checkpoints={serverProjection?.checkpoints}
+        hasWorktree={activeWorktreePath !== null}
         onConfirm={onConfirmRevertStable}
       />
       {embedded ? null : <LinkPullRequestDialogHost />}
