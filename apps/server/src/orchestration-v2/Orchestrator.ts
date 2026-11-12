@@ -9938,11 +9938,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     ) {
       const projection = yield* projectionStore
-        .getThreadRecords(
-          command.threadId,
-          ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
-          { turnItemTypes: ["secret_delivery"], messageRoles: [] },
-        )
+        .getThreadRecords(command.threadId, ["runs", "nodes", "turnItems"], {
+          turnItemTypes: ["secret_delivery"],
+          messageRoles: [],
+        })
         .pipe(
           Effect.mapError(
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
@@ -9950,7 +9949,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
       const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
-      if (run === undefined || (existing === undefined && run.rootNodeId !== command.nodeId)) {
+      const node = projection.nodes.find((candidate) => candidate.id === command.nodeId);
+      if (
+        run === undefined ||
+        (existing === undefined &&
+          (node === undefined || node.runId !== run.id || node.parentNodeId !== null))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -9990,10 +9994,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               threadId: command.threadId,
               runId: command.runId,
               nodeId: existing?.nodeId ?? command.nodeId,
-              providerThreadId: existing ? existing.providerThreadId : run.providerThreadId,
-              providerTurnId: existing
-                ? existing.providerTurnId
-                : (providerTurnForRun(projection, run)?.id ?? null),
+              providerThreadId: existing
+                ? existing.providerThreadId
+                : (node?.providerThreadId ?? null),
+              providerTurnId: existing ? existing.providerTurnId : (node?.providerTurnId ?? null),
               nativeItemRef: null,
               parentItemId: null,
               ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),

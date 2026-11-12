@@ -2237,6 +2237,18 @@ it.effect("records secret delivery metadata without reopening a deleted item", (
       creationSource: "web",
     });
     const run = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    const originalNode = (yield* projections.getThreadRecords(threadId, ["nodes"])).nodes.find(
+      (node) => node.id === run.rootNodeId,
+    )!;
+    const providerThreadId = ProviderThreadId.make("provider-thread:delivery-original");
+    const providerTurnId = ProviderTurnId.make("provider-turn:delivery-original");
+    yield* projections.apply({
+      id: EventId.make("delivery:original-node"),
+      type: "node.updated",
+      threadId,
+      occurredAt: yield* DateTime.now,
+      payload: { ...originalNode, providerThreadId, providerTurnId },
+    });
     const turnItemId = yield* Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -2274,16 +2286,56 @@ it.effect("records secret delivery metadata without reopening a deleted item", (
           clientRequestId: "receipt-retry",
         };
         assert.equal((yield* service.publish(input).pipe(Effect.flip)).reason, "record_failed");
+        yield* projections.apply({
+          id: EventId.make("delivery:steer-before-record"),
+          type: "run.updated",
+          threadId,
+          occurredAt: yield* DateTime.now,
+          payload: {
+            ...run,
+            rootNodeId: NodeId.make("node:steer-before-record"),
+            providerThreadId: ProviderThreadId.make("provider-thread:steer-before-record"),
+          },
+        });
+        const childNodeId = NodeId.make("node:delivery-child");
+        yield* projections.apply({
+          id: EventId.make("delivery:child-node"),
+          type: "node.updated",
+          threadId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...originalNode, id: childNodeId, parentNodeId: originalNode.id },
+        });
+        const rejected = yield* orchestrator
+          .dispatch({
+            type: "secret_delivery.record",
+            commandId: CommandId.make("delivery:reject-child"),
+            threadId,
+            runId: run.id,
+            nodeId: childNodeId,
+            turnItemId: TurnItemId.make("delivery:child"),
+            label: "Invalid child delivery",
+            secretStatus: "available",
+            expiresAt: 86400000,
+          })
+          .pipe(Effect.flip);
+        assert.equal(rejected._tag, "OrchestratorDispatchError");
         const receipt = yield* service.publish(input);
         assert.equal(attempts, 2);
         assert.equal((yield* service.publish(input)).deliveryId, receipt.deliveryId);
         assert.equal(attempts, 2);
+        assert.equal(
+          (yield* service.read({ threadId, deliveryId: receipt.deliveryId })).value,
+          "synthetic-receipt-retry",
+        );
         return receipt.deliveryId;
       }).pipe(Effect.provide(NodeServices.layer)),
     );
     const original = (yield* projections.getThreadRecords(threadId, ["turnItems"], {
       turnItemTypes: ["secret_delivery"],
     })).turnItems[0]!;
+    assert.equal(original.nodeId, originalNode.id);
+    assert.equal(original.providerThreadId, providerThreadId);
+    assert.equal(original.providerTurnId, providerTurnId);
     yield* projections.apply({
       id: EventId.make("delivery:steer-restart"),
       type: "run.updated",
