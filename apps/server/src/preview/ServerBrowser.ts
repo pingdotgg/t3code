@@ -1693,10 +1693,11 @@ const make = Effect.gen(function* () {
     if (contents === savedProfiles) return;
     yield* writeFileStringAtomically({ filePath: savedProfilesPath, contents }).pipe(
       Effect.provideContext(fileServices),
-      Effect.tap(() => {
-        savedProfiles = contents;
-        return Effect.void;
-      }),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          savedProfiles = contents;
+        }),
+      ),
       Effect.catch((cause) =>
         Effect.logWarning("failed to save reported browser profiles", { cause }),
       ),

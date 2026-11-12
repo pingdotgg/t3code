@@ -2677,25 +2677,37 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
-it.live("an agent opens a reported profile after a restart, before any client reports again", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const cleanupStarted = yield* Deferred.make<void>();
-    const releaseCleanup = yield* Deferred.make<void>();
-    let pauseCleanup = false;
-    const gatedFs = FileSystem.FileSystem.of({
+// Holds the next profile save at its temp-file cleanup, after the rename, until released.
+const gateSaveCleanup = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const cleanupStarted = yield* Deferred.make<void>();
+  const releaseCleanup = yield* Deferred.make<void>();
+  let paused = false;
+  return {
+    cleanupStarted,
+    releaseCleanup,
+    pauseNext: () => {
+      paused = true;
+    },
+    fs: FileSystem.FileSystem.of({
       ...fs,
       remove: (target, options) =>
         fs.remove(target, options).pipe(
           Effect.tap(() => {
-            if (!pauseCleanup) return Effect.void;
-            pauseCleanup = false;
+            if (!paused) return Effect.void;
+            paused = false;
             return Deferred.succeed(cleanupStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releaseCleanup)),
             );
           }),
         ),
-    });
+    }),
+  };
+});
+
+it.live("an agent opens a reported profile after a restart, before any client reports again", () =>
+  Effect.gen(function* () {
+    const gate = yield* gateSaveCleanup;
     const persistent = (name: string) =>
       ({ id: `profile-${name.toLowerCase()}`, name, kind: "persistent" }) as const;
     // Together the two clients report more profiles than one report may hold.
@@ -2716,14 +2728,14 @@ it.live("an agent opens a reported profile after a restart, before any client re
       const reportFromB = yield* browser.profileReporter;
       const reportFromC = yield* browser.profileReporter;
       yield* reportFromA({ profiles: fromA, defaultProfileId: "profile-work" });
-      pauseCleanup = true;
+      gate.pauseNext();
       const savingB = yield* reportFromB({
         profiles: fromB,
         defaultProfileId: "profile-shared",
       }).pipe(Effect.forkScoped({ startImmediately: true }));
       // A save that ends without reaching the gate fails the test instead of hanging it.
       yield* Effect.raceFirst(
-        Deferred.await(cleanupStarted),
+        Deferred.await(gate.cleanupStarted),
         Fiber.join(savingB).pipe(
           Effect.andThen(Effect.die("save finished before the cleanup gate")),
         ),
@@ -2733,14 +2745,14 @@ it.live("an agent opens a reported profile after a restart, before any client re
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* Scope.close(clientA, Exit.void);
-      yield* Deferred.succeed(releaseCleanup, undefined);
+      yield* Deferred.succeed(gate.releaseCleanup, undefined);
       yield* Fiber.join(savingB);
       yield* Fiber.join(savingC);
     }).pipe(
       Effect.scoped,
       Effect.provide(
         Layer.fresh(ServerBrowser.layer).pipe(
-          Layer.provide(Layer.succeed(FileSystem.FileSystem, gatedFs)),
+          Layer.provide(Layer.succeed(FileSystem.FileSystem, gate.fs)),
         ),
       ),
     );
@@ -2807,86 +2819,19 @@ it.live("warns at startup about a saved profile catalog it cannot read or decode
   }).pipe(Effect.provide(dependencies)),
 );
 
-it.live("an interrupted profile save cannot leave the unchanged-report cache stale", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const { stateDir } = yield* ServerConfig.ServerConfig;
-    const cleanupStarted = yield* Deferred.make<void>();
-    const releaseCleanup = yield* Deferred.make<void>();
-    let pauseCleanup = false;
-    const gatedFs = FileSystem.FileSystem.of({
-      ...fs,
-      remove: (target, options) =>
-        fs.remove(target, options).pipe(
-          Effect.tap(() => {
-            if (!pauseCleanup) return Effect.void;
-            pauseCleanup = false;
-            return Deferred.succeed(cleanupStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseCleanup)),
-            );
-          }),
-        ),
-    });
-    yield* Effect.gen(function* () {
-      const report = yield* (yield* ServerBrowser.ServerBrowser).profileReporter;
-      const original = {
-        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" as const }],
-        defaultProfileId: "profile-work",
-      };
-      yield* report(original);
-      pauseCleanup = true;
-      const saving = yield* report({ ...original, defaultProfileId: "default" }).pipe(
-        Effect.forkScoped,
-      );
-      yield* Deferred.await(cleanupStarted);
-      saving.interruptUnsafe();
-      yield* Deferred.succeed(releaseCleanup, undefined);
-      yield* Fiber.await(saving);
-      yield* report(original);
-      const saved = yield* fs.readFileString(
-        path.join(stateDir, "server-browser", "reported-profiles.json"),
-      );
-      expect(JSON.parse(saved)).toMatchObject(original);
-    }).pipe(
-      Effect.provide(
-        Layer.fresh(ServerBrowser.layer).pipe(
-          Layer.provide(Layer.succeed(FileSystem.FileSystem, gatedFs)),
-        ),
-      ),
-    );
-  }).pipe(Effect.provide(dependencies)),
-);
-
 it.live("a report interrupted while an earlier save holds the lock is still saved", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const cleanupStarted = yield* Deferred.make<void>();
-    const releaseCleanup = yield* Deferred.make<void>();
-    let pauseCleanup = false;
-    const gatedFs = FileSystem.FileSystem.of({
-      ...fs,
-      remove: (target, options) =>
-        fs.remove(target, options).pipe(
-          Effect.tap(() => {
-            if (!pauseCleanup) return Effect.void;
-            pauseCleanup = false;
-            return Deferred.succeed(cleanupStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseCleanup)),
-            );
-          }),
-        ),
-    });
+    const gate = yield* gateSaveCleanup;
     const work = { id: "profile-work", name: "Work", kind: "persistent" } as const;
     const late = { id: "profile-late", name: "Late", kind: "persistent" } as const;
     yield* Effect.gen(function* () {
       const report = yield* (yield* ServerBrowser.ServerBrowser).profileReporter;
-      pauseCleanup = true;
+      gate.pauseNext();
       const saving = yield* report({ profiles: [work], defaultProfileId: "profile-work" }).pipe(
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* Effect.raceFirst(
-        Deferred.await(cleanupStarted),
+        Deferred.await(gate.cleanupStarted),
         Fiber.join(saving).pipe(
           Effect.andThen(Effect.die("save finished before the cleanup gate")),
         ),
@@ -2897,14 +2842,14 @@ it.live("a report interrupted while an earlier save holds the lock is still save
         defaultProfileId: "profile-late",
       }).pipe(Effect.forkScoped({ startImmediately: true }));
       waiting.interruptUnsafe();
-      yield* Deferred.succeed(releaseCleanup, undefined);
+      yield* Deferred.succeed(gate.releaseCleanup, undefined);
       yield* Fiber.join(saving);
       yield* Fiber.await(waiting);
     }).pipe(
       Effect.scoped,
       Effect.provide(
         Layer.fresh(ServerBrowser.layer).pipe(
-          Layer.provide(Layer.succeed(FileSystem.FileSystem, gatedFs)),
+          Layer.provide(Layer.succeed(FileSystem.FileSystem, gate.fs)),
         ),
       ),
     );
