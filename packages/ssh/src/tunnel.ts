@@ -1005,7 +1005,15 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey,
     });
     const result = yield* runSshCommand(target, {
-      remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
+      // Shells known to take `-l -c` with a POSIX-style `exec` read their own login
+      // profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
+      remoteCommandArgs: [
+        "sh",
+        "-c",
+        shellSingleQuote(
+          `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s -- ${stateKey}" ;; *) exec sh -l -s -- ${stateKey} ;; esac`,
+        ),
+      ],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
