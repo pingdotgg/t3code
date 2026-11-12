@@ -466,6 +466,8 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+// Staging hashes every untracked file; the 30 s process default kills large workspaces every turn.
+const CHECKPOINT_STAGE_TIMEOUT_MS = 10 * 60 * 1000;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
@@ -1352,10 +1354,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           .join(" ");
         const filterOverrides = filterConfig.stdout
           .split("\0")
-          .filter((record) => record.includes("\n"))
+          .filter((record) => record.length > 0)
           .flatMap((record) => {
             const separator = record.indexOf("\n");
             const command = record.slice(separator + 1);
+            // Empty or valueless entries disable a filter; repeat them unwrapped so they still win.
+            if (separator === -1 || command === "") return ["-c", record.replace("\n", "=")];
             return ["-c", `${record.slice(0, separator)}=${restoreObjectEnv} ${command}`];
           });
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
@@ -1379,6 +1383,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...exclusions,
             ],
             env: stageEnv,
+            timeoutMs: CHECKPOINT_STAGE_TIMEOUT_MS,
           });
         yield* fileSystem
           .makeDirectory(privateObjectsDir, { recursive: true })

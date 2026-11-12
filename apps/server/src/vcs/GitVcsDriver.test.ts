@@ -462,14 +462,26 @@ it.effect("checkpoint capture runs clean filters against their own repository's 
       "-m",
       "p",
     ]);
-    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.meta filter=metadata\n");
+    yield* fs.writeFileString(
+      path.join(cwd, ".gitattributes"),
+      "*.meta filter=metadata\n*.dat filter=disabled\n*.raw filter=noprocess\n",
+    );
     yield* fs.writeFileString(path.join(cwd, "a.meta"), "body\n");
+    yield* fs.writeFileString(path.join(cwd, "a.dat"), "precious\n");
+    yield* fs.writeFileString(path.join(cwd, "a.raw"), "raw\n");
     yield* git(["config", "filter.metadata.required", "true"]);
     yield* git(["config", "filter.metadata.clean", `git -C '${other}' show HEAD:prefix && cat`]);
+    // Empty values disable a filter, including one set earlier in the configuration.
+    yield* git(["config", "filter.disabled.clean", "echo wrong"]);
+    yield* git(["config", "--add", "filter.disabled.clean", ""]);
+    yield* git(["config", "filter.noprocess.clean", "cat"]);
+    yield* git(["config", "filter.noprocess.process", ""]);
 
     yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
     assert.strictEqual((yield* git(["show", `${checkpointRef}:a.meta`])).stdout, "header\nbody\n");
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:a.dat`])).stdout, "precious\n");
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:a.raw`])).stdout, "raw\n");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
