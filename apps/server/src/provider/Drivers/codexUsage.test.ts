@@ -497,6 +497,11 @@ describe("parseCodexLine", () => {
     const transition = parseCodexRecords(request("upgraded", counters(25, 5)), state);
     expect(transition.map((record) => record.totals.outputTokens)).toEqual([3, 5]);
     expect(parseCodexLine(counted(counters(25, 5), counters(720, 130)), state)).toBeNull();
+    expect(parseCodexLine(request("", counters(10, 1)), state)).toBeNull();
+    expect(
+      parseCodexLine(counted(counters(10, 1), counters(730, 131)), state)?.totals.outputTokens,
+    ).toBe(1);
+    expect(parseCodexLine(counted(counters(10, 1), counters(730, 131)), state)).toBeNull();
     expect(state.malformedRecords).toBe(0);
   });
 

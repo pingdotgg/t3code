@@ -258,6 +258,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
         },
       ];
     }
+    state.requestLedgerActive = false;
     (state.unreportedRequests ??= []).push({ ...codexAttribution(state, timestampMs), usage });
     return [];
   }
