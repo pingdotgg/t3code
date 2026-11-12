@@ -3550,7 +3550,6 @@ export function ChatComposer(props: ChatComposerProps) {
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
-          data-inline-resting-controls="true"
           className={composerProviderState.composerFrameClassName}
         >
           <div
