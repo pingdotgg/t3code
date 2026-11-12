@@ -512,18 +512,23 @@ const hasReference = (node: RootContent): boolean =>
   node.type === "footnoteReference" ||
   ("children" in node && (node.children as RootContent[]).some(hasReference));
 
-const plainText = (node: RootContent): string =>
-  "value" in node
-    ? node.value
-    : "children" in node
-      ? (node.children as RootContent[]).map(plainText).join("")
-      : "";
+/** How many of the ascending numbers are below `value`. */
+function countBelow(sorted: readonly number[], value: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (sorted[middle]! < value) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
 
 /**
  * Parses the block's text again with a tab before each mark. The tab ends the URL as a space would,
- * so emphasis around the URL closes and a later URL gets its own link. The tabs are then dropped
- * and positions mapped back to the source. Returns false and leaves the block alone when its text
- * would parse differently on its own, as a quote's continuation lines do.
+ * so emphasis around the URL closes and later URLs and code get their own nodes. The tabs are then
+ * dropped and positions mapped back to the source. Returns false and leaves the block alone when its
+ * text would parse differently on its own, as a quote's continuation lines do.
  */
 function reparseAtCjkPunctuation(
   processor: Processor,
@@ -536,25 +541,23 @@ function reparseAtCjkPunctuation(
   if (from?.offset === undefined || to?.offset === undefined || hasReference(block)) return false;
   const base = from.offset;
   const text = source.slice(base, to.offset);
-  if (text.includes("\t")) return false;
+  // A tab is the marker, and a quote's `>` on a later line would read as a new quote.
+  if (text.includes("\t") || /[\r\n][ ]*>/.test(text)) return false;
   const marks = offsets.map((offset) => offset - base);
-  for (let attempt = 0; attempt < 32; attempt++) {
+  // Each pass finds the next URL in a run with no spaces, like `http://a，http://b，http://c`.
+  for (let attempt = 0; attempt < 16; attempt++) {
     marks.sort((a, b) => a - b);
     const tabs = marks.map((mark, index) => mark + index);
-    const unmarked = (offset: number) => offset - tabs.filter((tab) => tab < offset).length;
-    const marked = marks.reduceRight(
-      (value, mark) => `${value.slice(0, mark)}\t${value.slice(mark)}`,
-      text,
-    );
+    const unmarked = (offset: number) => offset - countBelow(tabs, offset);
+    const marked = [0, ...marks]
+      .map((start, index) => text.slice(start, marks[index] ?? text.length))
+      .join("\t");
     const [paragraph, ...rest] = (processor.parse(marked) as Root).children;
     if (paragraph?.type !== "paragraph" || rest.length > 0) return false;
     const more = cjkPunctuationOffsets(paragraph, marked);
     if (more.length > 0) {
       marks.push(...more.map(unmarked));
       continue;
-    }
-    if (plainText(paragraph).replace(/[\t*_~]/g, "") !== plainText(block).replace(/[*_~]/g, "")) {
-      return false;
     }
 
     let tabCount = 0;
@@ -564,8 +567,7 @@ function reparseAtCjkPunctuation(
         const offset = point.offset;
         if (offset === undefined || moved.has(point)) continue;
         moved.add(point);
-        const lineStart = offset - point.column + 1;
-        const tabsOnLine = tabs.filter((tab) => tab >= lineStart && tab < offset).length;
+        const tabsOnLine = countBelow(tabs, offset) - countBelow(tabs, offset - point.column + 1);
         point.column = (point.line === 1 ? from.column - 1 : 0) + point.column - tabsOnLine;
         point.line += from.line - 1;
         point.offset = base + unmarked(offset);
