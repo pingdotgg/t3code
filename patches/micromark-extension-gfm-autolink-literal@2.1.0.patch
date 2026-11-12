@@ -1,5 +1,5 @@
 diff --git a/dev/lib/syntax.js b/dev/lib/syntax.js
-index 904e27200ae4980183beda525d33feef70c2e7f7..ebdfdee9fe55e799853500e8ced3829174d6a2f0 100644
+index 904e27200ae4980183beda525d33feef70c2e7f7..7bf80020d7a1f711a154cc967f1fb22bafe82329 100644
 --- a/dev/lib/syntax.js
 +++ b/dev/lib/syntax.js
 @@ -662,7 +662,8 @@ function tokenizePath(effects, ok) {
@@ -38,7 +38,7 @@ index 904e27200ae4980183beda525d33feef70c2e7f7..ebdfdee9fe55e799853500e8ced38291
  }
 +
 +// CJK and full-width punctuation (`，`, `。`, `（`) ends a URL the way whitespace does,
-+// since CJK prose puts no space after a link.
++// since CJK prose puts no space after a link. Symbols (`￥`, `＋`) stay part of the URL.
 +function cjkPunctuation(code) {
 +  return (
 +    code !== null &&
@@ -46,11 +46,11 @@ index 904e27200ae4980183beda525d33feef70c2e7f7..ebdfdee9fe55e799853500e8ced38291
 +      (code >= 0xfe10 && code <= 0xfe1f) ||
 +      (code >= 0xfe30 && code <= 0xfe6f) ||
 +      (code >= 0xff00 && code <= 0xffef)) &&
-+    unicodePunctuation(code)
++    /\p{P}/u.test(String.fromCodePoint(code))
 +  )
 +}
 diff --git a/lib/syntax.js b/lib/syntax.js
-index dffbaf15146b34d3b3f634286629ccb148866f4c..df4dabf94635b0f45537bfea969b49bd0baaed11 100644
+index dffbaf15146b34d3b3f634286629ccb148866f4c..00ad40ca7aea303a4def45c6dcfa86daff7171be 100644
 --- a/lib/syntax.js
 +++ b/lib/syntax.js
 @@ -584,7 +584,7 @@ function tokenizePath(effects, ok) {
@@ -86,7 +86,7 @@ index dffbaf15146b34d3b3f634286629ccb148866f4c..df4dabf94635b0f45537bfea969b49bd
  }
 +
 +// CJK and full-width punctuation (`，`, `。`, `（`) ends a URL the way whitespace does,
-+// since CJK prose puts no space after a link.
++// since CJK prose puts no space after a link. Symbols (`￥`, `＋`) stay part of the URL.
 +function cjkPunctuation(code) {
 +  return (
 +    code !== null &&
@@ -94,6 +94,6 @@ index dffbaf15146b34d3b3f634286629ccb148866f4c..df4dabf94635b0f45537bfea969b49bd
 +      (code >= 0xfe10 && code <= 0xfe1f) ||
 +      (code >= 0xfe30 && code <= 0xfe6f) ||
 +      (code >= 0xff00 && code <= 0xffef)) &&
-+    unicodePunctuation(code)
++    /\p{P}/u.test(String.fromCodePoint(code))
 +  )
 +}

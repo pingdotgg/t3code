@@ -100,6 +100,8 @@ it.each([
     ],
     ["打开 http://localhost:18780，然后刷新", `打开 ${link("http://localhost:18780")}，然后刷新`],
     ["URL：https://example.com/a。下一句", `URL：${link("https://example.com/a")}。下一句`],
+    ["https://www.google.com/search?q=￥1000", link("https://www.google.com/search?q=￥1000")],
+    ["https://example.com/search?q=Ａ＋Ｂ", link("https://example.com/search?q=Ａ＋Ｂ")],
   ] as const) {
     expect(shape(processor.runSync(processor.parse(markdown), markdown) as Root), markdown).toBe(
       expected,
