@@ -224,7 +224,7 @@ describe("DesktopServerExposure", () => {
 
         const state = yield* serverExposure.getState;
         assert.equal(state.mode, "network-accessible");
-        assert.equal(state.endpointUrl, "http://192.168.1.20:4173/");
+        assert.equal(state.endpointUrl, "http://192.168.1.20:4173");
         assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
       }),
     );
