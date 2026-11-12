@@ -280,6 +280,8 @@ export const layer: Layer.Layer<
         provider.auth.type === "customEndpoint" ||
         provider.usageLimits?.unavailable?.reason === "unsupported";
       if (!proxied) return failure;
+      // The cached snapshot usually predates the request that exhausted the pool.
+      yield* usageLimitSources.value.refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);
       const resetAt = exhaustedPoolRefillAt(
         yield* usageLimitSources.value.current,
         instance.driverKind,

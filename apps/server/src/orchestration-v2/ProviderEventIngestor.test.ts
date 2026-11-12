@@ -397,8 +397,13 @@ it.effect(
             exhausted("b.json", firstRefill),
           ],
         } as UsageLimitSourceSnapshot;
+        // The background snapshot predates the request that exhausted the pool.
+        let refreshed = false;
         const sources = Layer.mock(UsageLimitSources)({
-          current: Effect.succeed([hub]),
+          current: Effect.sync(() => (refreshed ? [hub] : [])),
+          refresh: Effect.sync(() => {
+            refreshed = true;
+          }),
           streamChanges: Stream.empty,
         });
         yield* Effect.gen(function* () {
