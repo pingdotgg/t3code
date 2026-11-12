@@ -239,7 +239,7 @@ import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
@@ -2473,9 +2473,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ? `Replying to ${replyTo.subagents.map((subagent) => subagent.title).join(", ")}`
             : "Replying to",
           description: (
-            <button
-              type="button"
-              className="cursor-pointer hover:text-foreground"
+            <InlineButton
+              tone="muted"
               onClick={() => {
                 const { citation } = replyTo;
                 const source = readThreadShell(
@@ -2485,7 +2484,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               }}
             >
               {assistantCitationLabel(replyTo.citation)}
-            </button>
+            </InlineButton>
           ),
           dismissLabel: "Cancel reply",
           onDismiss: () => setComposerDraftReplyTo(composerDraftTarget, null),
