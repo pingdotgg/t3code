@@ -1557,6 +1557,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // thousands of delivered ones, each carrying its full prompt.
           omitSettledSubagents: true,
           ...(recent === undefined ? {} : { sinceLastCompaction: recent }),
+          // No command reads a settled task's node or its child's provider thread.
+          omitSettledSubagentRecords: true,
           // Commands act on pending forks and merge-backs only; consumed ones stay unread.
           contextTransferStatuses: ["pending"],
         },
