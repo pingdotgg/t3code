@@ -5010,6 +5010,7 @@ describe("AcpAdapterV2", () => {
       const path = yield* Path.Path;
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      const runtimeCalls: Array<"cancel" | "prompt"> = [];
       const instanceId = ProviderInstanceId.make("acp-test-settled-permission");
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -5026,6 +5027,13 @@ describe("AcpAdapterV2", () => {
             ),
             wrapRuntime: (runtime) => ({
               ...runtime,
+              cancel: Effect.sync(() => runtimeCalls.push("cancel")).pipe(
+                Effect.andThen(runtime.cancel),
+              ),
+              prompt: (payload, options) =>
+                Effect.sync(() => runtimeCalls.push("prompt")).pipe(
+                  Effect.andThen(runtime.prompt(payload, options)),
+                ),
               handleRequestPermission: (handler) =>
                 Effect.sync(() => {
                   requestPermission = handler;
@@ -5087,6 +5095,23 @@ describe("AcpAdapterV2", () => {
         exit,
         Exit.succeed({ outcome: { outcome: "selected", optionId: "allow-once" } }),
       );
+
+      // The agent's own turn is still running; the next prompt must cancel it first.
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.deepEqual(runtimeCalls, ["prompt", "cancel", "prompt"]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
