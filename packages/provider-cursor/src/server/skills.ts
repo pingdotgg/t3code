@@ -17,6 +17,7 @@ const HAS_SKILL_MENTION_PATTERN = new RegExp(SKILL_MENTION_PATTERN.source, "u");
 const MAX_SKILL_DEPTH = 10;
 const MAX_SKILL_BYTES = ByteSize.bytes(1_000_000);
 const MAX_SKILL_SCAN_ENTRIES = 10_000;
+const MAX_SKILL_SCAN_STATS = 100_000;
 const MAX_SKILL_SCAN_BYTES = ByteSize.bytes(8_000_000);
 
 interface CursorSkillFrontmatter {
@@ -29,6 +30,7 @@ interface CursorSkillFrontmatter {
 
 interface CursorSkillScanBudget {
   remainingEntries: number;
+  remainingStats: number;
   remainingBytes: bigint;
   exhausted: boolean;
   incomplete: boolean;
@@ -153,6 +155,11 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       resolvedDirectory === rootDirectory ||
       resolvedDirectory.startsWith(`${rootDirectory}${path.sep}`);
 
+    if (input.budget.remainingStats === 0) {
+      input.budget.exhausted = true;
+      return;
+    }
+    input.budget.remainingStats -= 1;
     const skillPath = path.join(directory, "SKILL.md");
     const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
     if (skillInfo?.type === "File") {
@@ -189,17 +196,25 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       return;
     }
     for (const entry of [...entries].sort()) {
+      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
+      if (entry === "node_modules") continue;
+      // Files spend no directory budget, so a separate cap keeps a huge file tree bounded.
+      if (input.budget.remainingStats === 0) {
+        input.budget.exhausted = true;
+        return;
+      }
+      input.budget.remainingStats -= 1;
+      const child = path.join(directory, entry);
+      const info = yield* orUndefined(fileSystem.stat(child), input.budget);
+      // Only directories can hold skills, so only they spend the budget: a skill
+      // shipping many ordinary files must not hide its siblings.
+      if (info?.type !== "Directory") continue;
+      if (depth >= MAX_SKILL_DEPTH) continue;
       if (input.budget.remainingEntries === 0) {
         input.budget.exhausted = true;
         return;
       }
       input.budget.remainingEntries -= 1;
-      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
-      if (entry === "node_modules") continue;
-      const child = path.join(directory, entry);
-      const info = yield* orUndefined(fileSystem.stat(child), input.budget);
-      if (info?.type !== "Directory") continue;
-      if (depth >= MAX_SKILL_DEPTH) continue;
       yield* visit(child, depth + 1);
     }
   });
@@ -233,6 +248,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   const skillsByName = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
+    remainingStats: MAX_SKILL_SCAN_STATS,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
     exhausted: false,
     incomplete: false,

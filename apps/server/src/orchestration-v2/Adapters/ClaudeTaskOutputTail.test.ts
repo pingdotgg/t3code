@@ -20,7 +20,7 @@ const makeTaskFile = Effect.gen(function* () {
   return { root, tasks, file: path.join(tasks, `${TASK_ID}.output`) };
 });
 
-// TestClock cannot interleave with real filesystem I/O; use the live clock.
+// TestClock cannot interleave with real filesystem I/O; tests that wait on a poll use the live clock.
 describe("tailClaudeTaskOutput", () => {
   it.live("follows a file that appears after the task starts, across split characters", () =>
     Effect.scoped(
@@ -48,6 +48,32 @@ describe("tailClaudeTaskOutput", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("drops a split character when the file is truncated and rewritten", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { root, tasks, file } = yield* makeTaskFile;
+        yield* fileSystem.makeDirectory(tasks, { recursive: true });
+        // End the first read inside the two-byte é.
+        yield* fileSystem.writeFile(file, new TextEncoder().encode("café").subarray(0, 4));
+        const chunks = yield* Queue.unbounded<string>();
+        const stop = yield* Deferred.make<void>();
+        yield* tailClaudeTaskOutput({
+          root,
+          sessionId: SESSION_ID,
+          taskId: TASK_ID,
+          stop,
+          onChunk: (chunk) => Queue.offer(chunks, chunk),
+        }).pipe(Effect.forkScoped);
+        assert.equal(yield* Queue.take(chunks), "caf");
+
+        yield* fileSystem.writeFileString(file, "ok\n");
+        yield* Deferred.succeed(stop, undefined);
+        assert.equal(yield* Queue.take(chunks), "ok\n");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("skips ahead when the command writes faster than it is read", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -65,11 +91,12 @@ describe("tailClaudeTaskOutput", () => {
         }).pipe(Effect.forkScoped);
         assert.equal(yield* Queue.take(chunks), "start\n");
 
-        yield* fileSystem.writeFileString(file, `start\n${"y\n".repeat(1_000_000)}end\n`);
+        // The skip lands on the second byte of a two-byte é.
+        yield* fileSystem.writeFileString(file, `start\n${"é\n".repeat(1_000_000)}end.\n`);
         const flooded = yield* Queue.take(chunks);
         assert.isAtMost(flooded.length, 256 * 1024 + 1);
-        assert.isTrue(flooded.startsWith("\n"));
-        assert.isTrue(flooded.endsWith("y\nend\n"));
+        assert.equal(flooded.slice(0, 3), "\n\né");
+        assert.isTrue(flooded.endsWith("é\nend.\n"));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

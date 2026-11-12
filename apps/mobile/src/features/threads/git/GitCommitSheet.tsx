@@ -8,7 +8,6 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
-import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/ui/AppText";
 import { cn } from "../../../lib/cn";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -67,24 +66,24 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     });
   };
 
+  const android = Platform.OS === "android";
+  const header = (
+    <SheetHeader
+      title="Commit changes"
+      subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
+      onCancel={() => navigation.goBack()}
+      accessibilityLabel="Cancel commit"
+    />
+  );
+
   return (
+    // Material sheet drags follow the first nested-scrolling native view, and the inline
+    // header's Compose button is one, so Android renders content first and reverses the column.
     <View
       collapsable={false}
-      className="bg-sheet ios:flex-1"
-      style={Platform.OS === "android" ? { maxHeight: windowHeight * 0.92 } : undefined}
+      className="bg-sheet ios:flex-1 android:flex-col-reverse"
+      style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
-      {Platform.OS === "android" ? (
-        <NativeStackScreenOptions
-          options={{ sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" }}
-        />
-      ) : null}
-      <SheetHeader
-        presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Commit changes"
-        subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
-        onCancel={() => navigation.goBack()}
-        accessibilityLabel="Cancel commit"
-      />
       <ScreenContent fitToContents>
         <ScrollView
           nestedScrollEnabled
@@ -228,6 +227,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           </View>
         </ScrollView>
       </ScreenContent>
+      {header}
     </View>
   );
 }
