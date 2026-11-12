@@ -10303,6 +10303,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (toolUseId !== undefined) {
                 pendingSubagentLaunchesByToolUseId.delete(toolUseId);
               }
+              // Every run of a forked skill shares its derived id; it belongs to the newest run.
+              if (
+                message.tool_use_id === undefined &&
+                toolUseId !== undefined &&
+                context.subagentsByToolUseId.get(toolUseId) !==
+                  context.subagentsByTaskId.get(message.task_id)
+              ) {
+                context.subagentsByToolUseId.delete(toolUseId);
+              }
               const owner =
                 launch?.ownerToolUseId === undefined
                   ? undefined

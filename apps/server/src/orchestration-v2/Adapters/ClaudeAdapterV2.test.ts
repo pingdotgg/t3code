@@ -17847,17 +17847,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         // A `context: fork` skill has no Agent call: task_started carries no tool_use_id,
-        // and the fork's frames name `forked-command-<skill>` as their parent.
-        for (const frame of [
+        // and every run's frames name `forked-command-<skill>` as their parent.
+        const forkFrames = (taskId: string, text: string, uuidBase: number) => [
           claudeSdkFrame({
             type: "system",
             subtype: "task_started",
-            task_id: "task-forked-skill",
+            task_id: taskId,
             description: "/fork-probe",
             prompt: "go",
             subagent_type: "general-purpose",
             task_type: "local_agent",
-            uuid: "00000000-0000-4000-8000-000000000231",
+            uuid: `00000000-0000-4000-8000-000000000${uuidBase}`,
             session_id: WAKE_NATIVE_SESSION,
           }),
           claudeSdkFrame({
@@ -17865,35 +17865,57 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             parent_tool_use_id: "forked-command-fork-probe",
             message: {
               model: "claude-haiku-4-5-20251001",
-              id: "msg_forked_skill_reply",
+              id: `msg_${taskId}`,
               type: "message",
               role: "assistant",
-              content: [{ type: "text", text: "OK" }],
+              content: [{ type: "text", text }],
             },
-            uuid: "00000000-0000-4000-8000-000000000232",
+            uuid: `00000000-0000-4000-8000-000000000${uuidBase + 1}`,
             session_id: WAKE_NATIVE_SESSION,
           }),
           claudeSdkFrame({
             type: "system",
             subtype: "task_notification",
-            task_id: "task-forked-skill",
+            task_id: taskId,
             status: "completed",
             summary: "/fork-probe",
             output_file: "",
-            uuid: "00000000-0000-4000-8000-000000000233",
+            uuid: `00000000-0000-4000-8000-000000000${uuidBase + 2}`,
             session_id: WAKE_NATIVE_SESSION,
           }),
-          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000234", result: "OK" }),
+        ];
+        for (const frame of [
+          ...forkFrames("task-fork-a", "first", 231),
+          ...forkFrames("task-fork-b", "second", 241),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000251", result: "OK" }),
         ]) {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
         yield* Queue.take(harness.terminalReceipts);
 
-        const fork = harness.events
-          .filter((event) => event.type === "subagent.updated")
-          .at(-1)?.subagent;
-        assert.equal(fork?.model, "claude-haiku-4-5");
-        assert.equal(fork?.modelSelection?.model, "claude-haiku-4-5");
+        const latestByTask = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated"
+              ? [[event.subagent.nativeTaskRef?.nativeId, event.subagent] as const]
+              : [],
+          ),
+        );
+        const repliesIn = (threadId: string | null | undefined) =>
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.threadId === threadId
+              ? [event.message.text]
+              : [],
+          );
+        assert.deepEqual(
+          ["task-fork-a", "task-fork-b"].map((taskId) => {
+            const fork = latestByTask.get(taskId);
+            return [fork?.model, fork?.modelSelection?.model, repliesIn(fork?.childThreadId)];
+          }),
+          [
+            ["claude-haiku-4-5", "claude-haiku-4-5", ["go", "first", "/fork-probe"]],
+            ["claude-haiku-4-5", "claude-haiku-4-5", ["go", "second", "/fork-probe"]],
+          ],
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
