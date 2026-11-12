@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -56,6 +57,7 @@ const firstAttemptId = RunAttemptId.make("attempt:secret-request-record:1");
 const steeredAttemptId = RunAttemptId.make("attempt:secret-request-record:2");
 const originalRoot = NodeId.make("node:secret-request-record:original");
 const steeredRoot = NodeId.make("node:secret-request-record:steered");
+const originalTurnId = ProviderTurnId.make("provider-turn:secret-request-record:original");
 const messageId = MessageId.make("message:secret-request-record");
 const cardId = TurnItemId.make("turn-item:secret-request:secret-request-record");
 const staleCardId = TurnItemId.make("turn-item:secret-request:secret-request-record:stale");
@@ -168,6 +170,25 @@ it.effect("closes a secret card recorded under an earlier root after a steering 
       },
     });
 
+    // The first attempt reached the provider; the card is asked on that turn.
+    yield* projections.apply({
+      id: EventId.make("secret-request-record:turn"),
+      type: "provider-turn.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: originalTurnId,
+        providerThreadId,
+        nodeId: originalRoot,
+        runAttemptId: firstAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+
     const record = (commandId: string, nodeId: NodeId, turnItemId: TurnItemId) =>
       orchestrator.dispatch({
         type: "secret_request.record",
@@ -196,6 +217,7 @@ it.effect("closes a secret card recorded under an earlier root after a steering 
     yield* record("secret-request-record:open", originalRoot, cardId);
     const opened = yield* readCard(cardId);
     assert.equal(opened?.secretStatus, "pending");
+    assert.equal(opened?.providerTurnId, originalTurnId);
 
     // The user steers while the card waits: the run's root moves to a new attempt.
     yield* projections.apply({
@@ -256,6 +278,10 @@ it.effect("closes a secret card recorded under an earlier root after a steering 
     const cancelled = yield* readCard(cardId);
     assert.equal(cancelled?.secretStatus, "cancelled");
     assert.equal(cancelled?.status, "cancelled");
+    // Closing through the card's own node keeps the identity it was asked with,
+    // even though the run's active attempt has no provider turn of its own.
+    assert.equal(cancelled?.nodeId, originalRoot);
+    assert.equal(cancelled?.providerTurnId, originalTurnId);
 
     // A new card may not be opened under the stale root.
     const stale = yield* Effect.flip(
