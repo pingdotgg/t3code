@@ -218,7 +218,10 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReportStateInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly subscribeRefreshes: Stream.Stream<number>;
-    readonly refreshAfterTurn: (projectId: ProjectId) => Effect.Effect<void>;
+    readonly refreshAfterTurn: (
+      projectId: ProjectId,
+      options?: { readonly pushed?: boolean },
+    ) => Effect.Effect<void>;
     /** Project and remote lookups inside `effect` read once per filter, e.g. across one sync sweep. */
     readonly withSharedProjectReads: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
@@ -471,32 +474,37 @@ function withRateLimitBackoff(
   const protect = <A>(
     operation: string,
     effect: Effect.Effect<A, PullRequestProviderError>,
-    allowPaused: boolean,
+    alwaysInteractive: boolean,
   ) =>
-    limits.check(key, allowPaused ? { allowPaused: true } : undefined).pipe(
-      Effect.mapError(
-        (error) =>
-          new PullRequestProviderError({
-            provider: api.kind,
-            operation,
-            reason: "rate-limited",
-            detail: error.detail,
-            retryAt: error.retryAt,
-            cause: error,
-          }),
-      ),
-      Effect.flatMap((lease) =>
-        effect.pipe(
-          Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
-          Effect.tap(() => limits.recordSuccess({ ...key, lease })),
-          Effect.tapError((error) =>
-            error.reason === "rate-limited"
-              ? limits.recordRateLimit({
-                  ...key,
-                  lease,
-                  ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-                })
-              : Effect.void,
+    SourceControlRateLimit.Interactive.pipe(
+      Effect.map((callerInteractive) => alwaysInteractive || callerInteractive),
+      Effect.flatMap((allowPaused) =>
+        limits.check(key, allowPaused ? { allowPaused: true } : undefined).pipe(
+          Effect.mapError(
+            (error) =>
+              new PullRequestProviderError({
+                provider: api.kind,
+                operation,
+                reason: "rate-limited",
+                detail: error.detail,
+                retryAt: error.retryAt,
+                cause: error,
+              }),
+          ),
+          Effect.flatMap((lease) =>
+            effect.pipe(
+              Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
+              Effect.tap(() => limits.recordSuccess({ ...key, lease })),
+              Effect.tapError((error) =>
+                error.reason === "rate-limited"
+                  ? limits.recordRateLimit({
+                      ...key,
+                      lease,
+                      ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+                    })
+                  : Effect.void,
+              ),
+            ),
           ),
         ),
       ),
@@ -505,10 +513,10 @@ function withRateLimitBackoff(
     <Args extends ReadonlyArray<unknown>, A>(
       operation: string,
       call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
-      allowPaused = false,
+      alwaysInteractive = false,
     ) =>
     (...args: Args) =>
-      protect(operation, call(...args), allowPaused);
+      protect(operation, call(...args), alwaysInteractive);
   const interactive = <Args extends ReadonlyArray<unknown>, A>(
     operation: string,
     call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
@@ -1956,6 +1964,9 @@ export const make = Effect.gen(function* () {
                 ? {}
                 : { reviewThreadsTruncated: activity.reviewThreadsTruncated }),
               reviewThreads: activity.reviewThreads,
+              ...(activity.overviewThreads === undefined
+                ? {}
+                : { overviewThreads: activity.overviewThreads }),
               commits: activity.commits,
               ...(activity.reactions === undefined ? {} : { reactions: activity.reactions }),
             })),
@@ -3631,12 +3642,14 @@ export const make = Effect.gen(function* () {
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.fn(
     "PullRequestService.refreshAfterTurn",
-  )(function* (projectId) {
+  )(function* (projectId, options) {
     // Everything the provider holds, not just the project's repository: a turn can touch a
     // change request reached through another repository, and no epoch may move until those
     // reads are gone, or a reader in between keeps the old one under the new epoch.
     yield* forgetProviderReads();
-    listingsEpoch = ++epochCounter;
+    const epoch = ++epochCounter;
+    // A push can open or move a PR; a plain turn waits for the listing TTL to spare the API quota.
+    if (options?.pushed === true) listingsEpoch = epoch;
     projectEpochs.delete(projectId);
     if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
       const oldest = projectEpochs.keys().next().value;
@@ -3645,8 +3658,7 @@ export const make = Effect.gen(function* () {
         projectEpochs.delete(oldest);
       }
     }
-    projectEpochs.set(projectId, listingsEpoch);
-    const epoch = listingsEpoch;
+    projectEpochs.set(projectId, epoch);
     yield* readCache.invalidate(`project:${projectId}`);
     yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
   });
