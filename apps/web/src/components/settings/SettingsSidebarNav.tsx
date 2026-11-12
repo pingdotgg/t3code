@@ -464,7 +464,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           !compactSearchOpen && "max-md:hidden",
                         )}
                       >
-                        Installed extensions
+                        <T>Installed extensions</T>
                       </h3>
                       <div role="group" aria-labelledby="settings-nav-extensions">
                         <SidebarMenu>
