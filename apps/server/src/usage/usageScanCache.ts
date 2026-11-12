@@ -62,6 +62,7 @@ type SerializedRecord = readonly [
   speed: number,
   rateModelIndex?: number | null,
   unresolvedServiceTierTurnId?: string | null,
+  cacheCreation1hTokens?: number,
   supersedesDedupeKey?: string,
 ];
 
@@ -122,10 +123,16 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
       ? null
       : intern(tables.models, tables.modelIndex, record.rateModel),
     ...(record.supersedesDedupeKey !== undefined
-      ? ([record.unresolvedServiceTierTurnId ?? null, record.supersedesDedupeKey] as const)
-      : record.unresolvedServiceTierTurnId === undefined
-        ? ([] as const)
-        : ([record.unresolvedServiceTierTurnId] as const)),
+      ? ([
+          record.unresolvedServiceTierTurnId ?? null,
+          record.cacheCreation1hTokens ?? 0,
+          record.supersedesDedupeKey,
+        ] as const)
+      : record.cacheCreation1hTokens !== undefined
+        ? ([record.unresolvedServiceTierTurnId ?? null, record.cacheCreation1hTokens] as const)
+        : record.unresolvedServiceTierTurnId !== undefined
+          ? ([record.unresolvedServiceTierTurnId] as const)
+          : ([] as const)),
   ];
   return {
     s: entry.size,
@@ -216,6 +223,7 @@ export function decodeScanCache(
         speedIndex,
         rateModelIndex,
         unresolvedServiceTierTurnId,
+        cacheCreation1h = 0,
         supersedesDedupeKey,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
@@ -227,6 +235,7 @@ export function decodeScanCache(
         !Number.isFinite(timestampMs) ||
         model === undefined ||
         (unresolvedServiceTierTurnId != null && typeof unresolvedServiceTierTurnId !== "string") ||
+        !Number.isFinite(cacheCreation1h) ||
         (supersedesDedupeKey !== undefined && typeof supersedesDedupeKey !== "string") ||
         (rateModelIndex != null && rateModel === undefined) ||
         !Number.isFinite(uncached) ||
@@ -256,6 +265,7 @@ export function decodeScanCache(
           outputTokens: output,
           reasoningTokens: reasoning,
         },
+        ...(cacheCreation1h > 0 ? { cacheCreation1hTokens: cacheCreation1h } : {}),
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
         ...(version >= 7 && unresolvedServiceTierTurnId != null
@@ -298,7 +308,8 @@ export function decodeScanCache(
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
     // v9 and v11 repair skipped Codex requests; clean v8+ entries stay served while unchanged.
-    // Claude history before v14 lacks authoritative fallback replacement keys.
+    // v10 adds Claude advisor calls; before v12 a repeated Claude key kept its first, possibly partial, copy.
+    // v13 adds Claude 1-hour cache writes; v14 adds authoritative fallback replacement keys.
     const legacy =
       (entry.p === "claude" && version < 14) ||
       (format.state !== undefined &&

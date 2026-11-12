@@ -1887,6 +1887,43 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("counts unpriced tokens from the unpriced records of a mixed model", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const message = (id: string, cost: number, input: number, output: number, minute: number) =>
+        encodeUnknownJson({
+          id,
+          sessionID: "session-1",
+          role: "assistant",
+          modelID: "acme-coder-1",
+          providerID: "acme",
+          time: { created: Date.parse(`2026-08-01T10:0${minute}:00Z`) },
+          cost,
+          tokens: { input, output, reasoning: 0, cache: { read: 0, write: 0 } },
+        });
+      const priced = yield* message("msg_priced", 1, 60, 40, 0);
+      const unpriced = yield* message("msg_unpriced", 0, 9_000, 900, 1);
+      yield* Effect.promise(async () => {
+        const directory = NodePath.join(home, "opencode", "storage", "message", "session-1");
+        await NodeFSP.mkdir(directory, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(directory, "msg_priced.json"), priced);
+        await NodeFSP.writeFile(NodePath.join(directory, "msg_unpriced.json"), unpriced);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-unpriced-tokens", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const model = mergeUsage(
+        [{ environmentId: EnvironmentId.make("local"), label: "local", summary }],
+        summary.contractVersion,
+      ).models.find((entry) => entry.model === "acme-coder-1");
+
+      assert.strictEqual(model?.costUsd, 1);
+      assert.strictEqual(model?.totalTokens, 10_000);
+      assert.strictEqual(model?.unpricedTokens, 9_900);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

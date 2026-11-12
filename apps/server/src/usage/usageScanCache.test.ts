@@ -65,7 +65,16 @@ describe("scan cache round trip", () => {
       [
         "/a.jsonl",
         100,
-        [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5-5", speed: "fast" })],
+        [
+          record(),
+          record({
+            dedupeKey: "msg_2::fallback",
+            supersedesDedupeKey: "msg_2:",
+            model: "claude-opus-5-5",
+            speed: "fast",
+            cacheCreation1hTokens: 8,
+          }),
+        ],
       ],
       [
         "/b.jsonl",

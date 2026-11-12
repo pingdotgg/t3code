@@ -30,6 +30,13 @@ export function parseClaudeLine(line: string): readonly UsageRecord[] {
   return parseClaudeRecord(parsed);
 }
 
+function cacheCreation1h(usage: Record<string, unknown>): { cacheCreation1hTokens?: number } {
+  const split = usage["cache_creation"];
+  if (typeof split !== "object" || split === null) return {};
+  const tokens = tokenCount((split as Record<string, unknown>)["ephemeral_1h_input_tokens"]);
+  return tokens > 0 ? { cacheCreation1hTokens: tokens } : {};
+}
+
 function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
   if (typeof parsed !== "object" || parsed === null) return [];
 
@@ -75,6 +82,7 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
     model: fallbackModel ?? model,
     sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
     totals: usageTotals(serving ?? usageRecord),
+    ...cacheCreation1h(serving ?? usageRecord),
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
     dedupeKey: serving === null || dedupeKey === null ? dedupeKey : `${dedupeKey}:fallback`,
@@ -104,6 +112,7 @@ function parseClaudeRecord(parsed: unknown): readonly UsageRecord[] {
       model: entryModel,
       sessionId: executor.sessionId,
       totals: usageTotals(entry),
+      ...cacheCreation1h(entry),
       reportedCostUsd: null,
       speed: executor.speed,
       dedupeKey: dedupeKey === null ? null : `${dedupeKey}:${kind}:${index}`,
