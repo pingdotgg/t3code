@@ -239,7 +239,7 @@ import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
@@ -2473,9 +2473,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ? `Replying to ${replyTo.subagents.map((subagent) => subagent.title).join(", ")}`
             : "Replying to",
           description: (
-            <button
-              type="button"
-              className="cursor-pointer hover:text-foreground"
+            <InlineButton
+              tone="muted"
               onClick={() => {
                 const { citation } = replyTo;
                 const source = readThreadShell(
@@ -2485,7 +2484,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               }}
             >
               {assistantCitationLabel(replyTo.citation)}
-            </button>
+            </InlineButton>
           ),
           dismissLabel: "Cancel reply",
           onDismiss: () => setComposerDraftReplyTo(composerDraftTarget, null),
@@ -3326,7 +3325,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <ComposerBannerStack items={shelfItems} />
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
-              <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
+              <ComposerBanner.Root
+                data-chat-composer-top-drawer="true"
+                surface="panel"
+                variant="info"
+              >
                 {pendingUserInputs.length > 0 ? (
                   <ComposerPendingUserInputPanel
                     pendingUserInputs={pendingUserInputs}
@@ -3367,15 +3370,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             data-chat-composer-surface="true"
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
-              "rounded-2xl transition-[background-color] duration-200",
-              "in-data-[thread-context-over]:bg-accent/45 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-inset in-data-[thread-context-over]:ring-primary/70",
-              isDragOverComposer ? "bg-accent/45 ring-1 ring-inset ring-primary/70" : null,
+              "rounded-3xl transition-[background-color] duration-200",
+              "in-data-[thread-context-over]:bg-info/10 in-data-[thread-context-over]:ring-1 in-data-[thread-context-over]:ring-inset in-data-[thread-context-over]:ring-ring",
+              isDragOverComposer ? "bg-info/10 ring-1 ring-inset ring-ring" : null,
               projectSelectionRequired ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,
             )}
           >
             {showCollapsedMobilePromptRow ? (
-              <div className="flex items-center justify-between gap-2 px-3 py-2">
+              <div className="flex items-center justify-between gap-2 py-2 ps-3.5 pe-2">
                 <button
                   type="button"
                   data-chat-composer-transition-prompt="true"
@@ -3404,7 +3407,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <button
                   type="button"
                   data-chat-composer-transition-actions="true"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-control surface-pill text-foreground hover:surface-raised-hover disabled:opacity-64"
                   disabled={collapsedComposerPrimaryActionDisabled}
                   aria-label={collapsedComposerPrimaryActionLabel}
                   onPointerDown={(event) => event.preventDefault()}

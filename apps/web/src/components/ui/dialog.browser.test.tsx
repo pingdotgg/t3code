@@ -68,7 +68,7 @@ describe("dialog initial focus", () => {
         <Dialog defaultOpen>
           <DialogPopup {...(reason === "caller initialFocus" ? { initialFocus: cancel } : {})}>
             <DialogTitle>Install update?</DialogTitle>
-            <DialogClose ref={cancel} render={<Button variant="outline" />}>
+            <DialogClose ref={cancel} render={<Button variant="secondary" />}>
               Cancel
             </DialogClose>
             <DialogAction disabled={reason === "disabled action"}>Install</DialogAction>

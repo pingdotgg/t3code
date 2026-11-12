@@ -35,8 +35,7 @@ export function settingsScopeEnvironmentLabel(
   environment: ScopeEnvironment,
   environments: readonly ScopeEnvironment[],
 ) {
-  const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
-  return secondary ? `${primary} · ${secondary}` : primary;
+  return settingsScopeEnvironmentLabels(environment, environments).primary;
 }
 
 export function settingsScopeProjectMachines(
@@ -46,13 +45,19 @@ export function settingsScopeProjectMachines(
 ) {
   const machines = group.memberProjects.map((member) => {
     const environment = environments.find((entry) => entry.environmentId === member.environmentId);
-    if (!environment) return member.environmentLabel ?? member.environmentId;
+    if (!environment)
+      return { primary: member.environmentLabel ?? member.environmentId, secondary: "" };
     const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
     const address =
       secondary || (includeAddresses ? settingsScopeEnvironmentAddress(environment) : "");
-    return includeAddresses || address ? `${primary} · ${address}` : primary;
+    return { primary, secondary: address };
   });
-  return Array.from(new Set(machines));
+  return machines.filter(
+    (machine, index) =>
+      machines.findIndex(
+        (other) => other.primary === machine.primary && other.secondary === machine.secondary,
+      ) === index,
+  );
 }
 
 export const ALL_ENVIRONMENTS_VALUE = "all";

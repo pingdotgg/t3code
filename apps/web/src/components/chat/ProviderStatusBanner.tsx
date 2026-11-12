@@ -144,7 +144,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
       <Alert
         variant={isWarning ? "warning" : "error"}
         role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
-        surface="glass"
+        surface="tray"
         controlAlignment="first-line"
       >
         <InfoIcon />
@@ -168,7 +168,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
                 disabled={!canRefresh || isRefreshing}
                 onClick={() => void refresh()}
                 size="xs"
-                variant="outline"
+                variant="secondary"
               >
                 <RefreshIcon />
                 {isRefreshing ? "Refreshing..." : "Refresh"}

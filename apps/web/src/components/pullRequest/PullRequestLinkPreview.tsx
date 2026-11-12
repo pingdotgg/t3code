@@ -145,15 +145,19 @@ export function PullRequestLinkPreview({
               fallback
             ) : (
               <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                <div className="flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
                   <span className="min-w-0 truncate">{card.repository}</span>
                   <span className="shrink-0">#{card.number}</span>
-                  <span aria-hidden>·</span>
                   {state === null ? null : (
-                    <span className="inline-flex shrink-0 items-center gap-1">
-                      <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
-                      {state.label}
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+                        <state.Icon
+                          aria-label={state.label}
+                          className={`size-3 ${state.toneClassName}`}
+                        />
+                      </TooltipTrigger>
+                      <TooltipPopup>{state.label}</TooltipPopup>
+                    </Tooltip>
                   )}
                 </div>
                 {subject?.kind === "comment" ? (
@@ -161,22 +165,21 @@ export function PullRequestLinkPreview({
                 ) : subject?.kind === "commit" ? (
                   <LinkedCommit commit={subject.commit} />
                 ) : (
-                  <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                  <p className="mt-1 text-label leading-snug text-foreground text-pretty">
                     {card.title}
                   </p>
                 )}
                 {card.author === undefined || subject !== null ? null : (
-                  <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <div className="mt-2 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
                     <PullRequestActorAvatar actor={card.author} className="size-4" />
-                    <span className="min-w-0 truncate">{authorLabel}</span>
-                    {preview === null ? null : (
-                      <>
-                        <span aria-hidden>·</span>
-                        <span className="shrink-0">
+                    <span className="min-w-0">
+                      <span className="block truncate">{authorLabel}</span>
+                      {preview === null ? null : (
+                        <span className="block">
                           opened <RelativeTime timestamp={preview.createdAt} />
                         </span>
-                      </>
-                    )}
+                      )}
+                    </span>
                   </div>
                 )}
               </div>
@@ -200,9 +203,9 @@ function LinkedComment({
   const outcome = pullRequestReviewOutcome(subject.reviewState);
   return (
     <div className="mt-2 min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
         <PullRequestActorAvatar actor={subject.author} className="size-4" />
-        <span className="min-w-0 truncate font-medium text-foreground">
+        <span className="min-w-0 truncate text-label text-foreground">
           {actorLabel(subject.author)}
         </span>
         {outcome === null ? (
@@ -210,13 +213,12 @@ function LinkedComment({
         ) : (
           <PullRequestReviewOutcomeBadge outcome={outcome} className="shrink-0" />
         )}
-        <span aria-hidden>·</span>
         <span className="shrink-0">
           <RelativeTime timestamp={subject.createdAt} />
         </span>
       </div>
       {subject.excerpt === null ? null : (
-        <p className="mt-1.5 line-clamp-4 text-xs leading-relaxed text-foreground text-pretty">
+        <p className="mt-1.5 line-clamp-4 text-meta leading-relaxed text-foreground text-pretty">
           {subject.excerpt}
         </p>
       )}
@@ -232,19 +234,17 @@ function LinkedCommit({
   const author = commit.authors?.[0];
   return (
     <div className="mt-2 min-w-0">
-      <p className="text-sm font-medium leading-snug text-foreground text-pretty">
+      <p className="text-label leading-snug text-foreground text-pretty">
         {commit.messageHeadline}
       </p>
-      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
         <code className="shrink-0 font-mono">{commit.oid.slice(0, 7)}</code>
         {author === undefined ? null : (
           <>
-            <span aria-hidden>·</span>
             <PullRequestActorAvatar actor={author} className="size-4" />
             <span className="min-w-0 truncate">{actorLabel(author)}</span>
           </>
         )}
-        <span aria-hidden>·</span>
         <span className="shrink-0">
           <RelativeTime timestamp={commit.committedDate} />
         </span>

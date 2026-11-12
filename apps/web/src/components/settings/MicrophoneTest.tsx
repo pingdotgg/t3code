@@ -194,7 +194,7 @@ export function MicrophoneTest({
     phase === "recording" || phase === "starting" ? (
       <Button
         size="sm"
-        variant="outline"
+        variant="secondary"
         aria-label="Stop recording"
         disabled={phase !== "recording"}
         onClick={() => {
@@ -206,7 +206,7 @@ export function MicrophoneTest({
         Stop
       </Button>
     ) : (
-      <Button size="sm" variant="outline" onClick={() => void start()}>
+      <Button size="sm" variant="secondary" onClick={() => void start()}>
         {phase === "ready" ? <RotateCcwIcon /> : <MicIcon />}
         {phase === "ready" ? "Record again" : "Record"}
       </Button>
@@ -309,7 +309,7 @@ function MicrophonePlayback({ src, duration }: { src: string; duration: number }
       />
       <Button
         size="icon-sm-pill"
-        variant="outline"
+        variant="secondary"
         aria-label={playing ? "Pause recording" : "Play recording"}
         onClick={() => void togglePlayback()}
       >
@@ -339,7 +339,7 @@ function MicrophonePlayback({ src, duration }: { src: string; duration: number }
           className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-muted accent-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&::-webkit-slider-thumb]:size-2.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-moz-range-thumb]:size-2.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-primary"
         />
       )}
-      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+      <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
         {formatTime(position)} / {formatTime(duration)}
       </span>
     </>

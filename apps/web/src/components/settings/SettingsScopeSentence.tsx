@@ -105,11 +105,13 @@ function ScopeOptionLabel({ option }: { option: ScopeOption }) {
       <span className="min-w-0 flex-1">
         <span className="block truncate">{option.label}</span>
         {option.secondary ? (
-          <span className="block truncate text-xs text-muted-foreground">{option.secondary}</span>
+          <span className="block whitespace-pre-line text-meta text-muted-foreground">
+            {option.secondary}
+          </span>
         ) : null}
       </span>
       {option.offline ? (
-        <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
+        <span className="shrink-0 text-meta text-muted-foreground">Offline</span>
       ) : null}
     </>
   );
@@ -139,7 +141,7 @@ function ScopeMenu({
   const trigger = (
     <Trigger
       aria-label={`${ariaLabel}: ${label}`}
-      render={<Button variant="outline" size="sm" />}
+      render={<Button variant="secondary" size="sm" />}
       className="min-w-0 max-w-72"
     >
       {icon}
@@ -199,7 +201,7 @@ function ScopeMenu({
   return (
     <Menu>
       {trigger}
-      <MenuPopup align="start">
+      <MenuPopup align="start" variant="scope">
         <div className="w-72 max-w-full">
           <MenuRadioGroup
             value={value}
@@ -330,12 +332,12 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
               ? group.workspaceRoot
               : ""
             : sameName.some((other) => other.machines === machines)
-              ? `${machines} · ${group.workspaceRoot}`
+              ? `${machines}\n${group.workspaceRoot}`
               : machines;
         return {
           value: group.projectKey,
           label: group.displayName,
-          secondary: group.archived ? ["Archived", location].filter(Boolean).join(" · ") : location,
+          secondary: group.archived ? ["Archived", location].filter(Boolean).join("\n") : location,
           icon: <ProjectFavicon project={group} className="size-3.5 shrink-0" />,
         };
       })}

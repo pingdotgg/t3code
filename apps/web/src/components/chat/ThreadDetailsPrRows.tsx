@@ -1,4 +1,3 @@
-import { pipe } from "effect/Function";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import type {
   EnvironmentId,
@@ -109,13 +108,15 @@ function ThreadDetailsPrRows({
             },
           });
   const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
-  const rest =
-    currentLink === null
-      ? []
-      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
-          .map((line) => line.link)
-          .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
-  if (rest.length === 0) return currentRow;
+  const visibleLinks = visibleThreadPullRequests(links);
+  if (currentLink === null || visibleLinks.length <= 1) return currentRow;
+  const restCount = visibleLinks.length - 1;
+  const currentKey = threadPullRequestKeyOf(currentLink);
+  const rest = expanded
+    ? pullRequestListLines(resolveThreadPullRequestChains(visibleLinks))
+        .map((line) => line.link)
+        .filter((link) => threadPullRequestKeyOf(link) !== currentKey)
+    : [];
 
   return (
     <>
@@ -138,18 +139,18 @@ function ThreadDetailsPrRows({
       <ThreadDetailsControl
         variant="ghost"
         size="sm"
+        aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
         part="row"
         tone="muted"
         className="w-full active:scale-100"
       >
-        {/* Chevrons, not plus and minus: the plus already means "add" in this card. */}
         {expanded ? (
           <ChevronUpIcon aria-hidden className="size-4 shrink-0" />
         ) : (
           <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
         )}
-        {expanded ? "Show less" : `Show ${rest.length} more`}
+        {expanded ? "Show less" : `Show ${restCount} more`}
       </ThreadDetailsControl>
     </>
   );

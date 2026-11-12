@@ -92,10 +92,10 @@ function ResponseCard({
         data-thread-find-ignore
         aria-label={label}
         // The message's markdown styles colour and underline links; a card is neither.
-        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-sm text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
+        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
       >
         {title ? (
-          <span className="block truncate text-xs font-medium text-foreground/80" dir="auto">
+          <span className="block truncate text-meta text-foreground/80" dir="auto">
             {title}
           </span>
         ) : null}
@@ -255,7 +255,7 @@ export function AssistantCitationChip({
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
-      className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
+      className="inline-flex h-full min-w-0 items-center gap-[0.33em] rounded-kbd text-inherit no-underline focus-visible:outline-2 focus-visible:outline-ring"
       aria-label={`View cited assistant text: ${label}`}
     >
       <QuoteIcon aria-hidden="true" />

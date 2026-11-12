@@ -39,6 +39,8 @@ import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsThreadPrRows } from "./chat/ThreadDetailsPrRows";
+import type { ReactElement } from "react";
+import { createPortal } from "react-dom";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -86,6 +88,12 @@ interface BranchToolbarBranchSelectorProps {
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
+  /** Panel only: renders the PR rows here instead of under the branch row; null holds them. */
+  prRowsContainer?: HTMLElement | null;
+}
+
+function portalTo(container: HTMLElement | undefined, node: ReactElement) {
+  return container ? createPortal(node, container) : node;
 }
 
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = "Stop the current turn to switch worktrees.";
@@ -110,6 +118,7 @@ export function BranchToolbarBranchSelector({
   onStartFromOriginChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
+  prRowsContainer,
 }: BranchToolbarBranchSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
@@ -720,7 +729,7 @@ export function BranchToolbarBranchSelector({
       }
       popupProps={{
         align: displayMode === "panel" ? "start" : "end",
-        side: displayMode === "panel" ? "bottom" : "top",
+        side: displayMode === "panel" ? "right" : "top",
         className: cn("flex flex-col", displayMode === "panel" ? "w-(--anchor-width)" : "w-80"),
         ...(displayMode === "toolbar" ? composerFloatingLayerProps : {}),
       }}
@@ -758,7 +767,7 @@ export function BranchToolbarBranchSelector({
           <ComboboxTrigger
             render={
               displayMode === "panel" ? (
-                <ThreadDetailsControl part="select" />
+                <ThreadDetailsControl part="row" />
               ) : (
                 <ComposerControl size="xs" />
               )
@@ -768,8 +777,7 @@ export function BranchToolbarBranchSelector({
           >
             <GitBranchIcon
               className={cn(
-                "size-3 shrink-0",
-                displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
+                displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0",
               )}
             />
             <ComposerContextLabel displayMode={displayMode}>
@@ -777,15 +785,18 @@ export function BranchToolbarBranchSelector({
             </ComposerContextLabel>
           </ComboboxTrigger>
         </span>
-        {displayMode === "panel" ? (
-          <ThreadDetailsThreadPrRows
-            threadRef={threadRef}
-            project={activeProject}
-            branchPr={branchPr}
-            branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
-            onActed={() => branchStatusQuery.refresh()}
-          />
-        ) : null}
+        {displayMode === "panel" && prRowsContainer !== null
+          ? portalTo(
+              prRowsContainer,
+              <ThreadDetailsThreadPrRows
+                threadRef={threadRef}
+                project={activeProject}
+                branchPr={branchPr}
+                branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
+                onActed={() => branchStatusQuery.refresh()}
+              />,
+            )
+          : null}
       </div>
     </BranchPicker>
   );

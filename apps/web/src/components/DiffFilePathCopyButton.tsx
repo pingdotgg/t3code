@@ -1,3 +1,4 @@
+import { cn } from "~/lib/utils";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef } from "react";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -30,7 +31,11 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
           />
         }
       >
-        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+        {isCopied ? (
+          <CheckIcon className={cn("size-3", isCopied ? "text-success" : "text-dim-foreground")} />
+        ) : (
+          <CopyIcon className={cn("size-3", isCopied ? "text-success" : "text-dim-foreground")} />
+        )}
       </TooltipTrigger>
       <TooltipPopup>
         <p>{isCopied ? "Copied" : "Copy path"}</p>

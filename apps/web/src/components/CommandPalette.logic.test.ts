@@ -178,7 +178,9 @@ describe("buildThreadActionItems", () => {
       runThread,
     });
     expect(new Set(items.map((item) => item.value)).size).toBe(2);
-    const remoteItem = items.find((item) => item.description === "Remote project · Current thread");
+    const remoteItem = items.find(
+      (item) => item.value === `thread:${remote.environmentId}:${remote.id}`,
+    );
     await remoteItem?.run();
     expect(runThread).toHaveBeenCalledWith(remote);
   });

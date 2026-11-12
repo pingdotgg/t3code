@@ -191,7 +191,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           title={props.displayName || props.provider?.displayName || "Codex"}
           description={<CodexSignInDescription />}
           control={
-            <Button size="sm" variant="outline" className="min-w-44" disabled>
+            <Button size="sm" variant="secondary" className="min-w-44" disabled>
               Open sign-in page
             </Button>
           }
@@ -612,15 +612,22 @@ function ManagedCodexSetup({
   }, [clientCallback, url]);
 
   const runtimeDescription =
-    installation?.phase === "downloading"
-      ? `Downloading ${(installation.downloadedBytes / 1_000_000).toFixed(1)}${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)}`} MB.`
-      : installation?.phase === "extracting"
-        ? "Installing Codex."
-        : installation?.phase === "verifying"
-          ? "Checking Codex."
-          : installed
-            ? `${installation?.source === "local" ? "Using your installed Codex" : "Managed by T3 Code"}${installation?.installedVersion ? ` · v${installation.installedVersion}` : ""}.`
-            : (installation?.message ?? "T3 Code downloads and manages Codex for you.");
+    installation?.phase === "downloading" ? (
+      `Downloading ${(installation.downloadedBytes / 1_000_000).toFixed(1)}${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)}`} MB.`
+    ) : installation?.phase === "extracting" ? (
+      "Installing Codex."
+    ) : installation?.phase === "verifying" ? (
+      "Checking Codex."
+    ) : installed ? (
+      <span className="flex flex-col gap-0.5">
+        <span>
+          {installation?.source === "local" ? "Using your installed Codex." : "Managed by T3 Code."}
+        </span>
+        {installation?.installedVersion ? <span>v{installation.installedVersion}</span> : null}
+      </span>
+    ) : (
+      (installation?.message ?? "T3 Code downloads and manages Codex for you.")
+    );
   const accountDescription = finishingSignIn ? (
     "Finishing sign-in..."
   ) : installActive ? (
@@ -666,7 +673,7 @@ function ManagedCodexSetup({
   const waitingControl = (
     <Button
       size="sm"
-      variant={remoteWeb ? "default" : "outline"}
+      variant={remoteWeb ? "default" : "secondary"}
       className={presentation === "onboarding" ? "min-w-44" : undefined}
       disabled={
         handoffQuery.data?.phase === "finished"
@@ -730,7 +737,7 @@ function ManagedCodexSetup({
             />
           </div>
           <Button
-            variant="outline"
+            variant="secondary"
             type="submit"
             disabled={pending || readOnly || !callbackUrl.trim()}
           >
@@ -752,7 +759,7 @@ function ManagedCodexSetup({
         {handoffUrl ? (
           <details>
             <summary className="cursor-pointer">Other ways to connect</summary>
-            <Button className="mt-2" size="sm" variant="outline" render={<a href={handoffUrl} />}>
+            <Button className="mt-2" size="sm" variant="secondary" render={<a href={handoffUrl} />}>
               Use T3 desktop for automatic return
             </Button>
           </details>
@@ -985,7 +992,7 @@ function ManagedCodexSetup({
               <>
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   disabled={unavailable || busy}
                   onClick={() => setAccountPickerOpen(true)}
                 >

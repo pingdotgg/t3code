@@ -29,7 +29,7 @@ function ConfiguredT3ConnectSidebarAvatar() {
         elements: {
           avatarBox: "size-7",
           // Clerk's unlayered trigger reset (padding, radius, background) beats layered utilities.
-          userButtonTrigger: "mb-1! rounded-lg! p-1! hover:bg-sidebar-row-hover!",
+          userButtonTrigger: "mb-1! rounded-control! p-1! hover:surface-ghost-hover!",
         },
       }}
     >

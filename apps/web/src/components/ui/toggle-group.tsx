@@ -16,11 +16,16 @@ function ToggleGroup({
   variant = "segmented",
   size: sizeProp,
   orientation = "horizontal",
+  detached = false,
   children,
   ...props
-}: ToggleGroupPrimitive.Props & VariantProps<typeof toggleVariants>) {
+}: ToggleGroupPrimitive.Props & VariantProps<typeof toggleVariants> & { detached?: boolean }) {
   const size =
-    sizeProp === undefined ? (variant === "segmented" ? "segmented" : "default") : sizeProp;
+    sizeProp === undefined
+      ? variant === "segmented" || variant === "segmented-flat"
+        ? "segmented"
+        : "default"
+      : sizeProp;
   const value = { size, variant };
   return (
     <ToggleGroupPrimitive
@@ -29,13 +34,18 @@ function ToggleGroup({
         orientation === "horizontal"
           ? "*:pointer-coarse:after:min-w-auto"
           : "*:pointer-coarse:after:min-h-auto",
-        variant === "segmented"
-          ? "gap-0.5 rounded-lg bg-input/40 p-0.5"
-          : variant === "default"
-            ? "gap-0.5"
-            : orientation === "horizontal"
-              ? "*:not-first:not-data-[slot=separator]:before:-start-[0.5px] *:not-last:not-data-[slot=separator]:before:-end-[0.5px] *:not-first:rounded-s-none *:not-last:rounded-e-none *:not-first:border-s-0 *:not-last:border-e-0 *:not-first:before:rounded-s-none *:not-last:before:rounded-e-none"
-              : "*:not-first:not-data-[slot=separator]:before:-top-[0.5px] *:not-last:not-data-[slot=separator]:before:-bottom-[0.5px] flex-col *:not-first:rounded-t-none *:not-last:rounded-b-none *:not-first:border-t-0 *:not-last:border-b-0 *:not-first:before:rounded-t-none *:not-last:before:rounded-b-none *:data-[slot=toggle]:not-last:before:hidden dark:*:last:before:hidden dark:*:first:before:block",
+        variant === "segmented-flat"
+          ? "surface-well gap-0.5 rounded-control p-px"
+          : variant === "segmented"
+            ? "surface-well gap-0.5 rounded-[9px] p-px"
+            : detached
+              ? cn("gap-1", orientation === "vertical" && "flex-col")
+              : variant === "default"
+                ? "gap-0.5"
+                : orientation === "horizontal"
+                  ? "*:not-first:not-data-[slot=separator]:before:-start-[0.5px] *:not-last:not-data-[slot=separator]:before:-end-[0.5px] *:not-first:rounded-s-none *:not-last:rounded-e-none *:not-first:border-s-0 *:not-last:border-e-0 *:not-first:before:rounded-s-none *:not-last:before:rounded-e-none"
+                  : "*:not-first:not-data-[slot=separator]:before:-top-[0.5px] *:not-last:not-data-[slot=separator]:before:-bottom-[0.5px] flex-col *:not-first:rounded-t-none *:not-last:rounded-b-none *:not-first:border-t-0 *:not-last:border-b-0 *:not-first:before:rounded-t-none *:not-last:before:rounded-b-none *:data-[slot=toggle]:not-last:before:hidden dark:*:last:before:hidden dark:*:first:before:block",
+        detached && variant === "outline" && "*:data-pressed:text-strong-foreground",
         className,
       )}
       data-size={size}

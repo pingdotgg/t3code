@@ -41,6 +41,7 @@ export function extensionStatusBannerItem(
     id: "pi-extension-status",
     variant: "default",
     icon: <span>▸</span>,
+    // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's Pi extension status line; the redesign restyles it later.
     title: <output>{`Pi · ${statuses.map((status) => status.text).join(" · ")}`}</output>,
   };
 }
@@ -98,10 +99,12 @@ export function goalNowItem(input: {
   return {
     id: `goal:${input.threadId}`,
     icon: <TargetIcon />,
-    title:
-      presentation.usage === null
-        ? presentation.title
-        : `${presentation.title} · ${presentation.usage}`,
+    title: (
+      <span className="inline-flex flex-col">
+        <span>{presentation.title}</span>
+        {presentation.usage === null ? null : <span>{presentation.usage}</span>}
+      </span>
+    ),
     description: presentation.objective,
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (
@@ -113,7 +116,6 @@ export function goalNowItem(input: {
             >
               Resume
             </InlineButton>
-            <span aria-hidden>·</span>
           </>
         ) : null}
         <InlineButton
@@ -218,7 +220,10 @@ export function backgroundWorkNowItem(input: {
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
-          {presentation.waiting ? "Waiting" : "Running"} · {only.label}
+          <span className="inline-flex flex-col">
+            <span>{presentation.waiting ? "Waiting" : "Running"}</span>
+            <span>{only.label}</span>
+          </span>
         </>
       ) : (
         presentation.title

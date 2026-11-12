@@ -48,7 +48,7 @@ export function CommandPaletteSubmitButton(props: {
         render={
           <Button
             id={props.id}
-            variant="outline"
+            variant="secondary"
             size="xs"
             className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
             aria-label={props.ariaLabel}
@@ -157,14 +157,14 @@ export function RemoteRepositorySummary(props: {
 }) {
   return (
     <div className="shrink-0 p-2 pb-0">
-      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
-      <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
+      <div className="px-2 py-1.5 text-meta text-dim-foreground">Repository</div>
+      <div className="flex min-h-8 items-center gap-2 rounded-control px-2 py-1.5">
         <CommandPaletteTitleIcon>
           {remoteProjectSourceIcon(props.source, ITEM_ICON_CLASS)}
         </CommandPaletteTitleIcon>
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-foreground text-sm">{props.title}</span>
-          <span className="truncate text-muted-foreground/85 text-xs">{props.description}</span>
+          <span className="truncate text-strong-foreground text-sm">{props.title}</span>
+          <span className="truncate text-dim-foreground text-xs">{props.description}</span>
         </span>
       </div>
     </div>
