@@ -50,16 +50,14 @@ export function ProjectsSettings() {
         />
       ) : unavailable ? (
         unavailable
-      ) : (
+      ) : manualOrder ? (
         <SettingsPageContainer>
-          {manualOrder ? (
-            <ProjectOrderList />
-          ) : (
-            <SettingsScopeNotice inline target="project">
-              Choose a project to manage its name, icon, checkouts and actions.
-            </SettingsScopeNotice>
-          )}
+          <ProjectOrderList />
         </SettingsPageContainer>
+      ) : (
+        <SettingsScopeNotice target="project">
+          Choose a project to manage its name, icon, checkouts and actions.
+        </SettingsScopeNotice>
       )}
     </div>
   );

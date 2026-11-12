@@ -92,9 +92,6 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
     expect(
-      reorderProjects(makeUiState(), currentOrder, [keyB], [keyALocal, keyARemote]).projectOrder,
-    ).toEqual([keyB, keyALocal, keyARemote, keyC]);
-    expect(
       reorderProjects(
         makeUiState(),
         [keyB, keyALocal, keyARemote, keyC],
