@@ -1677,7 +1677,7 @@ function startAnnotation(
         return;
       }
     }
-    if (event.key === "Escape") {
+    if (event.key === "Escape" && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
       teardown(true);
