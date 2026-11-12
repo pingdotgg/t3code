@@ -247,6 +247,26 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("checks shortly after startup and then every four hours", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* TestClock.adjust("15 seconds");
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust("3 hours");
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust("1 hour");
+        assert.equal(harness.checkCount(), 2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect(
     "rejects install while a refresh check is in progress and releases the reservation",
     () =>
@@ -422,6 +442,33 @@ describe("DesktopUpdates", () => {
 
         const changedState = yield* updates.setChannel("nightly");
         assert.equal(changedState.channel, "nightly");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("shows why a download failed, not only the channel", () => {
+    const harness = makeHarness({
+      downloadUpdate: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+          channel: "nightly",
+          cause: new Error("net::ERR_CONTENT_LENGTH_MISMATCH"),
+        }),
+      ),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        assert.isFalse(result.completed);
+
+        const state = yield* updates.getState;
+        assert.equal(state.errorContext, "download");
+        assert.include(state.message ?? "", "ERR_CONTENT_LENGTH_MISMATCH");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -628,7 +675,11 @@ describe("DesktopUpdates", () => {
         const result = yield* updates.install;
         assert.isTrue(result.accepted);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        assert.deepEqual(harness.installSteps, [
+          "closeSshTunnels",
+          "quitAndInstall",
+          "startBackend",
+        ]);
         assert.equal(harness.updateRestartMarkers.size, 0);
         assert.equal(harness.installRecords.size, 0);
       }),
@@ -658,7 +709,7 @@ describe("DesktopUpdates", () => {
 
         const result = yield* updates.install;
         assert.equal(result.state.errorContext, "install");
-        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+        assert.deepEqual(harness.installSteps, ["closeSshTunnels", "quitAndInstall"]);
         assert.isFalse((yield* (yield* pool.primary).snapshot).desiredRunning);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -752,7 +803,11 @@ describe("DesktopUpdates", () => {
         assert.equal(harness.quitAndInstalls(), 1);
         harness.emit("error", new Error("duplicate native installer error"));
         yield* flushCallbacks;
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        assert.deepEqual(harness.installSteps, [
+          "closeSshTunnels",
+          "quitAndInstall",
+          "startBackend",
+        ]);
 
         yield* Deferred.succeed(releaseRecovery, undefined);
         const failedResult = yield* Fiber.join(failedInstall);
@@ -901,6 +956,32 @@ describe("DesktopUpdates", () => {
         harness.emit("update-available", { version: "1.2.3" });
         yield* flushCallbacks;
         assert.equal((yield* updates.getState).availableVersion, "1.2.3");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps the current track's offers when a track switch fails to save", () => {
+    const harness = makeHarness({
+      setUpdateChannelError: new DesktopAppSettings.DesktopSettingsWriteError({
+        operation: "replace-settings-file",
+        path: "desktop-settings.json",
+        cause: new Error("rename failed"),
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const error = yield* updates
+          .setChannel("nightly", { minimumVersion: "1.2.5-nightly.20261028.1" })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "DesktopUpdateChannelPersistenceError");
+        assert.equal((yield* updates.getState).channel, "latest");
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
