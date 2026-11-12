@@ -825,13 +825,16 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-  // Candidates are compared by realpath, so the configured roots must be too.
-  const canonicalDirectory = (directory: string) =>
-    fileSystem
-      .realPath(path.resolve(directory))
-      .pipe(Effect.orElseSucceed(() => path.resolve(directory)));
-  const baseDir = yield* canonicalDirectory(serverConfig.baseDir);
-  const worktreesDir = yield* canonicalDirectory(serverConfig.worktreesDir);
+  // Recorded cwds and their realpaths are both checked, so keep both spellings of a symlinked root.
+  const rootSpellings = (directory: string) => {
+    const resolved = path.resolve(directory);
+    return fileSystem.realPath(resolved).pipe(
+      Effect.orElseSucceed(() => resolved),
+      Effect.map((realPath) => (realPath === resolved ? [resolved] : [resolved, realPath])),
+    );
+  };
+  const baseDirs = yield* rootSpellings(serverConfig.baseDir);
+  const worktreesDirs = yield* rootSpellings(serverConfig.worktreesDir);
   const platform = yield* HostProcess.Platform;
   const isWindows = platform === "win32";
   const foldWorktreeCase = isWindows;
@@ -855,10 +858,14 @@ export const make = Effect.gen(function* () {
         normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
       ),
     ) ||
-    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
+    baseDirs.some((baseDir) =>
+      normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+        normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
+      ),
     ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
+    worktreesDirs.some((worktreesDir) =>
+      isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase),
+    );
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
