@@ -663,6 +663,15 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
+  const environmentOmitsOlderSettledAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) =>
+        get(input.snapshotAtom(environmentId))?.olderSettled?.counts.some(
+          ({ count }) => count > 0,
+        ) ?? false,
+    ).pipe(Atom.withLabel(`environment-omits-older-settled:${environmentId}`)),
+  );
+
   let previousDelegatedUnderParent: ReadonlySet<string> = new Set();
   const delegatedUnderParentAtom = Atom.make((get) => {
     const environmentIds = new Set(enabledEnvironmentIds(get(input.catalogValueAtom)));
@@ -670,12 +679,17 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const environmentId of environmentIds) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
+        if (parent === undefined || !environmentIds.has(parent.environmentId)) continue;
+        const parentShell = get(environmentThreadIndexAtom(parent.environmentId)).get(
+          parent.threadId,
+        );
         if (
-          parent !== undefined &&
-          environmentIds.has(parent.environmentId) &&
           // An archived parent leaves navigation; its task there stays listed on its own.
-          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
-            null
+          parentShell !== undefined
+            ? parentShell.archivedAt === null
+            : // A parent missing from a snapshot that left out older settled threads is most
+              // likely one of them; an archived or deleted one looks the same from here.
+              get(environmentOmitsOlderSettledAtom(parent.environmentId))
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }
