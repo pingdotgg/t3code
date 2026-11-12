@@ -16,6 +16,7 @@ import ko from "./translations/ko.json";
 import ptBR from "./translations/pt-BR.json";
 import ru from "./translations/ru.json";
 import zh from "./translations/zh.json";
+import zhTW from "./translations/zh-TW.json";
 
 // Screens import GT from here so the polyfills above always load first.
 export { useGT } from "gt-react-native";
@@ -30,6 +31,7 @@ const TRANSLATIONS: Readonly<Record<string, Record<string, string>>> = {
   ja,
   ko,
   ru,
+  "zh-TW": zhTW,
 };
 
 initializeGT({
