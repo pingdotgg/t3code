@@ -45,12 +45,14 @@ function Composer({
   editorRef,
   sourceVisible = true,
   onCommandKeyDown,
+  disabled = false,
   send = "clears",
 }: {
   question: boolean;
   sourceVisible?: boolean;
   onCommandKeyDown?: (key: string, event: KeyboardEvent) => boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+  disabled?: boolean;
   send?: "clears" | "blocked" | "refusedLater";
 }) {
   const [prompt, setPrompt] = useState(promptBefore);
@@ -75,7 +77,7 @@ function Composer({
         cursor={0}
         contextRecords={new Map()}
         skills={[]}
-        disabled={false}
+        disabled={disabled}
         placeholder=""
         onChange={(next) => (question ? setAnswer(next) : setPrompt(next))}
         onCitationDraftSave={(replacedValue, savedValue) => {
@@ -321,4 +323,27 @@ it("reveals a side-chat citation using the composer scope on its parent route", 
   } finally {
     navigation.params = { environmentId: "environment", threadId: "thread" };
   }
+});
+
+it("cancels a new citation while dictation makes the composer read-only", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} disabled />);
+
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+  if (!sourceAnchor) throw new Error("Citation source did not resolve");
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      previousValue: "See ",
+      value: promptBefore,
+      citationStart: "See ".length,
+      sourceAnchor,
+      insertedSpaces: { before: false, after: true },
+    }),
+  );
+  await expect.element(page.getByLabelText("Comment on selected text")).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe("See ");
 });
