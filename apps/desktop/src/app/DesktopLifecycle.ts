@@ -12,6 +12,7 @@ import type * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { stopChildProcessesBeforeExit } from "./DesktopExitChildren.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -304,6 +305,7 @@ export const make = DesktopLifecycle.of({
     });
 
     // Electron can exit without before-quit, e.g. when the X11/Wayland connection drops.
+    // Children (the backend too) get SIGTERM while main still holds an AppImage mount open.
     // Prepended so the record is buffered before the trace sink's own exit flush runs.
     yield* addScopedListener(
       process,
@@ -314,10 +316,15 @@ export const make = DesktopLifecycle.of({
             const shutdown = yield* DesktopShutdown.DesktopShutdown;
             if (yield* shutdown.isComplete) return;
             const attributes = { exitCode, quitPhase: quit.phase };
-            yield* logLifecycleError(
-              "desktop main process exiting before shutdown completed",
-              attributes,
-            ).pipe(Effect.withSpan("desktop.lifecycle.exit", { attributes }));
+            yield* Effect.gen(function* () {
+              yield* logLifecycleError(
+                "desktop main process exiting before shutdown completed",
+                attributes,
+              );
+              if (environment.platform !== "linux") return;
+              const killed = stopChildProcessesBeforeExit(process.pid);
+              yield* Effect.annotateCurrentSpan({ killedChildPids: killed });
+            }).pipe(Effect.withSpan("desktop.lifecycle.exit", { attributes }));
           }),
         );
       },
