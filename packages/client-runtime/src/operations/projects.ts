@@ -9,6 +9,7 @@ import type {
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
@@ -18,6 +19,7 @@ import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
   findProjectByPath,
+  getBrowseParentPath,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
@@ -127,7 +129,8 @@ export function githubIncompleteOwnerRepositoryMessage(
 
 export function normalizePastedCloneUrl(input: string): string {
   const trimmed = input.trim();
-  return REPOSITORY_SHORTHAND.test(trimmed) ? (defaultHostCloneUrl(trimmed) ?? trimmed) : trimmed;
+  if (REPOSITORY_SHORTHAND.test(trimmed)) return defaultHostCloneUrl(trimmed) ?? trimmed;
+  return sourceControlClients.repositoryUrlFromPage(trimmed) ?? trimmed;
 }
 
 export function getDefaultCloneUrl(
@@ -207,6 +210,26 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
   return lastSegment.endsWith(".git") ? lastSegment.slice(0, -".git".length) : lastSegment;
 }
 
+/** The folder a clone gets below its base: `<repo>`, or `<host>/<owner>/<repo>` like ghq. */
+export function getCloneDirectoryPath(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return (
+    (ghqCloneLayout ? cloneUrlRepositoryPath(remoteUrl) : null) ?? getCloneDirectoryName(repository)
+  );
+}
+
+/** The clone's own folder, which folder browsing keeps at the end of the destination. */
+export function getCloneDirectoryLeafName(
+  remoteUrl: string,
+  ghqCloneLayout: boolean,
+  repository = remoteUrl,
+): string {
+  return getCloneDirectoryPath(remoteUrl, ghqCloneLayout, repository).split("/").at(-1) ?? "";
+}
+
 export function getCloneDestinationPath(
   directoryPath: string,
   directoryName: string | null | undefined,
@@ -215,7 +238,8 @@ export function getCloneDestinationPath(
   if (name.length === 0) {
     return directoryPath;
   }
-  return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
+  const base = ensureBrowseDirectoryPath(directoryPath);
+  return `${base}${base.endsWith("\\") ? name.replaceAll("/", "\\") : name}`;
 }
 
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {
@@ -274,6 +298,26 @@ export function getCloneDestinationBrowsePath(input: {
   return selectedDirectoryMatches
     ? selectedDirectoryPath
     : getCloneDestinationPath(selectedDirectoryPath, input.cloneDirectoryName);
+}
+
+// The native picker returns a full path, not a name under the browsed directory.
+// Split it and reuse the in-app rules so a folder already named after the
+// repository stays that folder instead of becoming repo/repo.
+export function getCloneDestinationForPickedFolder(input: {
+  readonly pickedPath: string;
+  readonly cloneDirectoryName: string;
+  readonly caseSensitive: boolean;
+}): string {
+  const parentPath = getBrowseParentPath(input.pickedPath);
+  if (parentPath === null) {
+    return getCloneDestinationPath(input.pickedPath, input.cloneDirectoryName);
+  }
+  return getCloneDestinationBrowsePath({
+    browseDirectoryPath: parentPath,
+    selectedDirectoryName: inferProjectTitleFromPath(input.pickedPath),
+    cloneDirectoryName: input.cloneDirectoryName,
+    caseSensitive: input.caseSensitive,
+  });
 }
 
 export function resolveAddProjectPath(input: {

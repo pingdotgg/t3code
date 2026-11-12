@@ -1,10 +1,20 @@
-import { SourceControlProviderKind, VcsProcessSpawnError } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  type VcsError,
+  VcsProcessExitError,
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { providerAuth } from "@t3tools/source-control-core/server/discovery";
+import * as PlatformError from "effect/PlatformError";
+import {
+  providerAuth,
+  type SourceControlProviderDiscoverySpec,
+} from "@t3tools/source-control-core/server/discovery";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   fakeDiscovery,
@@ -29,7 +39,29 @@ const run = (
     SourceControlHost.SourceControlProcessInput,
     "operation" | "command" | "args" | "cwd"
   >,
-): Effect.Effect<SourceControlHost.SourceControlProcessOutput, VcsProcessSpawnError> => {
+): Effect.Effect<SourceControlHost.SourceControlProcessOutput, VcsError> => {
+  const context = { operation: input.operation, command: input.command, cwd: input.cwd };
+  if (input.command === "slow-cli") {
+    return Effect.fail(new VcsProcessTimeoutError({ ...context, timeoutMs: 5_000 }));
+  }
+  if (input.command === "broken-cli") {
+    return Effect.fail(
+      new VcsProcessExitError({ ...context, exitCode: 1, detail: "broken-cli: bad install" }),
+    );
+  }
+  if (input.command === "absent-cli") {
+    return Effect.fail(
+      new VcsProcessSpawnError({
+        ...context,
+        cause: PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          pathOrDescriptor: input.command,
+        }),
+      }),
+    );
+  }
   if (input.args[0] === "--version") {
     return input.command === "missing-cli"
       ? Effect.fail(
@@ -47,29 +79,37 @@ const run = (
   );
 };
 
-const cliDiscovery = (name: string) => ({
+const cliDiscovery = (
+  name: string,
+  executable = name === "beta" ? "missing-cli" : `${name}-cli`,
+) => ({
   type: "cli" as const,
   kind: kind(name),
   label: name,
   installHint: `Install ${name}.`,
-  executable: name === "beta" ? "missing-cli" : `${name}-cli`,
+  executable,
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   parseAuth: ({ stdout }: { readonly stdout: string }) =>
     providerAuth({ status: "authenticated", account: /as (\S+)/.exec(stdout)?.[1] }),
 });
 
-const layerDiscovery = (runProcess = run) =>
+const defaultDiscoveries = [
+  cliDiscovery("alpha"),
+  cliDiscovery("beta"),
+  fakeDiscovery("gamma", {
+    probeAuth: Effect.succeed(providerAuth({ status: "authenticated", account: "api-user" })),
+  }),
+];
+
+const layerDiscovery = (
+  runProcess = run,
+  discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec> = defaultDiscoveries,
+) =>
   Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     SourceControlProviderRegistry.makeWithProviders(
-      [
-        cliDiscovery("alpha"),
-        cliDiscovery("beta"),
-        fakeDiscovery("gamma", {
-          probeAuth: Effect.succeed(providerAuth({ status: "authenticated", account: "api-user" })),
-        }),
-      ].map((discovery) => ({
+      discoveries.map((discovery) => ({
         kind: discovery.kind,
         provider: fakeSourceControlProvider(discovery.kind),
         discovery,
@@ -131,6 +171,41 @@ it.effect("reports every hosting integration in registry order with its sign-in"
       ],
     );
   }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery())))),
+);
+
+it.effect("explains a hosting CLI whose version probe failed instead of advising an install", () =>
+  Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const result = yield* discovery.discover;
+    const item = (name: string) => {
+      const found = result.sourceControlProviders.find((entry) => entry.kind === kind(name));
+      assert.isDefined(found);
+      return found;
+    };
+    const authDetail = (name: string) => Option.getOrElse(item(name).auth.detail, () => "");
+
+    assert.notInclude(item("slow").installHint, "Install slow.");
+    assert.include(item("slow").installHint, "timed out after 5000ms");
+    assert.strictEqual(authDetail("slow"), item("slow").installHint);
+
+    assert.notInclude(item("broken").installHint, "Install broken.");
+    assert.include(item("broken").installHint, "exited with status 1");
+    assert.strictEqual(authDetail("broken"), item("broken").installHint);
+
+    assert.strictEqual(item("absent").installHint, "Install absent.");
+  }).pipe(
+    Effect.provide(
+      SourceControlDiscovery.layer.pipe(
+        Layer.provide(
+          layerDiscovery(run, [
+            cliDiscovery("slow", "slow-cli"),
+            cliDiscovery("broken", "broken-cli"),
+            cliDiscovery("absent", "absent-cli"),
+          ]),
+        ),
+      ),
+    ),
+  ),
 );
 
 it.effect.each(["darwin", "linux"] as const)(

@@ -1,6 +1,32 @@
 {
-  "extends": "expo/tsconfig.base.json",
+  "extends": ["expo/tsconfig.base.json", "../../tsconfig.effect.json"],
   "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Severities deep-merge with tsconfig.effect.json; React Native has no Effect platform layer.
+        "diagnosticSeverity": {
+          "globalDate": "off",
+          "globalConsole": "off",
+          "globalRandom": "off",
+          "globalTimers": "off",
+          "globalFetch": "off"
+        },
+        "overrides": [
+          {
+            "include": [
+              "scripts/*.ts",
+              "scripts/*.mts",
+              "fingerprint.config.js",
+              "**/*.test.ts",
+              "**/*.test.tsx",
+              "**/*.test-support.ts"
+            ],
+            "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          }
+        ]
+      }
+    ],
     "allowImportingTsExtensions": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,

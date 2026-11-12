@@ -1,12 +1,13 @@
+import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
   mergeDirectPreviewAnnotation,
   planComposerTurn,
-  restorePlanFollowUpComposer,
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
+  deriveThreadPendingBackgroundTasks,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
@@ -1077,6 +1078,7 @@ describe("planComposerTurn", () => {
     keepFullHistory: false,
     phase: "ready" as const,
     dispatchMode: "auto" as const,
+    freshContext: false,
   };
 
   it("prepares a worktree from the selected branch on a new thread", () => {
@@ -1126,61 +1128,25 @@ describe("planComposerTurn", () => {
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
     });
-  });
-});
-
-describe("restorePlanFollowUpComposer", () => {
-  // The draft is the failed follow-up's thread; the refs and cursor are whatever thread is on
-  // screen.
-  it.each([
-    {
-      name: "puts the follow-up back while its thread is open",
-      before: { draft: "", refs: "", cursor: null },
-      routeIsCurrent: true,
-      after: { draft: "Tighten step 2", refs: "Tighten step 2", cursor: "Tighten step 2" },
-    },
-    {
-      name: "keeps a draft typed while the follow-up was in flight",
-      before: { draft: "Next idea", refs: "Next idea", cursor: null },
-      routeIsCurrent: true,
-      after: { draft: "Next idea", refs: "Next idea", cursor: null },
-    },
-    {
-      name: "leaves another thread's composer alone after navigating away",
-      before: { draft: "", refs: "Other thread", cursor: null },
-      routeIsCurrent: false,
-      after: { draft: "Tighten step 2", refs: "Other thread", cursor: null },
-    },
-  ])("$name", ({ before, routeIsCurrent, after }) => {
-    const composer: { draft: string; refs: string; cursor: string | null } = { ...before };
-    restorePlanFollowUpComposer({
-      snapshot: {
-        prompt: "Tighten step 2",
-        environmentContexts: [],
-        terminalContexts: [],
-        reviewComments: [],
-        previewAnnotations: [],
-        threadContexts: [],
-      },
-      draftHasUserContent: composer.draft.trim().length > 0,
-      routeIsCurrent,
-      writeComposerRefs: (snapshot) => {
-        composer.refs = snapshot.prompt;
-      },
-      writePrompt: (prompt) => {
-        composer.draft = prompt;
-      },
-      writeTerminalContexts: () => undefined,
-      writeReviewComments: () => undefined,
-      writePreviewAnnotations: () => undefined,
-      writeThreadContexts: () => undefined,
-      writeEnvironmentContexts: () => undefined,
-      resetCursor: ({ prompt }) => {
-        composer.cursor = prompt;
-      },
+    expect(
+      planComposerTurn({ ...running, sendQueuesBehindSetup: true, dispatchMode: "steer" }),
+    ).toMatchObject({
+      turnDispatchMode: "steer",
+      shouldQueueBehindActiveRun: true,
     });
-
-    expect(composer).toEqual(after);
+    // A fresh session cannot join the running turn, and a stale one is not compacted first.
+    expect(
+      planComposerTurn({
+        ...running,
+        dispatchMode: "steer",
+        freshContext: true,
+        resumeCompactionTokens: 120_000,
+      }),
+    ).toMatchObject({
+      compactBeforeSend: false,
+      turnDispatchMode: "queue",
+      shouldQueueBehindActiveRun: true,
+    });
   });
 });
 
@@ -1256,5 +1222,134 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+
+describe("deriveThreadPendingBackgroundTasks", () => {
+  const base = makeThreadProjectionFixture();
+  const run = (ordinal: number, status: string) => ({
+    id: RunId.make(`run-${ordinal}`),
+    ordinal,
+    status,
+  });
+  const item = (ordinal: number, type: string, nativeId: string, input: string) => ({
+    id: TurnItemId.make(`item-${nativeId}`),
+    type,
+    status: "running",
+    title: null,
+    runId: RunId.make(`run-${ordinal}`),
+    nativeItemRef: { nativeId },
+    input,
+  });
+  const projection = (overrides: object) =>
+    ({ ...base, ...overrides }) as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+
+  it.each(["queued", "preparing", "running"])(
+    "keeps an earlier run's background shell while a %s follow-up run has a foreground command",
+    (followUpStatus) => {
+      expect(
+        deriveThreadPendingBackgroundTasks(
+          projection({
+            runs: [run(1, "completed"), run(2, followUpStatus)],
+            turnItems: [
+              item(1, "command_execution", "shell-1", "sleep 600"),
+              item(2, "command_execution", "shell-2", "sleep 15"),
+            ],
+          }),
+        ),
+      ).toEqual([{ taskId: "shell-1", description: "sleep 600", kind: "command" }]);
+    },
+  );
+
+  it("does not list a live run's child from the provider roster as background", () => {
+    // The roster is not run-tied; Muse keys it by the child session id its rows carry.
+    expect(
+      deriveThreadPendingBackgroundTasks(
+        projection({
+          runs: [run(1, "completed"), run(2, "running")],
+          providerThreads: [
+            {
+              id: "provider-thread-1",
+              providerInstanceId: base.thread.providerInstanceId,
+              pendingBackgroundTasks: [
+                { taskId: "child-session-1", kind: "subagent" },
+                { taskId: "child-session-2", kind: "subagent" },
+              ],
+            },
+          ],
+          turnItems: [
+            { ...item(1, "subagent", "child-session-1", ""), prompt: "child 1" },
+            { ...item(2, "subagent", "child-session-2", ""), prompt: "child 2" },
+          ],
+        }),
+      ),
+    ).toEqual([
+      {
+        taskId: "child-session-1",
+        kind: "subagent",
+        providerInstanceId: base.thread.providerInstanceId,
+      },
+    ]);
+  });
+
+  it("keeps an earlier run's roster-only monitor while a follow-up run executes", () => {
+    // Claude completes the Monitor launch row on success; only the roster tracks the task.
+    expect(
+      deriveThreadPendingBackgroundTasks(
+        projection({
+          runs: [run(1, "completed"), run(2, "running")],
+          providerThreads: [
+            {
+              id: "provider-thread-1",
+              providerInstanceId: base.thread.providerInstanceId,
+              pendingBackgroundTasks: [{ taskId: "b1htjkjev", kind: "monitor" }],
+            },
+          ],
+          turnItems: [
+            { ...item(1, "dynamic_tool", "toolu-monitor", ""), status: "completed" },
+            item(2, "command_execution", "shell-2", "sleep 15"),
+          ],
+        }),
+      ),
+    ).toEqual([{ taskId: "b1htjkjev", kind: "monitor" }]);
+  });
+
+  it("keeps the provider roster while a follow-up run only waits in the queue", () => {
+    expect(
+      deriveThreadPendingBackgroundTasks(
+        projection({
+          runs: [run(1, "waiting"), run(2, "queued")],
+          providerThreads: [
+            {
+              id: "provider-thread-1",
+              providerInstanceId: base.thread.providerInstanceId,
+              pendingBackgroundTasks: [{ taskId: "task-1", kind: "background_task" }],
+            },
+          ],
+        }),
+      ),
+    ).toEqual([{ taskId: "task-1", kind: "background_task" }]);
+  });
+});
+
+describe("Open in for the host environment", () => {
+  it("shows both local environments when the primary has a separate WSL home", () => {
+    const primaryEnvironmentId = EnvironmentId.make("wsl");
+    const hostEnvironmentId = EnvironmentId.make("host");
+    for (const [activeThreadEnvironmentId, visible] of [
+      [primaryEnvironmentId, true],
+      [hostEnvironmentId, true],
+      [EnvironmentId.make("other"), false],
+    ] as const) {
+      expect(
+        shouldShowOpenInPicker({
+          activeProjectName: "Project",
+          activeThreadEnvironmentId,
+          primaryEnvironmentId,
+          hostEnvironmentId,
+          remoteOpenMode: "local-exec",
+        }),
+      ).toBe(visible);
+    }
   });
 });

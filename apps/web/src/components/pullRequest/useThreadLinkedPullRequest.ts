@@ -25,7 +25,7 @@ export function useThreadLinkedPullRequest(input: {
   readonly projectId: ProjectId | null;
   readonly projectRepository: string | null;
   readonly threadBranch: string | null;
-  readonly gitStatus: VcsStatusResult | null;
+  readonly gitStatus: Pick<VcsStatusResult, "refName" | "pr"> | null;
 }) {
   const { serverThreadRef, persisted, projectId, projectRepository, threadBranch, gitStatus } =
     input;

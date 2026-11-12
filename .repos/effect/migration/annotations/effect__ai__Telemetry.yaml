@@ -1,0 +1,19 @@
+"@effect/ai/Telemetry#AllAttributes":
+  replacement: "none"
+  note: "Removed. Use Telemetry.GenAITelemetryAttributeOptions for the grouped options accepted by Telemetry.addGenAIAnnotations, or Telemetry.GenAITelemetryAttributes for the prefixed gen_ai.* span attribute keys."
+"@effect/ai/Telemetry#BaseAttributes":
+  replacement: "Telemetry.ProviderAttributes"
+  note: "gen_ai.system was replaced by gen_ai.provider.name. Pass provider: { name } instead of system; legacy system values are not mapped."
+"@effect/ai/Telemetry#GenAITelemetryAttributeOptions":
+  replacement: "Telemetry.GenAITelemetryAttributeOptions"
+  note: "The system and token options were removed. Use provider: { name } for gen_ai.provider.name; gen_ai.token.type has no span replacement. The new output option writes gen_ai.output.type."
+"@effect/ai/Telemetry#TokenAttributes":
+  replacement: "none"
+  note: "Removed with the token option. gen_ai.token.type is not a span attribute in the current OpenTelemetry GenAI conventions."
+"@effect/ai/Telemetry#WellKnownSystem":
+  replacement: "Telemetry.WellKnownProviderName"
+  note: "Values follow gen_ai.provider.name: az.ai.inference, az.ai.openai, gemini, vertex_ai and xai became azure.ai.inference, azure.ai.openai, gcp.gemini, gcp.vertex_ai and x_ai."
+"@effect/ai/Telemetry#GenAITelemetryAttributes":
+  include: true
+  replacement: "Telemetry.GenAITelemetryAttributes"
+  note: "The flat span attribute keys changed: replace gen_ai.system with gen_ai.provider.name and remove gen_ai.token.type. gen_ai.output.type records text or json. Update code constructing or indexing this attribute type."

@@ -111,6 +111,9 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+export const VcsBranchStatus = Schema.Struct({ refName: Schema.NullOr(Schema.String) });
+export type VcsBranchStatus = typeof VcsBranchStatus.Type;
+
 export const VcsStatusSubscriptionInput = Schema.Struct({
   ...VcsStatusInput.fields,
   /** Passive observers receive cached remote status without retaining its refresh loop. */
@@ -360,6 +363,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "path_already_exists",
   "push_rejected_by_remote",
   "push_rejected_non_fast_forward",
+  "ref_name_conflict",
   "ref_not_found",
   "remote_unreachable",
   "tag_would_be_clobbered",

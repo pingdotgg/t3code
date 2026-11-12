@@ -126,7 +126,7 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
 });
 
 it.effect.each(["provider", "mcp"] as const)(
-  "a %s child does not inherit parent settlement protections and settles once idle",
+  "a %s child does not inherit parent settlement protections and settles once its parent settles",
   (creationSource) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -168,6 +168,21 @@ it.effect.each(["provider", "mcp"] as const)(
       assert.deepEqual(savedParent.pinnedAt, parentCreatedAt);
       assert.equal(savedParent.pinOrderKey, "a0");
       assert.deepEqual(savedParent.autoSettleDisabledAt, parentCreatedAt);
+      // A subagent child waits for its parent, so settle the pinned parent first.
+      assert.deepEqual(yield* store.getSettlementCandidates(), []);
+      yield* store.apply({
+        id: EventId.make(`event:${parentThreadId}:settled`),
+        type: "thread.settled",
+        threadId: parentThreadId,
+        occurredAt: childCreatedAt,
+        payload: {
+          ...savedParent,
+          settledOverride: "settled",
+          settledAt: childCreatedAt,
+          pinnedAt: null,
+          pinOrderKey: null,
+        },
+      });
       const candidates = yield* store.getSettlementCandidates();
       assert.deepEqual(
         candidates.map((candidate) => candidate.id),
@@ -413,6 +428,14 @@ it("orders a task's assistant messages by turn item, not by timestamps", () => {
   assert.equal(result.text, "All steps passed.");
   assert.equal(result.messageId, report.message.id);
   assert.equal(result.turnItemId, report.turnItem.id);
+  const reported = { runAttemptId: run.activeAttemptId, ordinal: 1, model: "gpt-5.4-mini" };
+  assert.equal(
+    subagentResultForRun(
+      { ...projection, messages: [report.message], providerTurns: [reported as never] },
+      run,
+    ).text,
+    "Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\nAll steps passed.",
+  );
 });
 
 it.effect("ends an orphaned native subagent's node when only its record already ended", () =>

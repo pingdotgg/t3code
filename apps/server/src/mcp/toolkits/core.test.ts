@@ -1,3 +1,4 @@
+import * as AssetSigner from "../../assets/AssetSigner.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -34,6 +35,7 @@ import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
   OrchestratorProjectionError,
+  OrchestratorProviderSelectionBusyError,
 } from "../../orchestration-v2/Orchestrator.ts";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -226,6 +228,11 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
       new OrchestratorCommandRejectedError({ ...command, cause: "Run is not queued." }),
     ).message,
   ).toBe("Run is not queued.");
+  const busy = new OrchestratorProviderSelectionBusyError({
+    commandId: command.commandId,
+    threadId,
+  });
+  expect(dispatchFailure(busy)).toMatchObject({ code: "invalid_request", message: busy.message });
   for (const cause of [
     undefined,
     "",
@@ -251,6 +258,8 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
   });
 });
 
+const fullAccessThreadId = ThreadId.make("mcp-core-full-access-thread");
+
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -271,6 +280,27 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     expect(
       htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
     ).toEqual(reference);
+    // Only a full-access thread may have the server read a file for it.
+    const byPath = (name: string, caller: McpInvocationContext.McpInvocationScope) =>
+      server
+        .callTool({
+          name,
+          arguments: {
+            path: "/t3-missing-dir/revenue.html",
+            ...(name === "html_render" ? { title: "Revenue", height: 240 } : {}),
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          // html_preview reports failures as plain text, html_render as a declared failure.
+          Effect.map((result) => (result.isError ? JSON.stringify(result.content) : undefined)),
+        );
+    const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
+    for (const name of ["html_preview", "html_render"]) {
+      expect(yield* byPath(name, scope), name).toContain("only full-access threads");
+      expect(yield* byPath(name, fullAccess), name).toContain("not a readable HTML document");
+    }
   }).pipe(
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
@@ -286,13 +316,15 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: () =>
+            getThreadShell: (id) =>
               Effect.succeed({
-                id: threadId,
+                id,
                 deletedAt: null,
                 archivedAt: null,
                 activeRunId: RunId.make("mcp-core-run"),
                 providerInstanceId: ProviderInstanceId.make("codex"),
+                runtimeMode: id === fullAccessThreadId ? "full-access" : "approval-required",
+                interactionMode: "default",
               } as OrchestrationV2ThreadShell),
           }),
         ),
@@ -373,7 +405,7 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
     expect(dispatched).toEqual([]);
     expect(outcome).toMatchObject({
       _tag: "Failure",
-      failure: { message: expect.stringContaining("Expected no excess property") },
+      failure: { message: expect.stringContaining('Unknown argument "threadIds"') },
     });
   }).pipe(
     Effect.provide(
@@ -1014,7 +1046,7 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
       McpHttpServer.layerAttachmentToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
-        Layer.provide(ServerSecretStore.layer),
+        Layer.provide(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
         Layer.provide(
           DocumentText.layer.pipe(
