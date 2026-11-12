@@ -13,7 +13,6 @@ import {
   type ProjectId,
   type ServerSettingsError,
   type ThreadSpecialistKey,
-  ownedWorkInboxRelevant,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -21,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ServerSettings from "../serverSettings.ts";
+import * as OwnedWorkService from "./OwnedWorkService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const LIVE_SHELL_STATUSES = new Set<string>([
@@ -38,6 +38,7 @@ function pendingReviewCount(thread: OrchestrationV2ThreadShell): number {
 function seatStatus(
   thread: OrchestrationV2ThreadShell | undefined,
   teamArchived: boolean,
+  openOwnedWorkCount: number,
 ): AgentTeamSeatStatus {
   if (teamArchived) return "archived";
   if (thread === undefined || thread.deletedAt !== null) return "archived";
@@ -46,7 +47,7 @@ function seatStatus(
   if (LIVE_SHELL_STATUSES.has(thread.status)) return "active";
   if (pendingReviewCount(thread) > 0) return "needs_attention";
   if (thread.pendingRuntimeRequest !== null) return "needs_attention";
-  if ((thread.openOwnedWorkCount ?? 0) > 0) return "needs_attention";
+  if (openOwnedWorkCount > 0) return "needs_attention";
   return "idle";
 }
 
@@ -69,6 +70,7 @@ export class AgentTeamService extends Context.Service<
 const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const ownedWork = yield* OwnedWorkService.OwnedWorkService;
   const random = yield* SecureRandom.SecureRandom;
 
   const specialistThreads = (projectId: ProjectId) =>
@@ -96,20 +98,26 @@ const make = Effect.gen(function* () {
 
     const boundThreads = yield* specialistThreads(input.projectId);
     const teamArchived = team.archivedAt !== null;
-    const seats = team.seatKeys.flatMap((key) => {
-      const thread = boundThreads.get(key);
-      if (thread === undefined) return [];
-      return [
-        {
-          key,
-          label: thread.specialist?.label ?? key,
+    const seats = yield* Effect.forEach(team.seatKeys, (key) =>
+      Effect.gen(function* () {
+        const thread = boundThreads.get(key);
+        if (thread === undefined) return [] as const;
+        const openOwnedWorkCount = yield* ownedWork.openCountForThread({
+          projectId: input.projectId,
           threadId: thread.id,
-          status: seatStatus(thread, teamArchived),
-          openOwnedWorkCount: thread.openOwnedWorkCount ?? 0,
-          pendingReviewCount: pendingReviewCount(thread),
-        },
-      ] satisfies ReadonlyArray<AgentTeamSeatView>;
-    });
+        });
+        return [
+          {
+            key,
+            label: thread.specialist?.label ?? key,
+            threadId: thread.id,
+            status: seatStatus(thread, teamArchived, openOwnedWorkCount),
+            openOwnedWorkCount,
+            pendingReviewCount: pendingReviewCount(thread),
+          },
+        ] as const satisfies ReadonlyArray<AgentTeamSeatView>;
+      }),
+    ).pipe(Effect.map((rows) => rows.flat()));
 
     return { team, seats } satisfies OrchestrationV2ReadAgentTeamResult;
   });
@@ -118,30 +126,40 @@ const make = Effect.gen(function* () {
   const listOwnedWorkInboxImpl = Effect.fn("AgentTeamService.listOwnedWorkInbox")(function* (
     input: OrchestrationV2ListOwnedWorkInboxInput,
   ) {
+    const items = yield* ownedWork.inboxItemsFor(input);
     const snapshot = yield* threads.getShellSnapshot({ projectId: input.projectId });
-    const homes = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-      (thread) =>
-        thread.deletedAt === null &&
-        thread.id !== input.actorThreadId &&
-        (thread.openOwnedWorkCount ?? 0) > 0,
+    const shells = new Map(
+      [...snapshot.threads, ...snapshot.archivedThreads].map((thread) => [thread.id, thread]),
     );
-
-    const entries: OrchestrationV2OwnedWorkInboxEntry[] = [];
-    for (const home of homes) {
-      const projection = yield* threads.getThreadProjection(home.id);
-      for (const item of projection.thread.ownedWorkItems ?? []) {
-        if (!ownedWorkInboxRelevant(item, input.actorThreadId)) continue;
-        const homeLabel =
-          home.specialist?.label ?? (home.title.trim() === "" ? undefined : home.title);
-        entries.push({
-          homeThreadId: home.id,
-          ...(home.specialist?.key === undefined ? {} : { homeSpecialistKey: home.specialist.key }),
-          ...(homeLabel === undefined ? {} : { homeLabel }),
-          item,
-        });
-      }
-    }
-
+    const entries: OrchestrationV2OwnedWorkInboxEntry[] = items.map((item) => {
+      const originId = item.createdByThreadId;
+      const origin = originId === null ? undefined : shells.get(originId);
+      const originLabel =
+        origin === undefined
+          ? undefined
+          : (origin.specialist?.label ?? (origin.title.trim() === "" ? undefined : origin.title));
+      return {
+        item,
+        ...(originId === null
+          ? {}
+          : {
+              originThreadId: originId,
+              homeThreadId: originId,
+            }),
+        ...(origin?.specialist?.key === undefined
+          ? {}
+          : {
+              originSpecialistKey: origin.specialist.key,
+              homeSpecialistKey: origin.specialist.key,
+            }),
+        ...(originLabel === undefined
+          ? {}
+          : {
+              originLabel,
+              homeLabel: originLabel,
+            }),
+      };
+    });
     entries.sort((left, right) => right.item.updatedAt.localeCompare(left.item.updatedAt));
     return { entries } satisfies OrchestrationV2ListOwnedWorkInboxResult;
   });
@@ -190,5 +208,6 @@ export const layer: Layer.Layer<
   never,
   | ServerSettings.ServerSettingsService
   | ThreadManagement.ThreadManagementService
+  | OwnedWorkService.OwnedWorkService
   | SecureRandom.SecureRandom
 > = Layer.effect(AgentTeamService, make);

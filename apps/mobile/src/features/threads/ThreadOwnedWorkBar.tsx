@@ -1,4 +1,3 @@
-import { useAtomValue } from "@effect/atom-react";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -10,28 +9,16 @@ import {
   type OwnedWorkItem,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { Button } from "../../components/ui/Button";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
+import { useThreadShell } from "../../state/entities";
+import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-
-const NO_OWNED_WORK_ATOM = Atom.make<ReadonlyArray<OwnedWorkItem>>([]);
-
-function ownedWorkAtom(ref: ScopedThreadRef) {
-  let previous: ReadonlyArray<OwnedWorkItem> = [];
-  return Atom.make((get) => {
-    const next =
-      get(environmentThreadDetails.threadAtom(ref))?.projection.thread.ownedWorkItems ?? [];
-    if (JSON.stringify(next) !== JSON.stringify(previous)) previous = next;
-    return previous;
-  });
-}
 
 function alertOnFailure(failureTitle: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -63,27 +50,52 @@ function statusLabel(status: OwnedWorkItem["status"]): string {
 
 /**
  * Settlement-blocking owned work above the composer: status plus Done / Cancel / Resume.
- * Assign and full history live in Thread Details on web.
+ * Assign and full history live in Thread Details on web. Items come from the project board.
  */
 export function ThreadOwnedWorkBar(props: {
   readonly threadRef: ScopedThreadRef | null;
   readonly canOperateThread: boolean;
 }) {
   const { threadRef } = props;
-  const itemsAtom = useMemo(
-    () => (threadRef === null ? NO_OWNED_WORK_ATOM : ownedWorkAtom(threadRef)),
-    [threadRef],
+  const shell = useThreadShell(threadRef);
+  const [items, setItems] = useState<ReadonlyArray<OwnedWorkItem>>([]);
+  const listOwnedWorkInbox = useAtomCommand(
+    threadEnvironment.listOwnedWorkInbox,
+    "list owned work inbox",
   );
-  const items = useAtomValue(itemsAtom);
-  const openItems = items.filter((item) => OPEN_OWNED_WORK_STATUSES.has(item.status));
   const complete = useAtomCommand(threadEnvironment.completeOwnedWork, "complete owned work");
   const cancel = useAtomCommand(threadEnvironment.cancelOwnedWork, "cancel owned work");
   const resume = useAtomCommand(threadEnvironment.resumeOwnedWork, "resume owned work");
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
 
-  if (threadRef === null || openItems.length === 0) return null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- load this seat's project-scoped inbox
+  useEffect(() => {
+    if (threadRef === null || shell === null) return;
+    let cancelled = false;
+    void listOwnedWorkInbox({
+      environmentId: threadRef.environmentId,
+      input: { projectId: shell.projectId, actorThreadId: threadRef.threadId },
+    }).then((result) => {
+      if (cancelled) return;
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) setItems([]);
+        return;
+      }
+      setItems(
+        result.value.entries
+          .map((entry) => entry.item)
+          .filter((item) => OPEN_OWNED_WORK_STATUSES.has(item.status)),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadRef, shell, listOwnedWorkInbox]);
+
+  if (threadRef === null || shell === null || items.length === 0) return null;
 
   const disabled = busyItemId !== null || !props.canOperateThread;
+  const projectId = shell.projectId;
 
   const run = (
     item: OwnedWorkItem,
@@ -95,12 +107,26 @@ export function ThreadOwnedWorkBar(props: {
     void action().then((result) => {
       setBusyItemId(null);
       alertOnFailure(failureTitle, result);
+      if (result._tag === "Success") {
+        void listOwnedWorkInbox({
+          environmentId: threadRef.environmentId,
+          input: { projectId, actorThreadId: threadRef.threadId },
+        }).then((refresh) => {
+          if (refresh._tag === "Success") {
+            setItems(
+              refresh.value.entries
+                .map((entry) => entry.item)
+                .filter((entry) => OPEN_OWNED_WORK_STATUSES.has(entry.status)),
+            );
+          }
+        });
+      }
     });
   };
 
   return (
     <View className="gap-2 px-4 pb-2">
-      {openItems.map((item) => {
+      {items.map((item) => {
         const waiting = item.status === "on_hold" || item.status === "needs_attention";
         const reason = item.holdReason ?? item.attentionReason ?? item.progress;
         const canComplete = item.status !== "assigned" && item.status !== "handed_off";
@@ -140,6 +166,7 @@ export function ThreadOwnedWorkBar(props: {
                             environmentId: threadRef.environmentId,
                             input: {
                               threadId: threadRef.threadId,
+                              projectId,
                               itemId: item.id,
                               actorThreadId: threadRef.threadId,
                             },
@@ -162,6 +189,7 @@ export function ThreadOwnedWorkBar(props: {
                             environmentId: threadRef.environmentId,
                             input: {
                               threadId: threadRef.threadId,
+                              projectId,
                               itemId: item.id,
                               closureReason: OWNED_WORK_CLOSURE_UX.done.reason,
                               actorThreadId: threadRef.threadId,
@@ -179,7 +207,7 @@ export function ThreadOwnedWorkBar(props: {
                   onPress={() =>
                     Dialog.confirm({
                       title: "Cancel this work?",
-                      message: "Marks the item canceled. History stays on the thread.",
+                      message: "Marks the item canceled. History stays on the project board.",
                       confirmText: OWNED_WORK_CLOSURE_UX.cancel.label,
                       destructive: true,
                       onConfirm: () =>
@@ -190,6 +218,7 @@ export function ThreadOwnedWorkBar(props: {
                               environmentId: threadRef.environmentId,
                               input: {
                                 threadId: threadRef.threadId,
+                                projectId,
                                 itemId: item.id,
                                 actorThreadId: threadRef.threadId,
                               },

@@ -146,7 +146,8 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
-import { decideOwnedWorkCommand, type OwnedWorkCommand } from "./OwnedWorkDecider.ts";
+import { type OwnedWorkCommand } from "./OwnedWorkDecider.ts";
+import * as OwnedWorkService from "./OwnedWorkService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as PermissionRouting from "./PermissionRouting.ts";
 import { buildWorkReviewArtifacts } from "./WorkReview.ts";
@@ -1336,6 +1337,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const ownedWork = yield* OwnedWorkService.OwnedWorkService;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -3719,36 +3721,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchOwnedWork = Effect.fn("orchestrationV2.dispatch.ownedWork")(function* (
     command: OwnedWorkCommand,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    _events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    const projection = yield* projectionStore
-      .getThreadRecords(command.threadId, [])
-      .pipe(
-        Effect.mapError(
-          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-        ),
-      );
-    const thread = projection.thread;
-    const now = yield* DateTime.now;
-    const decided = decideOwnedWorkCommand({ thread, command, now });
-    if (Result.isFailure(decided)) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: decided.failure,
-      });
-    }
-    if (decided.success === thread) return;
-    yield* emit(
-      events,
-      command,
-    )({
-      type: "thread.owned-work-updated",
-      threadId: command.threadId,
-      providerInstanceId: thread.providerInstanceId,
-      occurredAt: now,
-      payload: decided.success,
-    });
+    // Project-scoped board in server settings; no thread projection write.
+    yield* ownedWork.dispatch(command).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause,
+          }),
+      ),
+    );
   });
 
   const dispatchWorkReviewRequest = Effect.fn("orchestrationV2.dispatch.workReviewRequest")(
@@ -15140,6 +15125,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "permission-routing.consider" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
+          // Project board lives in settings; mutations record a receipt with no thread events.
+          command.type === "owned-work.assign" ||
+          command.type === "owned-work.claim" ||
+          command.type === "owned-work.progress" ||
+          command.type === "owned-work.handoff" ||
+          command.type === "owned-work.hold" ||
+          command.type === "owned-work.resume" ||
+          command.type === "owned-work.attention" ||
+          command.type === "owned-work.complete" ||
+          command.type === "owned-work.cancel" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
         (_planned) =>
           new OrchestratorDispatchError({
@@ -16082,6 +16077,7 @@ export const layer: Layer.Layer<
   | ProjectionStoreV2
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
+  | OwnedWorkService.OwnedWorkService
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),

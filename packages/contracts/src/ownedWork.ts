@@ -1,11 +1,17 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, OwnedWorkItemId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  OwnedWorkItemId,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /**
- * Home-thread owned work (OpenRig queue-inspired). `assigneeThreadId` is the destination seat;
- * assignees act through `listOwnedWorkInbox` against the home id. Closure records delivery only.
+ * Project-scoped owned work (OpenRig queue-inspired). Items live on the project; seats are
+ * assignees/claimers only. `createdByThreadId` is optional origin, not a storage parent.
  */
 export const OwnedWorkItemStatus = Schema.Literals([
   "assigned",
@@ -83,10 +89,11 @@ const OWNED_WORK_HISTORY_LIMIT = 40;
 
 export const OwnedWorkItem = Schema.Struct({
   id: OwnedWorkItemId,
+  projectId: ProjectId,
   title: TrimmedNonEmptyString,
   description: Schema.String,
   status: OwnedWorkItemStatus,
-  /** Who should pick this up; null means any teammate on the home thread may claim. */
+  /** Who should pick this up; null means any teammate on the project may claim. */
   assigneeThreadId: Schema.NullOr(ThreadId),
   claimedByThreadId: Schema.NullOr(ThreadId),
   progress: Schema.NullOr(Schema.String),
@@ -114,7 +121,8 @@ export const OwnedWorkItem = Schema.Struct({
   history: Schema.optional(Schema.Array(OwnedWorkHistoryEntry)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  createdByThreadId: ThreadId,
+  /** Origin seat when known; null when work was created outside a thread. */
+  createdByThreadId: Schema.NullOr(ThreadId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   claimedAt: Schema.NullOr(IsoDateTime),
@@ -125,6 +133,28 @@ export type OwnedWorkItem = typeof OwnedWorkItem.Type;
 export const openOwnedWorkCount = (
   items: ReadonlyArray<OwnedWorkItem> | null | undefined,
 ): number => items?.filter((item) => OPEN_OWNED_WORK_STATUSES.has(item.status)).length ?? 0;
+
+/** Whether an open item is this seat's responsibility (assignee, claimer, or unassigned origin). */
+const ownedWorkRelevantToThread = (item: OwnedWorkItem, threadId: ThreadId): boolean => {
+  if (!OPEN_OWNED_WORK_STATUSES.has(item.status)) return false;
+  if (item.claimedByThreadId === threadId) return true;
+  if (
+    (item.status === "assigned" || item.status === "handed_off") &&
+    item.assigneeThreadId === threadId
+  ) {
+    return true;
+  }
+  return (
+    item.status === "assigned" &&
+    item.assigneeThreadId === null &&
+    item.createdByThreadId === threadId
+  );
+};
+
+export const openOwnedWorkCountForThread = (
+  items: ReadonlyArray<OwnedWorkItem> | null | undefined,
+  threadId: ThreadId,
+): number => items?.filter((item) => ownedWorkRelevantToThread(item, threadId)).length ?? 0;
 
 /** Whether an open item should appear in `actorThreadId`'s cross-seat inbox. */
 export const ownedWorkInboxRelevant = (item: OwnedWorkItem, actorThreadId: ThreadId): boolean => {

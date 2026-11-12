@@ -95,6 +95,8 @@ import {
 import {
   OrchestrationV2ListOwnedWorkInboxInput,
   OrchestrationV2ListOwnedWorkInboxResult,
+  OrchestrationV2ListOwnedWorkInput,
+  OrchestrationV2ListOwnedWorkResult,
   OrchestrationV2ReadAgentTeamInput,
   OrchestrationV2ReadAgentTeamResult,
 } from "./agentTeam.ts";
@@ -3153,17 +3155,20 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("owned-work.assign"),
     commandId: CommandId,
+    /** Actor thread for command receipts/locking; items persist on `projectId`. */
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     title: TrimmedNonEmptyString,
     description: Schema.String,
     assigneeThreadId: Schema.optional(Schema.NullOr(ThreadId)),
-    createdByThreadId: ThreadId,
+    createdByThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   }),
   Schema.Struct({
     type: Schema.Literal("owned-work.claim"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     claimedByThreadId: ThreadId,
   }),
@@ -3171,6 +3176,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("owned-work.progress"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     progress: Schema.String,
     /** Defaults to the item's current claimer when omitted. */
@@ -3180,6 +3186,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("owned-work.handoff"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     toThreadId: ThreadId,
     note: Schema.optional(Schema.String),
@@ -3189,6 +3196,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("owned-work.hold"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     reason: Schema.String,
     actorThreadId: Schema.optional(ThreadId),
@@ -3197,6 +3205,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("owned-work.resume"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     note: Schema.optional(Schema.String),
     actorThreadId: Schema.optional(ThreadId),
@@ -3205,6 +3214,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("owned-work.attention"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     reason: Schema.String,
     actorThreadId: Schema.optional(ThreadId),
@@ -3213,6 +3223,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("owned-work.complete"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     /** Where the work went; required. Not acceptance of the next stage. */
     closureReason: OwnedWorkClosureReason,
@@ -3225,6 +3236,7 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("owned-work.cancel"),
     commandId: CommandId,
     threadId: ThreadId,
+    projectId: ProjectId,
     itemId: OwnedWorkItemId,
     /** Always recorded as `canceled`; optional note only. */
     closureNote: Schema.optional(Schema.String),
@@ -3846,6 +3858,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   previewSpecialistTemplate: "orchestration.previewSpecialistTemplate",
   addSpecialistsFromTemplate: "orchestration.addSpecialistsFromTemplate",
   readAgentTeam: "orchestration.readAgentTeam",
+  listOwnedWork: "orchestration.listOwnedWork",
   listOwnedWorkInbox: "orchestration.listOwnedWorkInbox",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -4568,6 +4581,10 @@ export const OrchestrationV2RpcSchemas = {
   readAgentTeam: {
     input: OrchestrationV2ReadAgentTeamInput,
     output: OrchestrationV2ReadAgentTeamResult,
+  },
+  listOwnedWork: {
+    input: OrchestrationV2ListOwnedWorkInput,
+    output: OrchestrationV2ListOwnedWorkResult,
   },
   listOwnedWorkInbox: {
     input: OrchestrationV2ListOwnedWorkInboxInput,

@@ -26,7 +26,7 @@ import { useEffect, useId, useState } from "react";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn, randomUUID } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { useQuietThreadProjection, useThreadShell } from "../../state/entities";
+import { useThreadShell } from "../../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
@@ -162,12 +162,10 @@ function ThreadAgentTeamPanelInner(props: {
   readonly shell: EnvironmentThreadShell;
 }) {
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
-  const projection = useQuietThreadProjection(threadRef)?.projection.thread;
-  const items = projection?.ownedWorkItems ?? [];
-  const openItems = items.filter((item) => OPEN_OWNED_WORK_STATUSES.has(item.status));
   const bound = props.shell.source.specialist;
   const archived = props.shell.archivedAt !== null;
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const projectId = props.shell.projectId;
 
   const [editing, setEditing] = useState(false);
   const [fields, setFields] = useState(() => specialistFields(bound));
@@ -177,6 +175,7 @@ function ThreadAgentTeamPanelInner(props: {
   const [description, setDescription] = useState("");
   const [destination, setDestination] = useState<string>(OPEN_DESTINATION);
   const [seats, setSeats] = useState<ReadonlyArray<AgentTeamSeatView>>([]);
+  const [boardItems, setBoardItems] = useState<ReadonlyArray<OwnedWorkItem>>([]);
   const [inbox, setInbox] = useState<ReadonlyArray<OrchestrationV2OwnedWorkInboxEntry>>([]);
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
   const assignTitleId = useId();
@@ -211,57 +210,81 @@ function ThreadAgentTeamPanelInner(props: {
     reportFailure: false,
   });
   const readAgentTeam = useAtomCommand(threadEnvironment.readAgentTeam, { reportFailure: false });
+  const listOwnedWork = useAtomCommand(threadEnvironment.listOwnedWork, { reportFailure: false });
   const listOwnedWorkInbox = useAtomCommand(threadEnvironment.listOwnedWorkInbox, {
     reportFailure: false,
   });
   const { archiveThread, unarchiveThread } = useThreadActions();
 
-  const refreshInbox = async () => {
-    const result = await listOwnedWorkInbox({
-      environmentId: props.environmentId,
-      input: { projectId: props.shell.projectId, actorThreadId: props.threadId },
-    });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) setInbox([]);
-      return;
+  const refreshBoard = async () => {
+    const [boardResult, inboxResult] = await Promise.all([
+      listOwnedWork({
+        environmentId: props.environmentId,
+        input: { projectId },
+      }),
+      listOwnedWorkInbox({
+        environmentId: props.environmentId,
+        input: { projectId, actorThreadId: props.threadId },
+      }),
+    ]);
+    if (boardResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(boardResult)) setBoardItems([]);
+    } else {
+      setBoardItems(boardResult.value.items);
     }
-    setInbox(result.value.entries);
+    if (inboxResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(inboxResult)) setInbox([]);
+    } else {
+      setInbox(inboxResult.value.entries);
+    }
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- load team seats + cross-seat inbox for this project
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- load team seats + project board/inbox
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [teamResult, inboxResult] = await Promise.all([
+      const [teamResult, boardResult, inboxResult] = await Promise.all([
         readAgentTeam({
           environmentId: props.environmentId,
-          input: { projectId: props.shell.projectId },
+          input: { projectId },
+        }),
+        listOwnedWork({
+          environmentId: props.environmentId,
+          input: { projectId },
         }),
         listOwnedWorkInbox({
           environmentId: props.environmentId,
-          input: { projectId: props.shell.projectId, actorThreadId: props.threadId },
+          input: { projectId, actorThreadId: props.threadId },
         }),
       ]);
       if (cancelled) return;
       if (teamResult._tag === "Success") {
         setSeats(teamResult.value.seats.filter((seat) => seat.status !== "archived"));
       }
+      if (boardResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(boardResult)) setBoardItems([]);
+      } else {
+        setBoardItems(boardResult.value.items);
+      }
       if (inboxResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(inboxResult)) setInbox([]);
-        return;
+      } else {
+        setInbox(inboxResult.value.entries);
       }
-      setInbox(inboxResult.value.entries);
     })();
     return () => {
       cancelled = true;
     };
   }, [
     props.environmentId,
-    props.shell.projectId,
+    projectId,
     props.threadId,
     readAgentTeam,
+    listOwnedWork,
     listOwnedWorkInbox,
   ]);
+
+  const openItems = boardItems.filter((item) => OPEN_OWNED_WORK_STATUSES.has(item.status));
 
   const dirty =
     fields.key !== (bound?.key ?? "") ||
@@ -305,7 +328,7 @@ function ThreadAgentTeamPanelInner(props: {
       reportFailure(failureTitle, squashAtomCommandFailure(result));
       return;
     }
-    void refreshInbox();
+    void refreshBoard();
   };
 
   const beginEdit = () => {
@@ -416,6 +439,7 @@ function ThreadAgentTeamPanelInner(props: {
       environmentId: props.environmentId,
       input: {
         threadId: props.threadId,
+        projectId,
         itemId,
         title: trimmed,
         ...(trimmedDescription === "" ? {} : { description: trimmedDescription }),
@@ -438,7 +462,7 @@ function ThreadAgentTeamPanelInner(props: {
     setDescription("");
     setDestination(OPEN_DESTINATION);
     setAssignOpen(false);
-    void refreshInbox();
+    void refreshBoard();
   };
 
   if (props.density !== "full") {
@@ -467,21 +491,25 @@ function ThreadAgentTeamPanelInner(props: {
 
   const meta = bound === undefined ? null : seatMeta(bound, archived);
   const workBusy = busyItemId !== null;
-  const boardRows = openItems.map((item) => ({
-    key: `board:${item.id}`,
-    homeThreadId: props.threadId,
-    item,
-    source: "board" as const,
-    homeLabel: undefined as string | undefined,
-  }));
-  const inboxRows = inbox.map((entry) => ({
-    key: `inbox:${entry.homeThreadId}:${entry.item.id}`,
-    homeThreadId: entry.homeThreadId,
-    item: entry.item,
-    source: "inbox" as const,
-    homeLabel:
-      entry.homeSpecialistKey !== undefined ? `@${entry.homeSpecialistKey}` : entry.homeLabel,
-  }));
+  const inboxItemIds = new Set(inbox.map((entry) => entry.item.id));
+  const boardRows = openItems
+    .filter((item) => !inboxItemIds.has(item.id))
+    .map((item) => ({
+      key: `board:${item.id}`,
+      item,
+      source: "board" as const,
+      originLabel: undefined as string | undefined,
+    }));
+  const inboxRows = inbox.map((entry) => {
+    const originKey = entry.originSpecialistKey ?? entry.homeSpecialistKey;
+    const originLabel = entry.originLabel ?? entry.homeLabel;
+    return {
+      key: `inbox:${entry.item.id}`,
+      item: entry.item,
+      source: "inbox" as const,
+      originLabel: originKey !== undefined ? `@${originKey}` : originLabel,
+    };
+  });
   const workRows = [...inboxRows, ...boardRows];
 
   return (
@@ -678,7 +706,7 @@ function ThreadAgentTeamPanelInner(props: {
         ) : null}
 
         {workRows.map((row) => {
-          const { item, homeThreadId, source, homeLabel } = row;
+          const { item, source, originLabel } = row;
           const waiting = item.status === "on_hold" || item.status === "needs_attention";
           const claimable =
             item.status === "assigned" || item.status === "handed_off"
@@ -695,8 +723,14 @@ function ThreadAgentTeamPanelInner(props: {
           const itemBusy = busyItemId === item.id;
           const detail =
             source === "inbox"
-              ? `${workStatusDetail(item, props.threadId)}${homeLabel === undefined ? "" : ` · from ${homeLabel}`}`
+              ? `${workStatusDetail(item, props.threadId)}${originLabel === undefined ? "" : ` · from ${originLabel}`}`
               : workStatusDetail(item, props.threadId);
+          const workInput = {
+            threadId: props.threadId,
+            projectId,
+            itemId: item.id,
+            actorThreadId: props.threadId,
+          };
           return (
             <li
               key={row.key}
@@ -731,11 +765,7 @@ function ThreadAgentTeamPanelInner(props: {
                       () =>
                         resume({
                           environmentId: props.environmentId,
-                          input: {
-                            threadId: homeThreadId,
-                            itemId: item.id,
-                            actorThreadId: props.threadId,
-                          },
+                          input: workInput,
                         }),
                       "Could not resume work",
                     )
@@ -757,7 +787,8 @@ function ThreadAgentTeamPanelInner(props: {
                         claim({
                           environmentId: props.environmentId,
                           input: {
-                            threadId: homeThreadId,
+                            threadId: props.threadId,
+                            projectId,
                             itemId: item.id,
                             claimedByThreadId: props.threadId,
                           },
@@ -782,10 +813,8 @@ function ThreadAgentTeamPanelInner(props: {
                         complete({
                           environmentId: props.environmentId,
                           input: {
-                            threadId: homeThreadId,
-                            itemId: item.id,
+                            ...workInput,
                             closureReason: OWNED_WORK_CLOSURE_UX.done.reason,
-                            actorThreadId: props.threadId,
                           },
                         }),
                       "Could not complete work",
@@ -820,11 +849,7 @@ function ThreadAgentTeamPanelInner(props: {
                           () =>
                             cancel({
                               environmentId: props.environmentId,
-                              input: {
-                                threadId: homeThreadId,
-                                itemId: item.id,
-                                actorThreadId: props.threadId,
-                              },
+                              input: workInput,
                             }),
                           "Could not cancel work",
                         )

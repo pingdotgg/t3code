@@ -24,6 +24,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AgentTeam from "./AgentTeamService.ts";
+import * as OwnedWork from "./OwnedWorkService.ts";
 import * as TeamTemplate from "./TeamTemplateService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -101,8 +102,11 @@ function makeHarness(bundle: ContributorBundle | null = null) {
   const layerLoader = Layer.succeed(ContributorBundleLoader.ContributorBundleLoader, {
     load: () => Effect.succeed(bundle === null ? Option.none() : Option.some(bundle)),
   });
+  const layerOwnedWork = OwnedWork.layer.pipe(Layer.provide(layerServerSettings));
   const layerAgentTeam = AgentTeam.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerThreadManagement, layerServerSettings, NodeCrypto.layer)),
+    Layer.provide(
+      Layer.mergeAll(layerThreadManagement, layerOwnedWork, layerServerSettings, NodeCrypto.layer),
+    ),
   );
   const layerTeamTemplate = TeamTemplate.layer.pipe(
     Layer.provide(

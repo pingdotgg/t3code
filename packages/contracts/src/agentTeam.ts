@@ -58,11 +58,17 @@ export type OrchestrationV2ReadAgentTeamResult = typeof OrchestrationV2ReadAgent
 
 /**
  * Cross-seat owned-work obligations for one actor (OpenRig `rig queue list --owned`).
- * Items still live on their home thread; the actor claims/acts against that home id.
+ * Items live on the project; origin fields are display-only.
  */
 export const OrchestrationV2OwnedWorkInboxEntry = Schema.Struct({
-  homeThreadId: ThreadId,
+  /** @deprecated Prefer `originThreadId`; kept for clients mid-upgrade. */
+  homeThreadId: Schema.optional(ThreadId),
+  originThreadId: Schema.optional(ThreadId),
+  originSpecialistKey: Schema.optional(ThreadSpecialistKey),
+  originLabel: Schema.optional(TrimmedNonEmptyString),
+  /** @deprecated Prefer `originSpecialistKey`. */
   homeSpecialistKey: Schema.optional(ThreadSpecialistKey),
+  /** @deprecated Prefer `originLabel`. */
   homeLabel: Schema.optional(TrimmedNonEmptyString),
   item: OwnedWorkItem,
 });
@@ -80,3 +86,14 @@ export const OrchestrationV2ListOwnedWorkInboxResult = Schema.Struct({
 });
 export type OrchestrationV2ListOwnedWorkInboxResult =
   typeof OrchestrationV2ListOwnedWorkInboxResult.Type;
+
+/** Full project board (OpenRig daemon-scoped queue). */
+export const OrchestrationV2ListOwnedWorkInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type OrchestrationV2ListOwnedWorkInput = typeof OrchestrationV2ListOwnedWorkInput.Type;
+
+export const OrchestrationV2ListOwnedWorkResult = Schema.Struct({
+  items: Schema.Array(OwnedWorkItem),
+});
+export type OrchestrationV2ListOwnedWorkResult = typeof OrchestrationV2ListOwnedWorkResult.Type;

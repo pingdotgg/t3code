@@ -119,6 +119,7 @@ import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as AgentTeamService from "./orchestration-v2/AgentTeamService.ts";
+import * as OwnedWorkService from "./orchestration-v2/OwnedWorkService.ts";
 import * as TeamTemplateService from "./orchestration-v2/TeamTemplateService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -1445,6 +1446,7 @@ export const layerWsRpc = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const teamTemplates = yield* TeamTemplateService.TeamTemplateService;
       const agentTeams = yield* AgentTeamService.AgentTeamService;
+      const ownedWork = yield* OwnedWorkService.OwnedWorkService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
@@ -2271,6 +2273,10 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.readAgentTeam]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.project_id": input.projectId }).pipe(
             Effect.andThen(agentTeams.read(input)),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.listOwnedWork]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.project_id": input.projectId }).pipe(
+            Effect.andThen(ownedWork.list(input)),
           ),
         [ORCHESTRATION_V2_WS_METHODS.listOwnedWorkInbox]: (input) =>
           Effect.annotateCurrentSpan({

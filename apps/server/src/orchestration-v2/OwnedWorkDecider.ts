@@ -1,9 +1,9 @@
 import {
   appendOwnedWorkHistory,
-  type OrchestrationV2AppThread,
   type OrchestrationV2ServerCommand,
   type OwnedWorkHistoryEntry,
   type OwnedWorkItem,
+  type ProjectId,
   ownedWorkClosureError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -24,20 +24,6 @@ export type OwnedWorkCommand = Extract<
       | "owned-work.cancel";
   }
 >;
-
-const itemsOf = (thread: OrchestrationV2AppThread): ReadonlyArray<OwnedWorkItem> =>
-  thread.ownedWorkItems ?? [];
-
-const withItems = (
-  thread: OrchestrationV2AppThread,
-  items: ReadonlyArray<OwnedWorkItem>,
-  now: DateTime.Utc,
-) =>
-  Result.succeed({
-    ...thread,
-    ownedWorkItems: [...items],
-    updatedAt: now,
-  });
 
 const findItem = (items: ReadonlyArray<OwnedWorkItem>, itemId: OwnedWorkItem["id"]) => {
   const index = items.findIndex((item) => item.id === itemId);
@@ -78,21 +64,21 @@ const history = (
 ): ReadonlyArray<OwnedWorkHistoryEntry> => appendOwnedWorkHistory(item.history, entry);
 
 /**
- * Applies an owned-work command to the home thread. Complete requires a closure reason
- * (delivery, not acceptance). Hold/attention keep the thread open with a resume path.
+ * Applies an owned-work command to the project board. Complete requires a closure reason
+ * (delivery, not acceptance). Hold/attention keep the item open with a resume path.
  */
 export function decideOwnedWorkCommand(input: {
-  readonly thread: OrchestrationV2AppThread;
+  readonly projectId: ProjectId;
+  readonly items: ReadonlyArray<OwnedWorkItem>;
   readonly command: OwnedWorkCommand;
   readonly now: DateTime.Utc;
-}): Result.Result<OrchestrationV2AppThread, string> {
-  const { thread, command, now } = input;
-  if (thread.deletedAt !== null) return Result.fail(`Thread ${thread.id} is deleted.`);
-  if (thread.archivedAt !== null) {
-    return Result.fail("Archived threads cannot change owned work.");
+}): Result.Result<ReadonlyArray<OwnedWorkItem>, string> {
+  const { projectId, items, command, now } = input;
+  if (command.projectId !== projectId) {
+    return Result.fail(
+      `Owned work command project ${command.projectId} does not match ${projectId}.`,
+    );
   }
-
-  const items = itemsOf(thread);
   const nowIso = DateTime.formatIso(now);
 
   switch (command.type) {
@@ -100,8 +86,10 @@ export function decideOwnedWorkCommand(input: {
       if (items.some((item) => item.id === command.itemId)) {
         return Result.fail(`Owned work item ${command.itemId} already exists.`);
       }
+      const createdByThreadId = command.createdByThreadId ?? command.threadId;
       const item: OwnedWorkItem = {
         id: command.itemId,
+        projectId,
         title: command.title,
         description: command.description,
         status: "assigned",
@@ -118,17 +106,17 @@ export function decideOwnedWorkCommand(input: {
           {
             at: nowIso,
             kind: "assigned",
-            actorThreadId: command.createdByThreadId,
+            actorThreadId: createdByThreadId,
             note: null,
           },
         ],
-        createdByThreadId: command.createdByThreadId,
+        createdByThreadId,
         createdAt: nowIso,
         updatedAt: nowIso,
         claimedAt: null,
         completedAt: null,
       };
-      return withItems(thread, [...items, item], now);
+      return Result.succeed([...items, item]);
     }
     case "owned-work.claim": {
       const found = findItem(items, command.itemId);
@@ -140,8 +128,7 @@ export function decideOwnedWorkCommand(input: {
       if (item.assigneeThreadId !== null && item.assigneeThreadId !== command.claimedByThreadId) {
         return Result.fail(`Owned work item ${command.itemId} is assigned to another thread.`);
       }
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status: "claimed",
@@ -155,7 +142,6 @@ export function decideOwnedWorkCommand(input: {
             note: null,
           }),
         }),
-        now,
       );
     }
     case "owned-work.progress": {
@@ -170,8 +156,7 @@ export function decideOwnedWorkCommand(input: {
       if (!actorOwns(item, command.actorThreadId)) {
         return Result.fail(`Owned work item ${command.itemId} is owned by another thread.`);
       }
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status: "in_progress",
@@ -186,7 +171,6 @@ export function decideOwnedWorkCommand(input: {
             note: command.progress,
           }),
         }),
-        now,
       );
     }
     case "owned-work.handoff": {
@@ -202,8 +186,7 @@ export function decideOwnedWorkCommand(input: {
       if (command.toThreadId === item.claimedByThreadId) {
         return Result.fail("Cannot hand off owned work to its current claimer.");
       }
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status: "handed_off",
@@ -222,7 +205,6 @@ export function decideOwnedWorkCommand(input: {
             toThreadId: command.toThreadId,
           }),
         }),
-        now,
       );
     }
     case "owned-work.hold": {
@@ -237,8 +219,7 @@ export function decideOwnedWorkCommand(input: {
       if (!actorOwns(item, command.actorThreadId)) {
         return Result.fail(`Owned work item ${command.itemId} is owned by another thread.`);
       }
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status: "on_hold",
@@ -252,7 +233,6 @@ export function decideOwnedWorkCommand(input: {
             note: command.reason,
           }),
         }),
-        now,
       );
     }
     case "owned-work.resume": {
@@ -267,8 +247,7 @@ export function decideOwnedWorkCommand(input: {
       if (!actorOwns(item, command.actorThreadId)) {
         return Result.fail(`Owned work item ${command.itemId} is owned by another thread.`);
       }
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status: "in_progress",
@@ -282,7 +261,6 @@ export function decideOwnedWorkCommand(input: {
             note: command.note ?? null,
           }),
         }),
-        now,
       );
     }
     case "owned-work.attention": {
@@ -297,8 +275,7 @@ export function decideOwnedWorkCommand(input: {
       if (!actorOwns(item, command.actorThreadId) && item.status !== "handed_off") {
         return Result.fail(`Owned work item ${command.itemId} is owned by another thread.`);
       }
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status: "needs_attention",
@@ -312,7 +289,6 @@ export function decideOwnedWorkCommand(input: {
             note: command.reason,
           }),
         }),
-        now,
       );
     }
     case "owned-work.complete": {
@@ -333,8 +309,7 @@ export function decideOwnedWorkCommand(input: {
       });
       if (closureError !== null) return Result.fail(closureError);
       const status = command.closureReason === "canceled" ? "cancelled" : "completed";
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status,
@@ -353,7 +328,6 @@ export function decideOwnedWorkCommand(input: {
             closureReason: command.closureReason,
           }),
         }),
-        now,
       );
     }
     case "owned-work.cancel": {
@@ -370,8 +344,7 @@ export function decideOwnedWorkCommand(input: {
       ) {
         return Result.fail(`Owned work item ${command.itemId} cannot be cancelled by this thread.`);
       }
-      return withItems(
-        thread,
+      return Result.succeed(
         replaceAt(items, index, {
           ...item,
           status: "cancelled",
@@ -390,7 +363,6 @@ export function decideOwnedWorkCommand(input: {
             closureReason: "canceled",
           }),
         }),
-        now,
       );
     }
   }

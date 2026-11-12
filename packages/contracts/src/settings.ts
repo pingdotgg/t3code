@@ -1,4 +1,5 @@
 import { AgentTeam } from "./agentTeam.ts";
+import { OwnedWorkItem } from "./ownedWork.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -1435,6 +1436,10 @@ export const ServerSettings = Schema.Struct({
   agentTeams: Schema.Record(ProjectId, AgentTeam).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Project-scoped owned-work board (Labs); seats are assignees only. */
+  ownedWorkByProject: Schema.Record(ProjectId, Schema.Array(OwnedWorkItem)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1889,6 +1894,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   agentTeams: Schema.optionalKey(Schema.Record(ProjectId, AgentTeam)),
+  ownedWorkByProject: Schema.optionalKey(Schema.Record(ProjectId, Schema.Array(OwnedWorkItem))),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   permissionRouting: Schema.optionalKey(PermissionRoutingPolicy),

@@ -1226,11 +1226,12 @@ export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThre
 );
 
 export interface AssignOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly title: string;
   readonly description?: string;
   readonly assigneeThreadId?: ThreadId | null;
-  readonly createdByThreadId: ThreadId;
+  readonly createdByThreadId?: ThreadId | null;
 }
 
 export const assignOwnedWork = Effect.fn("EnvironmentCommands.assignOwnedWork")(function* (
@@ -1240,15 +1241,19 @@ export const assignOwnedWork = Effect.fn("EnvironmentCommands.assignOwnedWork")(
     type: "owned-work.assign",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     title: input.title,
     description: input.description ?? "",
     ...(input.assigneeThreadId === undefined ? {} : { assigneeThreadId: input.assigneeThreadId }),
-    createdByThreadId: input.createdByThreadId,
+    ...(input.createdByThreadId === undefined
+      ? {}
+      : { createdByThreadId: input.createdByThreadId }),
   });
 });
 
 export interface ClaimOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly claimedByThreadId: ThreadId;
 }
@@ -1260,12 +1265,14 @@ export const claimOwnedWork = Effect.fn("EnvironmentCommands.claimOwnedWork")(fu
     type: "owned-work.claim",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     claimedByThreadId: input.claimedByThreadId,
   });
 });
 
 export interface ProgressOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly progress: string;
   readonly actorThreadId?: ThreadId;
@@ -1278,6 +1285,7 @@ export const progressOwnedWork = Effect.fn("EnvironmentCommands.progressOwnedWor
     type: "owned-work.progress",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     progress: input.progress,
     ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
@@ -1285,6 +1293,7 @@ export const progressOwnedWork = Effect.fn("EnvironmentCommands.progressOwnedWor
 });
 
 export interface HandoffOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly toThreadId: ThreadId;
   readonly note?: string;
@@ -1298,6 +1307,7 @@ export const handoffOwnedWork = Effect.fn("EnvironmentCommands.handoffOwnedWork"
     type: "owned-work.handoff",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     toThreadId: input.toThreadId,
     ...(input.note === undefined ? {} : { note: input.note }),
@@ -1306,6 +1316,7 @@ export const handoffOwnedWork = Effect.fn("EnvironmentCommands.handoffOwnedWork"
 });
 
 export interface HoldOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly reason: string;
   readonly actorThreadId?: ThreadId;
@@ -1318,6 +1329,7 @@ export const holdOwnedWork = Effect.fn("EnvironmentCommands.holdOwnedWork")(func
     type: "owned-work.hold",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     reason: input.reason,
     ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
@@ -1325,6 +1337,7 @@ export const holdOwnedWork = Effect.fn("EnvironmentCommands.holdOwnedWork")(func
 });
 
 export interface ResumeOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly note?: string;
   readonly actorThreadId?: ThreadId;
@@ -1337,6 +1350,7 @@ export const resumeOwnedWork = Effect.fn("EnvironmentCommands.resumeOwnedWork")(
     type: "owned-work.resume",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     ...(input.note === undefined ? {} : { note: input.note }),
     ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
@@ -1344,6 +1358,7 @@ export const resumeOwnedWork = Effect.fn("EnvironmentCommands.resumeOwnedWork")(
 });
 
 export interface AttentionOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly reason: string;
   readonly actorThreadId?: ThreadId;
@@ -1356,6 +1371,7 @@ export const attentionOwnedWork = Effect.fn("EnvironmentCommands.attentionOwnedW
     type: "owned-work.attention",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     reason: input.reason,
     ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),
@@ -1363,6 +1379,7 @@ export const attentionOwnedWork = Effect.fn("EnvironmentCommands.attentionOwnedW
 });
 
 export interface CompleteOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly closureReason: OwnedWorkClosureReason;
   readonly closureTarget?: string;
@@ -1377,6 +1394,7 @@ export const completeOwnedWork = Effect.fn("EnvironmentCommands.completeOwnedWor
     type: "owned-work.complete",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     closureReason: input.closureReason,
     ...(input.closureTarget === undefined ? {} : { closureTarget: input.closureTarget }),
@@ -1386,6 +1404,7 @@ export const completeOwnedWork = Effect.fn("EnvironmentCommands.completeOwnedWor
 });
 
 export interface CancelOwnedWorkInput extends ThreadCommandInput {
+  readonly projectId: ProjectId;
   readonly itemId: OwnedWorkItemId;
   readonly closureNote?: string;
   readonly actorThreadId?: ThreadId;
@@ -1398,6 +1417,7 @@ export const cancelOwnedWork = Effect.fn("EnvironmentCommands.cancelOwnedWork")(
     type: "owned-work.cancel",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    projectId: input.projectId,
     itemId: input.itemId,
     ...(input.closureNote === undefined ? {} : { closureNote: input.closureNote }),
     ...(input.actorThreadId === undefined ? {} : { actorThreadId: input.actorThreadId }),

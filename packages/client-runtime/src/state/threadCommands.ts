@@ -368,6 +368,14 @@ export function createThreadEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.projectId]),
       },
     }),
+    listOwnedWork: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:list-owned-work",
+      tag: ORCHESTRATION_V2_WS_METHODS.listOwnedWork,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.projectId]),
+      },
+    }),
     listOwnedWorkInbox: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:list-owned-work-inbox",
       tag: ORCHESTRATION_V2_WS_METHODS.listOwnedWorkInbox,

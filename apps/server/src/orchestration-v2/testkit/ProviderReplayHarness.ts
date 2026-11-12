@@ -40,6 +40,7 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as OwnedWorkService from "../OwnedWorkService.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -295,7 +296,8 @@ export function layerWithRegistry<Error>(
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
-  | CommandOutputRecorder.CommandOutputRecorder,
+  | CommandOutputRecorder.CommandOutputRecorder
+  | OwnedWorkService.OwnedWorkService,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -492,6 +494,7 @@ export function layerWithRegistry<Error>(
       }),
     }),
   );
+  const layerOwnedWorkProvided = OwnedWorkService.layer.pipe(Layer.provide(layerServerSettings));
   const layerOrchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -506,6 +509,7 @@ export function layerWithRegistry<Error>(
         layerProviderSwitchServiceProvided,
         layerRunExecutionServiceProvided,
         layerServerSettings,
+        layerOwnedWorkProvided,
         ThreadForkService.layer,
       ),
     ),
@@ -557,6 +561,7 @@ export function layerWithRegistry<Error>(
   const layerReplayRuntime = Layer.mergeAll(
     layerEffectOutboxProvided,
     layerOrchestratorProvided,
+    layerOwnedWorkProvided,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,

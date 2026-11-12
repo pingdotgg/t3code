@@ -7,6 +7,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
+  openOwnedWorkCountForThread,
   type ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -328,8 +329,16 @@ export const make = Effect.gen(function* () {
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
+    // Owned work lives on the project board; overlay seat counts before auto-settle checks.
+    const withOwnedWork = threads.map((thread) => ({
+      ...thread,
+      openOwnedWorkCount: openOwnedWorkCountForThread(
+        settings.ownedWorkByProject[thread.projectId],
+        thread.id,
+      ),
+    }));
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
-    const candidates = threads.filter(
+    const candidates = withOwnedWork.filter(
       (thread) =>
         (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
         isAutoSettlementCandidate(thread, nowMs),

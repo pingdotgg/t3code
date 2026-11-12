@@ -1,14 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { OwnedWorkItemId, ThreadId } from "./baseSchemas.ts";
-import { ownedWorkInboxRelevant, type OwnedWorkItem } from "./ownedWork.ts";
+import { OwnedWorkItemId, ProjectId, ThreadId } from "./baseSchemas.ts";
+import {
+  openOwnedWorkCountForThread,
+  ownedWorkInboxRelevant,
+  type OwnedWorkItem,
+} from "./ownedWork.ts";
 
 const actor = ThreadId.make("thread:actor");
-const home = ThreadId.make("thread:home");
+const origin = ThreadId.make("thread:origin");
 const other = ThreadId.make("thread:other");
+const projectId = ProjectId.make("project:owned-work");
 
 const baseItem = {
   id: OwnedWorkItemId.make("owned-work:1"),
+  projectId,
   title: "Ship client",
   description: "",
   progress: null,
@@ -19,7 +25,7 @@ const baseItem = {
   closureTarget: null,
   closureNote: null,
   history: [],
-  createdByThreadId: home,
+  createdByThreadId: origin,
   createdAt: "2026-06-20T00:00:00.000Z",
   updatedAt: "2026-06-20T00:00:00.000Z",
   claimedAt: null,
@@ -84,5 +90,41 @@ describe("ownedWorkInboxRelevant", () => {
         actor,
       ),
     ).toBe(false);
+  });
+});
+
+describe("openOwnedWorkCountForThread", () => {
+  it("counts unassigned origin work for the creator", () => {
+    expect(
+      openOwnedWorkCountForThread(
+        [
+          {
+            ...baseItem,
+            status: "assigned",
+            assigneeThreadId: null,
+            claimedByThreadId: null,
+            createdByThreadId: actor,
+          },
+        ],
+        actor,
+      ),
+    ).toBe(1);
+  });
+
+  it("does not count unassigned origin work for other seats", () => {
+    expect(
+      openOwnedWorkCountForThread(
+        [
+          {
+            ...baseItem,
+            status: "assigned",
+            assigneeThreadId: null,
+            claimedByThreadId: null,
+            createdByThreadId: origin,
+          },
+        ],
+        actor,
+      ),
+    ).toBe(0);
   });
 });

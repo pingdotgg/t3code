@@ -57,6 +57,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as AgentTeamService from "./AgentTeamService.ts";
+import * as OwnedWorkService from "./OwnedWorkService.ts";
 import * as TeamTemplateService from "./TeamTemplateService.ts";
 import * as ContributorBundleLoader from "../project/ContributorBundleLoader.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
@@ -220,6 +221,8 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
 );
 
+const layerOwnedWorkProvided = OwnedWorkService.layer;
+
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -239,6 +242,7 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerProviderSessionManagerProvided,
       layerProviderSwitchServiceProvided,
       layerRunExecutionServiceProvided,
+      layerOwnedWorkProvided,
       ThreadForkService.layer,
     ),
   ),
@@ -295,7 +299,7 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 );
 const layerContributorBundleLoaderProvided = ContributorBundleLoader.layer;
 const layerAgentTeamProvided = AgentTeamService.layer.pipe(
-  Layer.provide(layerThreadManagementProvided),
+  Layer.provide(Layer.mergeAll(layerThreadManagementProvided, layerOwnedWorkProvided)),
 );
 const layerTeamTemplateProvided = TeamTemplateService.layer.pipe(
   Layer.provide(
@@ -432,6 +436,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerOwnedWorkProvided,
   layerAgentTeamProvided,
   layerTeamTemplateProvided,
   layerScheduledTaskProvided,
