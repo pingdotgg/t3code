@@ -28,7 +28,8 @@ export function installSidebarTree(root: HTMLElement) {
   const ownerRow = (element: HTMLElement) => {
     const row = element.closest<HTMLElement>(ROW);
     if (row) return row;
-    const linked = element.dataset.sidebarActionFor;
+    const linked = element.closest<HTMLElement>("[data-sidebar-action-for]")?.dataset
+      .sidebarActionFor;
     return linked
       ? root.querySelector<HTMLElement>(`[data-sidebar-row="${CSS.escape(linked)}"]`)
       : null;

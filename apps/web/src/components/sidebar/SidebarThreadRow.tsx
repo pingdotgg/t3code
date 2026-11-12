@@ -59,6 +59,7 @@ import {
   memo,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -542,6 +543,31 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
+const SIDEBAR_ROW_ACTION_SELECTOR = "button:not([data-sidebar-row]), a, input";
+
+// Visible row content covers the primary button, so a press on it moves focus there.
+export function focusSidebarRowPrimaryAction(event: ReactMouseEvent<HTMLElement>) {
+  // React bubbles presses from portaled menus through the row.
+  if (!event.currentTarget.contains(event.target as Node)) return;
+  if ((event.target as HTMLElement).closest(SIDEBAR_ROW_ACTION_SELECTOR)) return;
+  const primary = event.currentTarget.querySelector<HTMLElement>("[data-sidebar-row]");
+  if (!primary) return;
+  event.preventDefault();
+  primary.focus({ preventScroll: true, focusVisible: false });
+}
+
+// Screen readers drop a button's descendants, so row actions sit beside this button.
+// It fills the isolated row behind the visible content.
+export function SidebarRowPrimaryAction(props: ComponentProps<"button">) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className="absolute inset-0 -z-1 cursor-pointer rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    />
+  );
+}
+
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
@@ -885,7 +911,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ) {
       return;
     }
-    if ((event.target as HTMLElement).closest("button, a, input")) return;
+    if ((event.target as HTMLElement).closest(SIDEBAR_ROW_ACTION_SELECTOR)) return;
     event.preventDefault();
     onStartRename(threadRef, thread.title);
   };
@@ -970,7 +996,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
 
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    "group/sidebar-row relative isolate w-full cursor-pointer overflow-hidden rounded-md text-left select-none",
     variantAction === "unsettle" &&
       !props.isActive &&
       "[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
@@ -1047,7 +1073,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           ? cn(
               "truncate",
               shouldRecede
-                ? "text-foreground/75 group-hover/sidebar-row:text-foreground group-focus-visible/sidebar-row:text-foreground"
+                ? "text-foreground/75 group-hover/sidebar-row:text-foreground group-has-[[data-sidebar-row]:focus-visible]/sidebar-row:text-foreground"
                 : status === "failed" && !isUnread && !isWoke
                   ? "text-foreground/95"
                   : "text-foreground",
@@ -1069,7 +1095,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {thread.title}
     </span>
   );
-  const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
+  const primaryAction = (
+    <SidebarRowPrimaryAction
+      data-sidebar-row={threadKey}
+      data-sidebar-parent={props.navigationParent}
+      aria-label={accessibility.label}
+      aria-current={accessibility.current}
+      aria-busy={isRegeneratingTitle || undefined}
+      onKeyDown={handleKeyDown}
+    />
+  );
 
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
@@ -1234,14 +1269,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             render={
               <div
                 ref={rowRef}
-                role="button"
-                tabIndex={0}
-                data-sidebar-row={threadKey}
-                data-sidebar-parent={props.navigationParent}
-                aria-label={accessibility.label}
-                aria-current={accessibility.current}
+                data-sidebar-action-for={threadKey}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
-                aria-busy={isRegeneratingTitle || undefined}
                 className={cn(
                   rowSurfaceClassName,
                   multiline
@@ -1250,16 +1279,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   // Lines titles up with the folder name, past its chevron and icon.
                   inFolder && "ps-9",
                 )}
+                onMouseDown={focusSidebarRowPrimaryAction}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
-                onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
               />
             }
           >
+            {primaryAction}
             {/* `contents` keeps one-line rows a single flex row. */}
             <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
-              {accessibleTitle}
               {inFolder ? null : (
                 <span
                   className={cn(
@@ -1430,23 +1459,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           render={
             <div
               ref={rowRef}
-              role="button"
-              tabIndex={0}
-              data-sidebar-row={threadKey}
-              data-sidebar-parent={props.navigationParent}
-              aria-label={accessibility.label}
-              aria-current={accessibility.current}
+              data-sidebar-action-for={threadKey}
               data-testid="sidebar-row-card"
-              aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
+              onMouseDown={focusSidebarRowPrimaryAction}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
-              onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
             />
           }
         >
-          {accessibleTitle}
+          {primaryAction}
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
