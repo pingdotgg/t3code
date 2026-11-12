@@ -7,6 +7,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1312,6 +1313,20 @@ describe("environment shell cold start", () => {
       expect(yield* Ref.get(h.httpLoads)).toBe(2);
       yield* Queue.offer(warmReload.events, { kind: "synchronized" });
       yield* h.liveAt(HTTP_SEQUENCE + 1);
+    }),
+  );
+
+  it.effect("resubscribes on the next session after a stream defect (#4589)", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(RECENT_ORIGIN);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* h.liveAt(CACHED_SEQUENCE);
+
+      yield* Queue.failCause(first.events, Cause.die(new Error("shell stream defect")));
+      yield* h.reconnect;
+      const resumed = yield* Queue.take(h.subscriptions);
+      expect(resumed.input).toMatchObject({ afterSequence: CACHED_SEQUENCE });
     }),
   );
 });
