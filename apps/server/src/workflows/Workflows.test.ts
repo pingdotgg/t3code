@@ -15,14 +15,15 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
-import { signal, store } from "./stepServices.ts";
-import { sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import { signal, start, store } from "./stepServices.ts";
+import { invoke, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0092 from "../persistence/Migrations/092_Workflows.ts";
 import Migration0093 from "../persistence/Migrations/093_WorkflowTriggers.ts";
 import Migration0094 from "../persistence/Migrations/094_WorkflowStepEnvironment.ts";
 import Migration0095 from "../persistence/Migrations/095_WorkflowRunInput.ts";
 import Migration0096 from "../persistence/Migrations/096_WorkflowStore.ts";
+import Migration0097 from "../persistence/Migrations/097_WorkflowRunParent.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
@@ -188,6 +189,63 @@ const stored = [
   ),
 ];
 
+const kid = workflow(
+  "kid",
+  {
+    version: 1,
+    payload: Schema.Struct({ mode: Schema.Literals(["finish", "stop", "hold"]) }),
+    returns: Schema.String,
+  },
+  (payload) =>
+    Effect.gen(function* () {
+      if (payload.mode === "stop") return yield* stop("nothing to do");
+      if (payload.mode === "hold") yield* wait("go", { returns: Schema.String });
+      return "grown";
+    }),
+);
+const family = [
+  kid,
+  /** Runs a kid as part of itself and reports how the kid ended. */
+  workflow(
+    "parent",
+    {
+      version: 1,
+      payload: Schema.Struct({ mode: Schema.Literals(["finish", "stop", "hold"]) }),
+      returns: Schema.String,
+    },
+    (payload) =>
+      Effect.map(invoke("kid", kid, payload), (ended) =>
+        ended.outcome === "completed" ? ended.value : `${ended.outcome}: ${ended.reason}`,
+      ),
+  ),
+  /** Starts two kids and does not wait for them. */
+  workflow(
+    "spawner",
+    { version: 1, payload: Schema.Struct({}), returns: Schema.Array(Schema.String) },
+    () =>
+      step(
+        "spawn",
+        { returns: Schema.Array(Schema.String), ...once },
+        Effect.forEach(["one", "two"], (key) =>
+          Effect.map(start(kid, { mode: "finish" }, { key: `spawned/${key}` }), (run) => run.runId),
+        ),
+      ),
+  ),
+  /** Two agents at once, the second with a minute to finish. */
+  workflow("pair", { version: 1, payload: Schema.Struct({}), returns: Schema.String }, () =>
+    Effect.map(
+      Effect.all(
+        [
+          agent("left", { brief: "Left.", project: "p1" }),
+          agent("right", { brief: "Right.", project: "p1", timeout: "1 minute" }),
+        ],
+        { concurrency: 2 },
+      ),
+      ([left, right]) => `${left.value} ${right.value}`,
+    ),
+  ),
+];
+
 const fix = workflow(
   "fix",
   {
@@ -296,9 +354,12 @@ const harness = Effect.gen(function* () {
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
   yield* Effect.provide(
-    Effect.all([Migration0092, Migration0093, Migration0094, Migration0095, Migration0096], {
-      discard: true,
-    }),
+    Effect.all(
+      [Migration0092, Migration0093, Migration0094, Migration0095, Migration0096, Migration0097],
+      {
+        discard: true,
+      },
+    ),
     database,
   );
   const counts = yield* Ref.make<Record<string, number>>({});
@@ -310,6 +371,7 @@ const harness = Effect.gen(function* () {
     fix,
     ...triggered,
     ...stored,
+    ...family,
   ]).pipe(
     Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
     Layer.provide(database),
@@ -775,6 +837,88 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("an invoked run reports how it ended, and cancelling the parent cancels it", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness;
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        // The kid of a parent that waits on it, once the kid itself waits.
+        const heldKid = Effect.gen(function* () {
+          const kid = (yield* workflows.list({})).find(
+            (run) =>
+              run.workflow === "kid" && (run.status === "running" || run.status === "waiting"),
+          );
+          return yield* workflows.waitFor(kid!.runId, status("waiting"));
+        });
+        const finished = yield* workflows.start(
+          "parent",
+          { mode: "finish" },
+          { idempotencyKey: "f" },
+        );
+        const stopped = yield* workflows.start("parent", { mode: "stop" }, { idempotencyKey: "s" });
+        assert.equal(
+          (yield* workflows.waitFor(finished.runId, status("completed"))).result,
+          "grown",
+        );
+        assert.equal(
+          (yield* workflows.waitFor(stopped.runId, status("completed"))).result,
+          "stopped: nothing to do",
+        );
+
+        const held = yield* workflows.start("parent", { mode: "hold" }, { idempotencyKey: "h" });
+        yield* workflows.waitFor(held.runId, (run) => run.detail === "kid");
+        const child = yield* heldKid;
+        yield* workflows.cancel(held.runId, "not needed");
+        assert.equal((yield* workflows.get(child.runId)).run.status, "cancelled");
+
+        // A kid cancelled by itself is an outcome its parent hears, not a failure.
+        const second = yield* workflows.start("parent", { mode: "hold" }, { idempotencyKey: "h2" });
+        yield* workflows.waitFor(second.runId, (run) => run.detail === "kid");
+        const lone = yield* heldKid;
+        yield* workflows.cancel(lone.runId, "changed my mind");
+        assert.equal(
+          (yield* workflows.waitFor(second.runId, status("completed"))).result,
+          "cancelled: changed my mind",
+        );
+
+        const spawner = yield* workflows.start("spawner", {}, { idempotencyKey: "sp" });
+        const spawned = (yield* workflows.waitFor(spawner.runId, status("completed")))
+          .result as ReadonlyArray<string>;
+        assert.equal(spawned.length, 2);
+        for (const runId of spawned) {
+          assert.equal((yield* workflows.waitFor(runId, status("completed"))).result, "grown");
+        }
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("two agents run side by side, and one past its time limit is stopped", () =>
+  Effect.gen(function* () {
+    const { boot, agents } = yield* harness;
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const run = yield* workflows.start("pair", {}, { idempotencyKey: "p" });
+        // Both have started before either has ended.
+        yield* agents.started(run.runId, "left/0");
+        yield* agents.started(run.runId, "right/0");
+        yield* agents.end(run.runId, "left/0", { reply: "done" });
+        // The right one never answers. Its minute passes on the clock, and its thread is stopped.
+        const paused = yield* workflows.waitFor(run.runId, status("paused"));
+        assert.include(paused.detail ?? "", "it was not done after 1m");
+        assert.equal(agents.interrupted.length, 1);
+        const { steps } = yield* workflows.get(run.runId);
+        assert.deepStrictEqual(steps.map((step) => [step.name, step.status]).toSorted(), [
+          ["left", "completed"],
+          ["right", "failed"],
+        ]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("an agent step in a linked environment keeps its thread there", () =>

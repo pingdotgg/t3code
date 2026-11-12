@@ -1,6 +1,8 @@
 // The steps that involve someone else: an agent that returns data, and a person who answers.
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -28,7 +30,7 @@ const CORRECTIONS = 2;
  * An agent doing one job in a thread a person can open. With `output` it returns data the server
  * checked against that schema; without, its last message. It starts a thread in `project`, or
  * continues `thread`. `environment` names a linked environment to start it in; a continued thread
- * stays where it is. A turn that dies is tried once more, then the run pauses at this step.
+ * stays where it is. With `timeout`, an agent that is not done by then is stopped. A turn that dies is tried once more, then the run pauses at this step.
  */
 export const agent = Effect.fn("workflow.agent")(function* <A = string, I = string>(
   name: string,
@@ -39,6 +41,8 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
     readonly project?: string;
     readonly environment?: string;
     readonly thread?: AgentThread;
+    /** How long the agent has. Past it the thread is stopped and the run pauses at this step. */
+    readonly timeout?: Duration.Input;
   },
 ): Effect.fn.Return<{ readonly value: A; readonly thread: AgentThread }, StepFailed, InRun> {
   const run = yield* claim(name);
@@ -66,7 +70,29 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
         Effect.tap((turn) =>
           run.store.stepThread(run.runId, name, turn.threadId, turn.environment ?? null),
         ),
+        Effect.flatMap((turn) =>
+          Effect.map(Clock.currentTimeMillis, (startedAt) => ({ ...turn, startedAt })),
+        ),
       );
+  /** The turn's result, or its thread stopped when the step's time is up. */
+  const within = Effect.fn("workflow.agent.within")(function* (
+    turn: AgentTurn,
+    startedAt: number | undefined,
+  ) {
+    if (options.timeout === undefined || startedAt === undefined) return yield* agents.result(turn);
+    const limit = Duration.fromInputUnsafe(options.timeout);
+    const left = startedAt + Duration.toMillis(limit) - (yield* Clock.currentTimeMillis);
+    const result = yield* agents
+      .result(turn)
+      .pipe(Effect.timeoutOption(Duration.millis(Math.max(0, left))));
+    if (Option.isSome(result)) return result.value;
+    yield* Effect.ignore(agents.interrupt(threadOf(turn)));
+    return {
+      ending: "stopped" as const,
+      detail: `it was not done after ${Duration.format(limit)}`,
+      reply: "",
+    };
+  });
   const done = (round: number) =>
     journaled(
       run,
@@ -90,6 +116,8 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
         start(`${round}`, options.brief, options.thread),
       ),
     );
+    // Counted from the step's first turn, so corrections do not buy more time.
+    const startedAt = turn.startedAt;
     let problem = "";
     let stopped = false;
     for (let correction = 0; ; correction++) {
@@ -100,7 +128,7 @@ export const agent = Effect.fn("workflow.agent")(function* <A = string, I = stri
         AgentResult,
         Effect.andThen(
           run.store.runStatus(run.runId, "waiting", `agent ${name}`),
-          agents.result(turn),
+          within(turn, startedAt),
         ),
       );
       if (result.ending !== "completed") {

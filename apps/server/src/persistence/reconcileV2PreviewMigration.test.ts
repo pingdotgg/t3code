@@ -76,6 +76,7 @@ describe("V2 preview upgrade", () => {
         [94, "WorkflowStepEnvironment"],
         [95, "WorkflowRunInput"],
         [96, "WorkflowStore"],
+        [97, "WorkflowRunParent"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -195,6 +196,7 @@ describe("V2 preview upgrade", () => {
         [94, "WorkflowStepEnvironment"],
         [95, "WorkflowRunInput"],
         [96, "WorkflowStore"],
+        [97, "WorkflowRunParent"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

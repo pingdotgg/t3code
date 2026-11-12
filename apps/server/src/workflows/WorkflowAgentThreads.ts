@@ -146,6 +146,7 @@ const make = Effect.gen(function* () {
           : {
               instanceId: ProviderInstanceId.make(input.model.instanceId),
               model: input.model.model,
+              ...(input.model.options === undefined ? {} : { options: input.model.options }),
             };
       if (modelSelection === undefined) {
         return yield* new WorkflowAgentError({

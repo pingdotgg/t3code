@@ -33,13 +33,7 @@ import {
   type Woke,
   type WorkflowDefinition,
 } from "./workflow.ts";
-import {
-  forStep,
-  KeyValues,
-  layerKeyValues,
-  layerSignalSender,
-  SignalSender,
-} from "./stepServices.ts";
+import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import {
   HOOK_PREFIX,
@@ -65,7 +59,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
 ) {
   const store = yield* WorkflowStore.WorkflowStore;
   const keyValues = yield* KeyValues;
-  const sender = yield* SignalSender;
+  const link = yield* EngineLink;
   const scope = yield* Scope.Scope;
   const agents = yield* WorkflowAgents;
   const random = yield* SecureRandom.SecureRandom;
@@ -96,6 +90,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     result: row.result_json === null ? null : WorkflowStore.jsonValue(row.result_json),
     pauses: Number(row.pauses),
     retired: row.ended_at === null && !byTag.has(row.engine_tag),
+    parentRunId: row.parent_run_id,
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -138,7 +133,20 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         engineTag: engineTag(definition),
         idempotencyKey: options.idempotencyKey,
         input: payload.input,
+        parent: options.parent,
       });
+      if (options.parent !== undefined) {
+        // The key named a run that someone else started: it would never tell this parent.
+        const row = yield* store.run(runId);
+        if (
+          row?.parent_run_id !== options.parent.runId ||
+          row.parent_wait !== options.parent.wait
+        ) {
+          return yield* new WorkflowInputError({
+            problem: `Run ${runId} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
+          });
+        }
+      }
       return { runId };
     },
   );
@@ -275,7 +283,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           reason: row.detail ?? undefined,
         }),
       ),
-      Effect.provideContext(forStep(keyValues, sender, `${row.run_id}/${END_STEP}`)),
+      Effect.provideContext(forStep(keyValues, link, `${row.run_id}/${END_STEP}`)),
       Effect.matchCauseEffect({
         onSuccess: () => store.stepEnded(row.run_id, END_STEP, "completed", null),
         onFailure: (cause) =>
@@ -378,16 +386,26 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       return "buffered" as const;
     },
   );
-  // Steps were registered before this engine existed; now they can signal through it.
-  sender.current = signal;
+  /** Tell the run that invoked this one, if one did, how it ended. */
+  const ended = Effect.fn("WorkflowEngine.ended")(function* (runId: string) {
+    const row = yield* store.run(runId);
+    if (row === undefined || row.parent_run_id === null || row.parent_wait === null) return;
+    if (row.status !== "completed" && row.status !== "stopped" && row.status !== "cancelled") {
+      return;
+    }
+    yield* signal(
+      { runId: row.parent_run_id, wait: row.parent_wait },
+      {
+        outcome: row.status,
+        value: row.result_json === null ? null : WorkflowStore.jsonValue(row.result_json),
+        ...(row.detail === null ? {} : { reason: row.detail }),
+      },
+      { id: `${runId}/ended` },
+    ).pipe(Effect.ignore);
+  });
 
-  return Workflows.of({
-    start,
-    hooks: Effect.succeed(hooks.map(({ workflow, name, path }) => ({ workflow, name, path }))),
-    deliver,
-    signal,
-    resume,
-    cancel: Effect.fn("Workflows.cancel")(function* (runId, reason) {
+  const cancel: Workflows["Service"]["cancel"] = Effect.fn("Workflows.cancel")(
+    function* (runId, reason) {
       const row = yield* requireRun(runId);
       if (row.ended_at !== null) return;
       const threads = yield* store.runningThreads(runId);
@@ -400,11 +418,30 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         discard: true,
       });
       yield* store.stepsCancelled(runId);
+      // What this run invoked was part of it.
+      yield* Effect.forEach(
+        yield* store.children(runId),
+        (child) => Effect.ignore(cancel(child.run_id, reason)),
+        { discard: true },
+      );
+      yield* ended(runId);
       // Waited for briefly, so the caller usually hears of a run that is cleaned up. A cleanup
       // can take minutes; it goes on by itself, and the sweep finishes one that is cut short.
       const cleanup = yield* Effect.forkIn(endCancelled({ ...row, detail: reason }), scope);
       yield* Fiber.join(cleanup).pipe(Effect.timeoutOption(CANCEL_WAITS));
-    }),
+    },
+  );
+
+  // Steps were registered before this engine existed; now they can reach it.
+  link.current = { signal, start, ended };
+
+  return Workflows.of({
+    start,
+    hooks: Effect.succeed(hooks.map(({ workflow, name, path }) => ({ workflow, name, path }))),
+    deliver,
+    signal,
+    resume,
+    cancel,
     get: Effect.fn("Workflows.get")(function* (runId) {
       const row = yield* requireRun(runId);
       const steps = yield* store.steps(runId);
@@ -468,7 +505,7 @@ export const layer = (definitions: ReadonlyArray<WorkflowDefinition>) => {
   return Layer.effect(Workflows, make(registered)).pipe(
     Layer.provide(layerDefinitions),
     Layer.provide(WorkflowStore.layer),
-    Layer.provide(Layer.merge(layerKeyValues, layerSignalSender)),
+    Layer.provide(Layer.merge(layerKeyValues, layerEngineLink)),
     Layer.provide(ClusterWorkflowEngine.layer),
     Layer.provide(SingleRunner.layer({ runnerStorage: "sql" })),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),

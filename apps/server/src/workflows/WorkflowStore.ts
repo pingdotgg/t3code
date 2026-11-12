@@ -15,6 +15,12 @@ export type SignalAddress =
   | { readonly runId: string; readonly wait: string }
   | { readonly workflow: string; readonly key: string };
 
+/** The run that invoked another, and the wait in it that hears how the other ended. */
+export interface RunParent {
+  readonly runId: string;
+  readonly wait: string;
+}
+
 export interface RunRow {
   readonly run_id: string;
   readonly workflow: string;
@@ -25,6 +31,8 @@ export interface RunRow {
   readonly detail: string | null;
   readonly result_json: string | null;
   readonly input_json: string | null;
+  readonly parent_run_id: string | null;
+  readonly parent_wait: string | null;
   readonly pauses: number | bigint;
   readonly started_at: string;
   readonly updated_at: string;
@@ -74,6 +82,7 @@ export class WorkflowStore extends Context.Service<
       readonly engineTag: string;
       readonly idempotencyKey: string;
       readonly input: Schema.Json;
+      readonly parent?: RunParent | undefined;
     }) => Effect.Effect<void>;
     readonly runStatus: (
       runId: string,
@@ -119,6 +128,8 @@ export class WorkflowStore extends Context.Service<
     readonly signalSeen: (signalId: string) => Effect.Effect<boolean>;
     /** Counts one more arrival at `name` in this run and returns the count. */
     readonly mark: (runId: string, name: string) => Effect.Effect<number>;
+    /** The runs this one invoked that have not ended. */
+    readonly children: (runId: string) => Effect.Effect<ReadonlyArray<RunRow>>;
     /** The steps a cancelled run left in flight are over: nothing will end them. */
     readonly stepsCancelled: (runId: string) => Effect.Effect<void>;
     /** Cancelled runs whose `onEnd` has not completed and may still be tried. */
@@ -176,11 +187,12 @@ const make = Effect.gen(function* () {
         sql`
           INSERT INTO workflow_runs (
             run_id, workflow, version, engine_tag, idempotency_key, title, status, input_json,
-            started_at, updated_at
+            parent_run_id, parent_wait, started_at, updated_at
           ) VALUES (
             ${run.runId}, ${run.workflow}, ${run.version}, ${run.engineTag},
             ${run.idempotencyKey}, ${`${run.workflow} ${run.idempotencyKey}`}, 'running',
-            ${jsonText(run.input)}, ${at}, ${at}
+            ${jsonText(run.input)}, ${run.parent?.runId ?? null}, ${run.parent?.wait ?? null},
+            ${at}, ${at}
           )
           ON CONFLICT (run_id) DO NOTHING
         `,
@@ -313,6 +325,11 @@ const make = Effect.gen(function* () {
         RETURNING count
       `.pipe(Effect.orDie);
       return Number(rows[0]?.count ?? 1);
+    }),
+    children: Effect.fn("WorkflowStore.children")(function* (runId) {
+      return yield* sql<RunRow>`
+        SELECT * FROM workflow_runs WHERE parent_run_id = ${runId} AND ended_at IS NULL
+      `.pipe(Effect.orDie);
     }),
     stepsCancelled: Effect.fn("WorkflowStore.stepsCancelled")(function* (runId) {
       const at = yield* now;

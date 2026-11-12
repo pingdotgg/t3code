@@ -1,3 +1,4 @@
+import type { ModelSelection } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -14,6 +15,8 @@ export class WorkflowAgentError extends Schema.TaggedError<WorkflowAgentError>()
 export interface AgentModel {
   readonly instanceId: string;
   readonly model: string;
+  /** The model's own options, such as reasoning effort, as `{ id, value }` pairs. */
+  readonly options?: ModelSelection["options"];
 }
 
 export const AgentTurn = Schema.Struct({
@@ -21,6 +24,8 @@ export const AgentTurn = Schema.Struct({
   turnId: Schema.String,
   /** The linked environment the thread is in. Absent for this one. */
   environment: Schema.optional(Schema.String),
+  /** When the step's first turn started, which its time limit counts from. */
+  startedAt: Schema.optional(Schema.Number),
 });
 export type AgentTurn = typeof AgentTurn.Type;
 
