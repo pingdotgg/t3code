@@ -825,8 +825,13 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-  const baseDir = path.resolve(serverConfig.baseDir);
-  const worktreesDir = path.resolve(serverConfig.worktreesDir);
+  // Candidates are compared by realpath, so the configured roots must be too.
+  const canonicalDirectory = (directory: string) =>
+    fileSystem
+      .realPath(path.resolve(directory))
+      .pipe(Effect.orElseSucceed(() => path.resolve(directory)));
+  const baseDir = yield* canonicalDirectory(serverConfig.baseDir);
+  const worktreesDir = yield* canonicalDirectory(serverConfig.worktreesDir);
   const platform = yield* HostProcess.Platform;
   const isWindows = platform === "win32";
   const foldWorktreeCase = isWindows;
