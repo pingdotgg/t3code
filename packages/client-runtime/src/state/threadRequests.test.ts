@@ -196,14 +196,20 @@ describe("announcing resolved thread requests", () => {
     using recorder = record();
     const announce = makeThreadRequestsResolvedAnnouncer(environmentId, threadId);
 
-    announce([first]);
-    announce([first, second]);
-    announce([first, second]);
-    announce([second]);
+    const pending = (id: RuntimeRequestId) => ({ id, status: "pending" as const });
+    announce([pending(first)]);
+    announce([pending(first), pending(second)]);
+    announce([pending(first), pending(second)]);
+    announce([{ id: first, status: "cancelled" }, pending(second)]);
+    announce([
+      { id: first, status: "cancelled" },
+      { id: second, status: "resolved" },
+    ]);
 
     expect(recorder.events).toEqual([
-      { environmentId, threadId, pendingRequestIds: [first] },
-      { environmentId, threadId, pendingRequestIds: [second] },
+      { environmentId, threadId, pendingRequestIds: [first], unansweredRequestIds: [] },
+      { environmentId, threadId, pendingRequestIds: [second], unansweredRequestIds: [first] },
+      { environmentId, threadId, pendingRequestIds: [], unansweredRequestIds: [first] },
     ]);
   });
 });
@@ -234,6 +240,20 @@ describe("initial user input drafts", () => {
     expect(seedUserInputDraftAnswers(questions, {}).editor).toEqual({
       customAnswer: "  Proposed commit\n\n",
     });
+  });
+
+  it("seeds a question with the id __proto__ as its own draft", () => {
+    const seeded = seedUserInputDraftAnswers(
+      [
+        { id: "__proto__", initialAnswer: "Proposed" },
+        { id: "name", initialAnswer: "Control" },
+      ],
+      {},
+    );
+
+    expect(JSON.stringify(seeded)).toBe(
+      '{"__proto__":{"customAnswer":"Proposed"},"name":{"customAnswer":"Control"}}',
+    );
   });
 });
 const projection: OrchestrationV2ThreadProjection = {

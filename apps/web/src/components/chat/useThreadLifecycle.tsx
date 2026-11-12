@@ -46,9 +46,10 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { useUiStateStore } from "../../uiStateStore";
-import { type ChatMessage } from "../../types";
+import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { AlarmClockIcon, CheckCircle2Icon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { titleRegenerationToast } from "../threadTitleRegenerationToast";
 import { newMessageId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { composerDraftHasUserContent, useComposerDraftStore } from "../../composerDraftStore";
@@ -105,6 +106,8 @@ interface ThreadLifecycleInput {
   readonly serverConfig: EnvironmentServerConfig | null;
   readonly runtimeMode: RuntimeMode;
   readonly isWorking: boolean;
+  /** Also true while the server prepares, starts, or queues a run this client did not send. */
+  readonly runIsLive: boolean;
   readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkNowItem>[0]["tasks"];
   readonly turnItems: Parameters<typeof backgroundWorkNowItem>[0]["turnItems"];
   readonly activePendingApproval: PendingThreadRequests["activePendingApproval"];
@@ -157,6 +160,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     serverConfig,
     runtimeMode,
     isWorking,
+    runIsLive,
     pendingBackgroundTasks,
     turnItems,
     activePendingApproval,
@@ -181,6 +185,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
   });
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
@@ -406,9 +413,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const handleSwitchCheckoutToThreadStable = useStableCallback(() => {
     void handleSwitchCheckoutToThread();
   });
-  // The interrupt path also accepts a completed run while its provider still
-  // has background work.
-  const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
+  const activeBackgroundTasks = activeThread ? pendingBackgroundTasks : [];
   const [backgroundWorkStops, setBackgroundWorkStops] = useState<
     Record<string, BackgroundWorkStopRequest | undefined>
   >({});
@@ -536,7 +541,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       createdAt,
       ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
       runtimeMode,
-      interactionMode: context.interactionMode,
+      interactionMode: DEFAULT_INTERACTION_MODE,
     });
     const result =
       settingsResult._tag === "Failure"
@@ -548,7 +553,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
               message: { messageId, role: "user", text, attachments: [] },
               modelSelection: context.selectedModelSelection,
               runtimeMode,
-              interactionMode: context.interactionMode,
+              interactionMode: DEFAULT_INTERACTION_MODE,
               createdAt,
             },
           });
@@ -596,10 +601,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       : null;
   const backgroundWorkNow = activeThread
     ? backgroundWorkNowItem({
+        environmentId,
         threadId: activeThread.id,
         tasks: activeBackgroundTasks,
         turnItems,
-        stopDisabled: !canOperateThread || isStoppingBackgroundWork,
+        // Interrupt stops the active run first, not this work; the composer owns that Stop.
+        stopDisabled: runIsLive || !canOperateThread || isStoppingBackgroundWork,
         stopping: isStoppingBackgroundWork,
         onStop: handleStopBackgroundWorkStable,
         onOpenThread: onOpenRelatedThreadStable,
@@ -680,6 +687,18 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread",
         ),
       );
+    },
+    "thread.regenerateTitle": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
+      if (activeThreadShell.titleRegeneration != null) return;
+      void regenerateThreadTitle({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId },
+      }).then((result) => {
+        const toast = titleRegenerationToast([result]);
+        if (toast) toastManager.add(toast);
+      });
     },
   } satisfies ChatShortcutCommands;
   return {
