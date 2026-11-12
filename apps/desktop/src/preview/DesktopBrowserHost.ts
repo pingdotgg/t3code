@@ -42,6 +42,15 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
 }
 
+/** A native window the tab's page opened, driven through its own debugger. */
+interface AttachedPopup {
+  readonly webContents: Electron.WebContents;
+  readonly debugger: Electron.Debugger;
+  relayed: ReturnType<CdpRelayConnection["addPopup"]> | null;
+  readonly onMessage: AttachedTab["onMessage"];
+  readonly onDestroyed: () => void;
+}
+
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
 interface AttachedTab {
@@ -84,6 +93,7 @@ interface AttachedTab {
   readonly onNewDocument: () => void;
   /** Stops waiting for the first page; set until the tab is announced. */
   stopWaiting: (() => void) | null;
+  readonly popups: Set<AttachedPopup>;
 }
 
 export class DesktopBrowserHost extends Context.Service<
@@ -93,6 +103,8 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    /** A page in an attached tab opened a native window; its agent can drive it. */
+    readonly openedPopup: (opener: Electron.WebContents, popup: Electron.WebContents) => void;
     readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
@@ -280,8 +292,66 @@ export const make = Effect.gen(function* () {
     syncPainting(tab);
   };
 
+  const relayPopup = (relay: CdpRelayConnection, popup: AttachedPopup) => {
+    const { webContents, debugger: debuggee } = popup;
+    popup.relayed = relay.addPopup({
+      send: (method, params, sessionId) =>
+        sessionId === undefined
+          ? debuggee.sendCommand(method, params)
+          : debuggee.sendCommand(method, params, sessionId),
+      targetId: () =>
+        debuggee
+          .sendCommand("Target.getTargetInfo")
+          .then((result: { targetInfo: { targetId: string } }) => result.targetInfo.targetId),
+      url: () => (webContents.isDestroyed() ? "" : webContents.getURL()),
+      title: () => (webContents.isDestroyed() ? "" : webContents.getTitle()),
+      close: () => {
+        if (!webContents.isDestroyed()) webContents.close();
+      },
+    });
+  };
+
+  const forgetPopup = (tab: AttachedTab, popup: AttachedPopup) => {
+    if (!tab.popups.delete(popup)) return;
+    popup.relayed?.remove();
+    popup.relayed = null;
+    popup.debugger.off("message", popup.onMessage);
+    if (popup.webContents.isDestroyed()) return;
+    popup.webContents.off("destroyed", popup.onDestroyed);
+    try {
+      if (popup.debugger.isAttached()) popup.debugger.detach();
+    } catch {}
+  };
+
+  const openedPopup = (opener: Electron.WebContents, webContents: Electron.WebContents) => {
+    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === opener);
+    if (!tab || webContents.isDestroyed()) return;
+    // Retained like the tab's own, against electron/electron#53376.
+    const debuggee = webContents.debugger;
+    try {
+      // DevTools or another client holding it leaves the window to the person.
+      if (debuggee.isAttached()) return;
+      debuggee.attach("1.3");
+    } catch {
+      return;
+    }
+    const popup: AttachedPopup = {
+      webContents,
+      debugger: debuggee,
+      relayed: null,
+      onMessage: (_event, method, params, sessionId) =>
+        popup.relayed?.event(method, params, sessionId),
+      onDestroyed: () => forgetPopup(tab, popup),
+    };
+    tab.popups.add(popup);
+    debuggee.on("message", popup.onMessage);
+    webContents.once("destroyed", popup.onDestroyed);
+    if (tab.relay) relayPopup(tab.relay, popup);
+  };
+
   const dropRelay = (tab: AttachedTab) => {
     tab.relay = null;
+    for (const popup of tab.popups) popup.relayed = null;
     tab.screencasts.clear();
     tab.agentUsed = false;
     dropFocusHolds(tab);
@@ -409,6 +479,7 @@ export const make = Effect.gen(function* () {
       },
     );
     tab.relay = relay;
+    for (const popup of tab.popups) relayPopup(relay, popup);
     return relay;
   };
 
@@ -431,6 +502,7 @@ export const make = Effect.gen(function* () {
     const announced = tab.stopWaiting === null;
     tab.stopWaiting?.();
     tab.relay = null;
+    for (const popup of tab.popups) forgetPopup(tab, popup);
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
@@ -475,6 +547,7 @@ export const make = Effect.gen(function* () {
         if (tab.screenshotTurn !== null) nextScreenshot(tab);
       },
       stopWaiting: null,
+      popups: new Set(),
     };
     tabs.set(id, tab);
     debuggee.debugger.on("message", tab.onMessage);
@@ -603,6 +676,7 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    openedPopup,
     loadFailed,
     setShown,
     placeDownload,

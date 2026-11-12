@@ -1517,6 +1517,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       window.webContents.on("before-input-event", (_event, input) => {
         syncMenuShortcuts(window.webContents, input);
       });
+      browserHost.openedPopup(wc, window.webContents);
     };
     const findForwardedShortcut = (keys: Parameters<typeof matchesKeybindingShortcut>[0]) =>
       !(
