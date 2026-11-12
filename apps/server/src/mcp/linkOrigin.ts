@@ -37,7 +37,7 @@ const fencingLinkOrigin = (caller: Pick<Caller, "scope" | "caller">) => {
 const outsideLink = (origin: OrchestrationV2LinkOrigin, message: string) =>
   new OrchestratorMcpFailure({
     code: "capability_denied",
-    message: `This work was started from ${origin.label} through a linked environment, so ${message} A link paired with full access is not limited this way.`,
+    message: `This work was started from ${origin.label} through a linked environment, so ${message} Its access level was recorded when it started. Re-pairing applies to new threads, and forks keep the original restriction. Start a new thread directly in this environment or through a link already paired with full access.`,
   });
 
 /** A thread a fenced caller may change: one its own link started. */
