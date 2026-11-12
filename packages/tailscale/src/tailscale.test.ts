@@ -110,6 +110,7 @@ describe("tailscale", () => {
       ] as const) {
         const reachable = yield* probeTailscaleHttpsEndpoint({
           baseUrl: "https://desktop.example.ts.net",
+          environmentId: "this-environment",
         }).pipe(
           Effect.provideService(
             HttpClient.HttpClient,
