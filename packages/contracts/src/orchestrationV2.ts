@@ -3649,10 +3649,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
       }),
     ),
   }),
-  /**
-   * Internal so no client can mark a request saved without the value being
-   * stored.
-   */
   Schema.Struct({
     type: Schema.Literal("secret_delivery.record"),
     commandId: CommandId,
@@ -3664,6 +3660,10 @@ const OrchestrationV2InternalCommand = Schema.Union([
     secretStatus: SecretDeliveryStatus,
     expiresAt: Schema.Number,
   }),
+  /**
+   * Internal so no client can mark a request saved without the value being
+   * stored.
+   */
   Schema.Struct({
     type: Schema.Literal("secret_request.record"),
     commandId: CommandId,

@@ -197,11 +197,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
-  /** Only status reaches the agent, never this value. */
   readonly sendSecret: (
     scope: McpInvocationScope,
     input: SendSecretInput,
   ) => Effect.Effect<SecretDeliveryReceipt, OrchestratorMcpFailure>;
+  /** Only status reaches the agent, never this value. */
   readonly requestSecret: (
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
