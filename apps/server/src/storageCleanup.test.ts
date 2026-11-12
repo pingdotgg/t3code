@@ -2465,6 +2465,19 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("removes a clean detached worktree only when every commit is on a branch", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["checkout", "--detach"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "unpushed\n");
+        yield* command(worktree, ["commit", "-am", "unpushed"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["checkout", "--detach", "main"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
   it.live.each([
     ["any-local-files", ".env", "kept"],
     ["uncommitted-changes", ".env", "removed"],
