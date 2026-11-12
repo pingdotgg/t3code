@@ -36,6 +36,7 @@ vi.mock("electron", async (importOriginal) => ({
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
@@ -48,6 +49,10 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import {
+  PASSKEY_BRIDGE_ARGUMENT,
+  PRIMARY_PASTE_DISABLED_ARGUMENT,
+} from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 
@@ -238,6 +243,8 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly primaryPasteEnabled?: boolean;
+  readonly previewPasskeyBridgeEnabled?: boolean;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -329,8 +336,11 @@ function layerTest(input: {
         } satisfies ElectronShell.ElectronShell["Service"]),
         layerElectronTheme,
         layerElectronWindow,
+        Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, {
+          enabled: input.primaryPasteEnabled ?? true,
+        }),
         Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-          bridgeEnabled: false,
+          bridgeEnabled: input.previewPasskeyBridgeEnabled ?? false,
           installSessionHandlers: () => {},
           attachGuest: () => () => {},
         }),
@@ -439,6 +449,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           } satisfies ElectronShell.ElectronShell["Service"]),
           layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
+          Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
           Layer.mock(PreviewPasskeys.PreviewPasskeys)({
             bridgeEnabled: false,
             installSessionHandlers: () => {},
@@ -693,6 +704,55 @@ describe("DesktopWindow", () => {
         );
         beforeInput(event, { ...input, key: "r", isAutoRepeat: false });
         assert.isFalse(fakeWindow.setIgnoreMenuShortcuts.mock.lastCall?.[0]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("ignores input that arrives after the window is destroyed", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+        const inputEvent = fakeWindow.webContentsListeners.get("input-event");
+        if (!beforeInput || !inputEvent) {
+          return yield* Effect.die("input listeners were not registered");
+        }
+
+        // Electron throws on any member access of a destroyed BrowserWindow.
+        fakeWindow.isDestroyed.mockReturnValue(true);
+        Object.defineProperty(fakeWindow.window, "webContents", {
+          get: () => {
+            throw new TypeError("Object has been destroyed");
+          },
+        });
+
+        // A held Cmd+Q quits from the grace timer, so the trailing Q keyUp lands here.
+        assert.doesNotThrow(() =>
+          beforeInput(
+            { preventDefault: () => {} },
+            {
+              type: "keyUp",
+              isAutoRepeat: false,
+              key: "q",
+              meta: true,
+              control: false,
+              alt: false,
+              shift: false,
+            },
+          ),
+        );
+        assert.doesNotThrow(() => inputEvent({}, { type: "gestureScrollEnd" }));
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1132,6 +1192,43 @@ describe("DesktopWindow", () => {
         ]);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect.each([
+    {
+      primaryPasteEnabled: false,
+      expected: [PASSKEY_BRIDGE_ARGUMENT, PRIMARY_PASTE_DISABLED_ARGUMENT],
+    },
+    { primaryPasteEnabled: true, expected: [PASSKEY_BRIDGE_ARGUMENT] },
+  ])(
+    "passes the primary-paste setting to preview guests (enabled: $primaryPasteEnabled)",
+    ({ primaryPasteEnabled, expected }) =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const layer = layerTest({
+          window: fakeWindow.window,
+          createCount: yield* Ref.make(0),
+          mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+          primaryPasteEnabled,
+          previewPasskeyBridgeEnabled: true,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const willAttachWebview = fakeWindow.webContentsListeners.get("will-attach-webview");
+          if (!willAttachWebview) {
+            return yield* Effect.die("will-attach-webview listener was not registered");
+          }
+          const webPreferences: Electron.WebPreferences = {};
+          willAttachWebview({ preventDefault: () => {} }, webPreferences, {
+            partition: "persist:t3code-preview-test",
+          });
+
+          assert.deepEqual(webPreferences.additionalArguments, expected);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("opens safe off-origin renderer navigations in the system browser", () =>

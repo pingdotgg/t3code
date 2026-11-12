@@ -10,10 +10,10 @@ import {
   withChipIcon,
 } from "../../native/useEnrichedLinkVariants";
 import {
-  enrichedSkillDisplayName,
   enrichedSkillInstructionsPath,
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { ThreadContextDivider } from "./thread-context-divider";
 import {
   ThreadHandoffDivider,
@@ -236,8 +236,9 @@ import { readEnvironmentScope, usePreparedConnection } from "../../state/session
 import { projectEnvironment } from "../../state/projects";
 import {
   needsWorkspaceBasenameLookup,
-  pickWorkspaceBasenameMatch,
+  pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
+  workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
   resolveThreadLink,
@@ -285,6 +286,7 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
 
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
+const VIEWED_IMAGE_GAP = 8;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
 // Virtualization remounts old rows; only newly created content should replay an entrance.
@@ -1102,21 +1104,13 @@ function ArtifactTemplateCard(props: {
 }) {
   return (
     <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
-      <View className="relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
+      <View className="h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
         <SymbolView
           name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
           size={20}
           tintColorClassName="accent-foreground-muted"
           type="monochrome"
         />
-        <View className="absolute -right-1 -bottom-1 h-4 w-4 items-center justify-center rounded-full bg-fuchsia-500">
-          <SymbolView
-            name={{ ios: "sparkles", android: "auto_awesome" }}
-            size={9}
-            tintColor="white"
-            type="monochrome"
-          />
-        </View>
       </View>
       <View className="min-w-0 flex-1">
         <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
@@ -1729,6 +1723,19 @@ function renderFeedEntry(
     );
   }
 
+  if (entry.type === "viewed-images") {
+    const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
+    return (
+      <View className="flex-row flex-wrap pb-2" style={{ gap: VIEWED_IMAGE_GAP }}>
+        {entry.paths.map((path) => (
+          <View key={path} style={{ width: thumbnailWidth }}>
+            {props.renderViewedImage({ href: path, alt: null, title: null })}
+          </View>
+        ))}
+      </View>
+    );
+  }
+
   if (entry.type === "mcp-app") {
     return (
       <ThreadMcpApp
@@ -1913,7 +1920,10 @@ function renderFeedEntry(
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = props.userMessageGrouping.continuesSteer
         ? null
-        : resolveUserMessageIntentBadge(message.inputIntent);
+        : resolveUserMessageIntentBadge(
+            message.inputIntent,
+            message.projectedItem?.item.status === "pending",
+          );
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
       );
@@ -2894,17 +2904,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         props.workspaceRoot &&
         relativePath &&
         !/[\\/]$/.test(presentation.path) &&
-        needsWorkspaceBasenameLookup(relativePath) &&
+        workspaceLinkLookupQuery(presentation.path, props.workspaceRoot) !== null &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
       ) {
+        const workspaceRoot = props.workspaceRoot;
         const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
         void executeAtomQuery(
           appAtomRegistry,
           projectEnvironment.searchEntries({
             environmentId: props.environmentId,
             input: {
-              cwd: props.workspaceRoot,
-              query: relativePath,
+              cwd: workspaceRoot,
+              query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
               kind: "file",
               limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
             },
@@ -2914,7 +2925,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           (result) => {
             const match =
               result._tag === "Success"
-                ? pickWorkspaceBasenameMatch(relativePath, result.value.entries)
+                ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
                 : null;
             if (!match || match === relativePath) {
               openAt(relativePath);
@@ -2931,7 +2942,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ).then(
               (metadata) =>
                 openAt(
-                  metadata._tag === "Success" && metadata.value?.kind !== "directory"
+                  metadata._tag === "Success" &&
+                    (needsWorkspaceBasenameLookup(relativePath)
+                      ? metadata.value?.kind !== "directory"
+                      : metadata.value === null)
                     ? match
                     : relativePath,
                 ),
@@ -2978,7 +2992,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         return {
-          title: enrichedSkillDisplayName(skill),
+          title: formatProviderSkillDisplayName(skill),
           actions: [
             {
               id: "open-skill",

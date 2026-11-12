@@ -1,3 +1,4 @@
+import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import {
   boundAttachmentIds,
   buildExpiredTerminalContextToastCopy,
@@ -1126,6 +1127,12 @@ describe("planComposerTurn", () => {
       shouldQueueBehindActiveRun: false,
       baseBranchForWorktree: null,
     });
+    expect(
+      planComposerTurn({ ...running, sendQueuesBehindSetup: true, dispatchMode: "steer" }),
+    ).toMatchObject({
+      turnDispatchMode: "steer",
+      shouldQueueBehindActiveRun: true,
+    });
     // A fresh session cannot join the running turn, and a stale one is not compacted first.
     expect(
       planComposerTurn({
@@ -1214,5 +1221,27 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+
+describe("Open in for the host environment", () => {
+  it("shows both local environments when the primary has a separate WSL home", () => {
+    const primaryEnvironmentId = EnvironmentId.make("wsl");
+    const hostEnvironmentId = EnvironmentId.make("host");
+    for (const [activeThreadEnvironmentId, visible] of [
+      [primaryEnvironmentId, true],
+      [hostEnvironmentId, true],
+      [EnvironmentId.make("other"), false],
+    ] as const) {
+      expect(
+        shouldShowOpenInPicker({
+          activeProjectName: "Project",
+          activeThreadEnvironmentId,
+          primaryEnvironmentId,
+          hostEnvironmentId,
+          remoteOpenMode: "local-exec",
+        }),
+      ).toBe(visible);
+    }
   });
 });
