@@ -44,7 +44,11 @@ import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
-import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
+import {
+  checkCodexProviderStatus,
+  mapCodexModelCapabilities,
+  type CodexAppServerProviderSnapshot,
+} from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -500,6 +504,84 @@ it.layer(
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+      }),
+    );
+
+    it.effect("offers cyber access only on catalog models that advertise it", () =>
+      Effect.gen(function* () {
+        const catalogModel = (slug: string, cyber?: Array<"standard" | "daybreakBlue">) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: mapCodexModelCapabilities({
+            additionalSpeedTiers: [],
+            ...(cyber ? { availableAccessPrograms: { cyber } } : {}),
+            defaultReasoningEffort: "medium",
+            description: slug,
+            displayName: slug,
+            hidden: false,
+            id: slug,
+            isDefault: false,
+            model: slug,
+            supportedReasoningEfforts: [],
+          }),
+        });
+        const defaultPrograms = (snapshot: Partial<CodexAppServerProviderSnapshot>) =>
+          checkCodexProviderStatus(decodeCodexSettings({ customModels: ["my-model"] }), () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                models: [
+                  catalogModel("both", ["standard", "daybreakBlue"]),
+                  catalogModel("daybreak-only", ["daybreakBlue"]),
+                  catalogModel("plain"),
+                ],
+                ...snapshot,
+              }),
+            ),
+          ).pipe(
+            Effect.map((status) =>
+              Object.fromEntries(
+                status.models.map((model) => {
+                  const descriptor = model.capabilities?.optionDescriptors?.find(
+                    (option) => option.id === "cyberAccessProgram",
+                  );
+                  return [
+                    model.slug,
+                    descriptor?.type === "select"
+                      ? (descriptor.currentValue ?? "no default")
+                      : null,
+                  ];
+                }),
+              ),
+            ),
+          );
+
+        assert.deepStrictEqual(yield* defaultPrograms({ daybreakEnabled: false }), {
+          both: "standard",
+          "daybreak-only": "daybreakBlue",
+          plain: null,
+          "my-model": null,
+        });
+        assert.deepStrictEqual(yield* defaultPrograms({ daybreakEnabled: true }), {
+          both: "daybreakBlue",
+          "daybreak-only": "daybreakBlue",
+          plain: null,
+          "my-model": null,
+        });
+        // An unread config keeps the choice but cannot know Codex's default.
+        assert.deepStrictEqual(yield* defaultPrograms({}), {
+          both: "no default",
+          "daybreak-only": "no default",
+          plain: null,
+          "my-model": null,
+        });
+        assert.deepStrictEqual(
+          yield* defaultPrograms({
+            account: { account: { type: "apiKey" }, requiresOpenaiAuth: false },
+            cyberAccessProgramsUnavailable: true,
+          }),
+          { both: null, "daybreak-only": null, plain: null, "my-model": null },
+        );
       }),
     );
 
