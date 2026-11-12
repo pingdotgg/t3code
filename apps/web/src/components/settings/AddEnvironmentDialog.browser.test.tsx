@@ -100,6 +100,7 @@ describe("AddEnvironmentDialog", () => {
 
   it("shows live SSH setup logs for the target being added", async () => {
     const listeners: Array<(event: { targetKey: string; text: string }) => void> = [];
+    using _setup = setup();
     using _bridge = stubGlobal("desktopBridge", {
       onSshEnvironmentProgress: (
         listener: (event: { targetKey: string; text: string }) => void,

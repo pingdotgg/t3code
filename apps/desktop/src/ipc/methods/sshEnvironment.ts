@@ -1,3 +1,4 @@
+import { sshTargetKey } from "@t3tools/client-runtime/connection";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteSessionState,
@@ -25,7 +26,6 @@ import {
   AuthSessionState,
 } from "@t3tools/contracts";
 import { SshHttpBridgeError } from "@t3tools/ssh/errors";
-import { targetConnectionKey } from "@t3tools/ssh/command";
 import { resolveLoopbackSshHttpBaseUrl } from "@t3tools/ssh/tunnel";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -142,7 +142,7 @@ export const ensureSshEnvironment = DesktopIpc.makeIpcMethod({
     const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const mainWindow = yield* electronWindow.main;
-    const targetKey = targetConnectionKey(target);
+    const targetKey = sshTargetKey(target);
     const onProgress = Option.isNone(mainWindow)
       ? undefined
       : (text: string) => {
