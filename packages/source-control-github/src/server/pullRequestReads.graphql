@@ -144,6 +144,7 @@ query PullRequestCore(
         nodes {
           name
           color
+          description
         }
       }
       commits(last: 1) {
@@ -274,6 +275,7 @@ query PullRequestActivity(
           createdAt
           lastEditedAt
           url
+          isMinimized
           author {
             login
             avatarUrl
@@ -295,6 +297,7 @@ query PullRequestActivity(
           submittedAt
           lastEditedAt
           url
+          isMinimized
           author {
             login
             avatarUrl
