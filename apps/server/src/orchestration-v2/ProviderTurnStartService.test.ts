@@ -1113,6 +1113,8 @@ effectIt.effect(
 
       const expectedTips = {
         retained: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
+        // A failed removal can leave the folder behind with only dependencies inside.
+        leftover: { tip: threadTip, file: "thread.txt", upstream: null, base: "" },
         deleted: { tip: projectTip, file: "project.txt", upstream: null, base: "project-current" },
         pushed: {
           tip: threadTip,
@@ -1147,7 +1149,12 @@ effectIt.effect(
           yield* git(workspaceRoot, ["remote", "remove", "origin"]);
         }
         yield* fileSystem.remove(worktreePath, { recursive: true });
-        if (scenario !== "retained") {
+        if (scenario === "leftover") {
+          yield* fileSystem.makeDirectory(path.join(worktreePath, "node_modules"), {
+            recursive: true,
+          });
+        }
+        if (scenario !== "retained" && scenario !== "leftover") {
           yield* git(workspaceRoot, ["worktree", "prune"]);
           yield* git(workspaceRoot, ["branch", "-D", "feature/restore"]);
         }
