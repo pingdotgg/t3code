@@ -3810,25 +3810,40 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'dynamic_tool',
         payload_json = json_set(payload_json, '$.type', 'dynamic_tool', '$.toolName', 't3-code.delegate_task')
         WHERE thread_id = ${threadId} AND ordinal = 4`;
-      const beforeInlineOutput = yield* historyPage(
-        threadId,
-        encodeThreadHistoryCursor({
-          snapshotSequence: 0,
-          sourceThreadId: threadId,
-          sourceItemId: "turn-item:bounded-sql-history:4",
-          position: 0,
-        }),
-        undefined,
-        false,
-        "deferred",
-      );
-      assert.deepEqual(
-        beforeInlineOutput.items.map((row) => row.item.ordinal),
-        [1, 2, 3],
-      );
+      const sharedRunId = "run:bounded-sql-history:1";
+      // A stale position selects from the cursor row itself, or from more than a page after it
+      // once the later rows are another run's and cannot fold.
+      for (const [position, laterStatus, laterRun] of [
+        [0, "completed", sharedRunId],
+        [999, "running", "run:bounded-sql-history:300"],
+      ] as const) {
+        yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = ${laterStatus},
+          run_id = ${laterRun},
+          payload_json = json_set(payload_json, '$.status', ${laterStatus}, '$.runId', ${laterRun})
+          WHERE thread_id = ${threadId} AND ordinal >= 300`;
+        const beforeInlineOutput = yield* historyPage(
+          threadId,
+          encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: threadId,
+            sourceItemId: "turn-item:bounded-sql-history:4",
+            position,
+          }),
+          undefined,
+          false,
+          "deferred",
+        );
+        assert.deepEqual(
+          beforeInlineOutput.items.map((row) => row.item.ordinal),
+          [1, 2, 3],
+        );
+      }
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET status = 'completed',
+        run_id = ${sharedRunId},
+        payload_json = json_set(payload_json, '$.status', 'completed', '$.runId', ${sharedRunId})
+        WHERE thread_id = ${threadId} AND ordinal >= 300`;
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
         payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal IN (2, 4)`;
-      const sharedRunId = "run:bounded-sql-history:1";
       for (const [ordinal, status] of [
         [0, "completed"],
         [1, "superseded"],

@@ -6430,15 +6430,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const scannedRuns = new Set<string>();
             const persistentOutputs = new Set<string>();
             while (workMode !== undefined) {
-              // A cursor row hidden in a work group leaves the page empty, so its run counts too.
-              const from = page.items[0]?.canonicalPosition ?? cursorPosition;
-              if (from < 0) break;
+              // A cursor row hidden in a work group moves the page, so the scan always covers it.
+              const span = [...page.items.slice(0, 1), ...page.items.slice(-1)].map(
+                (row) => row.canonicalPosition,
+              );
+              if (cursorPosition >= 0) span.push(cursorPosition);
+              if (span.length === 0) break;
               const runs = new Map(
                 indexed
-                  .slice(
-                    from,
-                    Math.max(page.items.at(-1)?.canonicalPosition ?? from, cursorPosition) + 1,
-                  )
+                  .slice(Math.min(...span), Math.max(...span) + 1)
                   .flatMap(({ sourceThreadId, item }) =>
                     item.runId !== null &&
                     (workMode === "work" ||
