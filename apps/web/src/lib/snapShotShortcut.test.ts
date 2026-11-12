@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseDesktopSnapShotShortcut, snapShotShortcutKeyLabels } from "./snapShotShortcut";
+import {
+  formatSnapShotShortcutLabel,
+  parseDesktopSnapShotShortcut,
+  snapShotShortcutKeyLabels,
+} from "./snapShotShortcut";
 
 describe("desktop-approved window capture shortcut labels", () => {
   it.each([
@@ -26,5 +30,11 @@ describe("desktop-approved window capture shortcut labels", () => {
     "<Control>UnknownKey",
   ])("does not guess keys from an unrecognized description: %s", (label) => {
     expect(parseDesktopSnapShotShortcut(label)).toBeNull();
+  });
+
+  it("names the left and right keys of a held modifier pair", () => {
+    const shortcut = { kind: "both-shift-keys" } as const;
+    expect(snapShotShortcutKeyLabels(shortcut, "MacIntel")).toEqual(["Left ⇧", "Right ⇧"]);
+    expect(formatSnapShotShortcutLabel(shortcut, "MacIntel")).toBe("Left Shift + Right Shift");
   });
 });
