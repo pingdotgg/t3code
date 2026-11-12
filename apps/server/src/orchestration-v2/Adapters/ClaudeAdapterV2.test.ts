@@ -7694,6 +7694,178 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("a stop after a tool result, before the next reply, resumes after that result", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeRollbackHarness;
+      const toolResultUuid = "00000000-0000-4000-8000-000000000662";
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-cursor-tool-result"),
+          text: "Print the marker.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "00000000-0000-4000-8000-000000000661",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "msg_cursor_tool_result",
+            model: "claude-sonnet-4-6",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_marker",
+                name: "Bash",
+                input: { command: "printf M" },
+              },
+            ],
+          },
+        }),
+        claudeSdkFrame({
+          type: "user",
+          uuid: toolResultUuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_marker", content: "M" }],
+          },
+        }),
+        // Stop mid-thinking: Claude Code emits no frame for an unfinished block.
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000663", result: "" }),
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+
+      assert.equal(lastProviderTurn(harness.events).nativeTurnRef?.nativeId, toolResultUuid);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      laterReply: false,
+      title: "a thinking-only reply to an accepted steer resumes after the steer",
+    },
+    {
+      laterReply: true,
+      title: "a later thinking-only frame echoing the same steer keeps the newer cursor",
+    },
+  ] as const)("$title", ({ laterReply }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeRollbackHarness;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const turnInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-cursor-steer"),
+        text: "Print the marker.",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(turnInput);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${turnInput.attemptId}`,
+      });
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "00000000-0000-4000-8000-000000000671",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          user_message_uuids: [harness.promptUuid(0)],
+          message: {
+            id: "msg_cursor_steer_tool",
+            model: "claude-sonnet-4-6",
+            content: [
+              { type: "tool_use", id: "toolu_steer", name: "Bash", input: { command: "printf M" } },
+            ],
+          },
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "user",
+          uuid: "00000000-0000-4000-8000-000000000672",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_steer", content: "M" }],
+          },
+        }),
+      );
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: turnInput.runId,
+        providerThread: harness.providerThread,
+        providerTurnId,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("cursor-steer"),
+          text: "Also end with KIWI.",
+          attachments: [],
+        },
+      });
+      const steerUuid = harness.offeredMessages.at(-1)?.uuid;
+      assert.isDefined(steerUuid);
+      const thinkingOnly = (uuid: string) =>
+        claudeSdkFrame({
+          type: "assistant",
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          user_message_uuids: [steerUuid],
+          message: {
+            id: `msg_${uuid}`,
+            model: "claude-sonnet-4-6",
+            content: [{ type: "thinking", thinking: "Adding KIWI.", signature: "signature" }],
+          },
+        });
+      yield* harness.offerAndWait(thinkingOnly("00000000-0000-4000-8000-000000000673"));
+      if (laterReply) {
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000674", text: "M" }),
+        );
+        yield* harness.offerAndWait(thinkingOnly("00000000-0000-4000-8000-000000000675"));
+      }
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId,
+      });
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(
+        lastProviderTurn(harness.events).nativeTurnRef?.nativeId,
+        laterReply ? "00000000-0000-4000-8000-000000000674" : steerUuid,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("an interrupted turn after a rollback stops resuming at the rolled-back head", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({

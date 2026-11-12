@@ -4588,6 +4588,8 @@ interface ActiveClaudeTurnContext {
   nativeMessageCursor: string | null;
   // Latest root transcript entry a thinking-only assistant frame can fall back to.
   nativeTranscriptTail: string | null;
+  // Steers whose root user entry a reply has already shown to be in the transcript.
+  readonly steersInTranscript: Set<string>;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
@@ -9890,7 +9892,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.replayed !== true &&
             claudeToolResultBlocksFromUserMessage(message).length > 0
           ) {
+            // A stop before the next reply would otherwise resume before this result and lose it.
+            context.nativeMessageCursor = message.uuid;
             context.nativeTranscriptTail = message.uuid;
+          }
+
+          if (
+            message.type === "assistant" &&
+            message.parent_tool_use_id === null &&
+            input.replayed !== true
+          ) {
+            // The first reply to an accepted steer echoes its uuid, the root entry that reply follows.
+            const steerUuid = claudeEchoedPromptUuids(message).find(
+              (uuid) => context.steerUuids.has(uuid) && !context.steersInTranscript.has(uuid),
+            );
+            if (steerUuid !== undefined) {
+              context.steersInTranscript.add(steerUuid);
+              context.nativeTranscriptTail = steerUuid;
+            }
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
@@ -12139,6 +12158,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               heldRootFrames: [],
               pendingSteers: new Map(),
               steerUuids: new Set(),
+              steersInTranscript: new Set(),
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
