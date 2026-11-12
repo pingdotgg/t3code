@@ -541,8 +541,15 @@ function reparseAtCjkPunctuation(
   if (from?.offset === undefined || to?.offset === undefined || hasReference(block)) return false;
   const base = from.offset;
   const text = source.slice(base, to.offset);
-  // A tab is the marker, and a quote's `>` on a later line would read as a new quote.
-  if (text.includes("\t") || /[\r\n][ ]*>/.test(text)) return false;
+  // A tab is the marker, a quote's `>` on a later line would read as a new quote, and only a
+  // table unescapes `\|` in code.
+  if (
+    text.includes("\t") ||
+    /[\r\n][ ]*>/.test(text) ||
+    (block.type === "tableCell" && text.includes("\\|"))
+  ) {
+    return false;
+  }
   const marks = offsets.map((offset) => offset - base);
   // Each pass finds the next URL in a run with no spaces, like `http://a，http://b，http://c`.
   for (let attempt = 0; attempt < 16; attempt++) {
