@@ -64,6 +64,8 @@ describe("searchSettings", () => {
     expect(searchSettings("sharing", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
     expect(searchSettings("claude", ITEMS).map((item) => item.id)).toEqual(["providers"]);
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
+    const spanish = (message: string) => (message === "Word wrap" ? "Ajuste de línea" : message);
+    expect(searchSettings("ajuste", ITEMS, spanish).map((item) => item.id)).toEqual(["word-wrap"]);
     for (const query of ["fallback", "fallback agent", "fallback model"]) {
       expect(searchSettings(query)[0]).toMatchObject({
         id: "fallback-model",

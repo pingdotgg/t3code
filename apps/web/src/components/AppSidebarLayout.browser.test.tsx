@@ -33,6 +33,7 @@ describe("desktop history swipe navigation", () => {
     "disables %s swipes and can re-enable them without reloading",
     async (direction) => {
       setup(false);
+      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
       using _available = vi
         .spyOn(window.navigation, direction === "back" ? "canGoBack" : "canGoForward", "get")
         .mockReturnValue(true);
