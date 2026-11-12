@@ -1873,7 +1873,8 @@ function ThreadDetailBody(
                         }
                         {...(freshSessionAvailable
                           ? {
-                              onFreshSession: () => setFreshSessionPending(selectedThreadKey, true),
+                              onFreshSession: (options?: { readonly withRecap?: boolean }) =>
+                                setFreshSessionPending(selectedThreadKey, true, options),
                             }
                           : {})}
                         offersSideChat={

@@ -3,28 +3,49 @@ import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 
-/** Threads whose next message starts a fresh provider session, keyed by thread, valued by when it was armed. */
-const freshSessionArmsAtom = Atom.make<Readonly<Record<string, number>>>({}).pipe(Atom.keepAlive);
+export type FreshSessionArm = {
+  readonly at: number;
+  /** When true, the fresh session gets a durable written recap of earlier history. */
+  readonly withRecap: boolean;
+};
 
-export function armFreshSession(threadKey: string): void {
+/** Threads whose next message starts a fresh provider session, keyed by thread. */
+const freshSessionArmsAtom = Atom.make<Readonly<Record<string, FreshSessionArm>>>({}).pipe(
+  Atom.keepAlive,
+);
+
+export function armFreshSession(
+  threadKey: string,
+  options?: { readonly withRecap?: boolean },
+): void {
   appAtomRegistry.set(freshSessionArmsAtom, {
     ...appAtomRegistry.get(freshSessionArmsAtom),
-    [threadKey]: Date.now(),
+    [threadKey]: { at: Date.now(), withRecap: options?.withRecap === true },
   });
 }
 
 /** With `arm`, clears only that arm, so a send never consumes one made while it was in flight. */
-export function disarmFreshSession(threadKey: string, arm?: number): void {
+export function disarmFreshSession(threadKey: string, arm?: FreshSessionArm): void {
   const current = appAtomRegistry.get(freshSessionArmsAtom);
-  if (current[threadKey] === undefined || (arm !== undefined && current[threadKey] !== arm)) return;
+  const existing = current[threadKey];
+  if (
+    existing === undefined ||
+    (arm !== undefined && (existing.at !== arm.at || existing.withRecap !== arm.withRecap))
+  ) {
+    return;
+  }
   const { [threadKey]: _removed, ...rest } = current;
   appAtomRegistry.set(freshSessionArmsAtom, rest);
 }
 
-export function readFreshSessionArm(threadKey: string): number | undefined {
+export function readFreshSessionArm(threadKey: string): FreshSessionArm | undefined {
   return appAtomRegistry.get(freshSessionArmsAtom)[threadKey];
 }
 
+export function useFreshSessionArm(threadKey: string): FreshSessionArm | undefined {
+  return useAtomValue(freshSessionArmsAtom)[threadKey];
+}
+
 export function useFreshSessionArmed(threadKey: string): boolean {
-  return useAtomValue(freshSessionArmsAtom)[threadKey] !== undefined;
+  return useFreshSessionArm(threadKey) !== undefined;
 }

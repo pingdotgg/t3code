@@ -1659,6 +1659,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     freshContext: OrchestrationV2Run.fields.freshContext,
+    contextHandoffOnFresh: OrchestrationV2Run.fields.contextHandoffOnFresh,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     /** Same as the text of message `messageId`. */
@@ -2508,6 +2509,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     workflowScript: OrchestrationV2ConversationMessage.fields.workflowScript,
     freshContext: OrchestrationV2Run.fields.freshContext,
+    contextHandoffOnFresh: OrchestrationV2Run.fields.contextHandoffOnFresh,
     inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     context: Schema.optional(OrchestrationMessageContext),

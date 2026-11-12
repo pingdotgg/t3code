@@ -3043,6 +3043,15 @@ describe("orchestration v2 provider switching", () => {
           assert.isTrue(freshRun.contextHandoffOnFresh);
           assert.isDefined(freshRun.contextHandoffId);
           assert.deepEqual(projection.thread.modelSelection, priorModel);
+          assert.isTrue(
+            projection.turnItems.some(
+              (item) =>
+                item.type === "user_message" &&
+                item.messageId === freshRun.userMessageId &&
+                item.freshContext === true &&
+                item.contextHandoffOnFresh === true,
+            ),
+          );
 
           const handoff = projection.contextHandoffs.find(
             (candidate) => candidate.id === freshRun.contextHandoffId,

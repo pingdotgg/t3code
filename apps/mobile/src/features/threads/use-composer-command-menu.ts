@@ -150,7 +150,16 @@ export function buildComposerSlashCommandItems(input: {
       type: "slash-command",
       command: "clear",
       label: "/clear",
-      description: "Start a fresh session",
+      description: "Start a fresh session without earlier context",
+    });
+  }
+  if (input.offersFreshSession && "recap".includes(query)) {
+    items.push({
+      id: "cmd:recap",
+      type: "slash-command",
+      command: "recap",
+      label: "/recap",
+      description: "Start fresh with recap",
     });
   }
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
@@ -287,8 +296,11 @@ export function useComposerCommandMenu({
   readonly onUsageLimits?: () => void;
   readonly modelOptions?: ReadonlyArray<ModelOption>;
   readonly modelProviders?: ReadonlyArray<ServerProvider>;
-  /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
-  readonly onFreshSession?: () => void;
+  /**
+   * Arms a fresh session for the next message; absent where `/clear` / `/recap` are unavailable.
+   * Pass `{ withRecap: true }` for Start fresh with recap.
+   */
+  readonly onFreshSession?: (options?: { readonly withRecap?: boolean }) => void;
   readonly offersSideChat?: boolean;
 }) {
   const [localSelection, setLocalSelection] = useState(() => ({
@@ -632,11 +644,15 @@ export function useComposerCommandMenu({
       return;
     }
 
-    if (item.type === "slash-command" && item.command === "clear" && onFreshSession) {
+    if (
+      item.type === "slash-command" &&
+      (item.command === "clear" || item.command === "recap") &&
+      onFreshSession
+    ) {
       const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
       setSelection({ start: cleared.cursor, end: cleared.cursor });
       onChangeDraftMessage(cleared.text);
-      onFreshSession();
+      onFreshSession(item.command === "recap" ? { withRecap: true } : undefined);
       return;
     }
     if (

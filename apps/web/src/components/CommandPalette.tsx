@@ -69,6 +69,7 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
+  NotebookPenIcon,
   PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
@@ -80,6 +81,7 @@ import {
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import { armFreshSession } from "./chat/freshSessionArms";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -1476,6 +1478,39 @@ function OpenCommandPaletteDialog(props: {
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
+      },
+    });
+  }
+
+  if (
+    activeThread !== null &&
+    activeThreadKey !== null &&
+    activeThreadServerConfig?.environment.capabilities.freshContext === true
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:start-fresh-with-recap",
+      searchTerms: [
+        "start fresh with recap",
+        "recap",
+        "handover",
+        "handoff",
+        "fresh",
+        "clear",
+        "compact",
+        "session",
+        "seat",
+      ],
+      title: "Start fresh with recap",
+      description: "New provider session with a written handoff. Distinct from Compact and Clear.",
+      icon: <NotebookPenIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        armFreshSession(activeThreadKey, { withRecap: true });
+        toastManager.add({
+          type: "success",
+          title: "Fresh session with recap armed",
+          description: "Your next message starts a new session and hands over a written recap.",
+        });
       },
     });
   }

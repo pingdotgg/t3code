@@ -216,7 +216,7 @@ export interface ThreadComposerProps {
   readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
-  readonly onFreshSession?: () => void;
+  readonly onFreshSession?: (options?: { readonly withRecap?: boolean }) => void;
   readonly offersSideChat?: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;

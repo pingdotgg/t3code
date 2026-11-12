@@ -2655,6 +2655,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : { idleCompaction: queuedMessage.idleCompaction }),
         }),
         ...(freshContext ? { freshContext: true } : {}),
+        ...(contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
         providerThreadId: queuedProviderThread.id,
         inputIntent: "queued_turn",
         status: "completed",
@@ -7548,6 +7549,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.context ? { context: command.context } : {}),
         attachments: command.attachments,
         ...(freshContext ? { freshContext: true } : {}),
+        ...(contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
         ...(run.contextHandoffId === null ? modelSwitchSince(projection, modelSelection) : {}),
       };
       const preparationTurnItem: OrchestrationV2TurnItem | null =

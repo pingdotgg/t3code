@@ -1,4 +1,8 @@
-import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import {
+  isClearComposerCommand,
+  isRecapComposerCommand,
+  parseSideChatCommand,
+} from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -698,8 +702,14 @@ export function useComposerSend(input: ComposerSendInput) {
       composerReviewComments.length === 0 &&
       composerThreadContexts.length === 0 &&
       composerEnvironmentContexts.length === 0;
-    if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(trimmed)) {
-      armFreshSession(routeThreadKey);
+    if (
+      freshSessionAvailable &&
+      composerHoldsOnlyText &&
+      (isClearComposerCommand(trimmed) || isRecapComposerCommand(trimmed))
+    ) {
+      armFreshSession(routeThreadKey, {
+        withRecap: isRecapComposerCommand(trimmed),
+      });
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -1273,6 +1283,7 @@ export function useComposerSend(input: ComposerSendInput) {
           interactionMode: DEFAULT_INTERACTION_MODE,
           dispatchMode: turnDispatchMode,
           ...(freshArm === undefined ? {} : { freshContext: true }),
+          ...(freshArm?.withRecap === true ? { contextHandoffOnFresh: true } : {}),
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },

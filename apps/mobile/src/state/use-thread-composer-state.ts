@@ -84,7 +84,11 @@ import {
   useComposerDraft,
   useComposerDraftSettings,
 } from "./use-composer-drafts";
-import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import {
+  isClearComposerCommand,
+  isRecapComposerCommand,
+  parseSideChatCommand,
+} from "@t3tools/shared/composerTrigger";
 import {
   compactionBlocksSteering,
   resolveComposerDispatchMode,
@@ -647,16 +651,18 @@ export function useThreadComposerState(input: {
       }
       return null;
     }
-    // A redirect's text answers its approval, so /clear there is that text, not the command.
+    // A redirect's text answers its approval, so /clear or /recap there is that text, not the command.
     if (
       beforeDispatch === undefined &&
       selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.freshContext === true &&
       thread.latestRun != null &&
       attachments.length === 0 &&
       draft.context === undefined &&
-      isClearComposerCommand(text)
+      (isClearComposerCommand(text) || isRecapComposerCommand(text))
     ) {
-      setFreshSessionPending(threadKey, true);
+      setFreshSessionPending(threadKey, true, {
+        withRecap: isRecapComposerCommand(text),
+      });
       clearComposerDraftContent(threadKey);
       return null;
     }
@@ -770,6 +776,8 @@ export function useThreadComposerState(input: {
 
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
     const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
+    const contextHandoffOnFresh =
+      freshContext && getComposerDraftSnapshot(threadKey).contextHandoffOnFresh === true;
     const metadata = makeQueuedMessageMetadata();
     // A fresh session drops the context a compaction would summarize. Only a send the notice
     // announced compacts, since the notice's minute clock can trail the exact deadline.
@@ -799,6 +807,7 @@ export function useThreadComposerState(input: {
           ? {}
           : { dispatchMode: followUpDispatchMode }),
       ...(freshContext ? { freshContext: true } : {}),
+      ...(contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
@@ -816,7 +825,9 @@ export function useThreadComposerState(input: {
           attachments: [],
         });
         appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
-        if (freshContext) setFreshSessionPending(threadKey, true);
+        if (freshContext) {
+          setFreshSessionPending(threadKey, true, { withRecap: contextHandoffOnFresh });
+        }
         setThreadComposerError(
           threadKey,
           error instanceof Error ? error.message : "Failed to save the queued message.",
