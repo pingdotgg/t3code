@@ -125,6 +125,39 @@ describe("guardHttpResponseWriteErrors", () => {
   });
 });
 
+describe("keepIdleConnections", () => {
+  it("closes a connection whose response finishes after the server stopped listening", async () => {
+    const server = HttpResponseErrorGuard.keepIdleConnections(NodeHttp.createServer());
+    const body = "x".repeat(1_000_000);
+    const closed = Promise.withResolvers<void>();
+    server.on("request", (_request, response) => {
+      // The server shuts down while this request is in flight.
+      server.close(() => closed.resolve());
+      response.end(body);
+    });
+    const port = await listen(server);
+    const agent = new NodeHttp.Agent({ keepAlive: true });
+
+    const received = await new Promise<number>((resolve, reject) => {
+      const request = NodeHttp.get({ host: "127.0.0.1", port, agent }, (response) => {
+        let bytes = 0;
+        response.on("data", (chunk: Buffer) => {
+          bytes += chunk.length;
+        });
+        response.on("end", () => resolve(bytes));
+        response.on("error", reject);
+      });
+      requests.push(request);
+      request.on("error", reject);
+    });
+
+    expect(received).toBe(body.length);
+    // Left alone, the kept-alive connection holds the server open for the keep-alive time.
+    await closed.promise;
+    agent.destroy();
+  });
+});
+
 describe("rejectRequestsUntilServing", () => {
   it("rejects early HTTP and upgrades, then hands each off to its serving handler", async () => {
     const writeErrors: unknown[] = [];

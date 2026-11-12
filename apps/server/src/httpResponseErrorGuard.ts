@@ -20,6 +20,25 @@ export function guardHttpResponseWriteErrors<T extends NodeHttp.Server>(
   return server;
 }
 
+// cloudflared and Tailscale serve keep an idle connection to this server for 90
+// seconds. Node's 5 second default closes it first, so they can send a request
+// into a closed connection, and a slow client reconnects in the middle of a connect.
+const HTTP_KEEP_ALIVE_TIMEOUT_MS = 95_000;
+
+/** Install before `rejectRequestsUntilServing`, whose handoff starts at the next request listener. */
+export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
+  server.keepAliveTimeout = HTTP_KEEP_ALIVE_TIMEOUT_MS;
+  server.headersTimeout = HTTP_KEEP_ALIVE_TIMEOUT_MS + 5_000;
+  // `close` drops only the connections idle at that moment. One that finishes
+  // its response later would hold shutdown for the whole keep-alive time.
+  server.on("request", (request, response) => {
+    response.once("finish", () => {
+      if (!server.listening) request.socket.end();
+    });
+  });
+  return server;
+}
+
 /**
  * NodeHttpServer listens before serve() attaches its handlers, so requests in
  * between would hang. Install this after the write-error guards so only the
