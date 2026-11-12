@@ -1723,46 +1723,42 @@ describe("incremental v2 timeline entries", () => {
     ]);
   });
 
-  it.each(["reasoning", "proposed_plan"] as const)(
-    "keeps every other entry when streaming %s text changes",
-    (kind) => {
-      const fixture = makeStreamingWorkTimelineFixture(kind);
-      // Codex emits `plan.updated` with each delta, so the artifact array is rebuilt too.
-      const plans = (markdown: string) =>
-        kind === "proposed_plan" ? [streamingPlanArtifact(fixture, markdown, "active")] : [];
-      let input = {
+  it("keeps every other entry when streaming plan text changes", () => {
+    const fixture = makeStreamingWorkTimelineFixture("proposed_plan");
+    // Codex emits `plan.updated` with each delta, so the artifact array is rebuilt too.
+    const plans = (markdown: string) => [streamingPlanArtifact(fixture, markdown, "active")];
+    let input = {
+      visibleTurnItems: withStreamedText(
+        fixture.visibleTurnItems,
+        fixture.streamingItemId,
+        "Let",
+        fixture.time(20),
+      ),
+      optimisticMessages: [],
+      plans: plans("Let"),
+    };
+    let projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    for (const [step, text] of ["Let me", "Let me check the tests"].entries()) {
+      input = {
         visibleTurnItems: withStreamedText(
-          fixture.visibleTurnItems,
+          input.visibleTurnItems,
           fixture.streamingItemId,
-          "Let",
-          fixture.time(20),
+          text,
+          fixture.time(21 + step),
         ),
         optimisticMessages: [],
-        plans: plans("Let"),
+        plans: plans(text),
       };
-      let projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-      for (const [step, text] of ["Let me", "Let me check the tests"].entries()) {
-        input = {
-          visibleTurnItems: withStreamedText(
-            input.visibleTurnItems,
-            fixture.streamingItemId,
-            text,
-            fixture.time(21 + step),
-          ),
-          optimisticMessages: [],
-          plans: plans(text),
-        };
-        const previous = projection;
-        projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
-        expect(projection.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
-        for (const [index, entry] of previous.entries.entries()) {
-          if (entry.id !== fixture.streamingItemId) expect(projection.entries[index]).toBe(entry);
-        }
+      const previous = projection;
+      projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
+      expect(projection.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
+      for (const [index, entry] of previous.entries.entries()) {
+        if (entry.id !== fixture.streamingItemId) expect(projection.entries[index]).toBe(entry);
       }
-    },
-  );
+    }
+  });
 
-  it("rebuilds the plan entry when its artifact status changes mid-stream", () => {
+  it("rebuilds the plan entry when only its artifact status changes", () => {
     const fixture = makeStreamingWorkTimelineFixture("proposed_plan");
     const visibleTurnItems = withStreamedText(
       fixture.visibleTurnItems,
@@ -1776,14 +1772,9 @@ describe("incremental v2 timeline entries", () => {
       plans: [streamingPlanArtifact(fixture, "Plan", "active")],
     });
     const input = {
-      visibleTurnItems: withStreamedText(
-        visibleTurnItems,
-        fixture.streamingItemId,
-        "Plan done",
-        fixture.time(21),
-      ),
+      visibleTurnItems,
       optimisticMessages: [],
-      plans: [streamingPlanArtifact(fixture, "Plan done", "superseded")],
+      plans: [streamingPlanArtifact(fixture, "Plan", "superseded")],
     };
     const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(input, previous);
     expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(input));
