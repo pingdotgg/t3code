@@ -88,7 +88,10 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
       Effect.map((info) => Number(info.size)),
       Effect.orElseSucceed(() => offset),
     );
-    if (size < offset) offset = 0;
+    if (size < offset) {
+      offset = 0;
+      decoder = new TextDecoder("utf-8", { fatal: false });
+    }
     if (size > offset) {
       const start = size - offset > MAX_READ_BYTES ? size - MAX_READ_BYTES : offset;
       const bytes = yield* Effect.scoped(
@@ -101,10 +104,15 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
       if (Option.isSome(bytes)) {
         // Skipped output must not splice two unrelated lines together.
         const skipped = start > offset;
-        // Reset partial UTF-8 bytes when skipping output.
-        if (skipped) decoder = new TextDecoder("utf-8", { fatal: false });
+        let first = 0;
+        if (skipped) {
+          // Reset partial UTF-8 bytes, and skip the rest of a code point the cut landed inside.
+          decoder = new TextDecoder("utf-8", { fatal: false });
+          while (((bytes.value[first] ?? 0) & 0xc0) === 0x80) first += 1;
+        }
         offset = start + bytes.value.byteLength;
-        const text = (skipped ? "\n" : "") + decoder.decode(bytes.value, { stream: true });
+        const text =
+          (skipped ? "\n" : "") + decoder.decode(bytes.value.subarray(first), { stream: true });
         if (text.length > 0) yield* input.onChunk(text);
       }
     }

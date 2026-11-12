@@ -19,8 +19,10 @@ export function persistPullRequestStats(): QueryPersistence<PullRequestListStats
     load: Effect.fn("pullRequestStatsPersistence.load")(
       function* (environmentId, key) {
         const [, input] = yield* Schema.decodeEffect(requestKey)(key);
-        const rows = yield* Effect.forEach(input.refs, (ref) =>
-          row.load(environmentId, statKey(ref)),
+        const rows = yield* Effect.forEach(
+          input.refs,
+          (ref) => row.load(environmentId, statKey(ref)),
+          { concurrency: "unbounded" },
         );
         const stats = rows.flatMap((value) => (Option.isSome(value) ? [value.value] : []));
         return stats.length ? Option.some({ stats }) : Option.none();

@@ -321,6 +321,9 @@ const routes = {
       { headers: { Upgrade: "websocket" } },
     );
     ws.accept();
+    // Listen before the DELETE: the close can arrive while the fetches below
+    // are pending, and a missed close event leaves the socket CLOSING forever.
+    const closed = waitForClosedConnection(ws);
     const deleteResp = await env.MYBROWSER.fetch(
       "https://localhost/v1/devtools/browser/" + sessionId,
       { method: "DELETE" },
@@ -331,7 +334,7 @@ const routes = {
       "https://localhost/v1/sessions?sessionId=" + sessionId,
     ).then((r) => r.json());
     const sessionGone = sessions.length === 0;
-    await waitForClosedConnection(ws);
+    await closed;
     const wsClosed = ws.readyState === WebSocket.READY_STATE_CLOSED;
     return Response.json({
       deleteStatus: deleteResp.status,
@@ -479,11 +482,15 @@ const routes = {
     });
     pageWs.accept();
 
+    // Listen before the DELETE: the closes arrive while it waits for Chrome
+    // to exit, and a missed close event leaves the socket CLOSING forever.
+    const closed = Promise.all([waitForClosedConnection(browserWs), waitForClosedConnection(pageWs)]);
+
     // DELETE should close everything
     const deleteResp = await env.MYBROWSER.fetch(base, { method: "DELETE" });
     const deleteBody = await deleteResp.json();
 
-    await Promise.all([waitForClosedConnection(browserWs), waitForClosedConnection(pageWs)]);
+    await closed;
 
     return Response.json({
       deleteStatus: deleteResp.status,
@@ -560,403 +567,367 @@ const startBrowserTestWorker = (name: string) =>
     ],
   });
 
-layer(localRuntimeLayer, { excludeTestServices: true })(
-  "Browser Rendering binding",
-  (it) => {
-    // This suite previously destabilized the Windows CI runner (run
-    // 30741543083): orphaned Chrome process trees survived per-test teardown
-    // and starved the 4-core runner until every subsequent vitest fork failed
-    // its 60s start handshake. Root cause: puppeteer's `Process.close()` falls
-    // back to a single-pid `ChildProcess.kill()` when its `taskkill /T` throws
-    // (leaving Chrome's child processes orphaned on Windows), and failed
-    // launches (`waitForLineOutput`/readiness-probe errors) never killed the
-    // spawned Chrome at all. `closeBrowserProcess` in `Browser.ts` now
-    // tree-kills on every teardown path, so the suite runs on Windows CI again.
-    const test = it.effect;
+layer(localRuntimeLayer, { excludeTestServices: true })("Browser Rendering binding", (it) => {
+  // This suite previously destabilized the Windows CI runner (run
+  // 30741543083): orphaned Chrome process trees survived per-test teardown
+  // and starved the 4-core runner until every subsequent vitest fork failed
+  // its 60s start handshake. Root cause: puppeteer's `Process.close()` falls
+  // back to a single-pid `ChildProcess.kill()` when its `taskkill /T` throws
+  // (leaving Chrome's child processes orphaned on Windows), and failed
+  // launches (`waitForLineOutput`/readiness-probe errors) never killed the
+  // spawned Chrome at all. `closeBrowserProcess` in `Browser.ts` now
+  // tree-kills on every teardown path, so the suite runs on Windows CI again.
+  const test = it.effect;
 
-    test(
-      "it creates a browser session",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-session");
-          const text = yield* worker.fetchText("/session");
-          expect(text.includes("sessionId")).toBe(true);
-        }),
-      // The first launch may download Chrome into the shared wrangler cache.
-      { timeout: 120_000 },
-    );
-
-    test(
-      "two browser bindings can coexist",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-two-bindings");
-          const { a, b } = yield* worker.fetchJson<{
-            a: { sessionId: string };
-            b: { sessionId: string };
-          }>("/two-bindings");
-          expect(typeof a.sessionId).toBe("string");
-          expect(typeof b.sessionId).toBe("string");
-          expect(a.sessionId).not.toBe(b.sessionId);
-        }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "it closes a browser session",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-close");
-          expect(yield* worker.fetchText("/close")).toBe("Browser closed");
-        }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "it reuses a browser session",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-reuse");
-          expect(yield* worker.fetchText("/reuse")).toBe(
-            "Browser session reused",
-          );
-        }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "it reconnects and sends CDP commands after disconnect",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-reconnect");
-          expect(yield* worker.fetchText("/reconnect")).toBe(
-            "Reconnect successful",
-          );
-        }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "fails if browser session already in use",
-      () =>
-        Effect.gen(function* () {
-          if (process.platform === "win32") return; // matches upstream skip
-          const worker = yield* startBrowserTestWorker("browser-already-used");
-          expect(yield* worker.fetchText("/already-used")).toBe(
-            "Failed to connect to browser session",
-          );
-        }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "gets sessions while acquiring and closing session",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker(
-            "browser-sessions-lifecycle",
-          );
-          const { emptySessions, acquiredSessions, afterClosedSessions } =
-            yield* worker.fetchJson<{
-              emptySessions: Array<unknown>;
-              acquiredSessions: Array<{
-                sessionId: unknown;
-                startTime: unknown;
-                connectionId?: unknown;
-              }>;
-              afterClosedSessions: Array<unknown>;
-            }>("/sessions-lifecycle");
-          expect(emptySessions.length).toBe(0);
-          expect(acquiredSessions.length).toBe(1);
-          expect(
-            typeof acquiredSessions[0].sessionId === "string" &&
-              typeof acquiredSessions[0].startTime === "number" &&
-              !acquiredSessions[0].connectionId,
-          ).toBe(true);
-          expect(afterClosedSessions.length).toBe(0);
-        }),
-      { timeout: 60_000 },
-    );
-
-    test(
-      "gets sessions while connecting and disconnecting session",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker(
-            "browser-sessions-disconnect",
-          );
-          const { connectedSession, disconnectedSession } =
-            yield* worker.fetchJson<{
-              connectedSession: {
-                sessionId: string;
-                connectionId?: string;
-                connectionStartTime?: number;
-              };
-              disconnectedSession: {
-                sessionId: string;
-                connectionId?: string;
-                connectionStartTime?: number;
-              };
-            }>("/sessions-disconnect");
-          expect(connectedSession.sessionId).toBe(
-            disconnectedSession.sessionId,
-          );
-          expect(
-            typeof connectedSession.connectionId === "string" &&
-              typeof connectedSession.connectionStartTime === "number",
-          ).toBe(true);
-          expect(
-            !disconnectedSession.connectionId &&
-              !disconnectedSession.connectionStartTime,
-          ).toBe(true);
-        }),
-      { timeout: 60_000 },
-    );
-
-    test("returns limits", () =>
+  test(
+    "it creates a browser session",
+    () =>
       Effect.gen(function* () {
-        const worker = yield* startBrowserTestWorker("browser-limits");
-        const res = yield* worker.fetch("/limits");
-        expect(res.status).toBe(200);
-        const body = (yield* Effect.promise(() => res.json())) as {
-          maxConcurrentSessions: unknown;
-          allowedBrowserAcquisitions: unknown;
-          timeUntilNextAllowedBrowserAcquisition: unknown;
-        };
-        expect(typeof body.maxConcurrentSessions).toBe("number");
-        expect(typeof body.allowedBrowserAcquisitions).toBe("number");
-        expect(typeof body.timeUntilNextAllowedBrowserAcquisition).toBe(
-          "number",
+        const worker = yield* startBrowserTestWorker("browser-session");
+        const text = yield* worker.fetchText("/session");
+        expect(text.includes("sessionId")).toBe(true);
+      }),
+    // The first launch may download Chrome into the shared wrangler cache.
+    { timeout: 120_000 },
+  );
+
+  test(
+    "two browser bindings can coexist",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-two-bindings");
+        const { a, b } = yield* worker.fetchJson<{
+          a: { sessionId: string };
+          b: { sessionId: string };
+        }>("/two-bindings");
+        expect(typeof a.sessionId).toBe("string");
+        expect(typeof b.sessionId).toBe("string");
+        expect(a.sessionId).not.toBe(b.sessionId);
+      }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "it closes a browser session",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-close");
+        expect(yield* worker.fetchText("/close")).toBe("Browser closed");
+      }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "it reuses a browser session",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-reuse");
+        expect(yield* worker.fetchText("/reuse")).toBe("Browser session reused");
+      }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "it reconnects and sends CDP commands after disconnect",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-reconnect");
+        expect(yield* worker.fetchText("/reconnect")).toBe("Reconnect successful");
+      }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "fails if browser session already in use",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform === "win32") return; // matches upstream skip
+        const worker = yield* startBrowserTestWorker("browser-already-used");
+        expect(yield* worker.fetchText("/already-used")).toBe(
+          "Failed to connect to browser session",
         );
-      }));
+      }),
+    { timeout: 60_000 },
+  );
 
-    test("returns empty history", () =>
+  test(
+    "gets sessions while acquiring and closing session",
+    () =>
       Effect.gen(function* () {
-        const worker = yield* startBrowserTestWorker("browser-history");
-        const res = yield* worker.fetch("/history");
-        expect(res.status).toBe(200);
-        expect(yield* Effect.promise(() => res.json())).toEqual([]);
-      }));
+        const worker = yield* startBrowserTestWorker("browser-sessions-lifecycle");
+        const { emptySessions, acquiredSessions, afterClosedSessions } = yield* worker.fetchJson<{
+          emptySessions: Array<unknown>;
+          acquiredSessions: Array<{
+            sessionId: unknown;
+            startTime: unknown;
+            connectionId?: unknown;
+          }>;
+          afterClosedSessions: Array<unknown>;
+        }>("/sessions-lifecycle");
+        expect(emptySessions.length).toBe(0);
+        expect(acquiredSessions.length).toBe(1);
+        expect(
+          typeof acquiredSessions[0].sessionId === "string" &&
+            typeof acquiredSessions[0].startTime === "number" &&
+            !acquiredSessions[0].connectionId,
+        ).toBe(true);
+        expect(afterClosedSessions.length).toBe(0);
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "devtools session list and detail endpoints",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker(
-            "browser-devtools-session",
-          );
-          const { emptyList, list, detail, missingStatus } =
-            yield* worker.fetchJson<{
-              emptyList: Array<unknown>;
-              list: Array<{ sessionId: string }>;
-              detail: { sessionId: string };
-              missingStatus: number;
-            }>("/devtools-session");
-          expect(emptyList).toEqual([]);
-          expect(list.length).toBe(1);
-          expect(typeof list[0].sessionId).toBe("string");
-          expect(detail.sessionId).toBe(list[0].sessionId);
-          expect(missingStatus).toBe(404);
-        }),
-      { timeout: 60_000 },
-    );
+  test(
+    "gets sessions while connecting and disconnecting session",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-sessions-disconnect");
+        const { connectedSession, disconnectedSession } = yield* worker.fetchJson<{
+          connectedSession: {
+            sessionId: string;
+            connectionId?: string;
+            connectionStartTime?: number;
+          };
+          disconnectedSession: {
+            sessionId: string;
+            connectionId?: string;
+            connectionStartTime?: number;
+          };
+        }>("/sessions-disconnect");
+        expect(connectedSession.sessionId).toBe(disconnectedSession.sessionId);
+        expect(
+          typeof connectedSession.connectionId === "string" &&
+            typeof connectedSession.connectionStartTime === "number",
+        ).toBe(true);
+        expect(!disconnectedSession.connectionId && !disconnectedSession.connectionStartTime).toBe(
+          true,
+        );
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "devtools json/version, json/list, json endpoints",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-devtools-json");
-          const { version, list, listAlias } = yield* worker.fetchJson<{
-            version: { Browser: string; "Protocol-Version": string };
-            list: Array<Record<string, unknown>>;
-            listAlias: Array<Record<string, unknown>>;
-          }>("/devtools-json");
-          expect(typeof version.Browser).toBe("string");
-          expect(typeof version["Protocol-Version"]).toBe("string");
-          expect(Array.isArray(list)).toBe(true);
-          // The page title for about:blank can change between sequential
-          // requests (from "" to "about:blank"), so strip the volatile `title`
-          // field before comparing the two alias endpoints.
-          const stripTitle = (arr: Array<Record<string, unknown>>) =>
-            arr.map(({ title: _title, ...rest }) => rest);
-          expect(stripTitle(list)).toEqual(stripTitle(listAlias));
-        }),
-      { timeout: 60_000 },
-    );
+  test("returns limits", () =>
+    Effect.gen(function* () {
+      const worker = yield* startBrowserTestWorker("browser-limits");
+      const res = yield* worker.fetch("/limits");
+      expect(res.status).toBe(200);
+      const body = (yield* Effect.promise(() => res.json())) as {
+        maxConcurrentSessions: unknown;
+        allowedBrowserAcquisitions: unknown;
+        timeUntilNextAllowedBrowserAcquisition: unknown;
+      };
+      expect(typeof body.maxConcurrentSessions).toBe("number");
+      expect(typeof body.allowedBrowserAcquisitions).toBe("number");
+      expect(typeof body.timeUntilNextAllowedBrowserAcquisition).toBe("number");
+    }));
 
-    test(
-      "DELETE /v1/devtools/browser/:session_id closes browser",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker(
-            "browser-devtools-delete",
-          );
-          const { deleteStatus, deleteBody, sessionGone, wsClosed } =
-            yield* worker.fetchJson<{
-              deleteStatus: number;
-              deleteBody: { status: string };
-              sessionGone: boolean;
-              wsClosed: boolean;
-            }>("/devtools-delete");
-          expect(deleteStatus).toBe(200);
-          expect(deleteBody.status).toBe("closed");
-          expect(sessionGone).toBe(true);
-          expect(wsClosed).toBe(true);
-        }),
-      { timeout: 60_000 },
-    );
+  test("returns empty history", () =>
+    Effect.gen(function* () {
+      const worker = yield* startBrowserTestWorker("browser-history");
+      const res = yield* worker.fetch("/history");
+      expect(res.status).toBe(200);
+      expect(yield* Effect.promise(() => res.json())).toEqual([]);
+    }));
 
-    test(
-      "POST /v1/devtools/browser acquires session, GET /v1/devtools/browser/:id connects and returns cf-browser-session-id",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker(
-            "browser-devtools-browser-ws",
-          );
-          const {
-            postStatus,
-            sessionId,
-            getStatus,
-            sessionIdFromGet,
-            browserProduct,
-          } = yield* worker.fetchJson<{
+  test(
+    "devtools session list and detail endpoints",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-devtools-session");
+        const { emptyList, list, detail, missingStatus } = yield* worker.fetchJson<{
+          emptyList: Array<unknown>;
+          list: Array<{ sessionId: string }>;
+          detail: { sessionId: string };
+          missingStatus: number;
+        }>("/devtools-session");
+        expect(emptyList).toEqual([]);
+        expect(list.length).toBe(1);
+        expect(typeof list[0].sessionId).toBe("string");
+        expect(detail.sessionId).toBe(list[0].sessionId);
+        expect(missingStatus).toBe(404);
+      }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "devtools json/version, json/list, json endpoints",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-devtools-json");
+        const { version, list, listAlias } = yield* worker.fetchJson<{
+          version: { Browser: string; "Protocol-Version": string };
+          list: Array<Record<string, unknown>>;
+          listAlias: Array<Record<string, unknown>>;
+        }>("/devtools-json");
+        expect(typeof version.Browser).toBe("string");
+        expect(typeof version["Protocol-Version"]).toBe("string");
+        expect(Array.isArray(list)).toBe(true);
+        // The page title for about:blank can change between sequential
+        // requests (from "" to "about:blank"), so strip the volatile `title`
+        // field before comparing the two alias endpoints.
+        const stripTitle = (arr: Array<Record<string, unknown>>) =>
+          arr.map(({ title: _title, ...rest }) => rest);
+        expect(stripTitle(list)).toEqual(stripTitle(listAlias));
+      }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "DELETE /v1/devtools/browser/:session_id closes browser",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-devtools-delete");
+        const { deleteStatus, deleteBody, sessionGone, wsClosed } = yield* worker.fetchJson<{
+          deleteStatus: number;
+          deleteBody: { status: string };
+          sessionGone: boolean;
+          wsClosed: boolean;
+        }>("/devtools-delete");
+        expect(deleteStatus).toBe(200);
+        expect(deleteBody.status).toBe("closed");
+        expect(sessionGone).toBe(true);
+        expect(wsClosed).toBe(true);
+      }),
+    { timeout: 60_000 },
+  );
+
+  test(
+    "POST /v1/devtools/browser acquires session, GET /v1/devtools/browser/:id connects and returns cf-browser-session-id",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-devtools-browser-ws");
+        const { postStatus, sessionId, getStatus, sessionIdFromGet, browserProduct } =
+          yield* worker.fetchJson<{
             postStatus: number;
             sessionId: string;
             getStatus: number;
             sessionIdFromGet: string;
             browserProduct: string;
           }>("/devtools-browser-ws");
-          expect(postStatus).toBe(200);
-          expect(typeof sessionId).toBe("string");
-          expect(getStatus).toBe(101);
-          expect(sessionIdFromGet).toBe(sessionId);
-          expect(typeof browserProduct).toBe("string");
-          expect(browserProduct).toContain("Chrome");
-        }),
-      { timeout: 60_000 },
-    );
+        expect(postStatus).toBe(200);
+        expect(typeof sessionId).toBe("string");
+        expect(getStatus).toBe(101);
+        expect(sessionIdFromGet).toBe(sessionId);
+        expect(typeof browserProduct).toBe("string");
+        expect(browserProduct).toContain("Chrome");
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "GET /v1/devtools/browser acquires and connects",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker(
-            "browser-devtools-browser-get",
-          );
-          const { status, sessionId, browserProduct } =
-            yield* worker.fetchJson<{
-              status: number;
-              sessionId: string;
-              browserProduct: string;
-            }>("/devtools-browser-get");
-          expect(status).toBe(101);
-          expect(typeof sessionId).toBe("string");
-          expect(typeof browserProduct).toBe("string");
-          expect(browserProduct).toContain("Chrome");
-        }),
-      { timeout: 60_000 },
-    );
+  test(
+    "GET /v1/devtools/browser acquires and connects",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-devtools-browser-get");
+        const { status, sessionId, browserProduct } = yield* worker.fetchJson<{
+          status: number;
+          sessionId: string;
+          browserProduct: string;
+        }>("/devtools-browser-get");
+        expect(status).toBe(101);
+        expect(typeof sessionId).toBe("string");
+        expect(typeof browserProduct).toBe("string");
+        expect(browserProduct).toContain("Chrome");
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "devtools json/protocol endpoint",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-json-protocol");
-          const { hasDomains } = yield* worker.fetchJson<{
-            hasDomains: boolean;
-          }>("/json-protocol");
-          expect(hasDomains).toBe(true);
-        }),
-      { timeout: 60_000 },
-    );
+  test(
+    "devtools json/protocol endpoint",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-json-protocol");
+        const { hasDomains } = yield* worker.fetchJson<{
+          hasDomains: boolean;
+        }>("/json-protocol");
+        expect(hasDomains).toBe(true);
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "devtools json/new, json/activate, json/close endpoints",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-json-new");
-          const { targetType, activateStatus, closeStatus } =
-            yield* worker.fetchJson<{
-              targetType: string;
-              activateStatus: number;
-              closeStatus: number;
-            }>("/json-new-activate-close");
-          expect(targetType).toBe("page");
-          expect(activateStatus).toBe(200);
-          expect(closeStatus).toBe(200);
-        }),
-      { timeout: 60_000 },
-    );
+  test(
+    "devtools json/new, json/activate, json/close endpoints",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-json-new");
+        const { targetType, activateStatus, closeStatus } = yield* worker.fetchJson<{
+          targetType: string;
+          activateStatus: number;
+          closeStatus: number;
+        }>("/json-new-activate-close");
+        expect(targetType).toBe("page");
+        expect(activateStatus).toBe(200);
+        expect(closeStatus).toBe(200);
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "devtools page/:target_id WebSocket endpoint",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-page-ws");
-          const { resultValue } = yield* worker.fetchJson<{
-            resultValue: number;
-          }>("/page-ws");
-          expect(resultValue).toBe(2);
-        }),
-      { timeout: 60_000 },
-    );
+  test(
+    "devtools page/:target_id WebSocket endpoint",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-page-ws");
+        const { resultValue } = yield* worker.fetchJson<{
+          resultValue: number;
+        }>("/page-ws");
+        expect(resultValue).toBe(2);
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "DELETE without prior WebSocket connection",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-delete-no-ws");
-          const { deleteStatus, deleteBody, sessionGone } =
-            yield* worker.fetchJson<{
-              deleteStatus: number;
-              deleteBody: { status: string };
-              sessionGone: boolean;
-            }>("/delete-no-ws");
-          expect(deleteStatus).toBe(200);
-          expect(deleteBody.status).toBe("closed");
-          expect(sessionGone).toBe(true);
-        }),
-      { timeout: 60_000 },
-    );
+  test(
+    "DELETE without prior WebSocket connection",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-delete-no-ws");
+        const { deleteStatus, deleteBody, sessionGone } = yield* worker.fetchJson<{
+          deleteStatus: number;
+          deleteBody: { status: string };
+          sessionGone: boolean;
+        }>("/delete-no-ws");
+        expect(deleteStatus).toBe(200);
+        expect(deleteBody.status).toBe("closed");
+        expect(sessionGone).toBe(true);
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "DELETE closes all WebSocket connections (browser + page)",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-delete-all-ws");
-          const { deleteStatus, deleteBody, browserWsClosed, pageWsClosed } =
-            yield* worker.fetchJson<{
-              deleteStatus: number;
-              deleteBody: { status: string };
-              browserWsClosed: boolean;
-              pageWsClosed: boolean;
-            }>("/delete-all-ws");
-          expect(deleteStatus).toBe(200);
-          expect(deleteBody.status).toBe("closed");
-          expect(browserWsClosed).toBe(true);
-          expect(pageWsClosed).toBe(true);
-        }),
-      { timeout: 60_000 },
-    );
+  test(
+    "DELETE closes all WebSocket connections (browser + page)",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-delete-all-ws");
+        const { deleteStatus, deleteBody, browserWsClosed, pageWsClosed } =
+          yield* worker.fetchJson<{
+            deleteStatus: number;
+            deleteBody: { status: string };
+            browserWsClosed: boolean;
+            pageWsClosed: boolean;
+          }>("/delete-all-ws");
+        expect(deleteStatus).toBe(200);
+        expect(deleteBody.status).toBe("closed");
+        expect(browserWsClosed).toBe(true);
+        expect(pageWsClosed).toBe(true);
+      }),
+    { timeout: 60_000 },
+  );
 
-    test(
-      "multiple concurrent raw WebSocket connections to same session",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startBrowserTestWorker("browser-multi-ws");
-          const { product1, product2 } = yield* worker.fetchJson<{
-            product1: string;
-            product2: string;
-          }>("/multi-ws");
-          expect(typeof product1).toBe("string");
-          expect(product1).toContain("Chrome");
-          expect(typeof product2).toBe("string");
-          expect(product2).toContain("Chrome");
-        }),
-      { timeout: 60_000 },
-    );
-  },
-);
+  test(
+    "multiple concurrent raw WebSocket connections to same session",
+    () =>
+      Effect.gen(function* () {
+        const worker = yield* startBrowserTestWorker("browser-multi-ws");
+        const { product1, product2 } = yield* worker.fetchJson<{
+          product1: string;
+          product2: string;
+        }>("/multi-ws");
+        expect(typeof product1).toBe("string");
+        expect(product1).toContain("Chrome");
+        expect(typeof product2).toBe("string");
+        expect(product2).toContain("Chrome");
+      }),
+    { timeout: 60_000 },
+  );
+});
 
 // -----------------------------------------------------------------------------
 // No-orphan invariant: closing a launched Chrome must kill the tracked pid

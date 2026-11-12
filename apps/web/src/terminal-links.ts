@@ -31,8 +31,10 @@ const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const POWERSHELL_PROMPT_PATH_PATTERN = /^PS ((?:[A-Za-z]:[\\/]|\\\\|\/)[^>\r\n]*)>/u;
 // Bare paths start only at a segment boundary: hover detection runs this on
 // every frame, so separator-free output must not be rescanned at every suffix.
+// For the same reason `]` needs its `[`: trimming a long run of `]` is quadratic.
+// Parentheses count only before a slash, so `src/foo.ts(3,10)` stays a compiler location.
 const FILE_PATH_PATTERN =
-  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/][\p{L}\p{M}\p{N}._-]+)+(?::\d+){0,2}/gu;
+  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+(?::\d+){0,2}/gu;
 const QUOTED_FILE_PATH_PATTERN =
   /(["'`])(?<path>(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\|[\p{L}\p{M}\p{N}._ -]+[\\/])[^\r\n]*?|[\p{L}\p{M}\p{N}._ -]+\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/gu;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;

@@ -15,7 +15,9 @@ import {
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
+  parseCliVersionResult,
   providerModelsFromSettings,
+  providerProbeEnvironment,
   spawnAndCollect,
   type ProviderProbeResult,
 } from "@t3tools/provider-core/server/snapshotProbe";
@@ -59,7 +61,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
 ) {
   if (!settings.enabled) return yield* makePendingMuseProvider(settings);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const museEnvironment = environment ?? makeMuseEnvironment();
+  const museEnvironment = providerProbeEnvironment(environment ?? makeMuseEnvironment());
   const snapshot = (probe: ProviderProbeResult, models: ReadonlyArray<ServerProviderModel> = []) =>
     buildServerProvider({
       presentation: MUSE_PRESENTATION,
@@ -105,14 +107,18 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
     });
   }
   const versionOutput = versionResult.success.value;
-  const version = parseMuseVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput, parseMuseVersion);
   if (versionOutput.code !== 0) {
     return snapshot({
       installed: true,
       version,
       status: "error",
       auth: { status: "unknown" },
-      message: "Muse Code CLI is installed but failed to run.",
+      // T3 runs Muse with MUSE_NO_AUTO_UPDATE=1, so a launcher whose runtime was never fetched
+      // (common after a mise upgrade) refuses to install it; a manual run completes setup.
+      message: versionOutput.stderr.includes("installed binary is missing")
+        ? "Muse Code has not finished installing. Run `muse --version` on this T3 server host, then refresh its status."
+        : "Muse Code CLI is installed but failed to run.",
     });
   }
 

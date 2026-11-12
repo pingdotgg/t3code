@@ -371,7 +371,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       Effect.andThen(
         Effect.gen(function* () {
           const threads = yield* ThreadManagementService.ThreadManagementService;
-          yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
+          yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId: input.sourceRunId });
         }),
       ),
     ),
