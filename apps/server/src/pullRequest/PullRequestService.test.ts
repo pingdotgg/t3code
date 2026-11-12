@@ -2111,6 +2111,62 @@ it.effect("names an SSH remote's web host from a later checkout when the first c
   }),
 );
 
+it.effect("reads a GitLab merge request on the web host of a checkout cloned over SSH", () =>
+  Effect.gen(function* () {
+    const hosts: Array<string> = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "ssh",
+          title: "ssh",
+          workspaceRoot: "/ssh",
+          repository: "group/project",
+          provider: "unknown",
+          host: "git.example.test",
+          remoteUrl: "git@git.example.test:group/project.git",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: (input) =>
+            Effect.sync(() => {
+              hosts.push(input.host);
+              return changeRequest(123, "2026-10-06T00:00:00Z");
+            }),
+        }),
+      ],
+      // glab is signed in to the web host only, so only the requested host identifies GitLab.
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          context:
+            context?.requestedHost === "gitlab.example.test"
+              ? {
+                  ...context,
+                  provider: {
+                    kind: SourceControlProviderKind.make("gitlab"),
+                    name: "GitLab Self-Hosted",
+                    baseUrl: "https://gitlab.example.test",
+                  },
+                }
+              : context!,
+          provider: undefined as never,
+        }),
+    });
+
+    yield* service.summary(
+      {
+        projectId: "ssh" as ProjectId,
+        host: "gitlab.example.test",
+        repository: "group/project",
+        number: 123,
+      },
+      { recoverTransientFailure: false },
+    );
+
+    assert.deepStrictEqual(hosts, ["gitlab.example.test"]);
+  }),
+);
+
 it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
