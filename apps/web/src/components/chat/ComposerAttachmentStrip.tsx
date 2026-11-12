@@ -328,7 +328,10 @@ export function ComposerAttachmentMediaRow({
                     "opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100",
                 )}
               >
-                {ready?.previewUrl && onAnnotateImage ? (
+                {ready?.previewUrl &&
+                onAnnotateImage &&
+                // The editor draws through the browser's decoder, which can't read HEIC.
+                !isHeicImageFile({ name: ready.name, type: ready.mimeType }) ? (
                   <span
                     className={cn(
                       "flex",

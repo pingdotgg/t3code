@@ -11,7 +11,7 @@ import {
 import { useEffect, useEffectEvent, useRef, useState, type PointerEvent } from "react";
 
 import type { ComposerImageAttachment } from "../../composerDraftStore";
-import { compressImageToByteLimit } from "../../lib/imageCompression";
+import { compressImageToByteLimit, readFileAsDataUrl } from "../../lib/imageCompression";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -43,6 +43,8 @@ import {
 
 export interface ImageAnnotationResult {
   readonly file: File;
+  /** The same bytes as `file`, so the draft can persist them along with the swap. */
+  readonly dataUrl: string;
   readonly crop: AnnotationRect | null;
   readonly imageSize: { readonly width: number; readonly height: number } | undefined;
 }
@@ -146,7 +148,12 @@ async function renderAnnotatedFile(
     const file = new File([blob], annotatedFileName(name), { type: "image/png" });
     const compressed = await compressImageToByteLimit(file, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
     if (!compressed.ok) return "The edited image is too large to attach.";
-    return { file: compressed.file, crop: activeCrop(ops), imageSize: compressed.imageSize };
+    return {
+      file: compressed.file,
+      dataUrl: await readFileAsDataUrl(compressed.file),
+      crop: activeCrop(ops),
+      imageSize: compressed.imageSize,
+    };
   } catch (error) {
     return error instanceof Error ? error.message : "Could not save the edited image.";
   }
@@ -181,6 +188,8 @@ function AnnotationEditor({
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const draftOpRef = useRef<AnnotationOp | null>(null);
   const dragStartRef = useRef<AnnotationPoint | null>(null);
+  // Pen points grow in place; copying them on every move makes long strokes quadratic.
+  const penPointsRef = useRef<AnnotationPoint[]>([]);
   const mountedRef = useRef(false);
 
   const size = source ? { width: source.naturalWidth, height: source.naturalHeight } : null;
@@ -274,9 +283,10 @@ function AnnotationEditor({
     }
     event.currentTarget.setPointerCapture(event.pointerId);
     dragStartRef.current = point;
+    penPointsRef.current = [point];
     draftOpRef.current =
       tool === "pen"
-        ? { kind: "pen", color, width: scale.stroke, points: [point] }
+        ? { kind: "pen", color, width: scale.stroke, points: penPointsRef.current }
         : tool === "crop"
           ? { kind: "crop", rect: rectFromPoints(point, point, size) }
           : { kind: tool, color, width: scale.stroke, from: point, to: point };
@@ -290,7 +300,7 @@ function AnnotationEditor({
     if (!draft || !start || !point || !size) return;
     switch (draft.kind) {
       case "pen":
-        draftOpRef.current = { ...draft, points: [...draft.points, point] };
+        penPointsRef.current.push(point);
         break;
       case "crop":
         draftOpRef.current = { kind: "crop", rect: rectFromPoints(start, point, size) };

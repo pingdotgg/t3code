@@ -1266,6 +1266,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       name: result.file.name,
       mimeType: result.file.type,
       sizeBytes: result.file.size,
+      dataUrl: result.dataUrl,
       ...(source ? { source: resizeSnapShotSource(source, result.imageSize) } : {}),
     });
   };
@@ -1539,7 +1540,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           composerImages,
           currentPersistedAttachments,
         );
-        if (cancelled) return;
+        // An edited image keeps its id, so a read of its old bytes must not overwrite the new copy.
+        if (cancelled || getComposerDraft(attachmentDraftTarget)?.images !== composerImages) return;
         syncComposerDraftPersistedAttachments(attachmentDraftTarget, serialized);
       } catch {
         const currentImageIds = new Set(composerImages.map((image) => image.id));
