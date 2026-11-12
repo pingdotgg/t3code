@@ -14,6 +14,7 @@ import {
   codexCardProvider,
   codexNeedsSetup,
   groupWelcomeAgents,
+  resolveWelcomeEnvironmentId,
   turnedOnInstance,
   welcomeOffersPhone,
 } from "./welcomePage.logic";
@@ -261,5 +262,50 @@ describe("welcomeOffersPhone", () => {
     expect(offers({ policy: policy({ connect: false }) })).toBe(false);
     expect(offers({ policy: policy({ clients: ["desktop"] }) })).toBe(false);
     expect(offers({ isPrimary: false })).toBe(false);
+  });
+});
+
+describe("resolveWelcomeEnvironmentId", () => {
+  const base = {
+    resumeEnvironmentId: undefined,
+    requestedEnvironmentId: undefined,
+    primaryEnvironmentId: "primary",
+    knownEnvironmentIds: ["primary", "remote", "other"],
+  };
+
+  it("sets up this computer by default", () => {
+    expect(resolveWelcomeEnvironmentId(base)).toBe("primary");
+  });
+
+  it("opens a connected computer that Settings asked for", () => {
+    expect(resolveWelcomeEnvironmentId({ ...base, requestedEnvironmentId: "remote" })).toBe(
+      "remote",
+    );
+  });
+
+  it("lets a ChatGPT sign-in return to the computer it set up", () => {
+    expect(
+      resolveWelcomeEnvironmentId({
+        ...base,
+        resumeEnvironmentId: "other",
+        requestedEnvironmentId: "remote",
+      }),
+    ).toBe("other");
+  });
+
+  it("ignores a computer the catalog does not know", () => {
+    expect(resolveWelcomeEnvironmentId({ ...base, requestedEnvironmentId: "gone" })).toBe(
+      "primary",
+    );
+  });
+
+  it("opens a connected computer without a primary one, as in the hosted app", () => {
+    expect(
+      resolveWelcomeEnvironmentId({
+        ...base,
+        primaryEnvironmentId: null,
+        requestedEnvironmentId: "remote",
+      }),
+    ).toBe("remote");
   });
 });

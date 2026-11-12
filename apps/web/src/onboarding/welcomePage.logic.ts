@@ -178,3 +178,23 @@ export function codexCardProvider(input: {
     welcomeAgentState(provider, input.settings) === "checking";
   return open ? provider : null;
 }
+
+/**
+ * The computer the Welcome page sets up. A ChatGPT sign-in returns to the computer it set up, and
+ * Settings opens the page for a connected computer; either id counts only once the catalog knows
+ * it, so an unknown one falls back to this computer.
+ */
+export function resolveWelcomeEnvironmentId<Id extends string>(input: {
+  readonly resumeEnvironmentId: Id | undefined;
+  readonly requestedEnvironmentId: Id | undefined;
+  readonly primaryEnvironmentId: Id | null;
+  readonly knownEnvironmentIds: ReadonlyArray<Id>;
+}): Id | null {
+  const known = (id: Id | undefined) =>
+    id !== undefined && input.knownEnvironmentIds.includes(id) ? id : undefined;
+  return (
+    known(input.resumeEnvironmentId) ??
+    known(input.requestedEnvironmentId) ??
+    input.primaryEnvironmentId
+  );
+}
