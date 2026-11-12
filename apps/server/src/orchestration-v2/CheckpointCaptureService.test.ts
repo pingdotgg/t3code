@@ -862,7 +862,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         appRunOrdinal: 1,
         ref: CheckpointRef.make("checkpoint-ref:cancelled-captured-1"),
         status: "ready" as const,
-        files: ["a", "b", "c", "d", "e"].map((name) => ({
+        files: ["a", "b", "c", "d", "e", "f", "g"].map((name) => ({
           path: `src/${name}.ts`,
           kind: "modified" as const,
           additions: 1,
@@ -873,9 +873,11 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       // Another chat in the same checkout edits files during this run; a delegate of this thread counts as its own.
       const otherThreadId = ThreadId.make("thread:checkpoint-capture-other-chat");
       const childThreadId = ThreadId.make("thread:checkpoint-capture-delegate");
+      const grandchildThreadId = ThreadId.make("thread:checkpoint-capture-nested-delegate");
       for (const [id, parentThreadId] of [
         [otherThreadId, null],
         [childThreadId, cancelledThreadId],
+        [grandchildThreadId, childThreadId],
       ] as const) {
         yield* projectionStore.apply({
           id: EventId.make(`event:checkpoint-capture-cancelled:thread-${id}`),
@@ -917,6 +919,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         [otherThreadId, "run:other-chat", null],
         [otherThreadId, "run:other-chat-earlier", earlier],
         [childThreadId, "run:delegate", null],
+        [grandchildThreadId, "run:nested-delegate", null],
       ] as const) {
         yield* sql`INSERT INTO orchestration_v2_projection_runs
           (run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at, completed_at, payload_json)
@@ -926,6 +929,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       const edits = [
         [cancelledThreadId, cancelledRunId, now, { fileName: "/repo/src/c.ts" }],
         [childThreadId, "run:delegate", now, { fileName: "/repo/src/d.ts" }],
+        [grandchildThreadId, "run:nested-delegate", now, { fileName: "/repo/src/f.ts" }],
+        [otherThreadId, "run:other-chat", now, { fileName: "/repo/src/f.ts" }],
+        [otherThreadId, "run:other-chat", now, { fileName: "/repo/src/g.ts" }],
         [otherThreadId, "run:other-chat", now, { fileName: "/repo/src/b.ts" }],
         [otherThreadId, "run:other-chat", now, { fileName: "/repo/src/d.ts" }],
         [otherThreadId, "run:other-chat", now, { fileName: "src/e.ts" }],
@@ -955,6 +961,15 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           VALUES (${`edit-${index}`}, ${editThreadId}, ${editRunId}, NULL, NULL, NULL, NULL,
             ${index}, 'file_change', 'completed', ${DateTime.formatIso(updatedAt)},
             ${JSON.stringify(payload)})`;
+      }
+      // A shell edit names its file; a read-only command names none of the other chat's files.
+      for (const command of ["sed -i 's/one/two/' src/g.ts", "git status"]) {
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json)
+          VALUES (${`command-${command}`}, ${cancelledThreadId}, ${cancelledRunId}, NULL, NULL,
+            NULL, NULL, 100, 'command_execution', 'completed', ${DateTime.formatIso(now)},
+            ${JSON.stringify({ input: command })})`;
       }
       const commits = yield* Ref.make(0);
       const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
@@ -1006,7 +1021,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       );
       assert.deepEqual(
         capturedEvent?.payload.files.map((file) => file.path),
-        ["src/a.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+        ["src/a.ts", "src/c.ts", "src/d.ts", "src/e.ts", "src/f.ts", "src/g.ts"],
       );
       const completedAt = projected.run?.completedAt;
       assert.equal(

@@ -65,15 +65,8 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const {
-        run,
-        rootNode,
-        scope,
-        providerThread,
-        preservedCheckpointOrdinals,
-        sideChat,
-        editedPaths,
-      } = yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat, edits } =
+        yield* projections.getCheckpointCaptureContext(input.threadId, input);
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
 
@@ -137,19 +130,17 @@ export const layer: Layer.Layer<
       // The diff spans the whole checkout; another chat sharing it may have made some of it.
       const checkpoint = {
         ...capturedCheckpoint,
-        files: capturedCheckpoint.files.filter(
-          (file) =>
-            !editedPaths.others.some((path) =>
-              namesCheckoutFile(path, {
-                cwd: scope.cwd,
-                filePath: file.path,
-                trustRelative: false,
-              }),
-            ) ||
-            editedPaths.own.some((path) =>
-              namesCheckoutFile(path, { cwd: scope.cwd, filePath: file.path, trustRelative: true }),
-            ),
-        ),
+        files: capturedCheckpoint.files.filter((file) => {
+          const names = (path: string, trustRelative: boolean) =>
+            namesCheckoutFile(path, { cwd: scope.cwd, filePath: file.path, trustRelative });
+          const fileName = file.path.slice(file.path.lastIndexOf("/") + 1);
+          // A shell write names no path, so a file this chat's command mentions may be its own work.
+          return (
+            !edits.otherPaths.some((path) => names(path, false)) ||
+            edits.ownPaths.some((path) => names(path, true)) ||
+            edits.ownCommands.some((command) => command.includes(fileName))
+          );
+        }),
       };
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;

@@ -270,10 +270,14 @@ export interface ProjectionCheckpointCaptureContext {
   readonly preservedCheckpointOrdinals: ReadonlyArray<number>;
   /** Side chats share their parent's worktree and never snapshot it. */
   readonly sideChat: boolean;
-  /** Paths named by file edits since the run was requested: this thread's or its children's, and other threads'. */
-  readonly editedPaths: {
-    readonly own: ReadonlyArray<string>;
-    readonly others: ReadonlyArray<string>;
+  /**
+   * Edits since the run was requested. Own covers this thread, its delegates and side chats; command
+   * and tool inputs stand in for writes that name no path.
+   */
+  readonly edits: {
+    readonly ownPaths: ReadonlyArray<string>;
+    readonly ownCommands: ReadonlyArray<string>;
+    readonly otherPaths: ReadonlyArray<string>;
   };
 }
 
@@ -5647,18 +5651,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}
               AND (status = 'ready' OR (status = 'missing' AND run_id IS NOT NULL))`,
             ]);
-            const editedPathRows =
+            const editRows =
               run === undefined
                 ? []
-                : yield* sql<{ readonly own: number; readonly path: string | null }>`
-            WITH edits AS (
-              SELECT item.payload_json,
-                (item.thread_id = ${threadId} OR item.thread_id IN (
-                  SELECT thread_id FROM orchestration_v2_projection_threads
-                  WHERE json_extract(payload_json, '$.lineage.parentThreadId') = ${threadId}
-                )) AS own
+                : yield* sql<{
+                    readonly own: number;
+                    readonly kind: "path" | "command";
+                    readonly value: string | null;
+                  }>`
+            WITH RECURSIVE own_threads(thread_id) AS (
+              SELECT ${threadId}
+              UNION
+              SELECT child.thread_id FROM orchestration_v2_projection_threads child
+              JOIN own_threads parent
+                ON json_extract(child.payload_json, '$.lineage.parentThreadId') = parent.thread_id
+              WHERE json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                OR json_extract(child.payload_json, '$.lineage.sideChat') = 1
+                OR json_extract(child.payload_json, '$.delegatedFrom') IS NOT NULL
+            ),
+            items AS (
+              SELECT item.type, item.payload_json,
+                item.thread_id IN (SELECT thread_id FROM own_threads) AS own
               FROM orchestration_v2_projection_turn_items item
-              WHERE item.type = 'file_change'
+              WHERE item.type IN ('file_change', 'command_execution', 'dynamic_tool')
                 AND item.updated_at >= ${DateTime.formatIso(run.requestedAt)}
                 AND item.run_id IN (
                   SELECT run_id FROM orchestration_v2_projection_runs
@@ -5666,13 +5681,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     OR completed_at >= ${DateTime.formatIso(run.requestedAt)}
                 )
             )
-            SELECT own, json_extract(payload_json, '$.fileName') AS path FROM edits
+            SELECT own, 'path' AS kind, json_extract(payload_json, '$.fileName') AS value
+            FROM items WHERE type = 'file_change'
             UNION
-            SELECT own, json_extract(change.value, '$.path') AS path
-            FROM edits, json_each(edits.payload_json, '$.changes') change`;
-            const editedPaths = (own: boolean) =>
-              editedPathRows.flatMap((row) =>
-                row.path !== null && (row.own === 1) === own ? [row.path] : [],
+            SELECT own, 'path' AS kind, json_extract(change.value, '$.path') AS value
+            FROM items, json_each(items.payload_json, '$.changes') change
+            WHERE items.type = 'file_change'
+            UNION
+            SELECT own, 'command' AS kind, CAST(json_extract(payload_json, '$.input') AS TEXT) AS value
+            FROM items WHERE own AND type IN ('command_execution', 'dynamic_tool')`;
+            const editValues = (own: boolean, kind: "path" | "command") =>
+              editRows.flatMap((row) =>
+                row.value !== null && (row.own === 1) === own && row.kind === kind
+                  ? [row.value]
+                  : [],
               );
             return {
               run,
@@ -5690,7 +5712,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               preservedCheckpointOrdinals: preservedRows.map(({ ordinal }) => ordinal),
               sideChat: threadRows[0].side_chat === 1,
-              editedPaths: { own: editedPaths(true), others: editedPaths(false) },
+              edits: {
+                ownPaths: editValues(true, "path"),
+                ownCommands: editValues(true, "command"),
+                otherPaths: editValues(false, "path"),
+              },
             };
           }),
         )
