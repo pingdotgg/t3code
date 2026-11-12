@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { McpGatewayProfile } from "@t3tools/contracts";
-import {
-  agentAccentColor,
-  agentColors,
-  agentHasAdvancedSettings,
-  defaultAgentColor,
-  soleOption,
-} from "./agents.logic";
+import { agentAccentColor, agentColors, defaultAgentColor, soleOption } from "./agents.logic";
 
 const base: McpGatewayProfile = {
   profileId: "b",
@@ -23,27 +17,6 @@ const base: McpGatewayProfile = {
 const profiles = [{ profileId: "a" }, base];
 
 describe("agent editor defaults", () => {
-  it("keeps Advanced closed for an agent with only basic fields and its palette color", () => {
-    expect(agentHasAdvancedSettings(base, profiles)).toBe(false);
-    expect(agentHasAdvancedSettings({ ...base, tags: ["Dev"], iconId: "rocket" }, profiles)).toBe(
-      false,
-    );
-  });
-
-  it.each<[string, Partial<McpGatewayProfile>]>([
-    ["description", { description: "Reviews code" }],
-    ["system prompt", { systemPrompt: "Be terse" }],
-    ["skills", { skillIds: ["s1"] }],
-    ["user skills off", { includeUserSkills: false }],
-    ["reasoning effort", { reasoningEffort: "high" }],
-    ["machines", { environmentIds: ["mac"] }],
-    ["permission mode", { runtimeMode: "full-access" }],
-    ["interaction mode", { interactionMode: "plan" }],
-    ["custom color", { color: "#123456" }],
-  ])("opens Advanced when %s is set", (_, change) => {
-    expect(agentHasAdvancedSettings({ ...base, ...change }, profiles)).toBe(true);
-  });
-
   it("gives a new agent the next palette slot", () => {
     expect(defaultAgentColor(null, profiles)).toBe(agentColors[2]);
     expect(defaultAgentColor(base, profiles)).toBe(agentColors[1]);

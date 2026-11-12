@@ -5,6 +5,10 @@ import {
   agentTagOptions,
   normalizeAgentTags,
 } from "@t3tools/client-runtime/state/agentIdentity";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import { CheckIcon } from "lucide-react";
+import { Toggle } from "../ui/toggle";
 
 /** Role tags: toggle the suggested roles or type your own. */
 export function AgentTagsField({
@@ -24,19 +28,20 @@ export function AgentTagsField({
   };
   return (
     <fieldset>
-      <legend>
-        Role <span className="text-muted-foreground">· optional, pick any</span>
-      </legend>
-      <div className="agent-tag-options" role="group" aria-label="Roles">
+      <Label render={<legend />} className="mb-1.5">
+        Role <span className="font-normal text-muted-foreground">optional, pick any</span>
+      </Label>
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Roles">
         {agentTagOptions(tags).map((tag) => {
           const pressed = selected.has(tag.toLocaleLowerCase());
           return (
-            <button
+            <Toggle
               key={tag}
-              type="button"
-              aria-pressed={pressed}
+              variant="outline"
+              size="sm"
+              pressed={pressed}
               disabled={!pressed && full}
-              onClick={() =>
+              onPressedChange={() =>
                 onChange(
                   pressed
                     ? tags.filter((item) => item.toLocaleLowerCase() !== tag.toLocaleLowerCase())
@@ -44,11 +49,14 @@ export function AgentTagsField({
                 )
               }
             >
+              {pressed && <CheckIcon />}
               {tag}
-            </button>
+            </Toggle>
           );
         })}
-        <input
+        <Input
+          size="compact"
+          className="w-32 grow"
           aria-label="Add a custom role"
           placeholder={full ? `Up to ${AGENT_MAX_TAGS} roles` : "Add role…"}
           maxLength={AGENT_MAX_TAG_LENGTH}

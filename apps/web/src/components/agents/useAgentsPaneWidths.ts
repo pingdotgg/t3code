@@ -4,7 +4,7 @@ import { useElementWidth } from "../../hooks/useElementWidth";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useResizableWidth } from "../../hooks/useResizableWidth";
 
-export const AGENTS_PROFILES_PANE = { min: 200, default: 280, max: 420 } as const;
+export const AGENTS_PROFILES_PANE = { min: 200, default: 240, max: 420 } as const;
 export const AGENTS_THREADS_PANE = { min: 280, default: 360, max: 720 } as const;
 /** The selected chat beside the panes stays readable; the panes yield first. */
 const AGENTS_CHAT_MIN_WIDTH = 420;

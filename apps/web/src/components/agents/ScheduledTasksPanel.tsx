@@ -54,14 +54,14 @@ export function ScheduledTasksPanel({ newForProfileId }: { newForProfileId?: str
           <h2>Scheduled tasks</h2>
           <p>Prompts your agents run at a set time or on repeat.</p>
         </div>
-        <button
-          className="agent-primary"
+        <Button
+          size="sm"
           disabled={!available || runnable.length === 0}
           onClick={() => setEditing("new")}
         >
-          <PlusIcon size={14} />
+          <PlusIcon />
           New task
-        </button>
+        </Button>
       </header>
       {tasks.length === 0 ? (
         <p className="agent-empty">

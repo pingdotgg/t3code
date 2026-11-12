@@ -6,7 +6,12 @@ import { ThreadCard } from "./ThreadCard";
 import { useAgentThreadContextMenu, useAgentThreadSettleAction } from "./useAgentThreadContextMenu";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { AgentRailTile } from "./AgentRailTile";
+import {
+  AgentRailTile,
+  agentRailCountClass,
+  agentRailGlyphClass,
+  agentRailRowClass,
+} from "./AgentRailTile";
 import { groupAgentsByRole } from "@t3tools/client-runtime/state/agentIdentity";
 import { Link, Outlet, useLocation, useNavigate, type LinkProps } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
@@ -20,7 +25,7 @@ import {
   SearchIcon,
   TagsIcon,
   XIcon,
-  LayoutGridIcon,
+  UsersRoundIcon,
   CalendarClockIcon,
   ChartNoAxesColumnIcon,
 } from "lucide-react";
@@ -63,6 +68,8 @@ import { useToggleWorkspaceView } from "../sidebar/mainAppLocation";
 import { BrandMark } from "../BrandMark";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
+import { Button } from "../ui/button";
+import { Toggle } from "../ui/toggle";
 
 const agentFilterSchema = Schema.NullOr(Schema.String);
 const agentOrderSchema = Schema.Array(Schema.String);
@@ -265,7 +272,7 @@ export function AgentsBoard() {
   const allTile = (
     <button
       type="button"
-      className="agent-tile"
+      className={agentRailRowClass}
       aria-current={filter === null ? "true" : undefined}
       aria-label={`All agents, ${activeCount(allThreads)} active`}
       onClick={() => {
@@ -273,9 +280,11 @@ export function AgentsBoard() {
         setShowFilters(false);
       }}
     >
-      <LayoutGridIcon size={20} aria-hidden="true" />
-      <span className="agent-tile-name">All</span>
-      <span className="agent-tile-count" aria-hidden="true">
+      <span className={agentRailGlyphClass} aria-hidden="true">
+        <UsersRoundIcon />
+      </span>
+      <span className="min-w-0 flex-1 truncate">All agents</span>
+      <span className={agentRailCountClass} aria-hidden="true">
         {activeCount(allThreads)}
       </span>
     </button>
@@ -371,39 +380,48 @@ export function AgentsBoard() {
         style={paneStyle}
       >
         <aside className="agents-filters" aria-label="Agent filters">
-          <header className="agents-filters-heading">
-            <h2>Agents</h2>
+          <header className="flex items-center gap-1 ps-2 pb-2">
+            <h2 className="min-w-0 flex-1 text-base font-semibold">Agents</h2>
             {profiles.length > 0 && (
               <Tooltip>
                 <TooltipTrigger
-                  render={<button type="button" className="agent-icon-button" />}
-                  aria-label="Group by role"
-                  aria-pressed={groupByRole}
-                  onClick={() => setGroupByRole(!groupByRole)}
+                  render={
+                    <Toggle
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Group by role"
+                      pressed={groupByRole}
+                      onPressedChange={setGroupByRole}
+                    />
+                  }
                 >
-                  <TagsIcon size={14} />
+                  <TagsIcon />
                 </TooltipTrigger>
                 <TooltipPopup side="bottom">Group by role</TooltipPopup>
               </Tooltip>
             )}
-            <button
-              className="agent-primary agents-new-agent"
+            <Button
+              size="sm"
               disabled={!available}
               onClick={() => setEditor({ step: "start", presets: null })}
             >
-              <PlusIcon size={14} />
+              <PlusIcon />
               New agent
-            </button>
+            </Button>
           </header>
-          {groupByRole && <div className="agent-rail">{allTile}</div>}
+          {groupByRole && <div className="flex flex-col gap-0.5">{allTile}</div>}
           {railGroups.map((group) => (
             <section
               key={group.tag === null ? "untagged" : `tag:${group.tag}`}
-              className="agent-rail-group"
+              className="flex flex-col"
               aria-label={groupByRole ? group.label : undefined}
             >
-              {groupByRole && <h3>{group.label}</h3>}
-              <div className="agent-rail">
+              {groupByRole && (
+                <h3 className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+                  {group.label}
+                </h3>
+              )}
+              <div className="flex flex-col gap-0.5">
                 {!groupByRole && allTile}
                 {group.profiles.map((profile, index) => {
                   const previous = group.profiles[index - 1]?.profileId;
@@ -453,15 +471,15 @@ export function AgentsBoard() {
             <footer className="agents-filters-footer">
               <Link
                 to="/agents/scheduled"
-                className="agent-filter"
+                className={agentRailRowClass}
                 activeProps={{ "aria-current": "page" }}
                 onClick={() => setShowFilters(false)}
               >
-                <CalendarClockIcon size={22} />
-                <span className="agent-filter-body">
-                  <span className="agent-filter-name">Scheduled tasks</span>
+                <span className={agentRailGlyphClass} aria-hidden="true">
+                  <CalendarClockIcon />
                 </span>
-                <span className="agent-filter-count">
+                <span className="min-w-0 flex-1 truncate">Scheduled tasks</span>
+                <span className={agentRailCountClass}>
                   {scheduledTasks.filter(({ task }) => task.enabled).length}
                 </span>
               </Link>
@@ -473,17 +491,12 @@ export function AgentsBoard() {
         </div>
         <section className="agents-threads" aria-label="Threads">
           <header>
-            <button
-              className="agent-mobile-filters agent-icon-button"
-              onClick={() => setShowFilters(true)}
-            >
-              <ArrowLeftIcon size={14} /> Agents
-            </button>
-            {scheduledSupported && (
-              <Link to="/agents/scheduled" className="agent-mobile-filters agent-icon-button">
-                <CalendarClockIcon size={14} /> Scheduled
-              </Link>
-            )}
+            <div className="agent-mobile-filters">
+              <Button variant="outline" size="sm" onClick={() => setShowFilters(true)}>
+                <ArrowLeftIcon />
+                Agents
+              </Button>
+            </div>
             <div className="agents-threads-heading">
               <h2>
                 Threads
@@ -493,16 +506,16 @@ export function AgentsBoard() {
               </h2>
               <p>Active & unread</p>
             </div>
-            <button
+            <Button
               type="button"
-              className="agent-primary agents-new-chat"
+              size="sm"
               aria-haspopup="dialog"
               disabled={!available || orderedProfiles.length === 0}
               onClick={() => setNewChatOpen(true)}
             >
-              <PlusIcon size={14} />
+              <PlusIcon />
               New chat
-            </button>
+            </Button>
           </header>
           {visible.length === 0 && pinned.length === 0 && (
             <p role="status" className="agent-empty">
