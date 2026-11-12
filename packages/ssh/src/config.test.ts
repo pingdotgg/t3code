@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverSshHosts, parseKnownHostsHostnames } from "./config.ts";
+import { discoverSshHosts, parseKnownHosts } from "./config.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -166,7 +166,7 @@ describe("ssh config", () => {
           alias: "bastion.example.com",
           hostname: "bastion.example.com",
           username: null,
-          port: null,
+          port: 2222,
           source: "known-hosts",
         },
         {
@@ -279,10 +279,37 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("keeps each explicit known_hosts port as its own destination", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(sshDir);
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        [
+          "[100.64.0.1]:2222 ssh-ed25519 AAAA",
+          "[100.64.0.1]:2223 ssh-ed25519 AAAA",
+          "[fd7a:115c:a1e0::1]:2222 ssh-ed25519 AAAA",
+          "",
+        ].join("\n"),
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts
+          .map((host) => `${host.hostname} ${host.port}`)
+          .toSorted((left, right) => left.localeCompare(right)),
+        ["100.64.0.1 2222", "100.64.0.1 2223", "fd7a:115c:a1e0::1 2222"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("parses known_hosts entries without returning hashed hosts", () =>
     Effect.sync(() => {
       assert.deepEqual(
-        parseKnownHostsHostnames(
+        parseKnownHosts(
           [
             "github.com ssh-ed25519 AAAA",
             "gitlab.com,gitlab-alias ssh-ed25519 BBBB",
@@ -296,13 +323,13 @@ describe("ssh config", () => {
           ].join("\n"),
         ),
         [
-          "::1",
-          "2001:db8::1",
-          "github.com",
-          "gitlab-alias",
-          "gitlab.com",
-          "port.example.com",
-          "ssh.example.com",
+          { hostname: "::1", port: null },
+          { hostname: "2001:db8::1", port: null },
+          { hostname: "github.com", port: null },
+          { hostname: "gitlab-alias", port: null },
+          { hostname: "gitlab.com", port: null },
+          { hostname: "port.example.com", port: null },
+          { hostname: "ssh.example.com", port: 2200 },
         ],
       );
     }),
