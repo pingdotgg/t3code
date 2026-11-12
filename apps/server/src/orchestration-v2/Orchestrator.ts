@@ -813,15 +813,19 @@ function delegatedCompletionWakeDetail(
     .map((taskId) => {
       const task = tasks.find((candidate) => candidate.id === taskId);
       const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+      const resume =
+        task?.status === "interrupted" && task.childThreadId !== null
+          ? `\nIt did not finish. Start no replacement unless asked; to continue it, t3_thread_send to thread ${task.childThreadId}.`
+          : "";
       if (task?.result != null) {
-        const detail = `${label}:\n${task.result}`;
+        const detail = `${label}:\n${task.result}${resume}`;
         const bytes = Buffer.byteLength(detail);
         if (bytes <= remainingBytes) {
           remainingBytes -= bytes;
           return detail;
         }
       }
-      return `${label}. Use task_status with taskId ${taskId} to read the result.`;
+      return `${label}. Use task_status with taskId ${taskId} to read the result.${resume}`;
     })
     .join("\n\n");
 }

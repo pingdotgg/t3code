@@ -178,6 +178,7 @@ const seedParentWithTerminalTask = (input: {
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
   readonly parentRunStatus?: "running" | "completed";
+  readonly interruptedChildThreadId?: ThreadId;
   readonly siblingTasks?: ReadonlyArray<{
     readonly id: NodeId;
     readonly deliveryState: "delivered" | "claimed";
@@ -306,7 +307,8 @@ const seedParentWithTerminalTask = (input: {
             driver,
             providerInstanceId: modelSelection.instanceId,
             providerThreadId: null,
-            childThreadId: null,
+            childThreadId:
+              task.id === input.taskId ? (input.interruptedChildThreadId ?? null) : null,
             nativeTaskRef: null,
             prompt: "Inspect the delivered ownership edge.",
             title: null,
@@ -316,7 +318,10 @@ const seedParentWithTerminalTask = (input: {
               state: task.deliveryState,
               observedByRunId: task.deliveryState === "acknowledged" ? input.runId : null,
             },
-            status: "completed" as const,
+            status:
+              task.id === input.taskId && input.interruptedChildThreadId !== undefined
+                ? ("interrupted" as const)
+                : ("completed" as const),
             result: "child finished",
             startedAt: input.now,
             completedAt: input.now,
@@ -679,6 +684,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         deliveryState: "claimed",
         completionWake: "always",
         deliveryTaskIds: [firstTaskId, secondTaskId],
+        interruptedChildThreadId: ThreadId.make("thread:delegated-delivery-live-cohort-child"),
         now,
       });
 
@@ -706,6 +712,10 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.include(message?.text ?? "", String(secondTaskId));
       assert.include(message?.text ?? "", "task_status");
       assert.include(message?.text ?? "", "child finished");
+      assert.include(
+        message?.text ?? "",
+        "t3_thread_send to thread thread:delegated-delivery-live-cohort-child",
+      );
     }),
   );
 
