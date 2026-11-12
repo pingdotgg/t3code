@@ -176,7 +176,8 @@ it.effect.each([
   { order: "cleanup-first", restoreFiles: false, unmanaged: true },
   { order: "cleanup-first", restoreFiles: true, leavesFolder: true },
   { order: "cleanup-first", restoreFiles: false, leavesFolder: true },
-])("locks rollback with %s", ({ order, restoreFiles, unmanaged = false, leavesFolder = false }) =>
+  { order: "cleanup-first", restoreFiles: true, leavesFolder: true, shared: true },
+])("locks rollback with %s", ({ order, restoreFiles, unmanaged, leavesFolder, shared }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -278,16 +279,31 @@ it.effect.each([
               Effect.succeed({
                 schemaVersion: 1,
                 snapshotSequence: 0,
-                threads: [],
+                threads: shared
+                  ? [
+                      {
+                        id: ThreadId.make("rollback-worktree-sharer"),
+                        projectId,
+                        worktreePath,
+                        deletedAt: null,
+                        lineage: {},
+                      },
+                    ]
+                  : [],
                 archivedThreads: [],
-              }),
+              } as never),
+            getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] } as never),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
           }),
           Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
             open: (input) =>
               Effect.gen(function* () {
                 assert.equal(input.runtimePolicy.cwd, worktreePath);
                 if (!(yield* fileSystem.exists(worktreePath).pipe(Effect.orDie))) {
-                  return yield* new ProviderWorkspaceMissingError({ threadId, cwd: worktreePath });
+                  return yield* new ProviderWorkspaceMissingError({
+                    threadId,
+                    cwd: worktreePath,
+                  });
                 }
                 calls.push("session");
                 yield* Deferred.succeed(openEntered, undefined);
@@ -336,10 +352,14 @@ it.effect.each([
       if (order === "rollback-first") assert.isFalse(cleanupEntered);
       yield* Deferred.succeed(release, undefined);
       if (cleanup !== undefined) yield* Fiber.join(cleanup);
-      if (unmanaged) {
+      if (unmanaged || shared) {
         const error = yield* Fiber.join(rollback).pipe(Effect.flip);
         assert.equal(error._tag, "CheckpointRollbackExecutionError");
         assert.deepEqual(calls, ["cleanup"]);
+        if (shared) {
+          assert.equal(error.reason, "shared-workspace");
+          assert.isTrue(yield* fileSystem.exists(path.join(worktreePath, "unsaved.txt")));
+        }
         return;
       }
       yield* Fiber.join(rollback);
