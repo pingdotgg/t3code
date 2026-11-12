@@ -338,6 +338,23 @@ describe("workspace card beside chat", () => {
   it("keeps chat centered while the card fits beside it", () => {
     expect(withCard(1500).chat).toEqual({ left: 382, width: 736, insetStart: 0, insetEnd: 0 });
   });
+  it("centers beside the card when opted in, retaining preview clearance", () => {
+    const result = resolveChatCanvasLayout({
+      container: { width: 1584, height: 988 },
+      maxChatWidth: 736,
+      detailsCard: { left: 1260, right: 1572, bottom: 339 },
+      preview: {
+        ...preview,
+        width: 240,
+        source: { width: 240, height: 365 },
+        position: { x: 1260, y: 240 },
+      },
+      centerChatBesideDetails: true,
+    });
+    expect(result.chat).toEqual({ left: 262, width: 736, insetStart: 0, insetEnd: 324 });
+    expect(result.frame).toEqual({ x: 1260, y: 351, width: 240, height: 365 });
+    expect(result.overlapsDetailsCard).toBe(false);
+  });
   it("narrows chat only after it reaches the left padding", () => {
     expect(withCard(1108).chat).toMatchObject({ left: 48, width: 736 });
     expect(withCard(1028).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 276 });

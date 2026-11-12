@@ -348,6 +348,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "center-chat-beside-details",
+    title: "Center chat beside thread details",
+    to: "/settings/appearance",
+    searchTerms: ["center centering alignment free space messages composer layout panel card"],
+  },
+  {
     id: "thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",

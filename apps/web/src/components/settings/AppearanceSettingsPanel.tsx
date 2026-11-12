@@ -289,6 +289,32 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+        <SettingsRow
+          {...searchableSetting("center-chat-beside-details")}
+          description="Center messages and the composer in the space beside an open thread details card."
+          resetAction={
+            settings.centerChatBesideDetails !==
+            DEFAULT_UNIFIED_SETTINGS.centerChatBesideDetails ? (
+              <SettingResetButton
+                label="chat centering"
+                onClick={() =>
+                  updateSettings({
+                    centerChatBesideDetails: DEFAULT_UNIFIED_SETTINGS.centerChatBesideDetails,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.centerChatBesideDetails}
+              onCheckedChange={(centerChatBesideDetails) =>
+                updateSettings({ centerChatBesideDetails })
+              }
+              aria-label="Center chat beside thread details"
+            />
+          }
+        />
         <ThreadDetailsItemsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}

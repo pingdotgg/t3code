@@ -31,9 +31,10 @@ const preview: ChatCanvasPreview = {
 
 describe("chat canvas model", () => {
   it("shows the details card inline only where the canvas fits it beside the chat", () => {
-    const resolve = (width: number) =>
+    const resolve = (width: number, centerChatBesideDetails = false) =>
       resolveChatCanvasModel({
         measurements: measurements(width),
+        centerChatBesideDetails,
         detailsCardMeasurement: null,
         threadRef,
         preview: null,
@@ -41,12 +42,41 @@ describe("chat canvas model", () => {
       }).detailsCardMode;
     expect(resolve(1400)).toBe("inline");
     expect(resolve(900)).toBe("popover");
+    expect(resolve(1400, true)).toBe("inline");
+    expect(resolve(900, true)).toBe("popover");
+  });
+
+  it("centers beside details only when opted in and an inline card is shown", () => {
+    for (const [width, maxChatWidth, defaultLeft, besideLeft] of [
+      [1500, 736, 382, 236],
+      [2200, 736, 732, 586],
+      [2200, 1024, 588, 442],
+      [1108, 736, 48, 48],
+      [1012, 736, 48, 48],
+      [1000, 736, 132, 132],
+      [1500, 10000, 48, 48],
+    ] as const) {
+      const resolve = (centerChatBesideDetails: boolean, detailsCardInlineOpen = true) =>
+        resolveChatCanvasModel({
+          measurements: { ...measurements(width), maxChatWidth },
+          detailsCardMeasurement: { threadRef, width: 280, fullContentHeight: 300 },
+          threadRef,
+          preview: null,
+          detailsCardInlineOpen,
+          centerChatBesideDetails,
+        });
+      expect(resolve(false).layout.chat.left).toBe(defaultLeft);
+      expect(resolve(true).layout.chat.left).toBe(besideLeft);
+      expect(resolve(true, false)).toEqual(resolve(false, false));
+      expect(resolve(true).detailsCardMode).toBe(resolve(false).detailsCardMode);
+    }
   });
 
   it("moves the card into a popover when a preview below it leaves too little height", () => {
-    const resolve = (fullContentHeight: number) =>
+    const resolve = (fullContentHeight: number, centerChatBesideDetails = false) =>
       resolveChatCanvasModel({
         measurements: measurements(1100, 300),
+        centerChatBesideDetails,
         detailsCardMeasurement: { threadRef, width: 280, fullContentHeight },
         threadRef,
         preview: { ...preview, position: { x: 760, y: 150 }, lastInteraction: "drag" },
@@ -55,6 +85,7 @@ describe("chat canvas model", () => {
     const model = resolve(400);
     expect(model.layout.overlapsDetailsCard).toBe(true);
     expect(model.detailsCardMode).toBe("popover");
+    expect(resolve(400, true)).toEqual(model);
   });
 
   it("ignores a details card measured for another thread", () => {
