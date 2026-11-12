@@ -75,5 +75,9 @@ describe("parseElicitationForm", () => {
       ),
       [true, true],
     );
+    assert.deepStrictEqual(form.content({ q0: "Yes", q1: "Only on Fridays" }), {
+      q0: "Yes",
+      q1__other: "Only on Fridays",
+    });
   });
 });
