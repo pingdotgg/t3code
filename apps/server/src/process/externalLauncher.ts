@@ -118,6 +118,7 @@ const CommandLookupEnvConfig = Config.all({
   ProgramW6432: Config.String("ProgramW6432").pipe(Config.option),
   XDG_DATA_HOME: Config.String("XDG_DATA_HOME").pipe(Config.option),
   "ProgramFiles(x86)": Config.String("ProgramFiles(x86)").pipe(Config.option),
+  T3CODE_CLI_FALLBACK_DIRS: Config.String("T3CODE_CLI_FALLBACK_DIRS").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));

@@ -95,11 +95,20 @@ const layerTest = (input: {
       ),
     ),
     Layer.succeed(HostProcess.Platform, input.platform),
+    Layer.succeed(HostProcess.Environment, {
+      T3CODE_CLI_FALLBACK_DIRS: "",
+      ...input.env,
+    }),
     Layer.succeed(
       SpawnExecutableResolution,
       (command) => input.resolveExecutable?.(command) ?? command,
     ),
-    ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({
+        env: { T3CODE_CLI_FALLBACK_DIRS: "", ...input.env },
+        preserveEmptyStrings: true,
+      }),
+    ),
   );
 };
 
@@ -164,6 +173,7 @@ it.effect.skipIf(windowsHost)(
           PATH: binDir,
           DISPLAY: ":0",
           ELECTRON_RUN_AS_NODE: "1",
+          T3CODE_CLI_FALLBACK_DIRS: "",
         }),
       );
 
@@ -209,7 +219,11 @@ it.effect.skipIf(windowsHost)(
             onSpawn: (command) => spawned.push(command),
           }),
         ),
-        Effect.provideService(HostProcess.Environment, { PATH: binDir, DISPLAY: ":0" }),
+        Effect.provideService(HostProcess.Environment, {
+          PATH: binDir,
+          DISPLAY: ":0",
+          T3CODE_CLI_FALLBACK_DIRS: "",
+        }),
       );
 
       assert.deepEqual(
@@ -251,7 +265,10 @@ it.effect.skipIf(windowsHost)(
                   command.command === "busctl" ? sessionManager : undefined,
               }),
             ),
-            Effect.provideService(HostProcess.Environment, { PATH: binDir }),
+            Effect.provideService(HostProcess.Environment, {
+              PATH: binDir,
+              T3CODE_CLI_FALLBACK_DIRS: "",
+            }),
           );
           // Only editors borrow the session display; a browser must not open on that screen.
           assert.deepEqual(spawned.find((command) => command.command === "xdg-open")?.options.env, {

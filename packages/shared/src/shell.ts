@@ -650,7 +650,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   // On POSIX, also search common CLI install directories that GUI apps may not
   // have on their PATH (~/.local/bin, Homebrew, nvm, bun, npm global).
   // This mirrors magpie's `proc.FindTool` fallback.
-  const knownPosixDirs = platform !== "win32" ? resolveKnownPosixCliDirs(env) : [];
+  const knownPosixDirs = platform !== "win32" ? resolveKnownPosixCliDirs(env, platform) : [];
 
   // Include the fallback directories in the cache key: calls with the same PATH
   // but different HOME/NVM_DIR/npm_config_prefix must not reuse each other's
@@ -992,12 +992,21 @@ function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<strin
 }
 
 /**
- * Common CLI installation directories on POSIX (macOS/Linux) that may not be on
- * the GUI app's PATH. GUI apps launched from Finder/Dock do not source the user's
- * shell profile, so directories added there (~/.local/bin, Homebrew, nvm, bun,
- * npm global) are invisible. This mirrors magpie's `proc.FindTool` fallback.
+ * Common POSIX CLI install dirs that GUI apps may lack on PATH.
+ * Tests override via T3CODE_CLI_FALLBACK_DIRS (empty string disables).
  */
-function resolveKnownPosixCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+function resolveKnownPosixCliDirs(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): ReadonlyArray<string> {
+  const override = env.T3CODE_CLI_FALLBACK_DIRS;
+  if (override !== undefined) {
+    return override
+      .split(pathDelimiterForPlatform(platform))
+      .map((dir) => dir.trim())
+      .filter((dir) => dir.length > 0);
+  }
+
   const home = env.HOME?.trim();
   const dirs: string[] = [];
 
