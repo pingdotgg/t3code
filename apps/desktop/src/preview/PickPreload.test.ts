@@ -62,3 +62,25 @@ it("keeps the tool while typing a tool key in the comment", () => {
 
   expect(document.documentElement.getAttribute("data-t3code-annotation-tool")).toBe("select");
 });
+
+it("keeps comment keystrokes away from the page's capture-phase shortcuts", () => {
+  const pageShortcut = vi.fn((event: KeyboardEvent) => event.preventDefault());
+  window.addEventListener("keydown", pageShortcut, { capture: true });
+  const shadowRoot = startAnnotation();
+  const comment = shadowRoot.querySelector("textarea");
+  if (!comment) throw new Error("comment textarea not found");
+
+  comment.focus();
+  const space = new KeyboardEvent("keydown", {
+    key: " ",
+    code: "Space",
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  });
+  comment.dispatchEvent(space);
+  window.removeEventListener("keydown", pageShortcut, { capture: true });
+
+  expect(pageShortcut).not.toHaveBeenCalled();
+  expect(space.defaultPrevented).toBe(false);
+});
