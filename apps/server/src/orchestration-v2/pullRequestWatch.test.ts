@@ -725,6 +725,80 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("reports each merge queue removal once while the head checks stay green", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const watching = evaluatePullRequestWatch(watch(), green, noRemarks).next;
+    const removed = (id: string, removedAt: string) =>
+      detail({ ...green, mergeQueueRemoval: { id, removedAt, reason: "Merge conflict" } });
+
+    const dropped = removed("first", "2026-10-02T12:10:00Z");
+    const first = evaluatePullRequestWatch(watching, dropped, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+    const wake = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: first.next.headSha,
+      report: first,
+    });
+    assert.deepEqual(wake.notification, {
+      source: { kind: "monitor" },
+      outcome: "failed",
+      summary: "#1: removed from merge queue",
+    });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, dropped, noRemarks).changes, []);
+    // A read without queue news keeps the removal already told.
+    const quiet = evaluatePullRequestWatch(first.next, green, noRemarks);
+    assert.deepEqual(evaluatePullRequestWatch(quiet.next, dropped, noRemarks).changes, []);
+
+    const again = removed("second", "2026-10-02T12:20:00Z");
+    assert.equal(evaluatePullRequestWatch(first.next, again, noRemarks).changes.length, 1);
+    const before = removed("before", "2026-10-02T11:00:00Z");
+    const baseline = evaluatePullRequestWatch(
+      watch({ headSha: watching.headSha, passed: true, passedChecks: watching.passedChecks }),
+      before,
+      noRemarks,
+    );
+    assert.deepEqual(baseline.changes, []);
+    for (const prior of [watching, baseline.next]) {
+      const skewed = evaluatePullRequestWatch(
+        prior,
+        removed("new", "2026-10-02T11:59:58Z"),
+        noRemarks,
+      );
+      assert.deepEqual(skewed.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+      assert.deepEqual(
+        evaluatePullRequestWatch(skewed.next, removed("new", "2026-10-02T11:59:58Z"), noRemarks)
+          .changes,
+        [],
+      );
+    }
+  });
+
+  it("reports a merge queue removal stamped in the second the watch started", () => {
+    const watching = watch({ startedAt: "2026-10-02T12:00:00.500Z" });
+    const removed = (removedAt: string) =>
+      detail({ mergeQueueRemoval: { id: "first", removedAt, reason: "CI failed" } });
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T12:00:00Z"), noRemarks).changes,
+      [{ kind: "merge-queue-removed", reason: "CI failed" }],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T11:59:59Z"), noRemarks).changes,
+      [],
+    );
+  });
+
+  it("stays quiet when the queue lets go of a pull request by merging it", () => {
+    const watching = evaluatePullRequestWatch(watch(), detail(), noRemarks).next;
+    const merging = detail({
+      mergeQueueRemoval: { id: "landed", removedAt: "2026-10-02T12:10:00Z", reason: "merged" },
+    });
+    const read = evaluatePullRequestWatch(watching, merging, noRemarks);
+    assert.deepEqual(read.changes, []);
+    assert.equal(read.next.mergeQueueRemovalId, "landed");
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(

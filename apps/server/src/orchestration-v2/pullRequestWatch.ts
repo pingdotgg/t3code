@@ -20,7 +20,8 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -39,7 +40,13 @@ export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    | "capabilities"
+    | "headSha"
+    | "checks"
+    | "mergeability"
+    | "viewer"
+    | "author"
+    | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
@@ -192,6 +199,23 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
+  // The queue's checks run on a commit of its own, so its head can stay green after the queue
+  // drops it. After the first read, IDs avoid comparing the server clock with the host clock.
+  // The initial read uses whole seconds to exclude historical removals.
+  const removal = detail.mergeQueueRemoval;
+  if (
+    removal !== undefined &&
+    // Merging also records a removal, up to a second before the pull request reads as merged.
+    removal.reason !== "merged" &&
+    removal.id !== watch.mergeQueueRemovalId &&
+    (watch.mergeQueueRemovalId !== undefined ||
+      Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000)
+  ) {
+    changes.push({ kind: "merge-queue-removed", reason: removal.reason });
+  }
+  // Null records an empty baseline; historical IDs are saved without waking the watch.
+  const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId ?? null;
+
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
@@ -209,6 +233,7 @@ export function evaluatePullRequestWatch(
       remarksThrough,
       remarkIds,
       conflicting,
+      mergeQueueRemovalId,
       wakes,
       // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
       ...(checksBaseline &&
@@ -278,6 +303,10 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "merge-queue-removed":
+      return [
+        `- It was removed from the merge queue without merging${change.reason === null ? "" : `: ${change.reason}`}.`,
+      ];
   }
 }
 
@@ -288,6 +317,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  "merge-queue-removed": "removed from merge queue",
 };
 
 const WATCHING_CLOSING =
@@ -348,7 +378,10 @@ export function pullRequestWatchMessage(input: {
       : WATCHING_CLOSING,
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "conflicting" ||
+      change.kind === "merge-queue-removed",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");
