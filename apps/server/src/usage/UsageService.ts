@@ -567,17 +567,24 @@ export const make = Effect.gen(function* () {
     if (!parsed.resumed && cached !== undefined && cached.provider === provider) {
       // A whole-file re-parse re-emits saved requests unresolved. Keep their saved tier
       // corrections, since the history that resolved them may no longer be available.
-      const saved = new Map<string, UsageRecord>();
+      // Equal requests keep their own corrections by matching occurrences in order.
+      const saved = new Map<string, UsageRecord[]>();
       for (const previous of [...cached.records, ...cached.tailRecords]) {
         const corrected = correctedRecord(previous);
-        if (corrected.unresolvedServiceTierTurnId === undefined) {
-          saved.set(identity(corrected), corrected);
-        }
+        const key = identity(corrected);
+        const occurrences = saved.get(key);
+        if (occurrences === undefined) saved.set(key, [corrected]);
+        else occurrences.push(corrected);
       }
       for (const record of [...parsed.records, ...parsed.tailRecords]) {
-        if (record.unresolvedServiceTierTurnId === undefined) continue;
-        const corrected = saved.get(identity(record));
-        if (corrected !== undefined) resolvedRecords.set(record, corrected);
+        const corrected = saved.get(identity(record))?.shift();
+        if (
+          record.unresolvedServiceTierTurnId !== undefined &&
+          corrected !== undefined &&
+          corrected.unresolvedServiceTierTurnId === undefined
+        ) {
+          resolvedRecords.set(record, corrected);
+        }
       }
     }
     if (parsed.resumed && cached !== undefined && cached.tailRecords.length > 0) {
