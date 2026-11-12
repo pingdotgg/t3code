@@ -684,7 +684,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Language"),
     to: "/settings/general",
     searchTerms: [
-      "locale translation english español spanish português portuguese brasil brazilian chinese 中文 idioma 语言",
+      "locale translation english español spanish français french português portuguese brasil brazilian chinese 中文 idioma langue 语言",
     ],
   },
   {

@@ -1,6 +1,6 @@
 {
   "defaultLocale": "en",
-  "locales": ["es", "pt-BR", "zh"],
+  "locales": ["es", "fr", "pt-BR", "zh"],
   "files": {
     "gt": {
       "output": "src/i18n/translations/[locale].json"
