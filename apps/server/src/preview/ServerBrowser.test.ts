@@ -2886,6 +2886,29 @@ it.live("failed session and browser launches release capacity, as does closing a
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a saved tab whose browser fails to relaunch reports the launch failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      contextFailure = new Error("Chromium launch failed");
+      const error = yield* broker
+        .invoke({
+          scope,
+          tabId: PreviewTabId.make(opened.tabId),
+          operation: "snapshot",
+          input: {},
+        })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PreviewAutomationExecutionError");
+      expect(error.message).toContain("Chromium launch failed");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a full server takes back the slot of the longest idle agent tab nobody views", () =>
   Effect.scoped(
     Effect.gen(function* () {
