@@ -1,6 +1,7 @@
-import { runtimeModeChoicesForSupportedModes } from "../threads/thread-settings-options";
-import { AsyncResult } from "effect/reactivity";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import {
+  runtimeModeChoicesForSupportedModes,
+  withManagedRuntimeModeLimits,
+} from "../threads/thread-settings-options";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -14,6 +15,7 @@ import type {
   EnvironmentId,
   ProjectId,
   RuntimeMode,
+  ManagedPolicySummary,
   ProviderInteractionMode,
   ScheduledTask,
   ScheduledTaskThreadMode,
@@ -395,25 +397,30 @@ function TaskRuntimeRow({
   borderTop,
   draft,
   provider,
+  managedPolicy,
   setDraft,
 }: {
   readonly borderTop?: boolean;
   readonly draft: Draft;
   readonly provider: { supportedRuntimeModes?: ReadonlyArray<RuntimeMode> } | null;
+  readonly managedPolicy: ManagedPolicySummary | undefined;
   readonly setDraft: (draft: Draft) => void;
 }) {
-  const choices = runtimeModeChoicesForSupportedModes(provider?.supportedRuntimeModes);
+  const choices = withManagedRuntimeModeLimits(
+    runtimeModeChoicesForSupportedModes(provider?.supportedRuntimeModes),
+    [managedPolicy],
+  ).filter((choice) => choice.disabledReason === undefined);
+  const runtimeMode =
+    clampManagedRuntimeMode(managedPolicy, draft.runtimeMode) ?? draft.runtimeMode;
   return (
     <SelectRow
       label="Permissions"
       borderTop={borderTop}
-      value={
-        choices.find((choice) => choice.mode === draft.runtimeMode)?.label ?? "Choose permissions"
-      }
+      value={choices.find((choice) => choice.mode === runtimeMode)?.label ?? "Choose permissions"}
       actions={choices.map((choice) => ({
         id: choice.mode,
         title: choice.label,
-        state: choice.mode === draft.runtimeMode ? ("on" as const) : undefined,
+        state: choice.mode === runtimeMode ? ("on" as const) : undefined,
       }))}
       onSelect={(id) => {
         if (
@@ -797,9 +804,7 @@ function TaskForm({
     config?.providers.find(
       (provider) => provider.instanceId === draft.modelSelection?.instanceId,
     ) ?? null;
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const planModeEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
+  const planModeEnabled = providerForDraft?.showInteractionModeToggle !== false;
   const boundToThread = draft.threadId !== null;
   const save = async () => {
     if (
@@ -872,10 +877,7 @@ function TaskForm({
       Dialog.alert("Permissions unavailable", "Choose permissions supported by this provider.");
       return;
     }
-    const interactionMode =
-      planModeEnabled && providerForDraft?.showInteractionModeToggle !== false
-        ? draft.interactionMode
-        : "default";
+    const interactionMode = planModeEnabled ? draft.interactionMode : "default";
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -1075,7 +1077,12 @@ function TaskForm({
           </Text>
         ) : (
           <SettingsSection>
-            <TaskRuntimeRow draft={draft} provider={providerForDraft} setDraft={setDraft} />
+            <TaskRuntimeRow
+              draft={draft}
+              provider={providerForDraft}
+              managedPolicy={config?.managedPolicy}
+              setDraft={setDraft}
+            />
             <TaskInteractionRow
               borderTop
               draft={draft}

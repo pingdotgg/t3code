@@ -122,7 +122,6 @@ import {
   runtimeModeConfig,
   runtimeModeOptions,
 } from "../chat/runtimeModeConfig";
-import { resolveComposerInteractionMode } from "../ChatView.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -1454,12 +1453,8 @@ function ScheduledTaskEditorForm({
   const compatibleRuntimeModeOptions = runtimeModeOptions.filter((mode) =>
     compatibleRuntimeModes.includes(mode),
   );
-  const { enabled: planModeUiEnabled, interactionMode: compatibleInteractionMode } =
-    resolveComposerInteractionMode({
-      planModeEnabled: settings.planModeEnabled,
-      provider: activeEntry?.snapshot ?? null,
-      interactionMode: draft.interactionMode,
-    });
+  const planModeUiEnabled = activeEntry?.snapshot.showInteractionModeToggle !== false;
+  const compatibleInteractionMode = planModeUiEnabled ? draft.interactionMode : "default";
 
   const runtimeMode =
     clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, providerRuntimeMode) ??
@@ -1826,7 +1821,6 @@ function ScheduledTaskEditorForm({
                   model={activeSelection.model}
                   modelOptions={activeSelection.options ?? []}
                   allowPromptInjectedEffort={false}
-                  planModeEnabled={settings.planModeEnabled}
                   disabled={saving || !connected}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>

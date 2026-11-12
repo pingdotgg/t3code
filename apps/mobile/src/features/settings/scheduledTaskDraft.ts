@@ -246,6 +246,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.enabled,
     draft.startFromOrigin,
     draft.runtimeMode,
+    draft.interactionMode,
   ]);
 }
 
