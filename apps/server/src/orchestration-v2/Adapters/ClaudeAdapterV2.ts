@@ -218,7 +218,6 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
-  boundedProviderFailureText,
   makeProviderFailure,
   makeProviderRetryTurnItem,
 } from "@t3tools/provider-core/server/failure";
@@ -758,16 +757,11 @@ async function sendClaudeControlRequest(
   return Predicate.isObject(reply) ? reply.response : undefined;
 }
 
-// The CLI words these errors for the host (policy blocks, hosted connectors); a redacted, clamped copy tells the agent what to do next.
 function claudeMcpServerAuthError(action: string) {
   return (error: ClaudeAgentSdkQueryRunnerError) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
       driver: CLAUDE_PROVIDER,
-      detail: `Claude could not ${action}${
-        error.cause instanceof Error
-          ? `: ${boundedProviderFailureText(error.cause.message, 300)}`
-          : "."
-      }`,
+      detail: `Claude could not ${action}`,
       cause: error,
     });
 }

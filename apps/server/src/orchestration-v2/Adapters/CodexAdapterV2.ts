@@ -139,7 +139,6 @@ import {
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
 import {
-  boundedProviderFailureText,
   makeProviderFailure,
   makeProviderFailureTurnItem,
   makeProviderRetryTurnItem,
@@ -7274,14 +7273,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         };
 
-        // The app-server words these errors for the host (no OAuth support, discovery failed), so a redacted, clamped copy tells the agent why.
         const mcpServerAuthError = (action: string) => (cause: unknown) =>
           new ProviderAdapter.ProviderAdapterProtocolError({
             driver: CODEX_PROVIDER,
-            detail: `Codex could not ${action}${
-              cause instanceof Error ? `: ${boundedProviderFailureText(cause.message, 300)}` : "."
-            }`,
-            payload: cause,
+            detail: `Codex could not ${action}`,
+            cause,
           });
         // Sign-in finishes in the app-server's own loopback listener, so there is no callback to submit.
         const mcpServerAuth: ProviderAdapter.ProviderAdapterV2McpServerAuth = {

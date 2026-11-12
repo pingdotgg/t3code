@@ -104,7 +104,9 @@ for command and file approvals.
 
 When an MCP server needs you to log in, ask Codex to sign in to it. Codex replies
 with a link; open it and log in. The login finishes on the machine running the
-environment, so open the link in a browser on that machine.
+environment, so open the link in a browser on that machine. If you are connected
+remotely, forward the port in the link's `redirect_uri` to your own machine first
+(for example with `ssh -L`), or log in from the host.
 
 ## Codex says I hit a usage limit
 

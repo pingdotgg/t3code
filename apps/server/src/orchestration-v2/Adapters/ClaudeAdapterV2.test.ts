@@ -5553,7 +5553,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         callbackExpected: false,
       });
       const failed = yield* Effect.flip(auth.authenticate({ ...target, server: "broken" }));
-      assert.include(failed.message, "https://linear.example/token");
+      assert.include(failed.message, "Claude could not start sign-in");
       assert.notInclude(failed.message, "SECRET");
       yield* auth.submitCallback!({
         ...target,
