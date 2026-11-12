@@ -113,6 +113,7 @@ interface ListItemFields {
 interface LabelFields {
   readonly name: string;
   readonly color?: string | null | undefined;
+  readonly description?: string | null | undefined;
 }
 
 interface ReviewRequestFields {
@@ -215,6 +216,7 @@ const RawWorkflowRunsSchema = Schema.Struct({
       id: Schema.Int,
       name: Schema.optional(Schema.NullOr(Schema.String)),
       html_url: Schema.optional(Schema.NullOr(Schema.String)),
+      status: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
 });
@@ -546,7 +548,9 @@ function toReviewDecision(value: string | null | undefined): PullRequestReviewDe
 function toLabels(raw: ReadonlyArray<LabelFields> | undefined): ReadonlyArray<PullRequestLabel> {
   return (raw ?? []).flatMap((label) => {
     const name = trimmed(label.name);
-    return name === null ? [] : [{ name, color: trimmed(label.color) }];
+    return name === null
+      ? []
+      : [{ name, color: trimmed(label.color), description: trimmed(label.description) }];
   });
 }
 
@@ -1121,6 +1125,32 @@ export function decodeWorkflowRunsJson(
   });
 }
 
+// Approval-gated runs (action_required) are read separately as action-required checks.
+const UNFINISHED_WORKFLOW_RUN_STATUSES = new Set([
+  "requested",
+  "queued",
+  "pending",
+  "waiting",
+  "in_progress",
+]);
+
+/** Workflow runs GitHub has not finished, which may have no check runs on the head yet. */
+export function decodeUnfinishedWorkflowRunsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitHubWorkflowRunApproval>, DecodeFailure> {
+  const decoded = decodeWorkflowRuns(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  return Result.succeed(
+    decoded.success.workflow_runs
+      .filter((run) => UNFINISHED_WORKFLOW_RUN_STATUSES.has(run.status ?? ""))
+      .map((run) => ({
+        id: run.id,
+        name: trimmed(run.name) ?? `Workflow run ${run.id}`,
+        url: trimmed(run.html_url),
+      })),
+  );
+}
+
 export function toPullRequestHeads(result: PullRequestHeads.Result): {
   readonly heads: ReadonlyArray<GitHubPullRequestHead>;
   readonly nextCursor: string | null;
@@ -1314,6 +1344,7 @@ export function toReviewDismissalsPage(result: ReviewDismissals.Result): {
 }
 
 function toThreadComment(comment: ThreadComment, viewer: string | null): PullRequestThreadComment {
+  const reviewUrl = trimmed(comment.pullRequestReview?.url);
   return {
     id: comment.id,
     author: toActor(comment.author),
@@ -1321,6 +1352,7 @@ function toThreadComment(comment: ThreadComment, viewer: string | null): PullReq
     createdAt: comment.createdAt,
     editedAt: comment.lastEditedAt,
     url: trimmed(comment.url),
+    ...(reviewUrl === null ? {} : { reviewUrl }),
     reactions: toReactions(comment.reactionGroups, viewer),
   };
 }
