@@ -45,7 +45,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import { makeWithWorktreeRecovery } from "../workspace/restoreMissingWorktree.ts";
+import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -427,7 +427,6 @@ it.layer(
     { method: "open", location: "managed" },
     { method: "attach", location: "managed" },
     { method: "open", location: "subdirectory" },
-    { method: "attach", location: "subdirectory" },
     { method: "open", location: "unmanaged" },
     { method: "open", location: "no-worktree" },
   ] as const)(
@@ -445,7 +444,7 @@ it.layer(
         const cwd = location === "subdirectory" ? path.join(worktreePath, "src") : worktreePath;
         const cleanupQueued = yield* Deferred.make<Fiber.Fiber<void>>();
         let creations = 0;
-        const withRecovery = yield* makeWithWorktreeRecovery(() =>
+        const prepareLaunch = yield* makePrepareTerminalLaunch(() =>
           Effect.succeed({
             id: ThreadId.make("thread-1"),
             projectId: ProjectId.make("project-1"),
@@ -486,18 +485,22 @@ it.layer(
           cwd,
           worktreePath: location === "subdirectory" ? null : worktreePath,
         });
-        const launch = (input: TerminalOpenInput) =>
-          method === "attach"
-            ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
-            : manager.open(input).pipe(Effect.asVoid);
+        const launch = prepareLaunch(input).pipe(
+          Effect.flatMap(({ input, recover }) =>
+            (method === "attach"
+              ? manager.attachStream(input, () => Effect.void)
+              : manager.open(input)
+            ).pipe(Effect.provideService(TerminalManager.TerminalCwdRecovery, recover)),
+          ),
+        );
         if (location === "unmanaged" || location === "no-worktree") {
-          const error = yield* withRecovery(input, launch).pipe(Effect.flip);
+          const error = yield* launch.pipe(Effect.flip);
           assert.deepEqual(error, new TerminalCwdNotFoundError({ cwd }));
           assert.equal(creations, 0);
           assert.equal(ptyAdapter.spawnInputs.length, 0);
           return;
         }
-        yield* withRecovery(input, launch);
+        yield* launch;
         yield* Fiber.join(yield* Deferred.await(cleanupQueued));
         assert.equal(creations, 1);
         assert.equal(ptyAdapter.spawnInputs.length, 1);

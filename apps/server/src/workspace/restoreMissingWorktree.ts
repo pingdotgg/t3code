@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import { isWithinRoot } from "./KnownWorkspaces.ts";
 import { TerminalCwdRecovery } from "../terminal/Manager.ts";
 
 class WorktreeRecreateError extends Schema.TaggedError<WorktreeRecreateError>()(
@@ -132,43 +133,42 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
 });
 
 // Worktree setup uses terminals, so recovery must stay outside TerminalManager.
-export const makeWithWorktreeRecovery = Effect.fn("restoreMissingWorktree.makeWithRecovery")(
-  function* <LookupError>(
-    getThreadShell: (threadId: ThreadId) => Effect.Effect<WorktreeThread | null, LookupError>,
-  ) {
-    const path = yield* Path.Path;
-    const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
-    return Effect.fn("restoreMissingWorktree.retryLaunch")(function* <
-      Input extends {
-        readonly threadId: string;
-        readonly cwd?: string | undefined;
-        readonly worktreePath?: string | null | undefined;
-      },
-      A,
-      E,
-      R,
-    >(input: Input, launch: (input: Input) => Effect.Effect<A, E, R>) {
-      const thread = yield* getThreadShell(ThreadId.make(input.threadId)).pipe(
-        Effect.orElseSucceed(() => null),
-      );
-      if (thread?.worktreePath == null) return yield* launch(input);
-      const relative = path.relative(thread.worktreePath, input.cwd ?? thread.worktreePath);
-      if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
-        return yield* launch(input);
-      }
-      return yield* launch({ ...input, worktreePath: thread.worktreePath }).pipe(
-        Effect.provideService(TerminalCwdRecovery, (error) =>
-          restoreMissingWorktree(thread).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("failed to recreate missing worktree", {
-                threadId: thread.id,
-                worktreePath: thread.worktreePath,
-                cause,
-              }).pipe(Effect.andThen(Effect.fail(error))),
-            ),
-          ),
+export const makePrepareTerminalLaunch = Effect.fn(
+  "restoreMissingWorktree.makePrepareTerminalLaunch",
+)(function* <LookupError>(
+  getThreadShell: (threadId: ThreadId) => Effect.Effect<WorktreeThread | null, LookupError>,
+) {
+  const path = yield* Path.Path;
+  const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
+  return Effect.fn("restoreMissingWorktree.prepareTerminalLaunch")(function* <
+    Input extends {
+      readonly threadId: string;
+      readonly cwd?: string | undefined;
+      readonly worktreePath?: string | null | undefined;
+    },
+  >(input: Input) {
+    const thread = yield* getThreadShell(ThreadId.make(input.threadId)).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    const worktreePath = thread?.worktreePath ?? null;
+    if (
+      thread === null ||
+      worktreePath === null ||
+      !isWithinRoot(path, path.resolve(input.cwd ?? worktreePath), worktreePath)
+    ) {
+      return { input, recover: TerminalCwdRecovery.defaultValue() };
+    }
+    const recover: TerminalCwdRecovery["Service"] = (error) =>
+      restoreMissingWorktree(thread).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("failed to recreate missing worktree", {
+            threadId: thread.id,
+            worktreePath,
+            cause,
+          }).pipe(Effect.andThen(Effect.fail(error))),
         ),
       );
-    });
-  },
-);
+    // The lease must cover the worktree root, even when the terminal opens in a subdirectory.
+    return { input: { ...input, worktreePath }, recover };
+  });
+});
