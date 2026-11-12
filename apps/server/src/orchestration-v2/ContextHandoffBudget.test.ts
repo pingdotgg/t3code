@@ -576,6 +576,31 @@ describe("handoff delivery", () => {
     }),
   );
 
+  it.effect("delivers a source provider's goal whole or not at all", () =>
+    Effect.gen(function* () {
+      const goal = `Thread goal (paused), owned by provider thread codex: ${"x".repeat(3_900)}`;
+      const withGoal = { ...handoff, history: { ...handoff.history!, goal } };
+      const injected: Array<ProviderAdapter.ProviderAdapterV2HistoricalContext> = [];
+      const deliver = (budget: number) =>
+        deliverContextHandoffs({
+          handoffs: [withGoal],
+          providerThread,
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          inject: (history) =>
+            Effect.sync(() => {
+              injected.push(history);
+              return true;
+            }),
+          persist: () => Effect.void,
+        });
+      assert.equal((yield* deliver(3_000).pipe(Effect.result))._tag, "Failure");
+      assert.lengthOf(injected, 0);
+      yield* deliver(16_000);
+      assert.include(injected[0]?.context, goal);
+    }),
+  );
+
   it.effect("does not redeliver after ambiguous injection failure", () =>
     Effect.gen(function* () {
       let durable = handoff;

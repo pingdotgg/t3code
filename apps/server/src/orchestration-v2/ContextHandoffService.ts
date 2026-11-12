@@ -540,8 +540,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         );
       const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
       const goal = sourceGoalNotice(input);
-      const coverage =
-        goal === null ? handoffCoverage(input) : `${handoffCoverage(input)}\n${goal}`;
+      const coverage = handoffCoverage(input);
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);
@@ -554,7 +553,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
                 },
               ];
         }),
-        coverage,
+        coverage: goal === null ? coverage : `${coverage}\n${goal}`,
         budget: tokenCap,
       });
       return {
@@ -574,6 +573,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           coverage,
           omittedItems: selected.omittedItems,
           omittedItemIds: selected.omittedItemIds,
+          ...(goal === null ? {} : { goal }),
         },
         createdByProviderInstanceId: null,
         createdAt: input.createdAt,

@@ -64,10 +64,14 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       .filter((handoff) => handoff.history === undefined)
       .map((handoff) => handoff.summaryText)
       .join("\n\n");
-    const fullCoverage =
+    const goals = Array.from(new Set(pending.flatMap((handoff) => handoff.history?.goal ?? [])));
+    const fullCoverage = [
       oldContext && historyCost([], `${coverage}\n${oldContext}`) + 512 <= budget
         ? `${coverage}\n${oldContext}`
-        : coverage;
+        : coverage,
+      // Never collapsed: an unfitting goal fails the budget check below instead of vanishing.
+      ...goals,
+    ].join("\n");
     const selected = selectHistory({
       messages,
       coverage: fullCoverage,
