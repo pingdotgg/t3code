@@ -4,10 +4,20 @@ import {
   MAX_TOOL_OUTPUT_IMAGES,
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import { describe, expect, it } from "vite-plus/test";
 
-import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
+import * as ServerConfig from "../config.ts";
+import {
+  storeServedToolOutputImages,
+  stripUnservedToolOutputImageBytes,
+} from "./toolOutputImageBytes.ts";
 
 const PNG_BYTES = 3_000;
 const PNG_BASE64 = Buffer.alloc(PNG_BYTES, 7).toString("base64");
@@ -212,4 +222,54 @@ describe("stripUnservedToolOutputImageBytes", () => {
     expect(outputOf(item)).toEqual(snapshot);
     expect(stripped.result[0]).toBe(untouched);
   });
+});
+
+describe("storeServedToolOutputImages", () => {
+  effectIt.effect("keeps an image inline until a retried write stores all of its bytes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let failNextWrite = true;
+      const faultyFs = {
+        ...fs,
+        writeFile: (filePath: string, content: Uint8Array) =>
+          failNextWrite
+            ? fs.writeFile(filePath, content.subarray(0, 10)).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "Unknown",
+                      module: "FileSystem",
+                      method: "writeFile",
+                      description: "ENOSPC",
+                    }),
+                  ),
+                ),
+              )
+            : fs.writeFile(filePath, content),
+      } satisfies FileSystem.FileSystem;
+      const item = toolItem({
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: PNG_BASE64 } },
+        ],
+      });
+      const store = storeServedToolOutputImages(item).pipe(
+        Effect.provideService(FileSystem.FileSystem, faultyFs),
+      );
+
+      expect(yield* store).toBe(item);
+      failNextWrite = false;
+      const stored = yield* store;
+      const [image] = toolOutputImages(stored.type === "dynamic_tool" ? stored.output : null);
+      const config = yield* ServerConfig.ServerConfig;
+      const bytes = yield* fs.readFile(`${config.attachmentsDir}/${image?.attachmentId}.png`);
+      expect(Buffer.from(bytes).toString("base64")).toBe(PNG_BASE64);
+      expect((yield* fs.readDirectory(config.attachmentsDir)).length).toBe(1);
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "tool-output-images-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 });

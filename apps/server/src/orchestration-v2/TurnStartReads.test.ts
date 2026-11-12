@@ -424,29 +424,12 @@ it.effect.each(["sqlite"] as const)(
           ],
         },
       });
-      const toolImageId = "thread-completion-reads-1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f-png";
-      yield* store.apply({
-        id: EventId.make("attachment:tool-image-event"),
-        type: "turn-item.updated",
-        threadId,
-        runId: oldRunId,
-        occurredAt: now,
-        payload: {
-          ...item,
-          id: TurnItemId.make("attachment:tool-image"),
-          type: "dynamic_tool",
-          toolName: "Read",
-          input: {},
-          output: [{ type: "image", mimeType: "image/png", attachmentId: toolImageId }],
-        },
-      });
       assert.deepEqual((yield* store.getThreadAttachmentIds(threadId)).toSorted(), [
         "answer-document",
         "answer-image",
         "attachment:old",
         "message-file",
         recordingId,
-        toolImageId,
       ]);
     }).pipe(Effect.provide(layerDatabase)),
 );

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
@@ -165,13 +168,19 @@ export const storeServedToolOutputImages = Effect.fn(
       const extension = inferImageExtension({ mimeType: image.mimeType });
       const attachmentId = `${baseId}-${extension.slice(1)}`;
       const filePath = path.join(config.attachmentsDir, `${attachmentId}${extension}`);
+      const partPath = `${filePath}.${NodeCrypto.randomUUID()}.part`;
       const stored = yield* fileSystem.exists(filePath).pipe(
         Effect.flatMap((exists) =>
           exists
             ? Effect.void
-            : fileSystem
-                .makeDirectory(config.attachmentsDir, { recursive: true })
-                .pipe(Effect.andThen(fileSystem.writeFile(filePath, bytes))),
+            : fileSystem.makeDirectory(config.attachmentsDir, { recursive: true }).pipe(
+                // Rename so an interrupted write never leaves a file that passes the exists check.
+                Effect.andThen(fileSystem.writeFile(partPath, bytes)),
+                Effect.andThen(fileSystem.rename(partPath, filePath)),
+                Effect.tapError(() =>
+                  fileSystem.remove(partPath, { force: true }).pipe(Effect.ignore),
+                ),
+              ),
         ),
         Effect.as(true),
         Effect.catch((cause) =>
