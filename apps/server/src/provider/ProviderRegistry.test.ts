@@ -466,6 +466,25 @@ it.layer(
       }),
     );
 
+    it.effect("names the instance's CODEX_HOME in the sign-in hint for a custom home", () =>
+      Effect.gen(function* () {
+        const homePath = "/srv/codex-work-home";
+        const status = yield* checkCodexProviderStatus(
+          decodeCodexSettings({ binaryPath: "codex", homePath }),
+          () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: { account: null, requiresOpenaiAuth: true },
+              }),
+            ),
+        );
+
+        assert.strictEqual(status.auth.status, "unauthenticated");
+        assert.include(status.message ?? "", "CODEX_HOME");
+        assert.include(status.message ?? "", homePath);
+      }),
+    );
+
     it.effect("returns ready with unknown auth when app-server does not require OpenAI auth", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>

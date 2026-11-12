@@ -70,10 +70,21 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
+// `gh repo set-default` marks the chosen remote with `remote.<name>.gh-resolved base`.
+function parseGhDefaultRemoteName(stdout: string): string | null {
+  const marked = stdout
+    .split("\n")
+    .map((line) => /^remote\.(.+)\.gh-resolved\s+base$/.exec(line.trim())?.[1])
+    .filter((name): name is string => name !== undefined);
+  return marked.length === 1 ? marked[0]! : null;
+}
+
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
+  ghDefaultRemoteName: string | null,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  for (const preferredRemoteName of ["upstream", "origin"] as const) {
+  for (const preferredRemoteName of [ghDefaultRemoteName, "upstream", "origin"]) {
+    if (preferredRemoteName === null) continue;
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
       return { remoteName: preferredRemoteName, remoteUrl };
@@ -239,8 +250,28 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
+  const ghResolvedResult = yield* processRunner
+    .run({
+      command: "git",
+      args: [
+        "-C",
+        cacheKey.rootPath,
+        ...(cacheKey.isBare ? ["--git-dir=."] : []),
+        "config",
+        "--get-regexp",
+        "^remote\\..*\\.gh-resolved$",
+      ],
+      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(Effect.option);
+  const ghDefaultRemoteName =
+    ghResolvedResult._tag === "Some" && ghResolvedResult.value.code === 0
+      ? parseGhDefaultRemoteName(ghResolvedResult.value.stdout)
+      : null;
+
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
-  const remote = pickPrimaryRemote(remotes);
+  const remote = pickPrimaryRemote(remotes, ghDefaultRemoteName);
   return remote
     ? buildRepositoryIdentity({
         ...remote,
