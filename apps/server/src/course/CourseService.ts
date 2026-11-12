@@ -663,16 +663,22 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
               references === undefined
                 ? ""
                 : references.length === 0
-                  ? "No published solution was found online; say so in every verdict. "
-                  : "Published references (hidden from the learner until their final answer) are a check, not the truth: in every verdict, name the one you checked as a markdown link. If your worked answer differs, say \"the posted solution disagrees; here's why mine differs\" and grade against your own working, never the reference. If a reference's numbers differ from the problem's own, treat it as a likely transcription misread; never say its author used wrong numbers. ";
+                  ? "No published solution was found online. End every verdict on this problem with the cite line. "
+                  : 'Published references (hidden from the learner until their final answer) are a check, not the truth. End every verdict on this problem, even a quick "correct", with the cite line. If your worked answer differs, say "the posted solution disagrees; here\'s why mine differs" and grade against your own working, never the reference. If a reference\'s numbers differ from the problem\'s own, treat it as a likely transcription misread; never say its author used wrong numbers. ';
+            const cite =
+              references === undefined
+                ? undefined
+                : references.length === 0
+                  ? "No published solution was found online; graded against my own working."
+                  : `Checked against ${references.map(({ label, url }) => `[${label}](${url})`).join(", ")} (unofficial).`;
+            const referenceFields =
+              references === undefined ? {} : { references, cite, note: referencesNote.trim() };
             if ((!input.reveal && !input.skip) || input.pset === undefined) {
               if (input.pset === undefined && input.unit === undefined) return item;
               return {
                 ...item,
                 text: yield* fs.readFileString(psetFile(path.join(root, course.id), number)),
-                ...(input.pset !== undefined && references !== undefined
-                  ? { references, note: referencesNote.trim() }
-                  : {}),
+                ...(input.pset === undefined ? {} : referenceFields),
               };
             }
             const text = yield* fs.readFileString(psetFile(path.join(root, course.id), number));
@@ -689,7 +695,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
               ...item,
               text,
               solution,
-              ...(references !== undefined ? { references } : {}),
+              ...referenceFields,
               note: `${input.skip ? "The learner asked for the answer, so this problem is skipped; the visible reply must begin with the line **Skipped, not graded.**, then the final answer, then every step of the working. Do not ask the learner to answer this part again. " : ""}${solution === null ? `No official solution exists; work the problem yourself and check against the listed worked-example units where they match (${examples || "none listed"}). Say plainly where your work disagrees, and tell the learner: graded against my own worked solution, not MIT's. ` : ""}${referencesNote}`.trim(),
             };
           }),

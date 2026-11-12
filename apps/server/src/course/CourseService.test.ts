@@ -83,6 +83,10 @@ describe("CourseService", () => {
         const plain = yield* service.problems({ courseId: course.id, pset: 1 });
         assert.deepStrictEqual(plain.problemSets[0]?.references, [reference]);
         assert.include(plain.problemSets[0]?.note ?? "", "a check, not the truth");
+        assert.strictEqual(
+          plain.problemSets[0]?.cite,
+          "Checked against [Posted solution](https://example.com/solution) (unofficial).",
+        );
         const revealed = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
         assert.strictEqual(revealed.problemSets[0]?.solution, "Solution");
         assert.strictEqual(revealed.attribution, "MIT OpenCourseWare, Mechanics, CC BY-NC-SA 4.0");
@@ -118,10 +122,7 @@ describe("CourseService", () => {
         yield* service.update({ courseId: course.id, pset: 1, references });
         const revealed = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
         assert.deepStrictEqual(revealed.problemSets[0]?.references, references);
-        assert.include(
-          revealed.problemSets[0]?.note ?? "",
-          "name the one you checked as a markdown link",
-        );
+        assert.include(revealed.problemSets[0]?.note ?? "", "with the cite line");
         const repaired = yield* service.add({
           lessonThreadId: threadId,
           ingested: {
