@@ -22,7 +22,6 @@ import {
   getChangedRanges,
   type Command,
   type Editor,
-  Extension,
   InputRule,
   markInputRule,
   markPasteRule,
@@ -369,20 +368,6 @@ export const ComposerBoldExtension = Bold.extend({
 export const ComposerStrikeExtension = Strike.extend({
   addInputRules() {
     return [markInputRuleOutsideCode(strikeInputRegex, this.type)];
-  },
-});
-
-/**
- * Mod+B bolds selected text only. Without a selection Tiptap would toggle bold
- * for the next typed text, which users hit by accident when they mean the
- * sidebar toggle. Runs ahead of the Bold extension and swallows the chord.
- */
-export const ComposerBoldSelectionOnlyExtension = Extension.create({
-  name: "composerBoldSelectionOnly",
-  priority: 1000,
-  addKeyboardShortcuts() {
-    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
-    return { "Mod-b": ignoreWithoutSelection, "Mod-B": ignoreWithoutSelection };
   },
 });
 
