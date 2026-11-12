@@ -14,10 +14,10 @@ vi.mock("~/speech/useTextFieldSpeech", () => ({
   useTextFieldSpeech: () => ({ blocksSubmission: true, submitAfterDictation: mocks.queue }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.submit }));
-vi.mock(import("~/state/pullRequests"), async (original) => ({
-  ...(await original()),
-  pullRequestEnvironment: { submitReview: {} } as never,
+vi.mock("./usePendingReviewCommentActions", () => ({
+  usePendingReviewCommentActions: () => ({ busy: false }),
 }));
+vi.mock("./PullRequestAttachments", () => ({ PullRequestAttachments: () => null }));
 
 it("submits only the line comments still in the draft when dictation finishes", async () => {
   mocks.submit.mockClear();
@@ -35,7 +35,26 @@ it("submits only the line comments still in the draft when dictation finishes", 
   await using screen = await render(
     <PullRequestReviewForm
       active
-      reviewThreads={[]}
+      reviewThreads={[
+        {
+          id: "hosted-thread",
+          path: "hosted.ts",
+          line: 2,
+          side: "right",
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "hosted-comment",
+              body: "Saved on GitHub",
+              url: "https://github.com/test/repo/pull/1#discussion_r1",
+              author: null,
+              createdAt: "2026-11-12T00:00:00Z",
+              pendingReviewId: "pending-review",
+            },
+          ],
+        },
+      ]}
       environmentId={EnvironmentId.make("test")}
       reference={reference}
       completionScope={null}
@@ -53,7 +72,21 @@ it("submits only the line comments still in the draft when dictation finishes", 
   await act(() => mocks.queue.mock.calls[0]![0]("Dictated summary"));
   expect(mocks.submit).toHaveBeenCalledWith(
     expect.objectContaining({
-      input: expect.objectContaining({ body: "Dictated summary", comments: [] }),
+      input: expect.objectContaining({
+        body: "Dictated summary",
+        pendingReviewId: "pending-review",
+        comments: [
+          expect.objectContaining({
+            id: "hosted-comment",
+            body: "Saved on GitHub",
+            hostedComment: {
+              reviewId: "pending-review",
+              commentId: "hosted-comment",
+              url: "https://github.com/test/repo/pull/1#discussion_r1",
+            },
+          }),
+        ],
+      }),
     }),
   );
 });

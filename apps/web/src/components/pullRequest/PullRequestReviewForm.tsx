@@ -27,6 +27,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { readableFailure } from "./pullRequestDetail.logic";
 import {
+  mergePendingReviewComments,
   pullRequestReviewKey,
   usePendingReviewComments,
   usePullRequestReviewStore,
@@ -128,12 +129,19 @@ export function PullRequestReviewForm({
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number], text: string) => {
-    const submittedComments = usePullRequestReviewStore.getState().drafts[reviewKey] ?? [];
+    const state = usePullRequestReviewStore.getState();
+    const submittedComments = mergePendingReviewComments(
+      state.drafts[reviewKey] ?? [],
+      reviewThreads,
+      state.removedHostComments[reviewKey] ?? [],
+    );
+    const submittedReviewId = submittedComments.find((comment) => comment.hostedComment)
+      ?.hostedComment?.reviewId;
     if (
       pending ||
       uploading ||
       draftBusy ||
-      !canSubmit(verdict.value, text, submittedComments.length)
+      !canSubmit(verdict.value, text, submittedComments.length, submittedReviewId)
     )
       return;
     const submittedBody = text;
@@ -143,7 +151,7 @@ export function PullRequestReviewForm({
       input: {
         ...reference,
         verdict: verdict.value,
-        ...(pendingReviewId ? { pendingReviewId } : {}),
+        ...(submittedReviewId ? { pendingReviewId: submittedReviewId } : {}),
         body: submittedBody,
         comments: submittedComments,
       },
@@ -174,13 +182,18 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string, commentCount: number) =>
+  const canSubmit = (
+    verdict: PullRequestReviewVerdict,
+    summary: string,
+    commentCount: number,
+    reviewId: string | undefined = pendingReviewId,
+  ) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
       : verdict === "approve" ||
         summary.trim().length > 0 ||
         commentCount > 0 ||
-        pendingReviewId !== undefined;
+        reviewId !== undefined;
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "", comments.length)
       ? "Summarize your review (optional)"

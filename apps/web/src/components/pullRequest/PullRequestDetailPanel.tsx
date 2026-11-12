@@ -28,7 +28,6 @@ import {
   type PullRequestSummary,
   type PullRequestReviewThread,
   type PullRequestThreadComment,
-  type PullRequestComment,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -133,7 +132,6 @@ import {
   buildPullRequestCommentContext,
   buildPullRequestContext,
   buildResolveConflictsPrompt,
-  latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isPullRequestNotFound,
   isStackedPullRequestBase,
@@ -1233,21 +1231,6 @@ export function PullRequestDetailPanel({
       },
       { keepGuide: true },
     );
-  };
-  const addCommentToComposer = (comment: PullRequestComment) => {
-    if (!detail) return;
-    const task = buildFixFindingHandoff({
-      number: detail.number,
-      title: detail.title,
-      url: detail.url,
-      headBranch: detail.headBranch,
-      baseBranch: detail.baseBranch,
-      state: detail.state,
-      isDraft: detail.isDraft,
-      finding: { kind: "comment", comment },
-    });
-    // General comments have no diff anchor, so their words belong in the composer itself.
-    void startAsk(`comment:${comment.id}`, { ...task, prompt: comment.body }, { keepGuide: true });
   };
   const addPendingToComposer = (comment: PendingReviewComment) => {
     const anchor = getReviewPositionAnchor(comment.position);

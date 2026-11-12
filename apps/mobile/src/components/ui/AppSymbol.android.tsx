@@ -1,7 +1,6 @@
 import IconPaperclip from "@tabler/icons-react-native/IconPaperclip";
 import IconSquare from "@tabler/icons-react-native/IconSquare";
 import IconSquareCheckFilled from "@tabler/icons-react-native/IconSquareCheckFilled";
-import IconSparkles from "@tabler/icons-react-native/IconSparkles";
 import { DiffCollapseIcon, DiffExpandIcon } from "../DiffDisclosureIcons";
 import type { Icon } from "@tabler/icons-react-native/types";
 /* Package-root imports eagerly register the entire Tabler icon set in Metro. */
@@ -214,7 +213,6 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   paperclip: IconPaperclip,
   square: IconSquare,
   "checkmark.square.fill": IconSquareCheckFilled,
-  sparkles: IconSparkles,
   ellipsis: IconDots,
   moon: IconMoon,
   "ellipsis.circle": IconDotsCircleHorizontal,

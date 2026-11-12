@@ -1,5 +1,5 @@
 import { Button } from "../ui/button";
-import { ExternalLinkIcon, CircleCheckIcon } from "lucide-react";
+import { CircleCheckIcon } from "lucide-react";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import type { PullRequestTimelineThread } from "./pullRequestDetail.logic";
 import {
@@ -219,20 +219,6 @@ function AddToChatButton({
       </TooltipTrigger>
       <TooltipPopup>Add to chat</TooltipPopup>
     </Tooltip>
-  );
-}
-
-function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
-  return url === null ? null : (
-    <Button
-      size="icon-xs"
-      variant="ghost-muted"
-      className="-mr-1 shrink-0"
-      aria-label="Open activity on host"
-      onClick={() => onOpen(url)}
-    >
-      <ExternalLinkIcon className="size-3" />
-    </Button>
   );
 }
 
@@ -865,9 +851,9 @@ export function PullRequestTimelineTab({
   useEffect(() => {
     reveal();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- runs for each clicked link and again when activity resolves its row
-  }, [revealUrl, targetIndex]);
+  }, [revealUrl, targetIndex, rows]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
-  useEffect(() => () => stopHolding.current?.(), []);
+  useEffect(() => () => stopHolding.current?.(), [stopHolding]);
   const openOnHost = (url: string) => {
     void readLocalApi()?.shell.openExternal(url);
   };
@@ -925,7 +911,29 @@ export function PullRequestTimelineTab({
     const event = row.event;
     if (event.reviewThread) {
       const thread = event.reviewThread;
-      return <div className="relative mb-5 pl-12"><ReviewThreadCard {...threadActions(thread)} thread={thread} workspaceRoot={detail.workspaceRoot} environmentId={environmentId} reference={reference} canReact={reactions.canReact} onReacted={onRefresh} onAddToComposer={onAddThreadCommentToComposer ? (comment) => onAddThreadCommentToComposer(thread, comment) : undefined} /></div>;
+      return (
+        <div
+          className="relative mb-5 pl-12"
+          {...(matches(event) ? { "data-pr-link-target": true, tabIndex: -1 } : {})}
+        >
+          <ReviewThreadCard
+            {...threadActions(thread)}
+            completionScope={reactions.completionScope}
+            revealRequest={matches(event) ? linked?.count : undefined}
+            thread={thread}
+            workspaceRoot={detail.workspaceRoot}
+            environmentId={environmentId}
+            reference={reference}
+            canReact={reactions.canReact}
+            onReacted={onRefresh}
+            onAddToComposer={
+              onAddThreadCommentToComposer
+                ? (comment) => onAddThreadCommentToComposer(thread, comment)
+                : undefined
+            }
+          />
+        </div>
+      );
     }
     if (event.thread) {
       return (

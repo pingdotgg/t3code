@@ -106,12 +106,14 @@ const reactionGroups = (groups: ReadonlyArray<Json> | undefined) =>
       nodes: nodesIn(reactors).map((node) => ({ __typename: "User", ...node })),
     },
   }));
-const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
+const remark = ({ author, reactionGroups: groups, pullRequestReview, ...raw }: Json) => ({
   body: "",
   lastEditedAt: null,
   isMinimized: false,
   url: "https://github.com/acme/web/pull/1#discussion",
-  pullRequestReview: null,
+  pullRequestReview: pullRequestReview
+    ? { id: "review", state: "COMMENTED", ...pullRequestReview }
+    : null,
   ...raw,
   author: actor(author),
   reactionGroups: reactionGroups(groups),

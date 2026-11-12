@@ -70,13 +70,13 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { WorkingChangesReview } from "./diffs/WorkingChangesReview";
-import { DiffDisplayControls } from "./diffs/DiffDisplayControls";
+
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
 import { compareReviewFilePaths } from "@t3tools/client-runtime/review-workspace";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
-import { ReviewIcon as MorphIcon } from "~/components/ReviewIcon";
+
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
@@ -622,9 +622,7 @@ export default function DiffPanel({
     fileStates,
     retry,
     requestFile,
-    readyFilePaths,
     renderableFiles: unorderedFiles,
-    settledFileCount,
     remainingFileCount,
     loadNextFiles,
   } = useReviewFilePatches({

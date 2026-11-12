@@ -174,14 +174,9 @@ export function PullRequestMergeControls(props: {
           ...(adminOverride ? { adminOverride: true, mergeMethod: method } : {}),
           ...(action === "merge" && method && stack.stack && scope
             ? {
-                resolveMergeMethod: (fresh) => {
-                  if (
-                    !canPerformPullRequestAction(fresh, "merge") ||
-                    !allowedMergeMethods(fresh).includes(method)
-                  )
-                    throw new Error(`The ${terminology.singular} changed. Refresh before merging.`);
-                  return method;
-                },
+                stackNumber: stack.stack.number,
+                expectedStackHeads: scope.heads,
+                mergeMethod: method,
               }
             : action === "merge" && method && !adminOverride
               ? {

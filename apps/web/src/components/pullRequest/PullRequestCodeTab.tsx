@@ -42,10 +42,8 @@ import {
   InfoIcon,
   MessageSquareOffIcon,
   TriangleAlertIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
 } from "lucide-react";
-import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
+import { ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -646,6 +644,20 @@ function PullRequestCodeTab({
     ignoreWhitespace,
     groupByType,
   );
+  const linkAnchor = parsePullRequestAnchor(revealUrl);
+  const linkFile =
+    linkAnchor?.kind === "diff"
+      ? loadedFiles.find((file) =>
+          pullRequestDiffPathMatches(linkAnchor.digest, resolveFileDiffPath(file)),
+        )
+      : undefined;
+  const pendingLinkPath = linkFile ? resolveFileDiffPath(linkFile) : null;
+  // The linked file stays shown past the test-file filter after the link settles.
+  const [revealedLink, setRevealedLink] = useState<{
+    readonly scope: string;
+    readonly path: string;
+  } | null>(null);
+  const linkPath = pendingLinkPath ?? (revealedLink?.scope === scopeKey ? revealedLink.path : null);
   const testFileCount = loadedFiles.filter((file) =>
     isTestChangedFile(resolveFileDiffPath(file)),
   ).length;
@@ -713,20 +725,6 @@ function PullRequestCodeTab({
     groupPendingReviewComments(detail.reviewThreads, pendingComments);
 
   const completionScope = pullRequestCompletionScope(detail, environmentId, reference);
-  const linkAnchor = parsePullRequestAnchor(revealUrl);
-  const linkFile =
-    linkAnchor?.kind === "diff"
-      ? loadedFiles.find((file) =>
-          pullRequestDiffPathMatches(linkAnchor.digest, resolveFileDiffPath(file)),
-        )
-      : undefined;
-  const pendingLinkPath = linkFile ? resolveFileDiffPath(linkFile) : null;
-  // The linked file stays shown past the test-file filter after the link settles.
-  const [revealedLink, setRevealedLink] = useState<{
-    readonly scope: string;
-    readonly path: string;
-  } | null>(null);
-  const linkPath = pendingLinkPath ?? (revealedLink?.scope === scopeKey ? revealedLink.path : null);
   const threadsByPath = reviewThreadsByPath(visibleHostThreads);
   const placedThreadIds = (() => {
     const placed = new Set<string>();
@@ -1768,10 +1766,7 @@ function PullRequestCodeTab({
     }
     const key = `${scopeKey}:${revealUrl}`;
     if (answeredLink.current === key) return;
-    if (
-      !pendingLinkPath ||
-      !items.some((item) => resolveFileDiffPath(item.fileDiff) === pendingLinkPath)
-    ) {
+    if (!pendingLinkPath || !filteredFiles.some((file) => file.path === pendingLinkPath)) {
       if (canLoadNextSlice) loadNextSlice();
       // Every page is loaded and none has the file.
       else if (!pendingLinkPath && loadedSlices.length > 0 && nextCursor === null) {

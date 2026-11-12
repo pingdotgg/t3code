@@ -79,7 +79,7 @@ import {
   type PullRequestSummary,
 } from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
-import { PullRequestComposerNotice } from "./PullRequestComposerNotice";
+
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import {
@@ -92,17 +92,8 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  Linking,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  type ScrollViewProps,
-  StyleSheet,
-  View,
-} from "react-native";
-import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { Linking, Platform, Pressable, RefreshControl, StyleSheet, View } from "react-native";
+
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -115,7 +106,7 @@ import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspace
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Tabs } from "../../components/ui/Tabs";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { ScreenContent } from "../../components/ui/ScreenContent";
+
 import { RelativeTime } from "../../components/RelativeTime";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestLiveChecks } from "./usePullRequestLiveChecks";
@@ -632,6 +623,12 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
               title: `${capitalizeTerm(terminology.singular)} actions`,
               icon: "ellipsis",
               items: [
+                {
+                  id: "comments",
+                  title: "Comments",
+                  icon: "text.bubble",
+                  onPress: () => setCommentsOpen(true),
+                },
                 ...(permissions.verdicts.length
                   ? [
                       {
@@ -751,7 +748,10 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
           onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
         >
           {(["overview", "guide", "activity", "diff"] as const)
-            .filter((tab) => tab !== "guide" || guidesEnabled)
+            .filter(
+              (tab) =>
+                (visitedSections.has(tab) || section === tab) && (tab !== "guide" || guidesEnabled),
+            )
             .map((tab) => (
               <View
                 key={tab}
@@ -782,6 +782,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                                     },
                                   ]
                                 : []),
+                              { value: "activity", label: "Activity" },
                               { value: "diff", label: "Code" },
                             ]}
                             selected={section}
@@ -914,13 +915,18 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                             </View>
                           ),
                         },
-                        ...(tab === "overview" ? (identity ? tabContent.rows : []) : []).map(
-                          (row) => ({
-                            ...row,
-                            key: `${tab}:${row.key}`,
-                            content: row.content,
-                          }),
-                        ),
+                        ...(tab === "overview"
+                          ? identity
+                            ? filesContent.rows
+                            : []
+                          : tab === "activity"
+                            ? tabContent.rows
+                            : []
+                        ).map((row) => ({
+                          ...row,
+                          key: `${tab}:${row.key}`,
+                          content: row.content,
+                        })),
                       ]}
                       keyExtractor={(row) => row.key}
                       getItemType={(row) =>
@@ -1083,7 +1089,10 @@ export function PullRequestDiffContent({
   const [filesOpen, setFilesOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const filter = usePullRequestFileFilter(result.parsed, params.focus ? params.path : undefined);
+  const filter = usePullRequestFileFilter(
+    result.parsed,
+    linkPath ?? (params.focus ? params.path : undefined),
+  );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
   const { loadMore } = result;

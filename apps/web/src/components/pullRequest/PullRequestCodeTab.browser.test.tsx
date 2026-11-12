@@ -260,9 +260,9 @@ it("scrolls to a file asked for as the tab opens", async () => {
   await expectFileHeaderShown(screen, container, "early-39.ts");
 });
 
-it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {
+it.each([false, true])("pages forward to a file asked for that is not loaded yet, then scrolls to it (grouped: %s)", async (groupByType) => {
   setup({ paged: true });
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true, pullRequestViewing: {...DEFAULT_CLIENT_SETTINGS.pullRequestViewing, groupByType} });
   using _preferences = {
     [Symbol.dispose]() {
       window.localStorage.removeItem("t3code.diffHideTestFiles");

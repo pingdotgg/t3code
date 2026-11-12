@@ -4,7 +4,7 @@ import { useReviewThreadActions } from "./useReviewThreadActions";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
-import { reviewLineRangeLabel } from "@t3tools/client-runtime/review-selection";
+
 import { PullRequestAttachments } from "./PullRequestAttachments";
 import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import { PullRequestCommentActions } from "./PullRequestCommentActions";
@@ -23,29 +23,24 @@ import type {
   PullRequestThreadComment,
 } from "@t3tools/contracts";
 import {
-  ArrowUpIcon,
   CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
   ClockIcon,
   HammerIcon,
-  MessageSquareIcon,
   MessageSquarePlusIcon,
   Trash2Icon,
   CircleCheckIcon,
   CircleIcon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Circle, CircleCheck } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PullRequestEditButton } from "./PullRequestEditButton";
+
 import { Badge } from "../ui/badge";
-import { ReviewIcon as MorphIcon } from "~/components/ReviewIcon";
+
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
@@ -315,7 +310,6 @@ export function ReviewThreadCard({
     if (revealRequest !== undefined) setExpanded(true);
   }
   const [uploading, setUploading] = useState(false);
-  const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [lastResolved, setLastResolved] = useState(thread.isResolved);
@@ -346,20 +340,12 @@ export function ReviewThreadCard({
   const nextCommentsCursor =
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
   const commentCount = thread.commentCount ?? comments.length;
-  const authors = [
-    ...new Set(comments.map((comment) => comment.author?.name ?? comment.author?.login ?? "ghost")),
-  ];
-  const authorLabel =
-    authors.length > 2
-      ? `${authors.slice(0, 2).join(", ")} and ${authors.length - 2} more`
-      : authors.join(" and ");
-  const collapsedLabel = `${commentCount} resolved ${commentCount === 1 ? "comment" : "comments"}${authorLabel ? ` from ${authorLabel}` : ""}`;
 
   // Follow resolution changes from this client or GitHub while allowing a finished thread to
   // be opened manually. Failed resolve requests leave the current view and draft intact.
   if (lastResolved !== thread.isResolved) {
     setLastResolved(thread.isResolved);
-    setExpanded(!thread.isResolved);
+    if (hidden === undefined) setExpanded(!thread.isResolved);
   }
 
   const saveEdit = async (commentId: string, body: string) => {

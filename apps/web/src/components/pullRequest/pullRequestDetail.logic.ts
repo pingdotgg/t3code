@@ -786,8 +786,8 @@ export function pullRequestTimelineEventMatches(
   event: PullRequestTimelineEvent,
   anchor: string,
 ): boolean {
-  return [event, ...(event.thread?.replies ?? []), ...(event.reviewThread?.comments ?? [])].some((item) =>
-    pullRequestAnchorMatchesUrl(anchor, item.url),
+  return [event, ...(event.thread?.replies ?? []), ...(event.reviewThread?.comments ?? [])].some(
+    (item) => pullRequestAnchorMatchesUrl(anchor, item.url),
   );
 }
 
@@ -795,7 +795,8 @@ export function buildPullRequestTimeline(
   detail: Pick<
     PullRequestDetailView,
     "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
-  > & Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
+  > &
+    Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
 ): ReadonlyArray<PullRequestTimelineEvent> {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const currentComments = new Map(detail.comments.map((comment) => [comment.id, comment]));
@@ -844,7 +845,10 @@ export function buildPullRequestTimeline(
     ...detail.comments
       .filter(
         (comment) =>
-          !threadedCommentIds.has(comment.id) && !(detail.overviewThreads ?? []).some((thread) => thread.comments.some((entry) => entry.id === comment.id)) &&
+          !threadedCommentIds.has(comment.id) &&
+          !(detail.overviewThreads ?? []).some((thread) =>
+            thread.comments.some((entry) => entry.id === comment.id),
+          ) &&
           !(
             comment.kind === "review" &&
             visibleBody(comment.body) === null &&
@@ -892,10 +896,29 @@ export function buildPullRequestTimeline(
         reactions: [],
       };
     }),
-    ...pullRequestConversationItems(detail.comments.filter((comment) => (detail.overviewThreads ?? []).some((thread) => thread.comments.some((entry) => entry.id === comment.id))), detail.overviewThreads ?? []).flatMap((item) => item.kind !== "thread" ? [] : [{
-      ...commentTimelineEvent(item.root),
-      thread: { ...item.thread, replies: item.replies.map(commentTimelineEvent), moreReplies: item.moreReplies, hasMoreReplies: item.hasMoreReplies, url: item.url },
-    }]),
+    ...pullRequestConversationItems(
+      detail.comments.filter((comment) =>
+        (detail.overviewThreads ?? []).some((thread) =>
+          thread.comments.some((entry) => entry.id === comment.id),
+        ),
+      ),
+      detail.overviewThreads ?? [],
+    ).flatMap((item) =>
+      item.kind !== "thread"
+        ? []
+        : [
+            {
+              ...commentTimelineEvent(item.root),
+              thread: {
+                ...item.thread,
+                replies: item.replies.map(commentTimelineEvent),
+                moreReplies: item.moreReplies,
+                hasMoreReplies: item.hasMoreReplies,
+                url: item.url,
+              },
+            },
+          ],
+    ),
     ...(detail.mergedAt
       ? [
           {

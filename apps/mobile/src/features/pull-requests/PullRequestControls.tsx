@@ -246,7 +246,7 @@ function PullRequestVerticalHeaderToolbar(props: PullRequestHeaderToolbarProps) 
         )
       ) : null}
       {showAgentControls ? (
-        <Toolbar.Menu title="AI helpers" icon="sparkles" disabled={agent.disabled}>
+        <Toolbar.Menu title="AI helpers" icon="pencil" disabled={agent.disabled}>
           {pullRequestAgentMenuItems(agent)}
         </Toolbar.Menu>
       ) : null}
@@ -375,7 +375,6 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
       </View>
     );
   }
-  const nativeThreadItems = pullRequestThreadMenuItems(agent, "ask");
   const primaryControl = showPrimary ? (
     !pendingReview && chooseThread ? (
       <Toolbar.Menu

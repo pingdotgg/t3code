@@ -48,11 +48,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import {
-  Inspector,
-  useAdaptiveWorkspaceLayout,
-  useWorkspacePaneState,
-} from "../layout/AdaptiveWorkspaceLayout";
+import { Inspector } from "../layout/AdaptiveWorkspaceLayout";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useReviewCacheForThread } from "./reviewState";
 import {
@@ -87,8 +83,6 @@ export function ReviewHeader(
     readonly showGitMenu?: boolean;
   },
 ) {
-  const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
-  const { panes } = useWorkspacePaneState();
   const presentation = useReviewHeaderPresentation(props);
   return (
     <AppBar
@@ -345,7 +339,6 @@ export function ReviewSheet(
   },
 ) {
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
-  const { panes } = useWorkspacePaneState();
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const insets = useSafeAreaInsets();
@@ -581,7 +574,6 @@ export function ReviewSheet(
     selectedSection !== null &&
     parsedDiff.kind === "files" &&
     NativeReviewDiffView !== null;
-  const showChangedFilesToggle = panes.supportsAuxiliaryPane && showChangedFilesPane;
 
   const listHeader = (() => {
     const children: ReactElement[] = [];

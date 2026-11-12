@@ -1,4 +1,3 @@
-import { isBotBadgeImage } from "./botBadgeImages";
 import { inlinePullRequestBadges } from "./pullRequestMarkdownBadges";
 import {
   splitPullRequestBody,
