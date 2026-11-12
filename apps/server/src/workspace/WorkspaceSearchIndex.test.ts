@@ -113,6 +113,31 @@ it.effect("fetches past a first page of Git-ignored results", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
+// A backslash is a file name character on Linux and macOS, so only Windows may treat it as a separator.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "keeps a backslash in a POSIX folder name as part of the search result path",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const items = [fileItem("dir\\one/report.txt")];
+        const finder = {
+          destroy: vi.fn(),
+          waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+          fileSearch: vi.fn(() => ({
+            ok: true as const,
+            value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
+          })),
+        } as unknown as FileFinder;
+        vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+        const result = yield* searchIndex.search("report", 50, "file");
+
+        expect(result.entries).toEqual([{ kind: "file", path: "dir\\one/report.txt" }]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+);
+
 it.effect("continues whole-word searches after a filtered grep page", () =>
   Effect.scoped(
     Effect.gen(function* () {
