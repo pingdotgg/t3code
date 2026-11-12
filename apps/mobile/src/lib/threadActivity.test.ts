@@ -1010,6 +1010,27 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("splits a settled turn's work fold at a steer", () => {
+    const steer = {
+      ...userMessage("2026-06-20T00:00:04.000Z"),
+      id: TurnItemId.make("item-steer"),
+      messageId: MessageId.make("message-steer"),
+      inputIntent: "steer" as const,
+    };
+    const after = { ...command("2026-06-20T00:00:06.000Z"), id: TurnItemId.make("item-after") };
+    const feed = buildThreadFeed(
+      [userMessage(), command(), steer, after, assistantMessage("2026-06-20T00:00:09.000Z")].map(
+        (item, position) => projected(item, position),
+      ),
+    );
+
+    expect(
+      deriveThreadFeedPresentation(feed, null, new Set()).map((entry) =>
+        entry.type === "message" ? entry.id : entry.type,
+      ),
+    ).toEqual(["message-user", "run-fold", "message-steer", "run-fold", "message-assistant"]);
+  });
+
   it("folds subagents while keeping created-thread and fork cards visible", () => {
     const { providerThreadId: _providerThreadId, ...forkBase } = base(
       "item-fork",
