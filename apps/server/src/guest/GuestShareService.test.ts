@@ -385,6 +385,40 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         type: "run.updated",
         payload: { ...ownerRunRecord, workspacePreparation },
       });
+    const workflowSubagent = (id: string) =>
+      ownerEvent(`event:${id}`, {
+        type: "subagent.updated",
+        payload: {
+          id: NodeId.make(id),
+          threadId,
+          runId,
+          parentNodeId: NodeId.make("node:owner"),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver,
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Review the diff",
+          title: "review",
+          model: null,
+          status: "running",
+          workflow: {
+            runHandles: {
+              runId: "workflow-run",
+              transcriptDir: `${worktreePath}/.claude/workflows/${id}`,
+              scriptPath: `${worktreePath}/.claude/workflows/${id}.js`,
+            },
+            phases: [],
+            agents: [],
+          },
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      });
 
     // Before the guest connects, so the opening snapshot carries them.
     yield* orchestrator.dispatch({
@@ -406,6 +440,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         checkpointScope("scope:before"),
         preparedRun("run:before", { type: "existing_worktree", worktreePath, branch }),
         linkedPullRequest("pr:before", "Fix the login bug"),
+        workflowSubagent("subagent:before"),
       ],
     });
     const events = yield* guestShares.stream(session);
@@ -422,6 +457,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         checkpointScope("scope:live"),
         preparedRun("run:live", { type: "worktree", baseRef: branch, branch }),
         linkedPullRequest("pr:live", "Fix the login bug, take two"),
+        workflowSubagent("subagent:live"),
       ],
     });
     yield* orchestrator.dispatch({
@@ -441,6 +477,10 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
     assert.equal(snapshot.item.projection.checkpointScopes.length, 1);
     assert.equal(snapshot.item.projection.runs[0]?.workspacePreparation?.type, "existing_worktree");
     assert.equal(snapshot.item.projection.thread.pullRequests?.[0]?.snapshot?.state, "open");
+    assert.equal(
+      snapshot.item.projection.subagents[0]?.workflow?.runHandles?.runId,
+      "workflow-run",
+    );
     assert.includeMembers(
       received.flatMap((event) =>
         event.type === "thread" && event.item.kind === "event" ? [event.item.event.type] : [],
@@ -451,6 +491,7 @@ it.effect("never sends the guest the owner's worktree path or branch", () =>
         "checkpoint-scope.created",
         "run.updated",
         "thread.pull-request-link-updated",
+        "subagent.updated",
       ],
     );
     const wire = JSON.stringify(received);

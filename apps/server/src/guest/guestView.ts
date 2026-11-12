@@ -6,6 +6,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   OrchestrationV2Run,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   OrchestrationV2ThreadProjection,
   ServerProvider,
@@ -61,6 +62,14 @@ const guestRun = (run: OrchestrationV2Run): OrchestrationV2Run =>
     ? run
     : { ...run, workspacePreparation: guestWorkspacePreparation(run.workspacePreparation) };
 
+// A workflow's transcript directory and script live on the owner's disk.
+const guestSubagent = (subagent: OrchestrationV2Subagent): OrchestrationV2Subagent => {
+  const runHandles = subagent.workflow?.runHandles;
+  if (subagent.workflow === undefined || runHandles === undefined) return subagent;
+  const { transcriptDir: _transcriptDir, scriptPath: _scriptPath, ...guestRunHandles } = runHandles;
+  return { ...subagent, workflow: { ...subagent.workflow, runHandles: guestRunHandles } };
+};
+
 /** The thread as its guest's stream sends it: without the owner's branches or paths on disk. */
 export function projectThreadProjectionForGuest(
   projection: OrchestrationV2ThreadProjection,
@@ -69,6 +78,7 @@ export function projectThreadProjectionForGuest(
     ...projection,
     thread: guestThread(projection.thread),
     runs: projection.runs.map(guestRun),
+    subagents: projection.subagents.map(guestSubagent),
     providerSessions: projection.providerSessions.map(guestProviderSession),
     checkpointScopes: projection.checkpointScopes.map(guestCheckpointScope),
   };
@@ -108,6 +118,8 @@ export function projectDomainEventForGuest(
     case "run.created":
     case "run.updated":
       return { ...event, payload: guestRun(event.payload) };
+    case "subagent.updated":
+      return { ...event, payload: guestSubagent(event.payload) };
     case "provider-session.attached":
     case "provider-session.updated":
       return { ...event, payload: guestProviderSession(event.payload) };
