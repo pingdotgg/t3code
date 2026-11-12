@@ -410,6 +410,14 @@ it.effect("trims the HTTP shell only when asked", () =>
     );
     expect(cut.olderSettled?.counts).toEqual([{ projectId: thread.projectId, count: 1 }]);
 
+    // A client that holds rows the socket can replay from keeps them; any other cursor reloads.
+    expect(full.projectIdentities).toBeTypeOf("string");
+    expect(yield* shell(`?resumeFrom=${full.snapshotSequence}`)).toEqual({ resumable: true });
+    expect(yield* shell(`?resumeFrom=${full.snapshotSequence - 1}`)).toEqual({ resumable: true });
+    for (const cursor of [full.snapshotSequence + 1, "x"]) {
+      expect((yield* shell(`?omitOlderSettled=1&resumeFrom=${cursor}`)).threads).toHaveLength(26);
+    }
+
     // Two idle chains under the source thread. Only `task-parent` has a task in a linked
     // environment, whose clients nest that task under it.
     const subagent = (id: string, parent: string) => {
@@ -464,13 +472,5 @@ it.effect("trims the HTTP shell only when asked", () =>
       thread.id,
       "task-parent",
     ]);
-
-    // A client that holds rows the socket can replay from keeps them; any other cursor reloads.
-    expect(full.projectIdentities).toBeTypeOf("string");
-    expect(yield* shell(`?resumeFrom=${full.snapshotSequence}`)).toEqual({ resumable: true });
-    expect(yield* shell(`?resumeFrom=${full.snapshotSequence - 1}`)).toEqual({ resumable: true });
-    for (const cursor of [full.snapshotSequence + 1, "x"]) {
-      expect((yield* shell(`?omitOlderSettled=1&resumeFrom=${cursor}`)).threads).toHaveLength(26);
-    }
   }),
 );

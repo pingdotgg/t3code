@@ -31,7 +31,12 @@ export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),
   environmentId: EnvironmentId,
   snapshot: OrchestrationV2ShellSnapshotJson,
-  origin: Schema.optionalKey(ShellCacheOrigin),
+  /**
+   * Not `origin`: clients from before `omitIdleSubagentParents` read that key, ignore flags they
+   * do not know, and would resume rows that lack the idle parents they expect. They find no
+   * origin here, so they load a fresh snapshot. Rename again when an omission changes the rows.
+   */
+  originV2: Schema.optionalKey(ShellCacheOrigin),
 });
 
 export const StoredOrchestrationThreadSnapshot = Schema.Struct({

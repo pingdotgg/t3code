@@ -111,9 +111,9 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         select: (stored) =>
           stored.environmentId === environmentId
             ? Option.some(
-                stored.origin === undefined
+                stored.originV2 === undefined
                   ? stored.snapshot
-                  : { ...stored.snapshot, origin: stored.origin },
+                  : { ...stored.snapshot, origin: stored.originV2 },
               )
             : Option.none(),
       }).pipe(
@@ -130,7 +130,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
           schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
           environmentId,
           snapshot,
-          ...(origin === undefined ? {} : { origin }),
+          ...(origin === undefined ? {} : { originV2: origin }),
         }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
         yield* database
           .saveCache(

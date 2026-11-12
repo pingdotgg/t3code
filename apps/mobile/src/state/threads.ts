@@ -11,8 +11,9 @@ import {
   createThreadFamilyAtoms,
 } from "@t3tools/client-runtime/state/threads";
 import { createSteadyShellAtoms } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useEffect } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -110,4 +111,19 @@ export function useEnvironmentThread(
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
   return state;
+}
+
+/**
+ * Keeps the open thread's family in the shell rows until its screen leaves. Shells leave idle
+ * subagents out, so the rows of the thread, of its parents and of its subagents may exist only
+ * there. Pass the ref the detail is read by: a thread still being created has no family to read.
+ */
+export function useOpenThreadFamily(ref: ScopedThreadRef | null) {
+  const environmentId = ref?.environmentId ?? null;
+  const threadId = ref?.threadId ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the open thread's family in the thread family registry until the screen leaves it
+  useEffect(() => {
+    if (environmentId === null || threadId === null) return;
+    return threadFamilies.mount(appAtomRegistry, environmentId, threadId);
+  }, [environmentId, threadId]);
 }
