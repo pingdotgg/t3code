@@ -98,6 +98,17 @@ function gitLabSelfHosted(context: SourceControlUnknownRemoteRefinementInput["co
   } as const;
 }
 
+// glab host matching requires the remote's exact spelling.
+function gitLabHost({ provider, remoteUrl }: SourceControlUnknownRemoteRefinementInput["context"]) {
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
+  const remoteHost = authority
+    ? authority.slice(authority.lastIndexOf("@") + 1)
+    : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
+  return remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
+    ? remoteHost.slice(0, provider.name.length)
+    : provider.name;
+}
+
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
   const host = input.context.provider.name.toLowerCase();
   const output = combinedAuthOutput(input.auth);
@@ -153,16 +164,21 @@ export const discovery = {
   // the current host reports signed out.
   authArgs: ["auth", "status"],
   authRetryArgs: ["auth", "status", "--all"],
-  // glab host matching requires the remote's exact spelling.
-  remoteRefinementArgs: ({ provider, remoteUrl }) => {
-    const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
-    const remoteHost = authority
-      ? authority.slice(authority.lastIndexOf("@") + 1)
-      : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
-    const host = remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
-      ? remoteHost.slice(0, provider.name.length)
-      : provider.name;
-    return ["auth", "status", "--hostname", host];
+  remoteRefinementArgs: (context) => ["auth", "status", "--hostname", gitLabHost(context)],
+  // A host-scoped user that differs from the global one is the host's own login; glab falls
+  // back to the global user, and older glab to $USER, for a host it has no login for.
+  localRemoteRefinement: {
+    args: (context) => [
+      ["config", "get", "user", "--host", gitLabHost(context)],
+      ["config", "get", "user", "--global"],
+    ],
+    env: { USER: "" },
+    refine: ([host, global], context) => {
+      const user = host?.exitCode === 0 ? host.stdout.trim() : "";
+      return user !== "" && global?.exitCode === 0 && user !== global.stdout.trim()
+        ? gitLabSelfHosted(context)
+        : undefined;
+    },
   },
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,

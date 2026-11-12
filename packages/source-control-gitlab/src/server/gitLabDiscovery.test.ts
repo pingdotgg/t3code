@@ -147,6 +147,7 @@ self-hosted.example.test
       },
       process: {
         run: ({ command, args }) => {
+          if (args[0] === "config") return Effect.succeed(processOutput(""));
           asked.push([command, ...args]);
           return Effect.succeed(
             processOutput(scenario.stdout, {
@@ -187,6 +188,49 @@ it.effect("claims a self-hosted remote glab is signed in to while the host is of
       },
     });
     assert.strictEqual(verdict.provider?.kind, "gitlab");
+    assert.strictEqual(verdict.settled, true);
+  }),
+);
+
+it.effect.each([
+  {
+    name: "claims a host whose token login glab cannot check offline",
+    hostUser: "",
+    globalUser: "",
+    auth: "timeout",
+    kind: "gitlab",
+  },
+  {
+    name: "ignores the global user glab reports for a host it has no login for",
+    hostUser: "global-user",
+    globalUser: "global-user",
+    auth: "x git.example.test has not been authenticated with glab.",
+    kind: undefined,
+  },
+] as const)("$name", (scenario) =>
+  Effect.gen(function* () {
+    const remoteUrl = "https://git.example.test/group/project.git";
+    const remote = parseGitRemoteHost(remoteUrl);
+    assert.ok(remote);
+    const verdict = yield* refineUnknownRemoteProvider({
+      specs: [GitLabSourceControlProvider.discovery],
+      cwd: "/repo",
+      context: { provider: unknownRemoteProvider(remote), remoteName: "origin", remoteUrl },
+      process: {
+        run: ({ operation, command, args, cwd }) => {
+          if (args[0] === "config") {
+            const user = args.includes("--global") ? scenario.globalUser : scenario.hostUser;
+            return Effect.succeed(processOutput(user === "" ? "" : `${user}\n`));
+          }
+          return scenario.auth === "timeout"
+            ? Effect.fail(new VcsProcessTimeoutError({ operation, command, cwd, timeoutMs: 5_000 }))
+            : Effect.succeed(
+                processOutput(scenario.auth, { exitCode: ChildProcessSpawner.ExitCode(1) }),
+              );
+        },
+      },
+    });
+    assert.strictEqual<string | undefined>(verdict.provider?.kind, scenario.kind);
     assert.strictEqual(verdict.settled, true);
   }),
 );

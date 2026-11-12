@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import * as NodeUtil from "node:util";
 import {
   VcsProcessExitError,
@@ -54,6 +55,17 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
   ) => SourceControlProviderInfo | null | undefined;
+  /** Read before `remoteRefinementArgs` without the network; a provider it returns settles the remote. */
+  readonly localRemoteRefinement?: {
+    readonly args: (
+      context: SourceControlProvider.SourceControlProviderContext,
+    ) => ReadonlyArray<ReadonlyArray<string>>;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly refine: (
+      outputs: ReadonlyArray<SourceControlAuthProbeInput>,
+      context: SourceControlProvider.SourceControlProviderContext,
+    ) => SourceControlProviderInfo | undefined;
+  };
   /** The verdict when the refinement probe times out, for a CLI that goes online only for its logins. */
   readonly refineTimedOutRemote?: (
     context: SourceControlProvider.SourceControlProviderContext,
@@ -407,31 +419,48 @@ function refineWithSpec(input: {
     return spec.refineUnknownRemote({ cwd: input.cwd, context });
   }
   if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
-  const { refineTimedOutRemote } = spec;
-  return input.process
-    .run({
+  const { localRemoteRefinement, refineTimedOutRemote } = spec;
+  const run = (args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
+    input.process.run({
       operation: "source-control.discovery.refine-unknown-remote",
       command: spec.executable,
-      args: spec.remoteRefinementArgs?.(context) ?? spec.authArgs,
+      args,
       cwd: input.cwd,
+      // The host is named in the args; inside the repository a CLI may first try to reach its remote.
+      spawnCwd: NodeOS.tmpdir(),
+      ...(env !== undefined ? { env } : {}),
       allowNonZeroExit: true,
       timeoutMs: probeTimeoutMs(spec),
       maxOutputBytes: 8_000,
       appendTruncationMarker: true,
-    })
-    .pipe(
-      Effect.catchIf(isMissingExecutable, () => Effect.void),
-      Effect.flatMap((auth) => {
-        const provider =
-          auth === undefined ? null : spec.refineUnknownRemote({ cwd: input.cwd, context, auth });
-        return provider === undefined
-          ? Effect.fail(new UnknownRemoteUnanswered())
-          : Effect.succeed(provider);
-      }),
-      Effect.catchIf(isVcsProcessTimeoutError, (cause) =>
-        refineTimedOutRemote ? Effect.succeed(refineTimedOutRemote(context)) : Effect.fail(cause),
-      ),
-    );
+    });
+  const local =
+    localRemoteRefinement === undefined
+      ? Effect.undefined
+      : Effect.forEach(localRemoteRefinement.args(context), (args) =>
+          run(args, localRemoteRefinement.env),
+        ).pipe(
+          Effect.map((outputs) => localRemoteRefinement.refine(outputs, context)),
+          Effect.orElseSucceed(() => undefined),
+        );
+  const probe = run(spec.remoteRefinementArgs?.(context) ?? spec.authArgs).pipe(
+    Effect.catchIf(isMissingExecutable, () => Effect.void),
+    Effect.flatMap((auth) => {
+      const provider =
+        auth === undefined ? null : spec.refineUnknownRemote({ cwd: input.cwd, context, auth });
+      return provider === undefined
+        ? Effect.fail(new UnknownRemoteUnanswered())
+        : Effect.succeed(provider);
+    }),
+    Effect.catchIf(isVcsProcessTimeoutError, (cause) =>
+      refineTimedOutRemote ? Effect.succeed(refineTimedOutRemote(context)) : Effect.fail(cause),
+    ),
+  );
+  return Effect.filterOrElse(
+    local,
+    (provider): provider is SourceControlProviderInfo => provider !== undefined,
+    () => probe,
+  );
 }
 
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
