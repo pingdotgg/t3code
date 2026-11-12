@@ -51,20 +51,37 @@ function fileChipMetadata(target: FileChipTarget) {
   if (!path) return null;
   const name = fileBasename(path);
   const dot = name.lastIndexOf(".");
-  const mimeType = dot < 0 ? null : hostPreviewMimeTypeFromExtension(name.slice(dot));
-  return mimeType ? { path, name, mimeType } : null;
+  const mimeType =
+    (dot < 0 ? null : hostPreviewMimeTypeFromExtension(name.slice(dot))) ??
+    "application/octet-stream";
+  return { path, name, mimeType };
 }
 
 /** Use literal resolved paths so encoded filename characters are not decoded twice. */
-export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) {
+export function fileChipShareSource(
+  target: FileChipTarget,
+  threadId: ThreadId | null,
+  draftCwd?: string | null,
+) {
   const metadata = fileChipMetadata(target);
-  return metadata
-    ? {
-        name: metadata.name,
-        mimeType: metadata.mimeType,
-        resource: { _tag: "media-file" as const, threadId, path: metadata.path },
-      }
-    : null;
+  if (!metadata) return null;
+  const resource =
+    threadId !== null
+      ? {
+          _tag: "media-file" as const,
+          threadId,
+          path: metadata.path,
+          disposition: "attachment" as const,
+        }
+      : draftCwd
+        ? {
+            _tag: "draft-workspace-file" as const,
+            cwd: draftCwd,
+            path: target.relativePath ?? metadata.path,
+            disposition: "attachment" as const,
+          }
+        : null;
+  return resource ? { name: metadata.name, mimeType: metadata.mimeType, resource } : null;
 }
 
 export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
