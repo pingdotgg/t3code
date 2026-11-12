@@ -69,15 +69,18 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
   target: unknown,
   eventName: string,
   listener: (...args: Args) => void,
+  options: { readonly prepend?: boolean } = {},
 ): Effect.Effect<void, never, Scope.Scope> {
   const eventTarget = target as {
     on: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
+    prependListener: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
     removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
   };
   const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
   return Effect.acquireRelease(
     Effect.sync(() => {
-      eventTarget.on(eventName, untypedListener);
+      if (options.prepend) eventTarget.prependListener(eventName, untypedListener);
+      else eventTarget.on(eventName, untypedListener);
     }),
     () =>
       Effect.sync(() => {
@@ -299,6 +302,27 @@ export const make = DesktopLifecycle.of({
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),
       );
     });
+
+    // Electron can exit without before-quit, e.g. when the X11/Wayland connection drops.
+    // Prepended so the record is buffered before the trace sink's own exit flush runs.
+    yield* addScopedListener(
+      process,
+      "exit",
+      (exitCode: number) => {
+        Effect.runSyncWith(context)(
+          Effect.gen(function* () {
+            const shutdown = yield* DesktopShutdown.DesktopShutdown;
+            if (yield* shutdown.isComplete) return;
+            const attributes = { exitCode, quitPhase: quit.phase };
+            yield* logLifecycleError(
+              "desktop main process exiting before shutdown completed",
+              attributes,
+            ).pipe(Effect.withSpan("desktop.lifecycle.exit", { attributes }));
+          }),
+        );
+      },
+      { prepend: true },
+    );
 
     if (environment.platform !== "win32") {
       yield* addScopedListener(process, "SIGINT", () => {
