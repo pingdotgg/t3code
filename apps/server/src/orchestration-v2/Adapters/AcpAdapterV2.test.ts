@@ -5011,6 +5011,7 @@ describe("AcpAdapterV2", () => {
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
       const runtimeCalls: Array<"cancel" | "prompt"> = [];
+      const permissionDuringStart: Array<unknown> = [];
       const instanceId = ProviderInstanceId.make("acp-test-settled-permission");
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -5033,6 +5034,32 @@ describe("AcpAdapterV2", () => {
               prompt: (payload, options) =>
                 Effect.sync(() => runtimeCalls.push("prompt")).pipe(
                   Effect.andThen(runtime.prompt(payload, options)),
+                ),
+              // session/load resumes a running agent turn that asks before start returns.
+              start: () =>
+                runtime.start().pipe(
+                  Effect.tap(() =>
+                    requestPermission === undefined
+                      ? Effect.die("ACP runtime must register a permission handler")
+                      : requestPermission(
+                          {
+                            sessionId: "mock-session-1",
+                            toolCall: {
+                              toolCallId: "resumed-tool",
+                              title: "Run restart",
+                              kind: "execute",
+                            },
+                            options: [
+                              { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+                            ],
+                          },
+                          { requestId: "resumed-permission", method: "session/request_permission" },
+                        ).pipe(
+                          Effect.tap((response) =>
+                            Effect.sync(() => permissionDuringStart.push(response)),
+                          ),
+                        ),
+                  ),
                 ),
               handleRequestPermission: (handler) =>
                 Effect.sync(() => {
@@ -5111,7 +5138,10 @@ describe("AcpAdapterV2", () => {
         Stream.filter((event) => event.type === "turn.terminal"),
         Stream.runHead,
       );
-      assert.deepEqual(runtimeCalls, ["prompt", "cancel", "prompt"]);
+      assert.deepEqual(permissionDuringStart, [
+        { outcome: { outcome: "selected", optionId: "allow-once" } },
+      ]);
+      assert.deepEqual(runtimeCalls, ["cancel", "prompt", "cancel", "prompt"]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

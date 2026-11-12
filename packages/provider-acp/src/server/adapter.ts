@@ -1952,7 +1952,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.followAgentWorkState === true &&
             continuationRequests !== undefined &&
             setup.initializeResult.protocolVersion === 2;
-          agentTurnOutsidePrompt = false;
           agentWork = null;
           agentRequests.clear();
           nativeChildren.clear();
@@ -6478,6 +6477,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly scope?: Scope.Scope;
           } = {},
         ) {
+          // Before start/load, so a turn the agent resumes during activation is kept.
+          agentTurnOutsidePrompt = false;
           yield* targetRuntime.getEvents().pipe(
             Stream.runForEach((event) => {
               if (event._tag === "EventStreamBarrier") {
@@ -6569,7 +6570,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 handlerGeneration,
                 Effect.gen(function* () {
                   const context = yield* Ref.get(activeTurn);
-                  if (context === null && !followsAgentWorkState) agentTurnOutsidePrompt = true;
+                  if (context === null) agentTurnOutsidePrompt = true;
                   // Kiro sends the tool's kind on its `tool_call` and leaves it
                   // off the permission request for that call; take it from the
                   // tool already seen under the same id so policy can tell a
@@ -8387,7 +8388,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const promptOptions = { dispatched: context.promptDispatched };
             if (agentTurnOutsidePrompt) {
               agentTurnOutsidePrompt = false;
-              yield* runtime.cancel.pipe(Effect.ignore);
+              if (!followsAgentWorkState) yield* runtime.cancel.pipe(Effect.ignore);
             }
             context.promptSentAt = yield* Clock.currentTimeMillis;
             if (promptInactivityTimeoutMillis !== undefined) {
