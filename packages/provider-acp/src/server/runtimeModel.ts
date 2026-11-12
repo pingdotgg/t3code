@@ -1556,27 +1556,16 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           : upd.status === "failed" || upd.status === "cancelled"
             ? ("failed" as const)
             : ("inProgress" as const);
-      // ACP patch semantics: an omitted field keeps its stored value; null (or an empty
-      // summary) clears it. The merge keeps any data key this update leaves out.
       const toolCall = makeToolCallState({
         toolCallId: `acp-compaction:${upd.compactionId}`,
         title: "Compact context",
         kind: "think",
         status,
-        ...("summary" in upd ? { rawOutput: summary || null } : {}),
+        rawOutput: (upd.error ?? summary) || undefined,
         _meta: upd._meta,
       });
       if (toolCall !== undefined) {
-        const data = {
-          ...toolCall.data,
-          ...("error" in upd ? { error: upd.error ?? null } : {}),
-          ...(upd._meta === null ? { meta: null } : {}),
-        };
-        events.push({
-          _tag: "ToolCallUpdated",
-          toolCall: { ...toolCall, data },
-          rawPayload: params,
-        });
+        events.push({ _tag: "ToolCallUpdated", toolCall, rawPayload: params });
       }
       break;
     }

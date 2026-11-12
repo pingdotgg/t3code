@@ -4194,7 +4194,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
-            const summary = textFromUnknown(toolCall.data.error ?? rawOutput);
+            const summary = textFromUnknown(rawOutput);
             turnItem = {
               ...base,
               type: "compaction",
