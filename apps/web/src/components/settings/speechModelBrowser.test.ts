@@ -33,7 +33,7 @@ const models: readonly EnvironmentSpeechModel[] = [
         en: { grade: "A", errorPercent: 3.8 },
         fr: { grade: "B", errorPercent: 8 },
       },
-      secondsPer30s: 2,
+      secondsPer30s: { cpu: 2, accelerated: 2 },
     },
   },
   {
@@ -47,7 +47,7 @@ const models: readonly EnvironmentSpeechModel[] = [
         en: { grade: "A", errorPercent: 3.2 },
         fr: { grade: "B", errorPercent: 9 },
       },
-      secondsPer30s: 1,
+      secondsPer30s: { cpu: 1, accelerated: 1 },
     },
   },
   {
@@ -58,7 +58,7 @@ const models: readonly EnvironmentSpeechModel[] = [
     active: false,
     state: "verifying",
     languages: ["en"],
-    benchmark: { accuracy: {}, secondsPer30s: null },
+    benchmark: { accuracy: {}, secondsPer30s: { cpu: null, accelerated: null } },
   },
 ];
 
@@ -78,6 +78,7 @@ it.each([
         downloadedOnly: false,
         sort,
         accuracyLanguage,
+        benchmarkTier: "accelerated",
       }).map((entry) => entry.id),
     ).toEqual(expected);
     expect(models[0]?.id).toBe("active");
@@ -91,6 +92,7 @@ it("combines text, all selected languages, and completed downloads without retai
     downloadedOnly: true,
     sort: "size",
     accuracyLanguage: "en",
+    benchmarkTier: "accelerated",
   } as const;
   expect(filterSpeechModels(models, options).map((entry) => entry.id)).toEqual(["fast", "active"]);
   expect(
