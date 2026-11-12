@@ -12,7 +12,7 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -297,6 +297,48 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
       expect(AsyncResult.isSuccess(harness.registry.get(summary))).toBe(true);
       expect(harness.requests()).toBe(2);
       unmount();
+    }),
+  ),
+);
+
+it.effect("reopening usage history shows it at once and reads again only once stale", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const OPENED_AT_MS = Date.UTC(2026, 8, 4, 12);
+      // Staleness is measured on Date.now, so only Date is faked.
+      yield* Effect.acquireRelease(
+        Effect.sync(() => vi.useFakeTimers({ toFake: ["Date"], now: OPENED_AT_MS })),
+        () => Effect.sync(() => vi.useRealTimers()),
+      );
+      const reread = yield* Deferred.make<void>();
+      const harness = yield* makeHarness((request) =>
+        request === 2 ? Deferred.succeed(reread, undefined).pipe(Effect.asVoid) : Effect.void,
+      );
+      const summary = harness.summary();
+      const afterScheduledTasks = Effect.callback<void>((resume) => {
+        harness.registry.schedulerAsync.makeDispatcher().scheduleTask(() => resume(Effect.void), 0);
+      });
+      // Closing drops the refresh-trigger wrapper, then the stale check under it, one task each.
+      const closeView = (close: () => void) =>
+        Effect.sync(close).pipe(
+          Effect.andThen(afterScheduledTasks.pipe(Effect.repeat({ times: 1 }))),
+        );
+      const openAt = (seconds: number) => {
+        vi.setSystemTime(OPENED_AT_MS + seconds * 1_000);
+        const close = harness.registry.mount(summary);
+        expect(AsyncResult.getOrElse(harness.registry.get(summary), () => null)).not.toBeNull();
+        return close;
+      };
+
+      const closeFirst = harness.registry.mount(summary);
+      yield* settledSummary(harness.registry, summary);
+      yield* closeView(closeFirst);
+      yield* closeView(openAt(30));
+      const close = openAt(91);
+      yield* Deferred.await(reread);
+      yield* settledSummary(harness.registry, summary);
+      expect(harness.requests()).toBe(2);
+      close();
     }),
   ),
 );
