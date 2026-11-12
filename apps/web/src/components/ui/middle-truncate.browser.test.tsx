@@ -23,4 +23,18 @@ describe("MiddleTruncate", () => {
     expect(label()).not.toHaveAttribute("data-overflow");
     expect(label()).toHaveStyle({ clipPath: "none" });
   });
+
+  it("keeps the space where the head meets the tail", async () => {
+    await using screen = await render(
+      <div>
+        <MiddleTruncate value="Fix the sidebar" tail={7} data-testid="split" />
+        <span data-testid="whole" className="whitespace-nowrap">
+          Fix the sidebar
+        </span>
+      </div>,
+    );
+    const width = (id: string) => screen.getByTestId(id).element().getBoundingClientRect().width;
+
+    expect(width("split")).toBeCloseTo(width("whole"), 0);
+  });
 });

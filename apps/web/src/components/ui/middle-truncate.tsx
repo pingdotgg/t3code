@@ -16,7 +16,8 @@ export function MiddleTruncate({
   showTitle?: boolean;
   variant?: "default" | "cap-aligned";
 }) {
-  const split = splitForMiddleTruncate(value, tail);
+  // Collapse whitespace up front: the segments render pre so the space at the cut survives.
+  const split = splitForMiddleTruncate(value.replace(/\s+/g, " ").trim(), tail);
   const headRef = useRef<HTMLSpanElement>(null);
   const head = split?.head;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fits the head span's DOM text and refits it through a ResizeObserver
@@ -43,10 +44,10 @@ export function MiddleTruncate({
         <>
           {/* The tail carries the ellipsis so it sits flush; a CSS ellipsis leaves a ragged gap. */}
           <span ref={headRef} className="peer min-w-0 overflow-hidden whitespace-pre">
-            {split.head.replace(/[\r\n]/g, " ")}
+            {split.head}
           </span>
           <span className="shrink-0 whitespace-pre peer-data-overflow:before:content-['…']">
-            {split.tail.replace(/[\r\n]/g, " ")}
+            {split.tail}
           </span>
         </>
       ) : (
