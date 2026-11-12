@@ -15,6 +15,7 @@ import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
   ensureTailscaleServe,
+  readTailscaleServeRootHolder,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
@@ -135,6 +136,15 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
 ) {
   override get message(): string {
     return `tailscale serve failed for HTTPS port ${String(this.servePort)}. Run \`tailscale serve --https=${String(this.servePort)} --bg <local-url>\` by hand to see why.`;
+  }
+}
+
+export class TailscaleServeTargetRefusedError extends Schema.TaggedError<TailscaleServeTargetRefusedError>()(
+  "TailscaleServeTargetRefusedError",
+  { localHost: Schema.String },
+) {
+  override get message(): string {
+    return `This Tailscale install can only proxy to localhost, and the server listens on ${this.localHost}. Restart it with \`--host 127.0.0.1\` or \`--host 0.0.0.0\`, then run this command again.`;
   }
 }
 
@@ -405,13 +415,26 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     if (isDevServerNotProxiableError(localTarget)) {
       return yield* localTarget;
     }
+    // The probe above fails whenever this host cannot reach its own MagicDNS name, so the Serve
+    // config, not the probe, decides whether the port is free.
+    const holder = yield* readTailscaleServeRootHolder(input.servePort, {
+      host: (localTarget.localHost ?? "127.0.0.1").replace(/^\[|\]$/gu, ""),
+      port: localTarget.localPort,
+    }).pipe(Effect.mapError((cause) => new TailscaleUnavailableError({ cause })));
+    if (holder === "other") {
+      return yield* new ServePortOccupiedError({ servePort: input.servePort });
+    }
     yield* ensureTailscaleServe({
       localPort: localTarget.localPort,
       servePort: input.servePort,
       ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
     }).pipe(
-      Effect.mapError(
-        (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
+      Effect.mapError((cause) =>
+        cause._tag === "TailscaleCommandExitError" &&
+        cause.stderrDiagnostic === "unsupported-target" &&
+        localTarget.localHost !== undefined
+          ? new TailscaleServeTargetRefusedError({ localHost: localTarget.localHost })
+          : new TailscaleServeFailedError({ servePort: input.servePort, cause }),
       ),
     );
     notes.push(

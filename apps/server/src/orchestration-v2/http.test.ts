@@ -369,6 +369,8 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
           }),
         );
         return (await response.json()) as {
+          readonly snapshotSequence: number;
+          readonly projectIdentities?: string;
           readonly threads: ReadonlyArray<{ readonly id: string }>;
           readonly olderSettled?: { readonly counts: ReadonlyArray<unknown> };
         };
@@ -382,5 +384,13 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
       [thread.id, ...Array.from({ length: 25 }, (_, index) => `settled-${index + 1}`)].toSorted(),
     );
     expect(cut.olderSettled?.counts).toEqual([{ projectId: thread.projectId, count: 1 }]);
+
+    // A client that holds rows the socket can replay from keeps them; any other cursor reloads.
+    expect(full.projectIdentities).toBeTypeOf("string");
+    expect(yield* shell(`?resumeFrom=${full.snapshotSequence}`)).toEqual({ resumable: true });
+    expect(yield* shell(`?resumeFrom=${full.snapshotSequence - 1}`)).toEqual({ resumable: true });
+    for (const cursor of [full.snapshotSequence + 1, "x"]) {
+      expect((yield* shell(`?omitOlderSettled=1&resumeFrom=${cursor}`)).threads).toHaveLength(26);
+    }
   }),
 );
