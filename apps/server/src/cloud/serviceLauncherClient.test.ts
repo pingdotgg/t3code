@@ -55,9 +55,10 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provide(NodeServices.layer),
   );
 
-it.effect(
-  "waits for the launcher to durably commit the trial update ID, then moves owned launchers",
-  () =>
+// regression: #34502 a remote update never replaces the launcher, so an installed one stays protocol 3
+it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(
+  "waits for a protocol-%i launcher to durably commit the trial update ID, then moves owned launchers",
+  (protocol) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -79,11 +80,7 @@ it.effect(
         dbPath: "/tmp/state.sqlite",
         status: "pending" as const,
       };
-      const host = new FakeLauncherProcess({
-        protocol: SERVICE_LAUNCHER_PROTOCOL,
-        childVersion: "1.1.0",
-        update: pending,
-      });
+      const host = new FakeLauncherProcess({ protocol, childVersion: "1.1.0", update: pending });
       host.env["HOME"] = root;
       const client = yield* makeClient(host, "1.1.0");
       const prepared = yield* Effect.forkChild(client.prepareTrial({ baseDir }), {
@@ -107,7 +104,7 @@ it.effect(
       yield* fs.remove(installed);
       yield* fs.symlink(exe("1.0.0"), installed);
       const restarted = new FakeLauncherProcess({
-        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        protocol,
         childVersion: "1.1.0",
         update: committed,
       });
@@ -156,6 +153,24 @@ it.effect("preserves a launcher rejection as a distinct error", () =>
       targetVersion: "1.1.0",
       reason: "requires local update",
     });
+  }),
+);
+
+it.effect("stops the server when the launcher asks over IPC", () =>
+  Effect.gen(function* () {
+    const host = new FakeLauncherProcess({
+      protocol: SERVICE_LAUNCHER_PROTOCOL,
+      childVersion: "1.0.0",
+    });
+    const stopped = yield* Effect.forkChild(
+      ServiceLauncherClient.awaitServiceLauncherStop({ currentVersion: "1.0.0" }).pipe(
+        Effect.provideService(ServiceLauncherClient.ServiceLauncherHostProcess, host),
+        Effect.provideService(HostProcess.Environment, host.env),
+      ),
+      { startImmediately: true },
+    );
+    host.emit({ type: "stop" });
+    yield* Fiber.join(stopped);
   }),
 );
 

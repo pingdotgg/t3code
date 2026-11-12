@@ -17,6 +17,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
+  type SupportedLauncherProtocol,
 } from "./serviceProtocol.ts";
 
 export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLauncherClientError>()(
@@ -102,6 +103,9 @@ export class ServiceLauncherClient extends Context.Service<
   ServiceLauncherClient,
   {
     readonly managed: boolean;
+    /** The supervising launcher's protocol. A remote update never replaces the launcher,
+        so it can be older than this runtime's own. */
+    readonly protocol: SupportedLauncherProtocol | undefined;
     readonly requestUpdate: (input: {
       readonly targetVersion: string;
       readonly dbPath: string;
@@ -216,6 +220,22 @@ export const repointLaunchers = Effect.fn("cloud.service_launcher_client.repoint
         ),
       );
     }
+  },
+);
+
+/** Completes when the launcher asks this server to stop, which Windows cannot signal. */
+export const awaitServiceLauncherStop = Effect.fn("cloud.service_launcher_client.await_stop")(
+  function* (options?: { readonly currentVersion?: string }) {
+    const startup = yield* resolveStartup(options).pipe(Effect.option);
+    if (Option.isNone(startup) || !startup.value.managed) return yield* Effect.never;
+    const { host } = startup.value;
+    return yield* Effect.callback<void>((resume) => {
+      const onMessage = (...args: ReadonlyArray<unknown>) => {
+        if (decodeServiceLauncherParentMessage(args[0])?.type === "stop") resume(Effect.void);
+      };
+      host.on("message", onMessage);
+      return Effect.sync(() => host.off("message", onMessage));
+    });
   },
 );
 
@@ -335,6 +355,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
 
   return ServiceLauncherClient.of({
     managed,
+    protocol: context?.protocol,
     requestUpdate,
     prepareTrial,
   });
