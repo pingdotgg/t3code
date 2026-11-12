@@ -579,9 +579,9 @@
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
     },
-    "./pinOrderKey": {
-      "types": "./src/pinOrderKey.ts",
-      "import": "./src/pinOrderKey.ts"
+    "./reviewFileClassification": {
+      "types": "./src/reviewFileClassification.ts",
+      "import": "./src/reviewFileClassification.ts"
     }
   },
   "scripts": {

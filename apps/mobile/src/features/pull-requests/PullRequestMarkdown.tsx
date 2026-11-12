@@ -1,3 +1,5 @@
+import { isBotBadgeImage } from "./botBadgeImages";
+import { inlinePullRequestBadges } from "./pullRequestMarkdownBadges";
 import {
   splitPullRequestBody,
   type PullRequestBodySegment,
@@ -121,7 +123,10 @@ export function PullRequestMarkdown(props: {
 }) {
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
-  const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const segments = useMemo(
+    () => splitPullRequestBody(inlinePullRequestBadges(props.markdown)),
+    [props.markdown],
+  );
   const [undoneTicks, setUndoneTicks] = useState(0);
   const gallery: FilePreviewItem[] = markdownImageSources(
     props.imageGroupMarkdown ?? props.markdown,

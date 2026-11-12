@@ -37,6 +37,7 @@ export function useReviewSections(input: {
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
   readonly reviewCache: ReviewCacheForThread;
+  readonly selectedSectionId?: string | undefined;
 }) {
   const { environmentId, reviewCache, threadId } = input;
   const enabled = input.enabled ?? true;
@@ -90,7 +91,7 @@ export function useReviewSections(input: {
   });
   const selectedSectionId = resolveReviewSelectedSectionId(
     cachedSections,
-    reviewCache.selectedSectionId,
+    input.selectedSectionId ?? reviewCache.selectedSectionId,
   );
 
   const selectedCheckpoint =
@@ -141,7 +142,21 @@ export function useReviewSections(input: {
     }
   };
 
+  const liveGitUnavailableReason = fileAccess.isPending
+    ? null
+    : !canReadFiles
+      ? (fileAccess.error ??
+        "This connection cannot read files. Pair again with Read files access to view uncommitted and branch changes.")
+      : selectedThreadCwd === null
+        ? "This thread has no workspace to compare."
+        : (diffPreview.error ??
+          (diffPreview.data &&
+          !diffPreview.data.sources.some((source) => source.kind === "working-tree")
+            ? "The workspace is not available as a Git checkout. Recorded turn changes are still available."
+            : null));
+
   return {
+    liveGitUnavailableReason,
     error:
       diffPreview.error ??
       activeTurnDiff.error ??

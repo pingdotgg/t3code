@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { PullRequestAttachments } from "./PullRequestAttachments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
@@ -42,9 +43,10 @@ export function PullRequestCommentForm({
   onCommented: () => void;
   onClose: () => void;
 }) {
+  const [uploading, setUploading] = useState(false);
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const locked = submitting !== null || actionPending;
+  const locked = submitting !== null || actionPending || uploading;
   const speech = useTextFieldSpeech({
     environmentId,
     projectId: reference.projectId,
@@ -76,7 +78,7 @@ export function PullRequestCommentForm({
 
   const submit = async (action: "comment" | "close" | "reopen", text: string) => {
     const trimmed = text.trim();
-    if (trimmed.length === 0 || submitting !== null || actionPending) return;
+    if (trimmed.length === 0 || submitting !== null || actionPending || uploading) return;
     setSubmitting(action);
     if (action !== "comment") {
       const result = await onCommentAction(trimmed, action);
@@ -110,7 +112,7 @@ export function PullRequestCommentForm({
     speech.preparing || (body.trim().length === 0 && !speech.blocksSubmission) || locked;
 
   return (
-    <div className="space-y-2">
+    <div data-review-attachment-composer className="space-y-2">
       <PullRequestMarkdownTextarea
         ref={textareaRef}
         completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
@@ -135,6 +137,14 @@ export function PullRequestCommentForm({
             if (!event.repeat) submitAfterDictation("comment");
           }
         }}
+      />
+      <PullRequestAttachments
+        environmentId={environmentId}
+        reference={reference}
+        disabled={submitting !== null || actionPending}
+        onBusyChange={setUploading}
+        textareaRef={textareaRef}
+        onTextChange={setBody}
       />
       <div className="flex flex-wrap items-center justify-end gap-2">
         <TextFieldSpeechControls speech={speech} disabled={locked} />

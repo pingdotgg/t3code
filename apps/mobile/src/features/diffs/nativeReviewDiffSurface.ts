@@ -29,6 +29,10 @@ export interface NativeReviewDiffRow {
   readonly fileId?: string;
   readonly filePath?: string;
   readonly previousPath?: string | null;
+  readonly renameSegments?: ReadonlyArray<{
+    readonly text: string;
+    readonly kind: "unchanged" | "removed" | "added" | "context";
+  }>;
   readonly changeType?:
     | "modified"
     | "new"
@@ -46,13 +50,15 @@ export interface NativeReviewDiffRow {
   readonly wordDiffRanges?: ReadonlyArray<NativeReviewDiffWordDiffRange>;
   readonly commentText?: string;
   readonly commentRangeLabel?: string;
+  readonly commentPending?: boolean;
+  readonly commentResolvedSummary?: string;
   readonly commentSectionTitle?: string;
-  /** A notice drawn in the warning colors. */
-  readonly tone?: "warning";
-  /** A notice that reports taps through `onPressNotice`. */
-  readonly actionable?: boolean;
-  /** Where a cut line's note starts in `content`. */
-  readonly noteStart?: number;
+  readonly hunkAction?: "Stage hunk" | "Unstage hunk";
+  readonly hunkActionDisabled?: boolean;
+  readonly hunkRevertAction?: boolean;
+  readonly hunkRevertActionDisabled?: boolean;
+  readonly fileAction?: "Stage file" | "Unstage file";
+  readonly fileActionDisabled?: boolean;
 }
 
 export interface NativeReviewDiffWordDiffRange {
@@ -128,6 +134,9 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly collapsedFileIdsJson?: string;
   readonly viewedFileIdsJson?: string;
   readonly selectedRowIdsJson?: string;
+  readonly enableLineRangeSelection?: boolean;
+  readonly showViewedCheckbox?: boolean;
+  readonly viewedCheckboxEnabled?: boolean;
   readonly collapsedCommentIdsJson?: string;
   readonly appearanceScheme: "light" | "dark";
   readonly themeJson: string;
@@ -148,6 +157,12 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   ) => void;
   readonly onToggleFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
   readonly onToggleViewedFile?: (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => void;
+  readonly onPressHunk?: (
+    event: NativeSyntheticEvent<{ readonly rowId?: string; readonly action?: "stage" | "revert" }>,
+  ) => void;
+  readonly onPressFileAction?: (
+    event: NativeSyntheticEvent<{ readonly fileId?: string; readonly rowId?: string }>,
+  ) => void;
   readonly onPressLine?: (
     event: NativeSyntheticEvent<{
       readonly rowId?: string;
@@ -157,6 +172,9 @@ export interface NativeReviewDiffViewProps extends ViewProps {
       readonly newLineNumber?: number;
       readonly change?: "context" | "add" | "delete";
     }>,
+  ) => void;
+  readonly onSelectLineRange?: (
+    event: NativeSyntheticEvent<{ readonly startRowId: string; readonly endRowId: string }>,
   ) => void;
   readonly onToggleComment?: (event: NativeSyntheticEvent<{ readonly commentId?: string }>) => void;
   readonly onPressNotice?: (

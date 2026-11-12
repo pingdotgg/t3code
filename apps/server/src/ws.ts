@@ -2832,6 +2832,12 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.update(input)),
         [WS_METHODS.pullRequestsComment]: (input) =>
           withPullRequestViewer(input, pullRequests.comment(input)),
+        [WS_METHODS.pullRequestsUploadAttachment]: (input) =>
+          withPullRequestViewer(input, pullRequests.uploadAttachment(input)),
+        [WS_METHODS.pullRequestsSaveDraftComment]: (input) =>
+          withPullRequestViewer(input, pullRequests.saveDraftComment(input)),
+        [WS_METHODS.pullRequestsDiscardDraftComment]: (input) =>
+          withPullRequestViewer(input, pullRequests.discardDraftComment(input)),
         [WS_METHODS.pullRequestsUpdateComment]: (input) =>
           withPullRequestViewer(input, pullRequests.updateComment(input)),
         [WS_METHODS.pullRequestsSubmitReview]: (input) =>
@@ -3237,14 +3243,14 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
-        [WS_METHODS.terminalOpen]: (input) =>
-          prepareTerminalLaunch(input).pipe(
-            Effect.flatMap((launch) =>
-              terminalManager
-                .open(launch.input)
-                .pipe(Effect.provideService(TerminalManager.TerminalCwdRecovery, launch.recover)),
-            ),
-          ),
+        [WS_METHODS.reviewSetStaged]: (input) =>
+          review.setStaged(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.reviewCommit]: (input) =>
+          review.commit(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.reviewGenerateCommitMessage]: (input) => review.generateCommitMessage(input),
+        [WS_METHODS.reviewRevert]: (input) =>
+          review.revert(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input, metadata) =>
           Stream.unwrap(
             prepareTerminalLaunch(input).pipe(

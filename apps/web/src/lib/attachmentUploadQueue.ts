@@ -139,7 +139,7 @@ function deletePendingUpload(environmentId: EnvironmentId, attachmentId: string)
   });
 }
 
-function uploadBytes(input: {
+export function uploadAttachmentBytes(input: {
   readonly url: string;
   readonly file: File;
   readonly mimeType: string;
@@ -267,26 +267,23 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) =>
-      Effect.tryPromise({
-        try: (signal) =>
-          uploadBytes({
-            url,
-            file,
-            mimeType,
-            signal,
-            onProgress: (progress) => {
-              const step = Math.floor(progress * 20);
-              if (step === lastStep || signal.aborted) return;
-              lastStep = step;
-              setUploadState(job.image.id, {
-                status: "uploading",
-                environmentId: job.environmentId,
-                progress,
-                ...(job.previous ? { previous: job.previous } : {}),
-              });
-            },
-          }),
-        catch: attachmentUploadError,
+      uploadAttachmentBytes({
+        url,
+        file,
+        mimeType,
+        onProgress: (progress) => {
+          const step = Math.floor(progress * 20);
+          if (step === lastStep || job.cancelled) {
+            return;
+          }
+          lastStep = step;
+          setUploadState(job.image.id, {
+            status: "uploading",
+            environmentId: job.environmentId,
+            progress,
+            ...(job.previous ? { previous: job.previous } : {}),
+          });
+        },
       }),
   });
   if (result.status === "uploaded") {

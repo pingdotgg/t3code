@@ -3,8 +3,15 @@ import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useState } from "react";
-import { SheetPane } from "../../components/ui/SheetPane";
+import { useState, type ComponentProps, type ReactNode } from "react";
+import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
+import {
+  Screen,
+  ScreenStack,
+  ScreenStackHeaderConfig,
+  ScreenStackHeaderSearchBarView,
+  SearchBar,
+} from "react-native-screens";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -19,6 +26,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly projectName: string;
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
+  readonly toolbar?: ReactNode;
 }) {
   const workspaceKey = JSON.stringify([props.environmentId, props.cwd]);
   // The pane stays mounted across thread switches; a query only filters the workspace it was typed in.
@@ -78,6 +86,7 @@ export function ThreadFileNavigatorPane(props: {
         entriesQuery.selectPath(path);
         props.onSelectFile(path);
       }}
+      toolbar={props.toolbar}
     />
   );
 

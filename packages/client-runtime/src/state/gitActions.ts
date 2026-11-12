@@ -115,6 +115,17 @@ export function buildMenuItems(
   ];
 }
 
+export function secondaryGitMenuItems(
+  items: ReadonlyArray<GitActionMenuItem>,
+  quickAction: GitQuickAction,
+): GitActionMenuItem[] {
+  return items.filter((item) =>
+    item.kind === "open_pr"
+      ? quickAction.kind !== "open_pr"
+      : item.dialogAction !== quickAction.action,
+  );
+}
+
 export function resolveQuickAction(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -6,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ProjectId } from "@t3tools/contracts";
 
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -16,6 +18,7 @@ import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import * as ReviewService from "./ReviewService.ts";
 
 function layer(input: {
+  readonly gitLayer?: typeof GitVcsDriver.layer;
   readonly workspaceRoot: string;
   readonly baseDir: string;
   readonly detectCalls?: Array<{ readonly cwd: string }>;
@@ -49,6 +52,13 @@ function layer(input: {
       ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
     ),
     Layer.provide(
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
+        generateStagedCommitMessage: () => Effect.succeed("Generated staged commit"),
+        invalidateLocalStatus: () => Effect.void,
+        invalidateStatus: () => Effect.void,
+      }),
+    ),
+    Layer.provide(
       Layer.mock(ProjectStore.ProjectStoreV2)({
         listShells: () =>
           projectRoots === "unavailable"
@@ -79,10 +89,11 @@ function layer(input: {
           }),
       }),
     ),
-    Layer.provide(
-      Layer.mock(GitVcsDriver.GitVcsDriver)({
-        listWorktreePaths: () => Effect.succeed([...(input.gitWorktrees ?? [])]),
-      }),
+    Layer.provideMerge(
+      input.gitLayer ??
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          listWorktreePaths: () => Effect.succeed([...(input.gitWorktrees ?? [])]),
+        }),
     ),
     Layer.provide(
       ServerSettings.ServerSettingsService.layerTest({
@@ -91,11 +102,238 @@ function layer(input: {
       }),
     ),
     Layer.provide(ServerConfig.layerTest(input.workspaceRoot, input.baseDir)),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 }
 
 describe("ReviewService", () => {
+  it.effect("stages a hunk, stages its file, and unstages without changing the working copy", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-staging-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-state-" });
+      yield* Effect.gen(function* () {
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const service = yield* ReviewService.ReviewService;
+        const run = (args: ReadonlyArray<string>) =>
+          git
+            .execute({ operation: "review.test", cwd: workspaceRoot, args })
+            .pipe(Effect.map((result) => result.stdout));
+        yield* run(["init"]);
+        yield* run(["config", "user.name", "Test"]);
+        yield* run(["config", "user.email", "test@example.com"]);
+        yield* fs.makeDirectory(`${workspaceRoot}/nested`);
+        yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "one\ntwo\nthree\n");
+        yield* run(["add", "."]);
+        yield* run(["commit", "-m", "initial"]);
+        const contents = "ONE\ntwo\nTHREE\n";
+        yield* fs.writeFileString(`${workspaceRoot}/file.txt`, contents);
+        const patch =
+          "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1,2 +1,2 @@\n-one\n+ONE\n two\n";
+        for (const cwd of [workspaceRoot, `${workspaceRoot}/nested`]) {
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: true, patch });
+          assert.include(yield* run(["diff", "--cached"]), "+ONE");
+          assert.notInclude(yield* run(["diff", "--cached"]), "+THREE");
+          assert.include(yield* run(["diff"]), "+THREE");
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: false, patch });
+          assert.equal(yield* run(["diff", "--cached"]), "");
+        }
+        for (const cwd of [workspaceRoot, `${workspaceRoot}/nested`]) {
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: true });
+          assert.include(yield* run(["diff", "--cached"]), "+THREE");
+          yield* service.setStaged({ cwd, paths: ["file.txt"], staged: false });
+          assert.equal(yield* run(["diff", "--cached"]), "");
+        }
+        assert.equal(yield* fs.readFileString(`${workspaceRoot}/file.txt`), contents);
+      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, gitLayer: GitVcsDriver.layer })));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "commits only staged content, amends without another commit, and reports a failed push after committing",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-commit-" });
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-state-" });
+        yield* Effect.gen(function* () {
+          const git = yield* GitVcsDriver.GitVcsDriver;
+          const service = yield* ReviewService.ReviewService;
+          const run = (args: string[]) =>
+            git
+              .execute({ operation: "review.test", cwd: workspaceRoot, args })
+              .pipe(Effect.map((result) => result.stdout.trim()));
+          yield* run(["init", "-b", "main"]);
+          yield* run(["config", "user.name", "Test"]);
+          yield* run(["config", "user.email", "test@example.com"]);
+          yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "initial\n");
+          yield* run(["add", "."]);
+          yield* run(["commit", "-m", "initial"]);
+          yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "staged\n");
+          yield* run(["add", "file.txt"]);
+          yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "unstaged\n");
+          const originalMessage = "index only\n\nKeep the original commit context.";
+          const committed = yield* service.commit({
+            cwd: workspaceRoot,
+            message: originalMessage,
+            action: "commit",
+          });
+          assert.strictEqual(committed.pushStatus, "not-requested");
+          assert.strictEqual(yield* run(["show", "HEAD:file.txt"]), "staged");
+          assert.strictEqual(yield* fs.readFileString(`${workspaceRoot}/file.txt`), "unstaged\n");
+          const amended = yield* service.commit({
+            cwd: workspaceRoot,
+            message: "   ",
+            action: "amend",
+          });
+          assert.notStrictEqual(amended.commitSha, "");
+          assert.strictEqual(yield* run(["rev-list", "--count", "HEAD"]), "2");
+          assert.strictEqual(yield* run(["log", "-1", "--format=%s"]), "index only");
+          assert.strictEqual(yield* run(["log", "-1", "--format=%B"]), originalMessage);
+          yield* run(["add", "file.txt"]);
+          const pushed = yield* service.commit({
+            cwd: workspaceRoot,
+            message: "push fails",
+            action: "commit-push",
+          });
+          assert.strictEqual(pushed.pushStatus, "failed");
+          assert.strictEqual(yield* run(["show", "HEAD:file.txt"]), "unstaged");
+          assert.strictEqual(yield* run(["rev-list", "--count", "HEAD"]), "3");
+          const remote = `${baseDir}/remote.git`;
+          yield* run(["init", "--bare", remote]);
+          yield* run(["remote", "add", "origin", remote]);
+          yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "pushed\n");
+          yield* run(["add", "file.txt"]);
+          const success = yield* service.commit({
+            cwd: workspaceRoot,
+            message: "local remote",
+            action: "commit-push",
+          });
+          assert.strictEqual(success.pushStatus, "pushed");
+          assert.strictEqual(
+            yield* run([`--git-dir=${remote}`, "rev-parse", "refs/heads/main"]),
+            success.commitSha,
+          );
+          yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "generated\n");
+          yield* run(["add", "file.txt"]);
+          yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "still unstaged\n");
+          assert.strictEqual(
+            yield* service.generateCommitMessage({ cwd: workspaceRoot }),
+            "Generated staged commit",
+          );
+          yield* service.commit({ cwd: workspaceRoot, message: "  ", action: "commit" });
+          assert.strictEqual(yield* run(["log", "-1", "--format=%s"]), "Generated staged commit");
+          assert.strictEqual(yield* run(["show", "HEAD:file.txt"]), "generated");
+          assert.strictEqual(
+            yield* fs.readFileString(`${workspaceRoot}/file.txt`),
+            "still unstaged\n",
+          );
+        }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, gitLayer: GitVcsDriver.layer })));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "reverts only selected unstaged edits and untracked files while preserving the index and neighboring files",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-revert-" });
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-state-" });
+        yield* Effect.gen(function* () {
+          const git = yield* GitVcsDriver.GitVcsDriver;
+          const service = yield* ReviewService.ReviewService;
+          const run = (args: string[]) =>
+            git
+              .execute({ operation: "review.test", cwd: workspaceRoot, args })
+              .pipe(Effect.map((result) => result.stdout.trim()));
+          yield* run(["init"]);
+          yield* run(["config", "user.name", "Test"]);
+          yield* run(["config", "user.email", "test@example.com"]);
+          yield* fs.makeDirectory(`${workspaceRoot}/src`);
+          yield* fs.writeFileString(`${workspaceRoot}/src/[literal].txt`, "initial\n");
+          yield* run(["add", "."]);
+          yield* run(["commit", "-m", "initial"]);
+          yield* fs.writeFileString(`${workspaceRoot}/src/[literal].txt`, "staged\n");
+          yield* run(["add", "."]);
+          yield* fs.writeFileString(`${workspaceRoot}/keep.txt`, "keep\n");
+          for (const cwd of [workspaceRoot, `${workspaceRoot}/src`]) {
+            yield* fs.writeFileString(`${workspaceRoot}/src/[literal].txt`, "unstaged\n");
+            yield* fs.writeFileString(`${workspaceRoot}/src/new.txt`, "new\n");
+            yield* service.revert({ cwd, paths: ["src/[literal].txt", "src/new.txt"] });
+            assert.strictEqual(
+              yield* fs.readFileString(`${workspaceRoot}/src/[literal].txt`),
+              "staged\n",
+            );
+            assert.strictEqual(yield* run(["show", ":src/[literal].txt"]), "staged");
+            assert.strictEqual(yield* fs.exists(`${workspaceRoot}/src/new.txt`), false);
+            assert.strictEqual(yield* fs.readFileString(`${workspaceRoot}/keep.txt`), "keep\n");
+          }
+          const traversal = yield* service
+            .revert({ cwd: workspaceRoot, paths: ["../keep.txt"] })
+            .pipe(Effect.flip);
+          assert.strictEqual(traversal._tag, "GitCommandError");
+        }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, gitLayer: GitVcsDriver.layer })));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reverts a hunk or selected addition without changing the index or other edits", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-review-partial-revert-",
+      });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-state-" });
+      yield* Effect.gen(function* () {
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const service = yield* ReviewService.ReviewService;
+        const run = (args: string[]) =>
+          git
+            .execute({ operation: "review.test", cwd: workspaceRoot, args })
+            .pipe(Effect.map((result) => result.stdout));
+        yield* fs.makeDirectory(`${workspaceRoot}/nested`);
+        yield* run(["init"]);
+        yield* run(["config", "user.name", "Test"]);
+        yield* run(["config", "user.email", "test@example.com"]);
+        yield* fs.writeFileString(`${workspaceRoot}/file.txt`, "alpha\nbeta\ngamma\ndelta\n");
+        yield* run(["add", "."]);
+        yield* run(["commit", "-m", "initial"]);
+        const index = "ALPHA\nbeta\ngamma\ndelta\n";
+        yield* fs.writeFileString(`${workspaceRoot}/file.txt`, index);
+        yield* run(["add", "."]);
+        yield* fs.writeFileString(
+          `${workspaceRoot}/file.txt`,
+          "ALPHA\nBETA\nextra\nGAMMA\ndelta\n",
+        );
+        const header = "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n";
+        yield* service.revert({
+          cwd: `${workspaceRoot}/nested`,
+          paths: [],
+          patch: header + "@@ -3,0 +3,1 @@\n+extra\n",
+        });
+        assert.strictEqual(
+          yield* fs.readFileString(`${workspaceRoot}/file.txt`),
+          "ALPHA\nBETA\nGAMMA\ndelta\n",
+        );
+        const hunk = header + "@@ -2,1 +2,1 @@\n-beta\n+BETA\n";
+        yield* service.revert({ cwd: workspaceRoot, paths: [], patch: hunk });
+        assert.strictEqual(
+          yield* fs.readFileString(`${workspaceRoot}/file.txt`),
+          "ALPHA\nbeta\nGAMMA\ndelta\n",
+        );
+        assert.strictEqual(yield* run(["show", ":file.txt"]), index);
+        const stale = yield* service
+          .revert({ cwd: workspaceRoot, paths: [], patch: hunk })
+          .pipe(Effect.flip);
+        assert.strictEqual(stale._tag, "GitCommandError");
+        assert.strictEqual(
+          yield* fs.readFileString(`${workspaceRoot}/file.txt`),
+          "ALPHA\nbeta\nGAMMA\ndelta\n",
+        );
+        assert.strictEqual(yield* run(["show", ":file.txt"]), index);
+      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, gitLayer: GitVcsDriver.layer })));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("rejects diff preview cwd outside the configured workspace roots", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -116,7 +354,7 @@ describe("ReviewService", () => {
         /must stay within the configured workspace root/,
       );
       assert.deepStrictEqual(detectCalls, []);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("allows previous custom worktree locations but never a filesystem root", () =>
@@ -151,7 +389,7 @@ describe("ReviewService", () => {
         }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, worktreesDirectory })));
         assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("allows registered project roots outside the server cwd", () =>
@@ -185,7 +423,7 @@ describe("ReviewService", () => {
         const error = yield* review(cwd, projectRoots).pipe(Effect.flip);
         assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("allows the worktree a thread is bound to, and nothing else outside the project", () =>
@@ -229,7 +467,7 @@ describe("ReviewService", () => {
         const error = yield* review(cwd).pipe(Effect.flip);
         assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("allows a thread's worktree linked from a managed folder to a checkout elsewhere", () =>
@@ -257,6 +495,6 @@ describe("ReviewService", () => {
         ),
       );
       assert.strictEqual(result.cwd, checkout);
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });
