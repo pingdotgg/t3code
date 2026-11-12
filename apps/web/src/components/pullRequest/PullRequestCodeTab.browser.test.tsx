@@ -260,33 +260,40 @@ it("scrolls to a file asked for as the tab opens", async () => {
   await expectFileHeaderShown(screen, container, "early-39.ts");
 });
 
-it.each([false, true])("pages forward to a file asked for that is not loaded yet, then scrolls to it (grouped: %s)", async (groupByType) => {
-  setup({ paged: true });
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true, pullRequestViewing: {...DEFAULT_CLIENT_SETTINGS.pullRequestViewing, groupByType} });
-  using _preferences = {
-    [Symbol.dispose]() {
-      window.localStorage.removeItem("t3code.diffHideTestFiles");
-      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
-    },
-  };
-  const container = pagedContainer();
-  await using screen = await render(tab(0), { container });
-  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
-  await screen.getByRole("button", { name: "Hide test files" }).click();
+it.each([false, true])(
+  "pages forward to a file asked for that is not loaded yet, then scrolls to it (grouped: %s)",
+  async (groupByType) => {
+    setup({ paged: true });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      diffFilesCollapsed: true,
+      pullRequestViewing: { ...DEFAULT_CLIENT_SETTINGS.pullRequestViewing, groupByType },
+    });
+    using _preferences = {
+      [Symbol.dispose]() {
+        window.localStorage.removeItem("t3code.diffHideTestFiles");
+        __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+      },
+    };
+    const container = pagedContainer();
+    await using screen = await render(tab(0), { container });
+    await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+    await screen.getByRole("button", { name: "Hide test files" }).click();
 
-  const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
-  const settled = vi.fn();
-  await screen.rerender(tab(0, null, url, settled));
+    const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
+    const settled = vi.fn();
+    await screen.rerender(tab(0, null, url, settled));
 
-  await expectFileHeaderShown(screen, container, "late.test.ts");
-  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
-  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
-  // A settled link keeps its test file past the filter, and a later click reveals it again.
-  await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }));
-  await expectFileHeaderShown(screen, container, "early-0.ts");
-  await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }, url, settled));
-  await expectFileHeaderShown(screen, container, "late.test.ts");
-});
+    await expectFileHeaderShown(screen, container, "late.test.ts");
+    await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+    // A settled link keeps its test file past the filter, and a later click reveals it again.
+    await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }));
+    await expectFileHeaderShown(screen, container, "early-0.ts");
+    await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }, url, settled));
+    await expectFileHeaderShown(screen, container, "late.test.ts");
+  },
+);
 
 it.each(["gone", "kept..newer"])(
   "validates the selected commit scope %s against the pull request",

@@ -801,6 +801,13 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                       // The scroll view owns its resting offset. LegendList keeps the first
                       // initialScrollOffset it gets, and the first render has the window's top
                       // inset (0 on the folded iPhone Duo), not the header's.
+                      onScrollBeginDrag={
+                        tab === "activity"
+                          ? () => {
+                              heldActivityRow.current = null;
+                            }
+                          : undefined
+                      }
                       onScroll={(event) => {
                         const offset = event.nativeEvent.contentOffset.y;
                         scrollOffsets.current[tab] = offset;
@@ -809,9 +816,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                       }}
                       className="flex-1"
                       renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
-                      // UIKit owns the bar's inset, so a minimizing bar and a resized column
-                      // move the list in the same frame as the bar.
-                      contentInsetAdjustmentBehavior="automatic"
+                      contentInsetAdjustmentBehavior="never"
                       contentInset={{ top: contentTopInset, bottom: contentBottomInset }}
                       scrollToOverflowEnabled
                       refreshControl={
@@ -822,17 +827,26 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                       }
                       alwaysBounceVertical
                       scrollsToTop={section === tab}
-                      onContentSizeChange={() => {
+                      onItemSizeChanged={({ itemKey }) => {
+                        const held = heldActivityRow.current;
+                        if (tab === "activity" && held !== null) {
+                          // A filter or refresh that moved the row ends the hold.
+                          if (held !== activityTargetIndex + 1) heldActivityRow.current = null;
+                          else positionActivityRow(held);
+                          return;
+                        }
                         if (
                           tab !== "overview" ||
                           section !== "overview" ||
+                          itemKey !== "overview:body" ||
                           !pendingDescriptionJump.current
                         )
                           return;
                         pendingDescriptionJump.current = false;
-                        // Collapse changes the scroll range; restore the heading after that layout commits.
-                        scrollViews.current.overview?.scrollToOffset({
-                          offset: bodyY.current + descriptionY.current - contentTopInset,
+                        scrollViews.current.overview?.scrollToIndex({
+                          index: 0,
+                          viewPosition: 0,
+                          viewOffset: -descriptionY.current,
                           animated: false,
                         });
                       }}
@@ -893,16 +907,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                                       }
                                     }}
                                   >
-                                    <PullRequestActivityFilters
-                                      value={activityFilter}
-                                      onChange={setActivityFilter}
-                                      hiddenCount={tabContent.hiddenCount}
-                                    />
-                                    <PullRequestReadStatus
-                                      pending={tabContent.pending}
-                                      error={tabContent.error}
-                                      terminology={terminology}
-                                    />
+                                    {filesContent.header}
                                   </View>
                                 </View>
                               ) : null}
@@ -911,6 +916,20 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                                   params={params}
                                   active={section === "guide"}
                                 />
+                              ) : null}
+                              {tab === "activity" ? (
+                                <>
+                                  <PullRequestActivityFilters
+                                    value={activityFilter}
+                                    onChange={setActivityFilter}
+                                    hiddenCount={tabContent.hiddenCount}
+                                  />
+                                  <PullRequestReadStatus
+                                    pending={tabContent.pending}
+                                    error={tabContent.error}
+                                    terminology={terminology}
+                                  />
+                                </>
                               ) : null}
                             </View>
                           ),
@@ -998,6 +1017,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                           ) : null}
                         </>
                       }
+                      ListFooterComponent={tab === "overview" ? filesContent.footer : null}
                     />
                   )}
                 </PullRequestMediaVisibleContext>
