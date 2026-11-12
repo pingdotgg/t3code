@@ -41,6 +41,8 @@ export class PeerMcpClient extends Context.Service<
       readonly tool: string;
       readonly arguments: Record<string, unknown>;
       readonly limits: PeerCallLimits;
+      /** The calling thread here, so what the call sends there names its sender. */
+      readonly sender?: McpInvocationContext.McpRemoteSender | undefined;
       readonly success: S;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
   }
@@ -161,6 +163,13 @@ const make = Effect.gen(function* () {
       const limitHeader = {
         [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
       };
+      const senderHeaders =
+        input.sender === undefined
+          ? {}
+          : {
+              [McpInvocationContext.SENDER_ENVIRONMENT_HEADER]: input.sender.environmentId,
+              [McpInvocationContext.SENDER_THREAD_HEADER]: input.sender.threadId,
+            };
       const sessionKey = `${input.environmentId} ${resolved.url}`;
       const callOnce = (sessionId: string) =>
         post(
@@ -172,7 +181,12 @@ const make = Effect.gen(function* () {
             method: "tools/call",
             params: { name: input.tool, arguments: input.arguments },
           },
-          { ...limitHeader, "mcp-session-id": sessionId, "mcp-protocol-version": PROTOCOL_VERSION },
+          {
+            ...limitHeader,
+            ...senderHeaders,
+            "mcp-session-id": sessionId,
+            "mcp-protocol-version": PROTOCOL_VERSION,
+          },
         );
       const existing = (yield* Ref.get(sessions)).get(sessionKey);
       const sessionId = existing ?? (yield* openSession(resolved.url, resolved.token, limitHeader));

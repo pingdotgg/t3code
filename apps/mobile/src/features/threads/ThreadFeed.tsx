@@ -2036,7 +2036,7 @@ function renderFeedEntry(
               {presentation.attribution === "guest" ? <GuestBubbleTint /> : null}
               {foldRowId !== null ? (
                 <AgentMessageFoldHeader
-                  environmentId={props.environmentId}
+                  environmentId={message.senderEnvironmentId ?? props.environmentId}
                   senderThreadId={message.senderThreadId}
                   summary={
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)
@@ -2146,7 +2146,7 @@ function renderFeedEntry(
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
               {foldRowId !== null && message.senderThreadId ? (
                 <OpenSenderThreadButton
-                  environmentId={props.environmentId}
+                  environmentId={message.senderEnvironmentId ?? props.environmentId}
                   senderThreadId={message.senderThreadId}
                 />
               ) : null}

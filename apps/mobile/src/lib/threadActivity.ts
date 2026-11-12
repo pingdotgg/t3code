@@ -42,6 +42,7 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   ChatAttachment,
+  EnvironmentId,
   MessageId,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
@@ -140,6 +141,7 @@ export interface ThreadFeedMessage {
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly senderEnvironmentId?: EnvironmentId;
   readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
   readonly sourceThreadId: ThreadId;
@@ -2387,6 +2389,9 @@ export function buildThreadFeed(
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),
                 ...(item.senderThreadId ? { senderThreadId: item.senderThreadId } : {}),
+                ...(item.senderEnvironmentId
+                  ? { senderEnvironmentId: item.senderEnvironmentId }
+                  : {}),
                 ...(item.idleCompaction ? { idleCompaction: item.idleCompaction } : {}),
               }
             : {}),

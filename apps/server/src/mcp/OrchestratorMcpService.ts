@@ -7,6 +7,7 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   TurnItemId,
+  type EnvironmentId,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -253,6 +254,18 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
 }
 
 // Without a reason, a Stop reads as the user's (see RunExecutionService.USER_STOP_REASON).
+/** The thread a message comes from: the caller's own, or the one a peer link calls for. */
+function senderOf(
+  scope: McpInvocationScope,
+  parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+): { senderThreadId?: ThreadId; senderEnvironmentId?: EnvironmentId } {
+  if (parent !== undefined) return { senderThreadId: parent.thread.id };
+  const sender = scope.client?.sender;
+  return sender === undefined || sender.environmentId === scope.environmentId
+    ? {}
+    : { senderThreadId: sender.threadId, senderEnvironmentId: sender.environmentId };
+}
+
 function agentStopReason(reason: string | undefined): string {
   return reason === undefined ? "Stopped by an agent" : `Stopped by an agent: ${reason}`;
 }
@@ -3143,7 +3156,7 @@ const make = Effect.gen(function* () {
             operation: "thread-send",
           }),
           threadId: input.threadId,
-          ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+          ...senderOf(scope, parent),
           messageId,
           text: input.message,
           attachments: [],

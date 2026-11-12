@@ -71,7 +71,9 @@ function QueuedRunSender(props: {
   const { attribution, scheduledTaskId } = resolveUserMessagePresentation(props.message);
   const senderThreadId = attribution === "agent" ? props.message.senderThreadId : undefined;
   const senderShell = useQuietThreadShell(
-    senderThreadId ? scopeThreadRef(props.environmentId, senderThreadId) : null,
+    senderThreadId
+      ? scopeThreadRef(props.message.senderEnvironmentId ?? props.environmentId, senderThreadId)
+      : null,
   );
   const tasks = useEnvironmentQuery(
     scheduledTaskId

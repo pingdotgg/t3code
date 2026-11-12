@@ -430,6 +430,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const { onImageExpand, onFileOpen } = ctx;
   const coarsePointer = useMediaQuery({ pointer: "coarse" });
   const senderThreadId = row.message.senderThreadId;
+  const senderEnvironmentId = row.message.senderEnvironmentId ?? ctx.activeThreadEnvironmentId;
   const resources = selectMessageImageResources(row.message.attachments);
   const previewUrls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
   const [projectPreviews] = useState(createMessageAttachmentPreviewProjector);
@@ -461,7 +462,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(
     folded && senderThreadId
-      ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
+      ? { environmentId: senderEnvironmentId, threadId: senderThreadId }
       : null,
   );
   const senderLabel = senderShell?.title.trim() || "Agent";
@@ -787,7 +788,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       )}
     >
       {folded && senderThreadId ? (
-        <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
+        <InlineButton
+          onClick={() => ctx.onOpenThread(senderThreadId, senderEnvironmentId)}
+          tone="muted"
+        >
           Open thread
         </InlineButton>
       ) : null}

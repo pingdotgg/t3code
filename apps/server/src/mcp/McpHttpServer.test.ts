@@ -999,6 +999,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
     Effect.gen(function* () {
       const providerToken = "providerTokenWithoutDots";
       const clientToken = "client-payload.client-signature";
+      const linkToken = "link-payload.link-signature";
       const providerScope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         requestNamespace: "provider-session",
@@ -1018,6 +1019,11 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         client: { sessionId: "session-1", label: "Claude Code", access: "auto" },
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
+      };
+      const linkScope: McpInvocationContext.McpInvocationScope = {
+        ...clientScope,
+        requestNamespace: "client:link",
+        client: { sessionId: "link", label: "T3 Code · laptop", access: "auto", linked: true },
       };
       const seen: Array<McpInvocationContext.McpInvocationScope> = [];
       const ProbeToolkit = Toolkit.make(
@@ -1042,7 +1048,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           }),
         ),
       ).pipe(
-        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) =>
@@ -1057,7 +1063,11 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           Layer.succeed(McpHttpServer.McpClientAuthenticator, {
             authenticate: (request) =>
               Effect.succeed(
-                request.headers.authorization === `Bearer ${clientToken}` ? clientScope : undefined,
+                request.headers.authorization === `Bearer ${clientToken}`
+                  ? clientScope
+                  : request.headers.authorization === `Bearer ${linkToken}`
+                    ? linkScope
+                    : undefined,
               ),
           }),
         ),
@@ -1068,11 +1078,12 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         Effect.withTracer(traced.tracer),
       );
       const httpClient = yield* HttpClient.HttpClient;
-      const call = (token: string | undefined) =>
+      const call = (token: string | undefined, extraHeaders: Record<string, string> = {}) =>
         Effect.gen(function* () {
           const headers = {
             accept: "application/json, text/event-stream",
             ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+            ...extraHeaders,
           };
           const initialize = yield* httpClient.post("/mcp", {
             headers,
@@ -1115,6 +1126,18 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       expect(seen.map((scope) => scope.requestNamespace)).toEqual([
         "provider-session",
         "client:session-1",
+      ]);
+
+      // Only a peer link may name the thread it calls for.
+      const senderHeaders = {
+        "t3-sender-environment": "environment-laptop",
+        "t3-sender-thread": "thread-laptop",
+      };
+      expect((yield* call(clientToken, senderHeaders)).status).toBe(200);
+      expect((yield* call(linkToken, senderHeaders)).status).toBe(200);
+      expect(seen.slice(2).map((scope) => scope.client?.sender)).toEqual([
+        undefined,
+        { environmentId: "environment-laptop", threadId: "thread-laptop" },
       ]);
 
       const missing = yield* call(undefined);

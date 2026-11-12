@@ -45,6 +45,8 @@ export interface McpClientCaller {
    * another environment passing on the limits of the agent it calls for.
    */
   readonly narrowedTo?: ClientModes | undefined;
+  /** The thread a peer link calls for (`T3-Sender-*`), so what it sends here names its sender. */
+  readonly sender?: McpRemoteSender | undefined;
   /** An outside client's thread links go through this hosted app, as Copy thread's do. */
   readonly hostedAppUrl?: string | undefined;
 }
@@ -56,6 +58,15 @@ export interface McpClientCaller {
  * `clientModeCeiling`), so a client gains nothing by sending a broad one.
  */
 export const MODE_LIMIT_HEADER = "t3-mode-limit";
+
+/** The calling thread a peer link passes on; honored only from peer links. */
+export const SENDER_ENVIRONMENT_HEADER = "t3-sender-environment";
+export const SENDER_THREAD_HEADER = "t3-sender-thread";
+
+export interface McpRemoteSender {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}
 
 export interface ClientModes {
   readonly runtimeMode: RuntimeMode;

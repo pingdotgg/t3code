@@ -16,6 +16,7 @@ import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effec
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
+  EnvironmentId,
   OrchestratorMcpFailure,
   PreviewAutomationError,
   ProviderInteractionMode,
@@ -190,6 +191,25 @@ const withModeLimit = (
     : { ...invocation, client: { ...invocation.client, narrowedTo: limit.value } };
 };
 
+const decodeSender = Schema.decodeUnknownOption(
+  Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId }),
+);
+
+/** Names the thread a peer link calls for; other clients cannot claim a sender. */
+const withSender = (
+  invocation: McpInvocationContext.McpInvocationScope,
+  request: HttpServerRequest.HttpServerRequest,
+): McpInvocationContext.McpInvocationScope => {
+  if (invocation.client?.linked !== true) return invocation;
+  const sender = decodeSender({
+    environmentId: request.headers[McpInvocationContext.SENDER_ENVIRONMENT_HEADER],
+    threadId: request.headers[McpInvocationContext.SENDER_THREAD_HEADER],
+  });
+  return Option.isNone(sender)
+    ? invocation
+    : { ...invocation, client: { ...invocation.client, sender: sender.value } };
+};
+
 // The Linked environments beta is off here: links wait until it is on again.
 const linkedEnvironmentsOff = HttpServerResponse.jsonUnsafe(
   {
@@ -235,7 +255,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         offerOAuth: Option.isSome(clients) && !looksLikeProviderToken(token),
       });
     }
-    const asked = withModeLimit(invocation, request);
+    const asked = withModeLimit(withSender(invocation, request), request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
     const linkedEnvironments = yield* linksEnabled;
