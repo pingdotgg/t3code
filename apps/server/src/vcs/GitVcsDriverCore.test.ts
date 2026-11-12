@@ -952,6 +952,24 @@ it.effect("invalidates cached metadata after interrupted worktree creation", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("listRefs follows a checkout made outside the driver after refs were cached", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const { initialBranch } = yield* initRepoWithCommit(cwd);
+    yield* git(cwd, ["branch", "feature/agent"]);
+    yield* driver.listRefs({ cwd });
+
+    // An agent's own `git switch` bypasses the driver's cache invalidation.
+    yield* git(cwd, ["switch", "feature/agent"]);
+    const refs = yield* driver.listRefs({ cwd });
+    const initialRef = refs.refs.find((ref) => ref.name === initialBranch);
+    assert.isNull(initialRef?.worktreePath);
+    assert.isFalse(initialRef?.current);
+    assert.isTrue(refs.refs.find((ref) => ref.name === "feature/agent")?.current);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 describe("pullCurrentBranch", () => {
   // A fast-forward that prints over 1 MB takes thousands of files, so the real pull's output is
   // padded past the cap instead.
