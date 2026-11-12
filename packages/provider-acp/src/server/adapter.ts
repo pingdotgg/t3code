@@ -22,7 +22,6 @@ import {
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
   type ProviderInstanceId,
-  type ProviderInteractionMode,
   type ProviderDriverKind,
   type ProviderRequestKind,
   type ProviderThreadId,
@@ -140,6 +139,8 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
+
+const runtimePoliciesEqual = Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy);
 
 // Grok summaries can trail hydrated tools by over two seconds; shorter waits split the wake.
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
@@ -1955,7 +1956,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
-        const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
+        const activeRuntimePolicy =
+          yield* Ref.make<ProviderAdapter.ProviderAdapterV2RuntimePolicy | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
@@ -7131,7 +7133,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeSessionId, candidate.sessionId);
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
-            yield* Ref.set(activeInteractionMode, null);
+            yield* Ref.set(activeRuntimePolicy, null);
             yield* Ref.set(promptInstructionStates, new Map());
             yield* Ref.set(compactionMarkers, new Map());
             yield* Ref.set(providerTurns, new Map());
@@ -7249,12 +7251,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const applyPolicyMode = Effect.fn("AcpAdapterV2.applyPolicyMode")(function* (
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+          policyMode: string,
+        ) {
+          yield* runtime.setMode(policyMode);
+          if (flavor.runtimeModeForSessionMode === undefined) return;
+          const actualMode = (yield* runtime.getModeState)?.currentModeId;
+          const expectedMode = runtime.resolveModeId?.(policyMode) ?? policyMode;
+          if (actualMode === expectedMode) return;
+          const actualRuntimeMode =
+            flavor.runtimeModeForSessionMode(actualMode ?? "") ?? "approval-required";
+          latestRuntimePolicy = {
+            ...runtimePolicy,
+            runtimeMode: isRuntimeModeAbove(actualRuntimeMode, runtimePolicy.runtimeMode)
+              ? runtimePolicy.runtimeMode
+              : actualRuntimeMode,
+          };
+          return yield* EffectAcpErrors.AcpRequestError.internalError(
+            `The agent reports permission mode "${actualMode ?? "unknown"}" instead of requested "${expectedMode}" (${runtimePolicy.runtimeMode}). The turn was not started.`,
+          );
+        });
+
         const configureSession = Effect.fnUntraced(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           modelSelection: ModelSelection,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
           yield* Ref.set(activeSelection, null);
+          yield* Ref.set(activeRuntimePolicy, null);
           yield* validateModelSelection(modelSelection);
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           // Invalid params is the agent refusing the value, and the runtime
@@ -7345,6 +7370,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           };
           const optionSelections = (modelSelection.options ?? []).flatMap((selection) => {
             if (flavor.ownedModelOptionIds?.includes(selection.id) === true) return [];
+            // Permission modes have one owner: the thread's runtime policy, not stale model options.
+            if (
+              flavor.sessionModeForPolicy !== undefined &&
+              isModeChoice(selection.id) &&
+              typeof selection.value === "string" &&
+              flavor.runtimeModeForSessionMode?.(selection.value) !== undefined
+            )
+              return [];
             if (!withinCeiling(selection)) return [];
             return [
               selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
@@ -7413,8 +7446,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
           const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
-          if (policyMode !== undefined) {
-            yield* runtime.setMode(policyMode);
+          if (
+            policyMode !== undefined &&
+            (flavor.runtimeModeForSessionMode === undefined ||
+              runtimePolicy.interactionMode === "plan")
+          ) {
+            yield* applyPolicyMode(runtimePolicy, policyMode);
           }
           const modeState = yield* runtime.getModeState;
           if (
@@ -7490,6 +7527,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               nativeBuildConfigurationBySessionId.delete(startResult.sessionId);
             }
+            // Leaving Plan can restore an older permission level; apply the current choice last.
+            if (policyMode !== undefined && flavor.runtimeModeForSessionMode !== undefined) {
+              yield* applyPolicyMode(runtimePolicy, policyMode);
+            }
           }
           yield* validateModelSelection(modelSelection);
           yield* (
@@ -7503,7 +7544,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         yield* configureSession(started, input.modelSelection, input.runtimePolicy);
         yield* Ref.set(activeSelection, input.modelSelection);
-        yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);
+        yield* Ref.set(activeRuntimePolicy, input.runtimePolicy);
         const createdAt = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
@@ -8074,7 +8115,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
-          yield* Ref.set(activeInteractionMode, null);
+          yield* Ref.set(activeRuntimePolicy, null);
           yield* Ref.set(snapshot, emptySnapshotState());
           return true;
         });
@@ -8105,14 +8146,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* setActiveSessionSetup(activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
-              yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+              yield* Ref.set(activeRuntimePolicy, turnInput.runtimePolicy);
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
-              const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
+              const configuredPolicy = yield* Ref.get(activeRuntimePolicy);
+              const requestedPermissionMode =
+                flavor.runtimeModeForSessionMode !== undefined
+                  ? flavor.sessionModeForPolicy?.(turnInput.runtimePolicy)
+                  : undefined;
+              const permissionMode =
+                requestedPermissionMode === undefined
+                  ? undefined
+                  : (runtime.resolveModeId?.(requestedPermissionMode) ?? requestedPermissionMode);
+              const modeState =
+                permissionMode === undefined ? undefined : yield* runtime.getModeState;
+              const expectedMode =
+                turnInput.runtimePolicy.interactionMode === "plan"
+                  ? (modeState?.availableModes.find((mode) => isAcpPlanModeId(mode.id))?.id ??
+                    permissionMode)
+                  : permissionMode;
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredPolicy === null ||
+                !runtimePoliciesEqual(configuredPolicy, turnInput.runtimePolicy) ||
+                (expectedMode !== undefined && modeState?.currentModeId !== expectedMode)
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
@@ -8127,7 +8185,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   turnInput.runtimePolicy,
                 );
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
-                yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+                yield* Ref.set(activeRuntimePolicy, turnInput.runtimePolicy);
               }
             }
             yield* validateModelSelection(turnInput.modelSelection);
@@ -8768,7 +8826,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
-                    yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
+                    yield* Ref.set(activeRuntimePolicy, nextRuntimePolicy);
                   }
                   const now = yield* DateTime.now;
                   return {
@@ -9271,7 +9329,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* setActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
-                    yield* Ref.set(activeInteractionMode, null);
+                    yield* Ref.set(activeRuntimePolicy, null);
                   }
                   const state = yield* Ref.get(snapshot);
                   const now = yield* DateTime.now;
@@ -9406,7 +9464,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* Ref.set(activeSessionId, forked.sessionId);
                   yield* setActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
-                  yield* Ref.set(activeInteractionMode, null);
+                  yield* Ref.set(activeRuntimePolicy, null);
                   itemIdentityVersion = 2;
                   const now = yield* DateTime.now;
                   const providerThread = makeProviderThread({
