@@ -483,6 +483,8 @@ export const make = Effect.gen(function* () {
         host: normalizeThreadPullRequestKey(first.link).host,
         repository: first.link.repository,
         number: first.link.number,
+        webUrl:
+          first.link.repositoryWebUrl ?? (first.link.source === "agent" ? null : first.link.url),
       };
       const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its

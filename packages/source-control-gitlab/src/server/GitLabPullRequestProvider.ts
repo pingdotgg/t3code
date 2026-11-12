@@ -19,6 +19,7 @@ import {
   type PullRequestProviderFailure,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderRepositoryRef,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { definition } from "../shared/definition.ts";
@@ -266,7 +267,22 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const provider: PullRequestProviderApi = {
+  // The path read from a clone or MR URL drops a GitLab installation's path prefix; glab resolves
+  // the authoritative URL to the project before any read or write.
+  const onProject =
+    <I extends ProviderRepositoryRef, A, E>(
+      operation: string,
+      call: (input: I) => Effect.Effect<A, E>,
+    ) =>
+    (input: I) =>
+      input.webUrl === undefined
+        ? call(input)
+        : cli.resolveProjectPath({ cwd: input.cwd, webUrl: input.webUrl }).pipe(
+            Effect.mapError(fail(operation)),
+            Effect.flatMap((repository) => call({ ...input, repository })),
+          );
+
+  const provider = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
     mergeMessageRewrite: removeAgentCredits,
@@ -673,9 +689,44 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("setThreadResolution"))),
     ),
-  };
+  } satisfies PullRequestProviderApi;
 
-  return provider;
+  const routed: PullRequestProviderApi = {
+    ...provider,
+    listChangeRequests: onProject("listChangeRequests", provider.listChangeRequests),
+    getFileStats: onProject("getFileStats", provider.getFileStats),
+    getChangeRequestChecks: onProject("getChangeRequestChecks", provider.getChangeRequestChecks),
+    getChangeRequestPreview: onProject("getChangeRequestPreview", provider.getChangeRequestPreview),
+    getChangeRequestSummary: onProject("getChangeRequestSummary", provider.getChangeRequestSummary),
+    getChangeRequest: onProject("getChangeRequest", provider.getChangeRequest),
+    getChangeRequestActivity: onProject(
+      "getChangeRequestActivity",
+      provider.getChangeRequestActivity,
+    ),
+    getViewerPermissions: onProject("getViewerPermissions", provider.getViewerPermissions),
+    getDiff: onProject("getDiff", provider.getDiff),
+    getDiffFileContents: onProject("getDiffFileContents", provider.getDiffFileContents),
+    getFileRevisions: onProject("getFileRevisions", provider.getFileRevisions),
+    listReviewerCandidates: onProject("listReviewerCandidates", provider.listReviewerCandidates),
+    listLabelCandidates: onProject("listLabelCandidates", provider.listLabelCandidates),
+    setLabels: onProject("setLabels", provider.setLabels),
+    listRepositoryLabels: onProject("listRepositoryLabels", provider.listRepositoryLabels),
+    searchRepositoryAuthors: onProject("searchRepositoryAuthors", provider.searchRepositoryAuthors),
+    searchRepositoryReferences: onProject(
+      "searchRepositoryReferences",
+      provider.searchRepositoryReferences,
+    ),
+    setReviewerRequest: onProject("setReviewerRequest", provider.setReviewerRequest),
+    runAction: onProject("runAction", provider.runAction),
+    updateChangeRequest: onProject("updateChangeRequest", provider.updateChangeRequest),
+    comment: onProject("comment", provider.comment),
+    updateComment: onProject("updateComment", provider.updateComment),
+    submitReview: onProject("submitReview", provider.submitReview),
+    replyToThread: onProject("replyToThread", provider.replyToThread),
+    setReaction: onProject("setReaction", provider.setReaction),
+    setThreadResolution: onProject("setThreadResolution", provider.setThreadResolution),
+  };
+  return routed;
 });
 
 function withListState<Item extends { readonly number: number }>(

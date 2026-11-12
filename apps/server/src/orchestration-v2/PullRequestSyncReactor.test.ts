@@ -15,7 +15,6 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationProjectShell,
-  type PullRequestRef,
   type PullRequestStack,
   type PullRequestSummary,
   type ThreadPullRequestKey,
@@ -42,6 +41,8 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
 import { type PullRequestTestThread, v2PullRequestThread } from "./testkit/pullRequestFixtures.ts";
+
+type PullRequestRef = PullRequestService.PullRequestRef;
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("sync-project");
@@ -614,13 +615,14 @@ describe("PullRequestSyncReactor", () => {
         });
 
         yield* Effect.gen(function* () {
-          yield* startAndSweep(fixture);
+          const reactor = yield* startAndSweep(fixture);
 
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), [
             {
               projectId: PROJECT_ID,
               host: "github.com",
               repository: "owner/repository",
+              webUrl: "https://github.com/owner/repository/pull/42",
               number: 42,
             },
           ]);
@@ -650,6 +652,37 @@ describe("PullRequestSyncReactor", () => {
           );
           assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
           assert.strictEqual(yield* Ref.get(fixture.shellSnapshotReads), 0);
+
+          const key = {
+            host: "code.example",
+            repository: "gitlab/team/subgroup/project",
+            number: 1,
+          };
+          const actualUrl =
+            "http://code.example:8924/gitlab/gitlab/team/subgroup/project/-/merge_requests/1";
+          for (const repositoryWebUrl of [undefined, actualUrl]) {
+            yield* Ref.set(
+              fixture.snapshots,
+              makeSnapshot([
+                makeThread("one", {
+                  pullRequests: [
+                    makeLink(1, null, {
+                      ...key,
+                      source: "agent",
+                      url: "https://code.example/gitlab/team/subgroup/project/-/merge_requests/1",
+                      ...(repositoryWebUrl === undefined ? {} : { repositoryWebUrl }),
+                    }),
+                  ],
+                }),
+              ]),
+            );
+            yield* reactor.requestSync(key);
+            yield* reactor.drain;
+            assert.strictEqual(
+              (yield* Ref.get(fixture.summaryCalls)).at(-1)?.webUrl,
+              repositoryWebUrl ?? null,
+            );
+          }
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

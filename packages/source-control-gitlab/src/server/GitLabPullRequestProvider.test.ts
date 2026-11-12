@@ -2,6 +2,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
@@ -1048,6 +1049,84 @@ describe("review decisions", () => {
         undefined,
       ]);
       expect(summary.reviewDecision).toBeUndefined();
+    }),
+  );
+});
+
+describe("GitLab installations under a path prefix", () => {
+  const origin = "http://code.example.test:8924";
+  // `code.example.test:8924/gitlab/team/project` parses as repository `gitlab/team/project`,
+  // which is a different project on this installation.
+  const parsedRepository = "gitlab/team/project";
+  const mergeRequestUrl = `${origin}/gitlab/team/project/-/merge_requests/9`;
+
+  const fixture = Effect.gen(function* () {
+    const resolved: string[] = [];
+    const apiPaths: string[] = [];
+    const native = yield* GitLabCli.make.pipe(
+      Effect.provide(
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              if (input.args[0] === "repo" && input.args[1] === "view") {
+                const selector = input.args[2]!;
+                resolved.push(selector);
+                return Effect.succeed(
+                  selector.includes("/unavailable")
+                    ? TestSourceControlHost.processOutput("", {
+                        stderr: "404 Project Not Found",
+                        exitCode: ChildProcessSpawner.ExitCode(1),
+                      })
+                    : TestSourceControlHost.processOutput(
+                        JSON.stringify({ path_with_namespace: "team/project" }),
+                      ),
+                );
+              }
+              apiPaths.push(input.args[1]!);
+              return Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify({ id: 1 })));
+            },
+          },
+        }),
+      ),
+    );
+    const cli = yield* GitLabPullRequestCli.make.pipe(
+      Effect.provideService(GitLabCli.GitLabCli, native),
+    );
+    const provider = yield* make.pipe(
+      Effect.provideService(GitLabPullRequestCli.GitLabPullRequestCli, cli),
+    );
+    return { provider, resolved, apiPaths };
+  });
+
+  it.effect("writes to the project glab resolves from the change request URL", () =>
+    Effect.gen(function* () {
+      const { provider, resolved, apiPaths } = yield* fixture;
+      const reference = {
+        cwd: "/w",
+        host: "code.example.test:8924",
+        repository: parsedRepository,
+        number: 9,
+      };
+      yield* provider.comment({ ...reference, webUrl: mergeRequestUrl, body: "one" });
+      yield* provider.comment({ ...reference, webUrl: mergeRequestUrl, body: "two" });
+      yield* provider.comment({ ...reference, body: "raw" });
+
+      expect(resolved).toEqual([`${origin}/gitlab/team/project`]);
+      expect(apiPaths.map((path) => path.split("/merge_requests")[0])).toEqual([
+        "projects/team%2Fproject",
+        "projects/team%2Fproject",
+        `projects/${encodeURIComponent(parsedRepository)}`,
+      ]);
+
+      const failure = yield* Effect.flip(
+        provider.comment({
+          ...reference,
+          webUrl: `${origin}/gitlab/unavailable/project`,
+          body: "never",
+        }),
+      );
+      expect(failure).toMatchObject({ _tag: "PullRequestProviderError", operation: "comment" });
+      expect(apiPaths).toHaveLength(3);
     }),
   );
 });

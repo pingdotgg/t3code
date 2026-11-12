@@ -13,7 +13,6 @@ import * as Semaphore from "effect/Semaphore";
 import {
   PullRequestOperationError,
   type PullRequestDetail,
-  type PullRequestRef,
   type PullRequestReviewGuide,
   type PullRequestReviewGuideResult,
   type PullRequestReviewGuideRun,
@@ -45,10 +44,10 @@ export class PullRequestReviewGuideService extends Context.Service<
   PullRequestReviewGuideService,
   {
     readonly get: (
-      input: PullRequestRef,
+      input: PullRequestService.PullRequestRef,
     ) => Effect.Effect<PullRequestReviewGuideResult, PullRequestService.PullRequestError>;
     readonly generate: (
-      input: PullRequestRef,
+      input: PullRequestService.PullRequestRef,
     ) => Effect.Effect<
       PullRequestReviewGuideResult & { readonly started: boolean },
       PullRequestService.PullRequestError
@@ -79,7 +78,7 @@ const make = Effect.gen(function* () {
   const ownership = yield* Semaphore.make(1);
 
   const keyFor = Effect.fn("PullRequestReviewGuideService.keyFor")(function* (
-    input: PullRequestRef,
+    input: PullRequestService.PullRequestRef,
   ) {
     const project = Option.getOrUndefined(
       yield* projects.getShell(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
@@ -364,7 +363,7 @@ const make = Effect.gen(function* () {
   });
 
   const write = Effect.fn("PullRequestReviewGuideService.write")(function* (
-    input: PullRequestRef,
+    input: PullRequestService.PullRequestRef,
     key: ThreadPullRequestKey,
     workspaceRoot: string,
     locator: RepositoryIdentity["locator"],

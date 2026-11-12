@@ -549,7 +549,12 @@ export const make = Effect.gen(function* () {
 
   const referenceOf = (group: WatchGroup) => {
     const first = group.targets[0]!;
-    return { projectId: first.thread.projectId, ...identityOf(first.link) };
+    return {
+      projectId: first.thread.projectId,
+      ...identityOf(first.link),
+      webUrl:
+        first.link.repositoryWebUrl ?? (first.link.source === "agent" ? null : first.link.url),
+    };
   };
 
   const fingerprintOf = (group: WatchGroup) =>

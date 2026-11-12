@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
@@ -80,7 +81,7 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
     }
     return {
       ...normalizeThreadPullRequestKey(parsed),
-      url: canonicalizeGitCafePullRequestUrl(input.url),
+      url: canonicalizeGitCafePullRequestUrl(PullRequestService.withoutUrlCredentials(input.url)),
     } satisfies ResolvedTarget;
   }
   if (input.repository === undefined || input.number === undefined) {
@@ -195,6 +196,10 @@ function projectForPullRequest(
   return projects.find(matches);
 }
 
+// A supplied URL is the link's authority; a repository alone stays a raw selector, as on main.
+const linkOf = (target: ResolvedTarget, input: PullRequestTargetInput) =>
+  input.url === undefined ? { url: target.url } : { url: target.url, repositoryWebUrl: target.url };
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -278,6 +283,17 @@ const make = Effect.gen(function* () {
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
+    // An existing link travels too, so an unlink racing this call cannot drop the watch.
+    const link = !watching
+      ? undefined
+      : before === undefined
+        ? linkOf(target, input)
+        : {
+            url: before.url,
+            ...(before.repositoryWebUrl === undefined
+              ? {}
+              : { repositoryWebUrl: before.repositoryWebUrl }),
+          };
     yield* engine
       .dispatch({
         type: "thread.pull-request.watch",
@@ -287,7 +303,7 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
-        ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
+        ...(link === undefined ? {} : { link: { ...link, source: "agent" as const } }),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
     const after = yield* requireThread(PullRequestWatchFailedError, thread.id);
@@ -295,7 +311,7 @@ const make = Effect.gen(function* () {
       host: target.host,
       repository: target.repository,
       number: target.number,
-      url: target.url,
+      url: link?.url ?? before?.url ?? target.url,
       watching: watchedLink(after)?.watch !== undefined,
       wasWatching: before?.watch !== undefined,
     };
@@ -343,9 +359,11 @@ const make = Effect.gen(function* () {
 
   const guideReference = (
     project: OrchestrationProjectShell,
-    target: { readonly host: string; readonly repository: string; readonly number: number },
+    target: ResolvedTarget,
+    webUrl: string | undefined,
   ) => ({
     projectId: project.id,
+    ...(webUrl === undefined ? {} : { webUrl }),
     host: target.host,
     repository: target.repository,
     number: target.number,
@@ -372,7 +390,8 @@ const make = Effect.gen(function* () {
           threadPullRequestKeysEqual(link, target),
         );
         if (existing && existing.source !== "stack-dismissed")
-          return { ...target, alreadyLinked: true, ...next };
+          return { ...target, url: existing.url, alreadyLinked: true, ...next };
+        const link = linkOf(target, input);
         const alreadyLinked = yield* engine
           .dispatch({
             type: "thread.pull-request.link",
@@ -381,7 +400,7 @@ const make = Effect.gen(function* () {
             host: target.host,
             repository: target.repository,
             number: target.number,
-            url: target.url,
+            ...link,
             source: "agent",
           })
           .pipe(
@@ -389,7 +408,7 @@ const make = Effect.gen(function* () {
 
             Effect.catchCause(dispatchFailure(PullRequestLinkFailedError)),
           );
-        return { ...target, alreadyLinked, ...next };
+        return { ...target, url: link.url, alreadyLinked, ...next };
       }),
     ),
     link_pull_requests: writesThread((input) =>
@@ -420,6 +439,7 @@ const make = Effect.gen(function* () {
               repository: target.repository,
               number: target.number,
               url: target.url,
+              repositoryWebUrl: target.url,
               source: "agent",
             });
           }).pipe(Effect.catchCause(dispatchFailure(PullRequestLinkFailedError))),
@@ -554,20 +574,22 @@ const make = Effect.gen(function* () {
                   }).message,
                 };
               }
-              return yield* reviewGuides.generate(guideReference(entry.project, entry.target)).pipe(
-                Effect.map((result) => ({
-                  ...identity,
-                  outcome: result.started ? ("started" as const) : ("running" as const),
-                  detail: null,
-                })),
-                Effect.catch((error) =>
-                  Effect.succeed({
+              return yield* reviewGuides
+                .generate(guideReference(entry.project, entry.target, entry.input.url))
+                .pipe(
+                  Effect.map((result) => ({
                     ...identity,
-                    outcome: "failed" as const,
-                    detail: guideFailureDetail(error),
-                  }),
-                ),
-              );
+                    outcome: result.started ? ("started" as const) : ("running" as const),
+                    detail: null,
+                  })),
+                  Effect.catch((error) =>
+                    Effect.succeed({
+                      ...identity,
+                      outcome: "failed" as const,
+                      detail: guideFailureDetail(error),
+                    }),
+                  ),
+                );
             }),
           { concurrency: 4 },
         );
@@ -585,15 +607,17 @@ const make = Effect.gen(function* () {
             repository: entry?.target.repository ?? input.repository ?? "",
           });
         }
-        const result = yield* reviewGuides.get(guideReference(entry.project, entry.target)).pipe(
-          Effect.mapError(
-            (error) =>
-              new PullRequestGuideFailedError({
-                detail: guideFailureDetail(error),
-                cause: error,
-              }),
-          ),
-        );
+        const result = yield* reviewGuides
+          .get(guideReference(entry.project, entry.target, entry.input.url))
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new PullRequestGuideFailedError({
+                  detail: guideFailureDetail(error),
+                  cause: error,
+                }),
+            ),
+          );
         return {
           host: entry.target.host,
           repository: entry.target.repository,

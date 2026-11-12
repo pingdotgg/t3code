@@ -52,7 +52,7 @@ import {
   type PullRequestListStatsResult,
   type PullRequestProviderSummary,
   type PullRequestReactionInput,
-  type PullRequestRef,
+  type PullRequestRef as ContractPullRequestRef,
   type PullRequestRoutingResult,
   type PullRequestRoutingIdentityInput,
   type PullRequestRoutingIdentityResult,
@@ -94,6 +94,7 @@ import {
   type ProviderListCursor,
   type ProviderChangeRequestSummary,
   type ProviderChangeRequestWatchFingerprint,
+  type ProviderRepositoryRef,
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -101,6 +102,10 @@ import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
 import { toChangeBreakdown } from "./pullRequestChangeBreakdown.ts";
+
+// Null keeps raw API selectors from inheriting an HTTP checkout's URL.
+type WithWebUrl<I> = I & { readonly webUrl?: string | null | undefined };
+export type PullRequestRef = WithWebUrl<ContractPullRequestRef>;
 
 export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
@@ -120,6 +125,7 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 
 // Providers request one extra row; 99 stays within GitHub/GitLab's 100-row API limit.
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
+const LINKED_WEB_URL_CAPACITY = 256;
 const REPOSITORY_CONCURRENCY = 12;
 const REPOSITORY_SEARCH_CHUNK = 100;
 const FILTERED_LIST_READS = 5;
@@ -242,54 +248,58 @@ export class PullRequestService extends Context.Service<
     /** Emits when the host reports a change; empty where the host has no event feed. */
     readonly changes: (input: PullRequestRef) => Stream.Stream<void>;
     readonly threadComments: (
-      input: PullRequestThreadCommentsInput,
+      input: WithWebUrl<PullRequestThreadCommentsInput>,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
     readonly diff: (
-      input: PullRequestDiffInput,
+      input: WithWebUrl<PullRequestDiffInput>,
     ) => Effect.Effect<PullRequestDiffResult, PullRequestError>;
     readonly diffFileContents: (
-      input: PullRequestDiffFileContentsInput,
+      input: WithWebUrl<PullRequestDiffFileContentsInput>,
     ) => Effect.Effect<PullRequestDiffFileContentsResult, PullRequestError>;
     readonly filesViewed: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestFilesViewedResult, PullRequestError>;
     readonly setFilesViewed: (
-      input: PullRequestSetFilesViewedInput,
+      input: WithWebUrl<PullRequestSetFilesViewedInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly changeBreakdown: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestChangeBreakdown, PullRequestError>;
     readonly runAction: (
-      input: PullRequestActionInput,
+      input: WithWebUrl<PullRequestActionInput>,
     ) => Effect.Effect<PullRequestSummary | undefined, PullRequestError>;
-    readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
-    readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
+    readonly update: (
+      input: WithWebUrl<PullRequestUpdateInput>,
+    ) => Effect.Effect<void, PullRequestError>;
+    readonly comment: (
+      input: WithWebUrl<PullRequestCommentInput>,
+    ) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
-      input: PullRequestCommentUpdateInput,
+      input: WithWebUrl<PullRequestCommentUpdateInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly submitReview: (
-      input: PullRequestSubmitReviewInput,
+      input: WithWebUrl<PullRequestSubmitReviewInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly replyToThread: (
-      input: PullRequestThreadReplyInput,
+      input: WithWebUrl<PullRequestThreadReplyInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly setThreadResolution: (
-      input: PullRequestThreadResolutionInput,
+      input: WithWebUrl<PullRequestThreadResolutionInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly setReaction: (
-      input: PullRequestReactionInput,
+      input: WithWebUrl<PullRequestReactionInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly reviewerCandidates: (
-      input: PullRequestReviewerCandidatesInput,
+      input: WithWebUrl<PullRequestReviewerCandidatesInput>,
     ) => Effect.Effect<PullRequestReviewerCandidateList, PullRequestError>;
     readonly requestReviewers: (
-      input: PullRequestReviewerRequestInput,
+      input: WithWebUrl<PullRequestReviewerRequestInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly labelCandidates: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestLabelCandidateList, PullRequestError>;
     readonly setLabels: (
-      input: PullRequestLabelChangeInput,
+      input: WithWebUrl<PullRequestLabelChangeInput>,
     ) => Effect.Effect<void, PullRequestError>;
     readonly invalidate: (
       input: PullRequestInvalidateInput,
@@ -335,10 +345,26 @@ export interface SupportedProject {
   readonly api: PullRequestProviderApi;
   readonly repository: string;
   readonly host: string;
+  readonly webUrl?: string | null | undefined;
   /** Unlike Azure repository names, remotes are unique across an organization. */
   readonly remote: string;
   readonly repositoryKey: string | null;
 }
+
+export function withoutUrlCredentials(value: string): string {
+  const url = URL.parse(value);
+  if (url === null) return value;
+  url.username = "";
+  url.password = "";
+  return url.toString();
+}
+
+const providerRef = (project: SupportedProject): ProviderRepositoryRef => ({
+  cwd: project.project.workspaceRoot,
+  repository: project.repository,
+  host: project.host,
+  ...(project.webUrl == null ? {} : { webUrl: project.webUrl }),
+});
 
 interface WorkspaceProjects {
   readonly supported: ReadonlyArray<SupportedProject>;
@@ -989,6 +1015,9 @@ export const make = Effect.gen(function* () {
             api: withRateLimitBackoff(api, host, rateLimits),
             repository,
             host,
+            ...(/^https?:\/\//i.test(identity.locator.remoteUrl)
+              ? { webUrl: withoutUrlCredentials(identity.locator.remoteUrl) }
+              : {}),
             remote:
               repositoryKey ??
               sourceControlDefinitions.repositoryKeyFromRemote(`https://${host}/${repository}`),
@@ -1002,6 +1031,31 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // A linked change request's URL is the only record of where an SSH checkout's project lives
+  // on a host served under a path prefix, and clients ask by repository alone.
+  // Learned only from a read that succeeded through the URL, so a bad URL never displaces routing.
+  const linkedWebUrls = new Map<string, string>();
+  const linkedWebUrlKey = (ref: PullRequestRef) => {
+    const host = ref.host?.trim().toLowerCase();
+    return host === undefined ? undefined : `${host}/${ref.repository.trim().toLowerCase()}`;
+  };
+  const withLinkedWebUrl = <I extends PullRequestRef>(ref: I): I => {
+    if (ref.webUrl !== undefined) return ref;
+    const key = linkedWebUrlKey(ref);
+    const webUrl = key === undefined ? undefined : linkedWebUrls.get(key);
+    return webUrl === undefined ? ref : { ...ref, webUrl };
+  };
+  const rememberWebUrl = (ref: PullRequestRef) => {
+    const key = linkedWebUrlKey(ref);
+    if (key === undefined || typeof ref.webUrl !== "string") return;
+    linkedWebUrls.delete(key);
+    linkedWebUrls.set(key, withoutUrlCredentials(ref.webUrl));
+    if (linkedWebUrls.size > LINKED_WEB_URL_CAPACITY) {
+      const oldest = linkedWebUrls.keys().next().value;
+      if (oldest !== undefined) linkedWebUrls.delete(oldest);
+    }
+  };
+
   // Azure derives organization from the checkout; require the matching repository.
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
@@ -1009,8 +1063,14 @@ export const make = Effect.gen(function* () {
         const own = supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
+        const webUrl = withLinkedWebUrl(ref).webUrl;
+        const refWebUrl =
+          webUrl === undefined
+            ? {}
+            : { webUrl: webUrl === null ? null : withoutUrlCredentials(webUrl) };
         if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
-          if (host === undefined || host === own.host) return Effect.succeed(own);
+          if (host === undefined || host === own.host)
+            return Effect.succeed({ ...own, ...refWebUrl });
         }
         if (host === undefined) {
           if (own === undefined) {
@@ -1066,6 +1126,7 @@ export const make = Effect.gen(function* () {
                       api: withRateLimitBackoff(api, host, rateLimits),
                       repository,
                       host,
+                      ...refWebUrl,
                       remote: sourceControlDefinitions.repositoryKeyFromRemote(
                         `https://${host}/${repository}`,
                       ),
@@ -1076,13 +1137,16 @@ export const make = Effect.gen(function* () {
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
             }
+            // A checkout URL only names its own repository; another one on the host keeps none.
             return Effect.succeed(
               route.repositoryKey !== null ||
                 route.repository.toLowerCase() === repository.toLowerCase()
-                ? route
+                ? { ...route, ...refWebUrl }
                 : {
                     ...route,
                     repository,
+                    webUrl: undefined,
+                    ...refWebUrl,
                     remote: sourceControlDefinitions.repositoryKeyFromRemote(
                       `https://${host}/${repository}`,
                     ),
@@ -1096,9 +1160,11 @@ export const make = Effect.gen(function* () {
   const canonicalRef = Effect.fn("PullRequestService.canonicalRef")(function* <
     I extends PullRequestRef,
   >(input: I) {
-    const project = yield* requireProject(input);
+    // The learned URL is part of the read's identity: cached reads must not outlive a change of route.
+    const linked = withLinkedWebUrl(input);
+    const project = yield* requireProject(linked);
     return {
-      ...input,
+      ...linked,
       projectId: project.project.id,
       host: project.host,
       repository: project.repository,
@@ -1131,9 +1197,7 @@ export const make = Effect.gen(function* () {
   ) =>
     project.api
       .getViewerPermissions({
-        cwd: project.project.workspaceRoot,
-        repository: project.repository,
-        host: project.host,
+        ...providerRef(project),
         number: ref.number,
         includeUpdateBranch,
       })
@@ -1416,9 +1480,7 @@ export const make = Effect.gen(function* () {
         const key = project.cursorKey;
         return project.api
           .listChangeRequests({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
+            ...providerRef(project),
             state: input.state,
             involvement,
             viewer,
@@ -1694,12 +1756,10 @@ export const make = Effect.gen(function* () {
       return yield* rejected();
     }
     const result = yield* api
-      .withVerifiedCredential(
-        { cwd: project.project.workspaceRoot, host: project.host, repository: project.repository },
-        (identity) =>
-          identity.accountId === input.expectedAccountId
-            ? operation.pipe(Effect.provideService(routingCredential, identity), Effect.result)
-            : Effect.fail(rejected()),
+      .withVerifiedCredential(providerRef(project), (identity) =>
+        identity.accountId === input.expectedAccountId
+          ? operation.pipe(Effect.provideService(routingCredential, identity), Effect.result)
+          : Effect.fail(rejected()),
       )
       .pipe(Effect.catchTags({ PullRequestProviderError: () => Effect.fail(rejected()) }));
     return yield* Effect.fromResult(result);
@@ -1784,9 +1844,7 @@ export const make = Effect.gen(function* () {
     requireProject(input).pipe(
       Effect.flatMap((project) => {
         const providerInput = {
-          cwd: project.project.workspaceRoot,
-          repository: project.repository,
-          host: project.host,
+          ...providerRef(project),
           number: input.number,
         };
         const read: Effect.Effect<
@@ -1810,9 +1868,7 @@ export const make = Effect.gen(function* () {
         const read = project.api.getChangeRequestStack;
         if (read === undefined) return Effect.succeed(null);
         return read({
-          cwd: project.project.workspaceRoot,
-          repository: project.repository,
-          host: project.host,
+          ...providerRef(project),
           number: input.number,
           includeDetails: options?.includeDetails !== false,
         }).pipe(
@@ -1844,9 +1900,7 @@ export const make = Effect.gen(function* () {
           [
             project.api
               .getChangeRequest({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
+                ...providerRef(project),
                 number: input.number,
               })
               .pipe(Effect.mapError(toPullRequestError("detail")), observeRead),
@@ -1925,9 +1979,7 @@ export const make = Effect.gen(function* () {
     requireProject(input).pipe(
       Effect.flatMap((project) =>
         (project.api.getChangeRequestPreview ?? project.api.getChangeRequest)({
-          cwd: project.project.workspaceRoot,
-          repository: project.repository,
-          host: project.host,
+          ...providerRef(project),
           number: input.number,
         }).pipe(
           Effect.mapError(toPullRequestError("preview")),
@@ -1947,9 +1999,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((project) =>
         project.api
           .getChangeRequestActivity({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
+            ...providerRef(project),
             number: input.number,
           })
           .pipe(
@@ -1988,9 +2038,7 @@ export const make = Effect.gen(function* () {
             );
           }
           return read({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
+            ...providerRef(project),
             number: input.number,
             threadId: input.threadId,
             cursor: input.cursor,
@@ -2005,9 +2053,7 @@ export const make = Effect.gen(function* () {
         project.api.capabilities.diff
           ? project.api
               .getDiff({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
+                ...providerRef(project),
                 number: input.number,
                 ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
                 ...(input.commit === undefined ? {} : { commit: input.commit }),
@@ -2028,9 +2074,7 @@ export const make = Effect.gen(function* () {
         const read = project.api.getDiffFileContents;
         return project.api.capabilities.diff && read
           ? read({
-              cwd: project.project.workspaceRoot,
-              repository: project.repository,
-              host: project.host,
+              ...providerRef(project),
               number: input.number,
               ...(input.commit === undefined ? {} : { commit: input.commit }),
               changeType: input.changeType,
@@ -2191,9 +2235,7 @@ export const make = Effect.gen(function* () {
               Effect.flatMap((removeAgentCreditsOnMerge) =>
                 project.api
                   .runAction({
-                    cwd: project.project.workspaceRoot,
-                    repository: project.repository,
-                    host: project.host,
+                    ...providerRef(project),
                     number: input.number,
                     action: input.action,
                     ...(removeAgentCreditsOnMerge ? { removeAgentCreditsOnMerge: true } : {}),
@@ -2233,9 +2275,7 @@ export const make = Effect.gen(function* () {
           ? project.api
               .withVerifiedCredential(
                 {
-                  cwd: project.project.workspaceRoot,
-                  host: project.host,
-                  repository: project.repository,
+                  ...providerRef(project),
                 },
                 () => operation.pipe(Effect.result),
               )
@@ -2279,9 +2319,7 @@ export const make = Effect.gen(function* () {
             }
             return project.api
               .comment({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
+                ...providerRef(project),
                 number: input.number,
                 body: input.body,
               })
@@ -2328,9 +2366,7 @@ export const make = Effect.gen(function* () {
           );
         }
         return rewrite({
-          cwd: project.project.workspaceRoot,
-          repository: project.repository,
-          host: project.host,
+          ...providerRef(project),
           number: input.number,
           ...(input.maintainerCanModify === undefined
             ? {}
@@ -2362,9 +2398,7 @@ export const make = Effect.gen(function* () {
           );
         }
         return rewrite({
-          cwd: project.project.workspaceRoot,
-          repository: project.repository,
-          host: project.host,
+          ...providerRef(project),
           number: input.number,
           commentId: input.commentId,
           kind: input.kind,
@@ -2408,9 +2442,7 @@ export const make = Effect.gen(function* () {
             }
             return project.api
               .submitReview({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
+                ...providerRef(project),
                 number: input.number,
                 verdict: input.verdict,
                 body: input.body,
@@ -2454,9 +2486,7 @@ export const make = Effect.gen(function* () {
             }
             return project.api
               .replyToThread({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
+                ...providerRef(project),
                 number: input.number,
                 threadId: input.threadId,
                 body: input.body,
@@ -2491,9 +2521,7 @@ export const make = Effect.gen(function* () {
             }
             return project.api
               .setThreadResolution({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
+                ...providerRef(project),
                 number: input.number,
                 threadId: input.threadId,
                 resolved: input.resolved,
@@ -2518,9 +2546,7 @@ export const make = Effect.gen(function* () {
         }
         return project.api
           .setReaction({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
+            ...providerRef(project),
             number: input.number,
             ...(input.subjectId === undefined ? {} : { subjectId: input.subjectId }),
             content: input.content,
@@ -2548,9 +2574,7 @@ export const make = Effect.gen(function* () {
                 viewer.requestReviewers
                   ? project.api
                       .listReviewerCandidates({
-                        cwd: project.project.workspaceRoot,
-                        repository: project.repository,
-                        host: project.host,
+                        ...providerRef(project),
                         number: input.number,
                         query: input.query,
                       })
@@ -2590,9 +2614,7 @@ export const make = Effect.gen(function* () {
             }
             return project.api
               .setReviewerRequest({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
+                ...providerRef(project),
                 number: input.number,
                 reviewers: input.reviewers,
                 requested: input.requested,
@@ -2612,9 +2634,7 @@ export const make = Effect.gen(function* () {
       ...new Map(supported.map((project) => [project.cursorKey, project])).values(),
     ];
     const refOf = (project: SupportedProject) => ({
-      cwd: project.project.workspaceRoot,
-      repository: project.repository,
-      host: project.host,
+      ...providerRef(project),
       query: input.query,
     });
     // One repository the host cannot read leaves the others' options standing, as a listing does.
@@ -2693,9 +2713,7 @@ export const make = Effect.gen(function* () {
                     }),
                   )
                 : list({
-                    cwd: project.project.workspaceRoot,
-                    repository: project.repository,
-                    host: project.host,
+                    ...providerRef(project),
                     number: input.number,
                   }).pipe(Effect.mapError(toPullRequestError("labelCandidates"))),
           ),
@@ -2725,9 +2743,7 @@ export const make = Effect.gen(function* () {
                   }),
                 )
               : change({
-                  cwd: project.project.workspaceRoot,
-                  repository: project.repository,
-                  host: project.host,
+                  ...providerRef(project),
                   number: input.number,
                   labels: input.labels,
                   applied: input.applied,
@@ -2947,16 +2963,26 @@ export const make = Effect.gen(function* () {
       ref.number,
       ref.expectedAccountId ?? null,
       ref[credentialNamespace] ?? null,
+      { webUrl: ref.webUrl },
     ]);
   const refOfCacheKey = (key: string): PullRequestRef => {
-    const [, projectId, host, repository, number, expectedAccountId, fingerprint] = JSON.parse(
-      key,
-    ) as [number, string, string | null, string, number, string | null, string | null];
+    const [, projectId, host, repository, number, expectedAccountId, fingerprint, urlReference] =
+      JSON.parse(key) as [
+        number,
+        string,
+        string | null,
+        string,
+        number,
+        string | null,
+        string | null,
+        Pick<PullRequestRef, "webUrl">,
+      ];
     return {
       projectId,
       ...(host === null ? {} : { host }),
       ...(expectedAccountId === null ? {} : { expectedAccountId }),
       ...(fingerprint === null ? {} : { [credentialNamespace]: fingerprint }),
+      ...urlReference,
       repository,
       number,
     } as PullRequestRef;
@@ -3028,6 +3054,7 @@ export const make = Effect.gen(function* () {
       project.repository.toLowerCase(),
       project.project.id,
       project.project.workspaceRoot,
+      project.webUrl ?? "",
       String(input.number),
       input.expectedAccountId ?? "",
       input[credentialNamespace] ?? "",
@@ -3166,9 +3193,7 @@ export const make = Effect.gen(function* () {
             ? Effect.succeed(null)
             : project.api
                 .getChangeRequestChecks({
-                  cwd: project.project.workspaceRoot,
-                  repository: project.repository,
-                  host: project.host,
+                  ...providerRef(project),
                   number: input.number,
                 })
                 .pipe(
@@ -3207,9 +3232,7 @@ export const make = Effect.gen(function* () {
             ? Effect.succeed(null)
             : project.api
                 .getChangeRequestWatchFingerprint({
-                  cwd: project.project.workspaceRoot,
-                  repository: project.repository,
-                  host: project.host,
+                  ...providerRef(project),
                   number: input.number,
                 })
                 .pipe(Effect.mapError(toPullRequestError("watchFingerprint"))),
@@ -3397,9 +3420,7 @@ export const make = Effect.gen(function* () {
           const read = project.api.getFileStats;
           if (read === undefined) return Effect.succeed(null);
           return read({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
+            ...providerRef(project),
             number: ref.number,
           }).pipe(
             Effect.map(toChangeBreakdown),
@@ -3732,7 +3753,7 @@ export const make = Effect.gen(function* () {
             ? ref
             : { ...ref, [credentialNamespace]: credential.credentialFingerprint },
           ...args,
-        );
+        ).pipe(Effect.tap(() => Effect.sync(() => rememberWebUrl(ref))));
       });
 
   // Cache small filename lists even when patches exceed limits, avoiding diff refetches on file expansion.
@@ -3784,9 +3805,7 @@ export const make = Effect.gen(function* () {
       if (project.api.capabilities.diff && project.api.getDiffFilePaths) {
         const slice = yield* project.api
           .getDiffFilePaths({
-            cwd: project.project.workspaceRoot,
-            repository: project.repository,
-            host: project.host,
+            ...providerRef(project),
             number: input.number,
             ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
             ...(input.commit === undefined ? {} : { commit: input.commit }),

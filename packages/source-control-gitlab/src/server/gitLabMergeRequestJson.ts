@@ -197,6 +197,8 @@ const RawProjectMergeSettingsSchema = Schema.Struct({
   squash_option: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+const RawProjectPathSchema = Schema.Struct({ path_with_namespace: TrimmedNonEmptyString });
+
 export interface GitLabMergeRequestListItem {
   readonly number: number;
   readonly title: string;
@@ -575,6 +577,7 @@ const decodeDiffRefs = decodeJsonResult(RawDiffRefsSchema);
 const decodeRevertTarget = decodeJsonResult(RawRevertTargetSchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
 const decodeProjectMergeSettings = decodeJsonResult(RawProjectMergeSettingsSchema);
+const decodeProjectPath = decodeJsonResult(RawProjectPathSchema);
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 
@@ -658,6 +661,13 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
   const decoded = decodeViewer(raw);
   return Result.isSuccess(decoded)
     ? Result.succeed(trimmed(decoded.success.username))
+    : Result.fail(decoded.failure);
+}
+
+export function decodeProjectPathJson(raw: string): Result.Result<string, DecodeFailure> {
+  const decoded = decodeProjectPath(raw);
+  return Result.isSuccess(decoded)
+    ? Result.succeed(decoded.success.path_with_namespace)
     : Result.fail(decoded.failure);
 }
 

@@ -5,11 +5,11 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   PullRequestOperationError,
+  SourceControlProviderKind,
   type OrchestrationProjectShell,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
   type ThreadPullRequestLink,
-  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -131,6 +131,17 @@ function makeLink(
     ...rest,
   };
 }
+
+const gitlabProject = makeProject({
+  canonicalKey: "code.example/gitlab/team/subgroup/project",
+  locator: {
+    source: "git-remote",
+    remoteName: "origin",
+    remoteUrl: "git@code.example:gitlab/team/subgroup/project.git",
+  },
+  provider: SourceControlProviderKind.make("gitlab"),
+  displayName: "gitlab/team/subgroup/project",
+});
 
 interface HarnessOptions {
   readonly thread?: PullRequestTestThread | null;
@@ -273,6 +284,7 @@ describe("pull request toolkit handlers", () => {
           repository: "t3tools/t3code",
           number: 123,
           source: "agent",
+          repositoryWebUrl: "https://github.com/T3Tools/T3Code/pull/123/files",
         },
       ]);
     }),
@@ -290,7 +302,11 @@ describe("pull request toolkit handlers", () => {
           type: "thread.pull-request.watch",
           number: 9,
           watching: true,
-          link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
+          link: {
+            url: "https://github.com/t3tools/t3code/pull/9",
+            repositoryWebUrl: "https://github.com/t3tools/t3code/pull/9",
+            source: "agent",
+          },
         },
       ]);
     }),
@@ -414,6 +430,37 @@ describe("pull request toolkit handlers", () => {
           }
         }
       }
+    }),
+  );
+
+  it.effect("keeps a GitLab repository selector raw and carries an existing link to a watch", () =>
+    Effect.gen(function* () {
+      const target = { repository: "gitlab/team/subgroup/project", number: 1 };
+      const harness = yield* makeHarness({ project: gitlabProject });
+      yield* harness.call("link_pull_request", target);
+      const [link] = yield* Ref.get(harness.commands);
+      expect(link).toMatchObject({ type: "thread.pull-request.link", ...target });
+      expect(link).not.toHaveProperty("repositoryWebUrl");
+
+      const url = "http://code.example:8924/gitlab/team/subgroup/project/-/merge_requests/1";
+      const existing = yield* makeHarness({
+        project: gitlabProject,
+        thread: makeThread([
+          makeLink(1, { ...target, host: "code.example", url, repositoryWebUrl: url }),
+        ]),
+      });
+      const result = yield* existing.call("watch_pull_request", target);
+      expect(yield* Ref.get(existing.commands)).toMatchObject([
+        {
+          type: "thread.pull-request.watch",
+          threadId: THREAD_ID,
+          host: "code.example",
+          ...target,
+          watching: true,
+          link: { url, repositoryWebUrl: url, source: "agent" },
+        },
+      ]);
+      expect(result.url).toBe(url);
     }),
   );
 

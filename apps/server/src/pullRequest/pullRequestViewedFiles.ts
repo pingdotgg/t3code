@@ -6,7 +6,6 @@ import * as Semaphore from "effect/Semaphore";
 import {
   PullRequestOperationError,
   type PullRequestFilesViewedResult,
-  type PullRequestRef,
   type PullRequestSetFilesViewedInput,
 } from "@t3tools/contracts";
 
@@ -15,7 +14,7 @@ import type {
   ProviderFileRevisions,
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import type { PullRequestError, SupportedProject } from "./PullRequestService.ts";
+import type { PullRequestError, PullRequestRef, SupportedProject } from "./PullRequestService.ts";
 
 const FILE_REVISIONS_CACHE_TTL = Duration.seconds(60);
 const FILE_REVISIONS_STALE_WINDOW = Duration.minutes(10);
@@ -53,6 +52,7 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
       fileRevisionsEpoch(),
       ref.projectId,
       project.repository.trim().toLowerCase(),
+      project.webUrl ?? "",
       ref.number,
     ].join(" ");
 
@@ -123,6 +123,7 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
         cwd: project.project.workspaceRoot,
         repository: project.repository,
         host: project.host,
+        ...(project.webUrl == null ? {} : { webUrl: project.webUrl }),
         number: ref.number,
         paths,
       }).pipe(
@@ -299,6 +300,7 @@ export const make = (dependencies: Dependencies) => {
             cwd: project.project.workspaceRoot,
             repository: project.repository,
             host: project.host,
+            ...(project.webUrl == null ? {} : { webUrl: project.webUrl }),
             number: input.number,
           }).pipe(Effect.mapError(toPullRequestError("filesViewed")));
         }
@@ -325,6 +327,7 @@ export const make = (dependencies: Dependencies) => {
             cwd: project.project.workspaceRoot,
             repository: project.repository,
             host: project.host,
+            ...(project.webUrl == null ? {} : { webUrl: project.webUrl }),
             number: input.number,
             files: input.files,
           }).pipe(Effect.mapError(toPullRequestError("setFilesViewed")));
