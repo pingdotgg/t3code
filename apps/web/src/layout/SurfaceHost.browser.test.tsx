@@ -50,11 +50,19 @@ function Host() {
   return <LayoutSurfaceHost layout={layout} />;
 }
 
-async function renderHost() {
+async function renderHost({ insetSidebar = false } = {}) {
   await page.viewport(900, 600);
   const container = document.createElement("div");
   container.style.cssText = "position:fixed;inset:0;display:flex;";
-  return render(<Host />, { container });
+  // The pane chrome (index.css) styles an inset that follows the app's inset sidebar.
+  const sidebar = insetSidebar ? <div data-slot="sidebar" data-variant="inset" hidden /> : null;
+  return render(
+    <>
+      {sidebar}
+      <Host />
+    </>,
+    { container },
+  );
 }
 
 const focusedTabId = () => selectFocusedTab(useLayoutStore.getState().layout)?.id;
@@ -83,4 +91,68 @@ it("shows a tab in an unfocused pane that runs off screen with one click on it",
   await using _screen = await renderHost();
   await clickHeld(inSecondPane(`[data-layout-pane-tab="${tabs.second.id}"]`));
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
+});
+
+const secondPaneStrip = () => inSecondPane("[data-layout-tab-strip]");
+const joinOffset = (strip: HTMLElement) =>
+  strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx");
+const tabOffset = (strip: HTMLElement, tabId: string) => {
+  const tab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabId}"]`)!;
+  const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+  return `${Math.round(left + strip.scrollLeft)}px`;
+};
+
+it("keeps a pane's tab strip and moves its joined tab when the pane switches tabs", async () => {
+  using tabs = setup();
+  await using _screen = await renderHost();
+  const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
+  const first = pane.tabs.find((tab) => tab.id !== tabs.second.id)!;
+  useLayoutStore.getState().focusTab(first.id);
+  await vi.waitFor(() =>
+    expect(joinOffset(secondPaneStrip())).toBe(tabOffset(secondPaneStrip(), first.id)),
+  );
+  const strip = secondPaneStrip();
+
+  useLayoutStore.getState().focusTab(tabs.second.id);
+  await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
+  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, tabs.second.id)));
+  // The label under the landed shape reads as the active one, and only that one.
+  await vi.waitFor(() =>
+    expect(
+      [...strip.querySelectorAll<HTMLElement>("[data-joined]")].map(
+        (tab) => tab.dataset.layoutPaneTab,
+      ),
+    ).toEqual([tabs.second.id]),
+  );
+  expect(secondPaneStrip()).toBe(strip);
+  expect(strip.isConnected).toBe(true);
+});
+
+it("shows an unfocused pane's active tab as a pill, and black chrome keeps the notch", async () => {
+  using tabs = setup();
+  await using _screen = await renderHost({ insetSidebar: true });
+  const notch = inSecondPane('[data-pane-notch=""]');
+  expect(notch.hasAttribute("data-pane-notch-unfocused")).toBe(true);
+  // The bar runs the pane's whole width; the notch ends at its tabs.
+  expect(getComputedStyle(notch, "::before").right).not.toBe("0px");
+  const join = inSecondPane("[data-pane-join]");
+  // Focus moving between panes cross-fades the joined tab and the pill.
+  await vi.waitFor(() => {
+    expect(getComputedStyle(join.querySelector("[data-jp]")!).opacity).toBe("1");
+    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("0");
+  });
+
+  useLayoutStore.getState().focusTab(tabs.second.id);
+  await vi.waitFor(() =>
+    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1"),
+  );
+
+  document.documentElement.classList.add("black-chrome");
+  try {
+    expect(getComputedStyle(join).display).toBe("none");
+    expect(getComputedStyle(inSecondPane("[data-pane-bar-corner]")).display).toBe("none");
+    expect(getComputedStyle(inSecondPane('[data-pane-notch=""]'), "::before").right).toBe("0px");
+  } finally {
+    document.documentElement.classList.remove("black-chrome");
+  }
 });
