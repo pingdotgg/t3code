@@ -37,6 +37,14 @@ describe("deriveAuthClientMetadata", () => {
     });
 
     expect(metadata.ipAddress).toBe("100.64.0.2");
+
+    const direct = deriveAuthClientMetadata({
+      request: {
+        headers: { "x-forwarded-for": "100.64.0.2" },
+        source: { remoteAddress: "192.168.1.20" },
+      } as never,
+    });
+    expect(direct.ipAddress).toBe("192.168.1.20");
   });
 
   it.each([
