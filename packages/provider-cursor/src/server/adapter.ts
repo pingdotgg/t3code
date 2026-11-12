@@ -2452,6 +2452,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             return { message: "/compress", prompt: undefined };
           }
           const newText = t3OrchestrationPrompt({
+            visualInstructions: (yield* host.settings.get.pipe(Effect.orDie)).visualInstructions,
             prompt: yield* providerMessageTextWithAttachmentPaths({
               text: yield* resolveCursorSkillText(
                 rawText,
