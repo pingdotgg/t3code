@@ -63,11 +63,7 @@ import {
   museApprovalOptions,
   type MuseItem,
 } from "./protocol.ts";
-import {
-  isMuseUsageLimitFailure,
-  museUsageLimitResetAt,
-  museUsageToLimits,
-} from "./usageLimits.ts";
+import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
   MuseSdkError,
@@ -79,7 +75,6 @@ import {
   type MuseSdkHost,
 } from "./sdk.ts";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
   providerMessageTextWithAttachmentPaths,
   isProviderNativeImageAttachment,
@@ -207,13 +202,21 @@ export interface MuseAdapterV2Options {
   readonly createHost?: typeof createMuseSdkHost;
   readonly requestTimeoutMs?: number;
   readonly nativeEventLogger?: ProviderEventLoggers.EventNdjsonLogger;
-  /** Receives every account-wide usage report, whichever session's host sent it. */
-  readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  /**
+   * Receives each subscription usage report (`usage/changed`) from this adapter's hosts,
+   * with the account generation the reporting host started under.
+   */
+  readonly onSubscriptionUsage?: (
+    usage: MuseSubscriptionUsage,
+    accountGeneration: number,
+  ) => Effect.Effect<void>;
+  /** The instance's account generation, read as each host starts, since reports name no account. */
+  readonly usageAccountGeneration?: Effect.Effect<number>;
 }
 
 interface ActiveTurn {
@@ -349,6 +352,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const eventPermit = yield* Semaphore.make(1);
       let host: MuseSdkHost;
       let hostEpoch = 0;
+      // The account generation the current host started under; see usageAccountGeneration.
+      let hostAccountGeneration = 0;
       let closed = false;
       let broken = false;
       // Only idle host failures can be retried on this runtime.
@@ -1382,12 +1387,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const handleNotification = Effect.fnUntraced(function* (method: string, data: unknown) {
         const params = yield* decode(recordSchema, data);
-        // usage/changed is account-wide and carries no session ID.
+        // Account-wide, so it names no session: Meta's subscription windows after a response.
         if (method === "usage/changed") {
-          latestSubscriptionUsage = yield* decode(MuseSubscriptionUsage, params);
-          if (options.onUsageLimits) {
-            yield* options.onUsageLimits(museUsageToLimits(latestSubscriptionUsage));
-          }
+          const usage = yield* decode(MuseSubscriptionUsage, params);
+          latestSubscriptionUsage = usage;
+          if (options.onSubscriptionUsage)
+            yield* options.onSubscriptionUsage(usage, hostAccountGeneration);
           return;
         }
         if (params.sessionId !== nativeSessionId) return;
@@ -1774,6 +1779,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       );
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
+        hostAccountGeneration = options.usageAccountGeneration
+          ? yield* options.usageAccountGeneration
+          : 0;
         const mcpSession = yield* mcpSessions.read(input.threadId);
         const environment = McpProviderSession.withAgentDeviceEnvironment(
           options.environment,

@@ -13,6 +13,7 @@ export type ProviderUsageLimitsReport = ProviderUsageLimitsUpdate & {
   readonly authLabel?: string;
   /** A full reading replaces sparse windows and clears a previous probe failure. */
   readonly complete?: boolean;
+  readonly replace?: boolean;
 };
 
 export interface ManagedServerProvider {

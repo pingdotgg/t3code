@@ -125,7 +125,8 @@ Claude resets are not available when the server runs on macOS, where Claude keep
 Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
-The same account signed in on more than one environment, or reported by a hub as well, counts once.
+Connections identified by the same email address or credential fingerprint count once across
+environments and hubs. Connections without either identifier count separately.
 Filter with the environment dropdown to see what a single machine has.
 
 When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
@@ -165,8 +166,13 @@ Grok reports the remaining subscription allowance and reset time for its current
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
-Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
-Until then it shows no limits. Readings are not kept across a server restart.
+Muse Code reports your Meta subscription's session and weekly windows when provider status
+refreshes (Muse 1.4.13 or newer) and with each reply. If the usage command is unavailable or
+returns no allowance, T3 Code keeps the last report for the same account, or waits for the next
+reply when none is available. Muse connections reporting the same email address count once
+across environments. Connections reporting only a display label count separately because
+labels do not uniquely identify accounts. With an API key, Muse does not report subscription
+limits.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.

@@ -42,7 +42,6 @@ import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
 
@@ -187,10 +186,11 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
-    emitHostWide: (method: string, params: Record<string, unknown>) =>
-      Effect.sync(() => {
-        notify({ jsonrpc: "2.0", method, params });
-      }),
+    /** A notification about the host or account rather than a session, as `usage/changed` is. */ emitHostWide:
+      (method: string, params: Record<string, unknown>) =>
+        Effect.sync(() => {
+          notify({ jsonrpc: "2.0", method, params });
+        }),
     takeCall: Effect.fnUntraced(function* (method: string) {
       while (true) {
         const call = yield* Queue.take(requests);
@@ -209,7 +209,12 @@ const makeHarness = Effect.fnUntraced(function* (
   policy = runtimePolicy,
   overrides: Pick<
     MuseAdapterV2Options,
-    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests" | "onUsageLimits"
+    | "createHost"
+    | "nativeEventLogger"
+    | "modelCatalog"
+    | "continuationRequests"
+    | "onSubscriptionUsage"
+    | "usageAccountGeneration"
   > = {},
 ) {
   let hostCount = 0;
@@ -361,6 +366,7 @@ const startConversation = Effect.fnUntraced(function* (
   return { nativeId: call.commandId!, providerTurn: event.providerTurn };
 });
 
+// `usage/changed` as Muse 1.4.3 sent it after a reply (2026-10-08), with a placeholder tier.
 const SUBSCRIPTION_USAGE = {
   window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 },
   weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
@@ -371,7 +377,6 @@ const QUOTA_MESSAGE =
   "API error 429: Subscription quota exhausted. Your usage window resets soon. (rate_limit_error)";
 const RELAYED_QUOTA_MESSAGE =
   "API error 429: All credentials for model muse-wonder-1.0-contributor are cooling down (last error: rate_limit_exceeded: Subscription quota exhausted. Your usage window resets at 2026-10-13T10:45:52Z.) (after 10 provider attempts)";
-
 const approval = (turnId: string) => ({
   approvalId: "approval-1",
   turnId,
@@ -608,7 +613,7 @@ describe("MuseAdapterV2", () => {
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const reports: Array<ProviderUsageLimitsReport> = [];
+      const reports: Array<MuseSubscriptionUsage> = [];
       const harness = yield* makeHarness(
         fake,
         INSTANCE_ID,
@@ -616,7 +621,7 @@ describe("MuseAdapterV2", () => {
         undefined,
         undefined,
         runtimePolicy,
-        { onUsageLimits: (report) => Effect.sync(() => void reports.push(report)) },
+        { onSubscriptionUsage: (report) => Effect.sync(() => void reports.push(report)) },
       );
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
@@ -635,8 +640,8 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
       assert.deepStrictEqual(
-        reports.map((report) => [report.authLabel, report.windows[0]?.usedPercent]),
-        [["tier-1", 100]],
+        reports.map((report) => [report.tier, report.window.usedPercent]),
+        [["tier-1", 103]],
       );
       assert.isTrue(
         harness.allEvents.some(
@@ -699,7 +704,7 @@ describe("MuseAdapterV2", () => {
   it.effect("skips an unreadable usage report without ending the session", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const reports: Array<ProviderUsageLimitsReport> = [];
+      const reports: Array<MuseSubscriptionUsage> = [];
       const harness = yield* makeHarness(
         fake,
         INSTANCE_ID,
@@ -707,7 +712,7 @@ describe("MuseAdapterV2", () => {
         undefined,
         undefined,
         runtimePolicy,
-        { onUsageLimits: (report) => Effect.sync(() => void reports.push(report)) },
+        { onSubscriptionUsage: (report) => Effect.sync(() => void reports.push(report)) },
       );
       yield* fake.emitHostWide("usage/changed", { window: "not usage" });
       yield* fake.emitHostWide("usage/changed", {
@@ -724,6 +729,42 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.isUndefined(terminal.failure?.resetAt);
       assert.deepStrictEqual(reports, []);
+      assert.strictEqual(fake.closeCount(), 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("hands Meta's subscription usage to the instance, with or without a turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const reports: Array<readonly [MuseSubscriptionUsage, number]> = [];
+      let generation = 3;
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          onSubscriptionUsage: (usage, accountGeneration) =>
+            Effect.sync(() => void reports.push([usage, accountGeneration])),
+          usageAccountGeneration: Effect.sync(() => generation),
+        },
+      );
+      // A report counts for the generation its host started under, not the current one.
+      generation = 4;
+      yield* fake.emitHostWide("usage/changed", SUBSCRIPTION_USAGE);
+      yield* fake.emitHostWide("usage/changed", { window: "not usage" });
+      // A reset no Date can hold would throw once formatted, so the report is skipped too.
+      yield* fake.emitHostWide("usage/changed", {
+        ...SUBSCRIPTION_USAGE,
+        weekly: { usedPercent: 5, resetsAtMs: 1e16 },
+      });
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "completed");
+      assert.deepStrictEqual(reports, [[SUBSCRIPTION_USAGE, 3]]);
       assert.strictEqual(fake.closeCount(), 0);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

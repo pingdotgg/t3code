@@ -51,9 +51,30 @@ export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
   readonly update: ProviderUsageLimitsUpdate;
   readonly checkedAt: string;
+  /** Replace the whole window set, including omitted resets and windows. */
+  readonly replace?: boolean;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (previous?.unavailable?.reason === "unsupported") return previous;
+  if (input.replace) {
+    const next = makeUsageLimits({
+      checkedAt: input.checkedAt,
+      windows: update.windows.map((window) => ({
+        ...window,
+        usedPercent: clampPercent(window.usedPercent),
+      })),
+    });
+    if (
+      previous &&
+      !previous.unavailable &&
+      previous.checkedAt === next.checkedAt &&
+      previous.windows.length === next.windows.length &&
+      previous.windows.every((window, index) => usageWindowEquals(window, next.windows[index]!))
+    )
+      return previous;
+    return { ...next, ...(previous?.resetCredits ? { resetCredits: previous.resetCredits } : {}) };
+  }
+  if (update.windows.length === 0) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
