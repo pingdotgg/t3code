@@ -149,7 +149,8 @@ function SettingsRouteLayout() {
   const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
-      search={rawSearch}
+      // Device-only pages hide the scope picker, so a project retained from another page must not apply.
+      search={SETTINGS_DEVICE_ONLY_PATHS.has(pathname) ? {} : rawSearch}
       singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
