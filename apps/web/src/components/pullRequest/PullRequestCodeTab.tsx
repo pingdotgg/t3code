@@ -769,12 +769,10 @@ function PullRequestCodeTab({
     foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(
-        fileKey,
-        effectiveFoldOverride,
-        foldChoices,
-        foldsAsViewed(path),
-      );
+      // A binary diff has no body to show, so its header is the whole row.
+      const collapsed =
+        binaryFileKeys.has(buildFileDiffIdentityKey(fileDiff)) ||
+        isFileDiffCollapsed(fileKey, effectiveFoldOverride, foldChoices, foldsAsViewed(path));
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -941,6 +939,9 @@ function PullRequestCodeTab({
     );
 
   const renderHeaderPrefix = (item: CodeViewItem<ReviewAnnotationGroup>) => {
+    if (item.type === "diff" && binaryFileKeys.has(buildFileDiffIdentityKey(item.fileDiff))) {
+      return <span aria-hidden className="mr-1 size-5 shrink-0" />;
+    }
     const collapsed = item.collapsed === true;
     return (
       <Button
