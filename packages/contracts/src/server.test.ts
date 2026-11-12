@@ -3,10 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
+  applyServerProviderDeltas,
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
+  ServerConfigProviderStatusDeltasPayload,
   ServerObservability,
   ServerProvider,
+  serverProviderDeltas,
   ServerProviders,
 } from "./server.ts";
 import { ServerSettings } from "./settings.ts";
@@ -38,6 +41,39 @@ describe("ServerProvider", () => {
       );
       expect(decodeServerProvider(wire)).toEqual(decoded);
     }
+  });
+});
+
+describe("provider status deltas", () => {
+  it("send a provider's lists only when they change and rebuild the full list", () => {
+    const codex = decodeServerProvider({
+      ...baseProviderSnapshot,
+      models: [{ slug: "gpt", name: "GPT", isCustom: false, capabilities: null }],
+      slashCommands: [{ name: "compact" }],
+      skills: [{ name: "review", path: "/skills/review", enabled: true }],
+    });
+    const claude = decodeServerProvider({ ...baseProviderSnapshot, instanceId: "claudeAgent" });
+    const previous = [codex];
+    const next = [
+      claude,
+      { ...codex, checkedAt: "2026-04-10T00:05:00.000Z", skills: [], message: "Checked" },
+    ];
+
+    const deltas = serverProviderDeltas(previous, next);
+    // Unchanged lists stay home; a provider the reader never saw travels whole.
+    expect(deltas[0]).toEqual(claude);
+    expect(deltas[1]).not.toHaveProperty("models");
+    expect(deltas[1]).not.toHaveProperty("slashCommands");
+    expect(deltas[1]).toMatchObject({ skills: [], message: "Checked" });
+
+    const codec = Schema.toCodecJson(ServerConfigProviderStatusDeltasPayload);
+    const wire = JSON.parse(JSON.stringify(Schema.encodeSync(codec)({ providers: deltas })));
+    const received = Schema.decodeUnknownSync(codec)(wire).providers;
+    // A decoding default would turn the absent slash commands into an empty list.
+    expect(received[1]).not.toHaveProperty("slashCommands");
+    expect(applyServerProviderDeltas(previous, received)).toEqual(next);
+    // Without the provider the delta builds on, its lists are unknown.
+    expect(applyServerProviderDeltas([], received)).toEqual([claude]);
   });
 });
 

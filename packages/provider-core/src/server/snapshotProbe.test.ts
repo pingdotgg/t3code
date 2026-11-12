@@ -1,8 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { ModelCapabilities } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -157,4 +159,20 @@ describe("ProviderCommandNotFoundError", () => {
       expect(error.message).not.toContain("secret-token-value");
     });
   });
+});
+
+describe("spawnAndCollect", () => {
+  // regression: #35262 - without forceKillAfter a timed-out probe whose CLI ignores
+  // SIGTERM waits for it to exit, so the caller's timeout never returns.
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "lets a timed-out probe return when the CLI ignores SIGTERM",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* spawnAndCollect(
+          "sh",
+          ChildProcess.make("sh", ["-c", 'trap "" TERM; sleep 30']),
+        ).pipe(Effect.timeoutOption("200 millis"));
+        expect(Option.isNone(result)).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
