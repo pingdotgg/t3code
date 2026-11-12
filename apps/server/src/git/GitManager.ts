@@ -1172,14 +1172,13 @@ export const make = Effect.gen(function* () {
     normalizeStatusCacheKey(cwd).pipe(
       Effect.flatMap((cacheKey) => Cache.invalidate(localStatusResultCache, cacheKey)),
     );
-  const prLookupEpochByCwd = new Map<string, number>();
-  const prLookupEpoch = (cwd: string) => prLookupEpochByCwd.get(cwd) ?? 0;
-  const bumpPrLookupEpoch = (cwd: string) =>
-    normalizeStatusCacheKey(cwd).pipe(
-      Effect.map((cacheKey) => {
-        prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
-      }),
-    );
+  // invalidateStatus bumps the checkout's generation and only its checked-out branch's epoch,
+  // so idle branches keep their cached answers until they change.
+  const statusGenerationByCwd = new Map<string, number>();
+  const statusGeneration = (cwd: string) => statusGenerationByCwd.get(cwd) ?? 0;
+  const prLookupEpochByBranchKey = new Map<string, number>();
+  const prLookupEpoch = (cwd: string, branch: string) =>
+    prLookupEpochByBranchKey.get(`${cwd}\u0000${branch}`) ?? 0;
   const prLookupCacheKey = (
     cwd: string,
     details: {
@@ -1197,7 +1196,7 @@ export const make = Effect.gen(function* () {
       details.defaultBranch ?? "",
       details.localBranchExists === false ? "0" : "1",
       details.remoteName ?? "",
-      String(prLookupEpoch(cwd)),
+      String(prLookupEpoch(cwd, details.branch)),
     ].join("\u0000");
   const prLookupFailureStreakByKey = new Map<string, number>();
   const nextPrLookupFailureTtl = (key: string) => {
@@ -2504,12 +2503,15 @@ export const make = Effect.gen(function* () {
     ) {
       return remembered.value;
     }
-    // invalidateStatus bumps the epoch. A read that started before a T3 git
+    // invalidateStatus bumps the generation. A read that started before a T3 git
     // action, or before a newer read finished, must not replace their state.
-    const epoch = prLookupEpoch(cwd);
+    const generation = statusGeneration(cwd);
     const value = yield* read;
     const latest = prLookupGitStateByKey.get(entryKey);
-    if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
+    if (
+      statusGeneration(cwd) !== generation ||
+      (latest !== undefined && latest.readAtMs > readAtMs)
+    ) {
       return value;
     }
     prLookupGitStateByKey.delete(entryKey);
@@ -2524,15 +2526,22 @@ export const make = Effect.gen(function* () {
     string,
     { readonly url: string; readonly fingerprint: string; readonly confirmedAtMs: number }
   >();
-  const forgetPrLookupGitState = (cwd: string) =>
-    normalizeStatusCacheKey(cwd).pipe(
-      Effect.map((cacheCwd) => {
-        const prefix = `${cacheCwd}\u0000`;
-        for (const key of prLookupGitStateByKey.keys()) {
-          if (key.startsWith(prefix)) prLookupGitStateByKey.delete(key);
-        }
-      }),
-    );
+  // Keeps other branches' own refs and config: a status refresh or T3 git action there
+  // changes only the checked-out branch, and the git-state TTL covers outside changes.
+  const forgetPrLookupGitState = (cacheCwd: string, headBranch: string) => {
+    const prefix = `${cacheCwd}\u0000`;
+    for (const entryKey of prLookupGitStateByKey.keys()) {
+      if (!entryKey.startsWith(prefix)) continue;
+      const [kind = "", detail = ""] = entryKey.slice(prefix.length).split("\u0000");
+      const branch =
+        kind === "branchRef" || kind === "trackingRemotes"
+          ? detail
+          : kind === "config" && detail.startsWith("branch.") && detail.endsWith(".remote")
+            ? detail.slice("branch.".length, -".remote".length)
+            : null;
+      if (branch === null || branch === headBranch) prLookupGitStateByKey.delete(entryKey);
+    }
+  };
   const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
     function* (
       cwd: string,
@@ -2838,8 +2847,35 @@ export const make = Effect.gen(function* () {
     function* (cwd) {
       yield* invalidateLocalStatusResultCache(cwd);
       yield* invalidateRemoteStatusResultCache(cwd);
-      yield* bumpPrLookupEpoch(cwd);
-      yield* forgetPrLookupGitState(cwd);
+      const cacheCwd = yield* normalizeStatusCacheKey(cwd);
+      statusGenerationByCwd.set(cacheCwd, statusGeneration(cacheCwd) + 1);
+      const headBranch = yield* gitCore
+        .execute({
+          operation: "GitManager.invalidateStatus.headBranch",
+          cwd: cacheCwd,
+          args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
+          Effect.orElseSucceed(() => ""),
+        );
+      if (headBranch.length > 0) {
+        prLookupEpochByBranchKey.set(
+          `${cacheCwd}\u0000${headBranch}`,
+          prLookupEpoch(cacheCwd, headBranch) + 1,
+        );
+      }
+      forgetPrLookupGitState(cacheCwd, headBranch);
+      // Open answers expire within a minute anyway; dropping them lets a merge settle at once.
+      const openKeys = [...(yield* Cache.entries(prLookupCache))]
+        .filter(
+          ([key, { latest }]) => latest?.state === "open" && key.startsWith(`${cacheCwd}\u0000`),
+        )
+        .map(([key]) => key);
+      yield* Effect.forEach(openKeys, (key) => Cache.invalidate(prLookupCache, key), {
+        discard: true,
+      });
     },
   );
 
