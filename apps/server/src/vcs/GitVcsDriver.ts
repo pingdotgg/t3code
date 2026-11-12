@@ -1640,6 +1640,25 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         );
       },
     ),
+
+    deleteCheckpointRefsUnder: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefsUnder")(
+      function* (input) {
+        if (input.prefixes.length === 0) return;
+        const listed = yield* execute({
+          operation: "GitVcsDriver.checkpoints.deleteCheckpointRefsUnder",
+          cwd: input.cwd,
+          args: ["for-each-ref", "--format=%(refname)", ...input.prefixes],
+        });
+        const refs = listed.stdout.split("\n").filter((ref) => ref.length > 0);
+        if (refs.length === 0) return;
+        yield* execute({
+          operation: "GitVcsDriver.checkpoints.deleteCheckpointRefsUnder",
+          cwd: input.cwd,
+          args: ["update-ref", "--stdin"],
+          stdin: refs.map((ref) => `delete ${ref}\n`).join(""),
+        });
+      },
+    ),
   };
 
   return {

@@ -13,6 +13,7 @@ import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as CheckpointRollback from "./CheckpointRollbackService.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -92,6 +93,7 @@ it.effect.each([
         Layer.mock(ProviderSessions.ProviderSessionManagerV2)({}),
         Layer.mock(ProviderTurnControl.ProviderTurnControlServiceV2)({}),
         Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),
+        Layer.mock(CheckpointService.CheckpointServiceV2)({}),
         Layer.mock(RuntimeRequests.RuntimeRequestServiceV2)({}),
         Layer.mock(ThreadTitles.ThreadTitleRegenerationService)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({

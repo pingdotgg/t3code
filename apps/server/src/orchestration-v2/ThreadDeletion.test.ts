@@ -182,6 +182,7 @@ it.effect("cancels active work without reviving a run while disposing delegated 
     const plan = yield* planThreadDeletion({
       command,
       projection,
+      workspaceRoot: "/workspace",
       attachmentIds: projection.messages.flatMap((message) =>
         message.attachments.map((attachment) => attachment.id),
       ),
@@ -269,6 +270,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
     const plan = yield* planThreadDeletion({
       command,
       projection,
+      workspaceRoot: "/workspace",
       attachmentIds: projection.messages.flatMap((message) =>
         message.attachments.map((attachment) => attachment.id),
       ),
@@ -299,6 +301,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "scheduled-tasks.cleanup" },
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
+        { type: "checkpoint-refs.cleanup", scopes: [], legacyCwd: "/workspace/feature" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
       ],
     );

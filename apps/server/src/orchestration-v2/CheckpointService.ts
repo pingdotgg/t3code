@@ -24,6 +24,8 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
+/** Where the pre-orchestration-v2 server kept refs, keyed by thread id. */
+const LEGACY_CHECKPOINT_REFS_PREFIX = "refs/t3/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
@@ -91,12 +93,26 @@ export class CheckpointDeleteStaleRefsError extends Schema.TaggedError<Checkpoin
   }
 }
 
+export class CheckpointDeleteThreadRefsError extends Schema.TaggedError<CheckpointDeleteThreadRefsError>()(
+  "CheckpointDeleteThreadRefsError",
+  {
+    threadId: ThreadId,
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to delete checkpoint refs for thread ${this.threadId} in ${this.cwd}.`;
+  }
+}
+
 export const CheckpointServiceV2Error = Schema.Union([
   CheckpointRootScopePrepareError,
   CheckpointBaselineCaptureError,
   CheckpointCaptureError,
   CheckpointRestoreError,
   CheckpointDeleteStaleRefsError,
+  CheckpointDeleteThreadRefsError,
 ]);
 export type CheckpointServiceV2Error = typeof CheckpointServiceV2Error.Type;
 
@@ -141,6 +157,12 @@ export interface CheckpointServiceV2Shape {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
+  /** Deletes every checkpoint ref a deleted thread created, including pre-v2 refs in `legacyCwd`. */
+  readonly deleteThreadRefs: (input: {
+    readonly threadId: ThreadId;
+    readonly scopes: ReadonlyArray<{ readonly id: CheckpointScopeId; readonly cwd: string }>;
+    readonly legacyCwd: string | null;
+  }) => Effect.Effect<void, CheckpointServiceV2Error>;
 }
 
 export class CheckpointServiceV2 extends Context.Service<
@@ -148,16 +170,21 @@ export class CheckpointServiceV2 extends Context.Service<
   CheckpointServiceV2Shape
 >()("t3/orchestration-v2/CheckpointService/CheckpointServiceV2") {}
 
+const checkpointRefsPrefixForScope = Effect.fn("checkpointRefsPrefixForScope")(function* (
+  scopeId: CheckpointScopeId,
+) {
+  const crypto = yield* Digest.Digest;
+  const digest = yield* crypto
+    .digest(Digest.sha256, new TextEncoder().encode(scopeId))
+    .pipe(Effect.orDie);
+  const scopeKey = Hex.encode(digest).slice(0, 32);
+  return `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}`;
+});
+
 export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdinal")(
   function* (input: { readonly scopeId: CheckpointScopeId; readonly ordinalWithinScope: number }) {
-    const crypto = yield* Digest.Digest;
-    const digest = yield* crypto
-      .digest(Digest.sha256, new TextEncoder().encode(input.scopeId))
-      .pipe(Effect.orDie);
-    const scopeKey = Hex.encode(digest).slice(0, 32);
-    return CheckpointRef.make(
-      `${CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(scopeKey)}/ordinal/${input.ordinalWithinScope}`,
-    );
+    const prefix = yield* checkpointRefsPrefixForScope(input.scopeId);
+    return CheckpointRef.make(`${prefix}/ordinal/${input.ordinalWithinScope}`);
   },
 );
 
@@ -574,6 +601,46 @@ export const layer: Layer.Layer<
         ),
       );
 
+    const deleteThreadRefs: CheckpointServiceV2Shape["deleteThreadRefs"] = Effect.fn(
+      "CheckpointServiceV2.deleteThreadRefs",
+    )(function* (input) {
+      const prefixesByCwd = new Map<string, Array<string>>();
+      const add = (cwd: string, prefix: string) =>
+        prefixesByCwd.set(cwd, [...(prefixesByCwd.get(cwd) ?? []), prefix]);
+      for (const scope of input.scopes) {
+        add(
+          scope.cwd,
+          yield* checkpointRefsPrefixForScope(scope.id).pipe(
+            Effect.provideService(Digest.Digest, crypto),
+          ),
+        );
+      }
+      if (input.legacyCwd !== null) {
+        add(
+          input.legacyCwd,
+          `${LEGACY_CHECKPOINT_REFS_PREFIX}/${Base64Url.encode(input.threadId)}`,
+        );
+      }
+      yield* Effect.forEach(
+        prefixesByCwd,
+        ([cwd, prefixes]) =>
+          withWorkspaceLock(
+            cwd,
+            Effect.gen(function* () {
+              // A removed worktree took its refs with it.
+              if (!(yield* checkpointStore.isGitRepository(cwd))) return;
+              yield* checkpointStore.deleteCheckpointRefsUnder({ cwd, prefixes });
+            }),
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new CheckpointDeleteThreadRefsError({ threadId: input.threadId, cwd, cause }),
+            ),
+          ),
+        { discard: true },
+      );
+    });
+
     return CheckpointServiceV2.of({
       prepareRootRunScope: (input) =>
         makeRootRunScope({ ...input, idAllocator }).pipe(
@@ -591,6 +658,7 @@ export const layer: Layer.Layer<
       capture,
       restore,
       deleteStaleRefs,
+      deleteThreadRefs,
     } satisfies CheckpointServiceV2Shape);
   }),
 );

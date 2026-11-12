@@ -48,6 +48,12 @@ export interface VcsDeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
+export interface VcsDeleteCheckpointRefsUnderInput {
+  readonly cwd: string;
+  /** Ref namespaces such as `refs/t3/checkpoints/<id>`; every ref below them is deleted. */
+  readonly prefixes: ReadonlyArray<string>;
+}
+
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
@@ -62,6 +68,9 @@ export interface VcsCheckpointOps {
   ) => Effect.Effect<ReadonlySet<string> | null, VcsError>;
   readonly deleteCheckpointRefs: (
     input: VcsDeleteCheckpointRefsInput,
+  ) => Effect.Effect<void, VcsError>;
+  readonly deleteCheckpointRefsUnder: (
+    input: VcsDeleteCheckpointRefsUnderInput,
   ) => Effect.Effect<void, VcsError>;
 }
 

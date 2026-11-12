@@ -20,6 +20,7 @@ import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
@@ -76,6 +77,7 @@ export const layerExecutor: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunFinalizationService.RunFinalizationService
   | CheckpointRollbackService.CheckpointRollbackServiceV2
+  | CheckpointService.CheckpointServiceV2
   | ProviderTurnControlService.ProviderTurnControlServiceV2
   | ProviderTurnStartService.ProviderTurnStartServiceV2
   | RuntimeRequestService.RuntimeRequestServiceV2
@@ -88,6 +90,7 @@ export const layerExecutor: Layer.Layer<
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
     const providerTurnStart = yield* ProviderTurnStartService.ProviderTurnStartServiceV2;
@@ -581,6 +584,23 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "checkpoint-refs.cleanup":
+            return checkpoints
+              .deleteThreadRefs({
+                threadId: effect.threadId,
+                scopes: effect.request.scopes,
+                legacyCwd: effect.request.legacyCwd,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "attachment.cleanup":
             return resourceCleanup.cleanupAttachments(effect.request.attachmentIds).pipe(
               Effect.mapError(

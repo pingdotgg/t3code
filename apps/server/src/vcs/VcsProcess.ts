@@ -78,6 +78,7 @@ export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureChe
 const gitMetricOperations = new Set([
   CHECKPOINT_CAPTURE_OPERATION,
   "GitVcsDriver.checkpoints.deleteCheckpointRefs",
+  "GitVcsDriver.checkpoints.deleteCheckpointRefsUnder",
   "GitVcsDriver.checkpoints.diffCheckpoints",
   "GitVcsDriver.checkpoints.hasHeadCommit",
   "GitVcsDriver.checkpoints.listAuthoredPaths",

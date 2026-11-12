@@ -541,6 +541,7 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(
         layerRunFinalizationServiceProvided,
         layerCheckpointRollbackServiceProvided,
+        layerCheckpointServiceProvided,
         layerProviderSessionManagerProvided,
         layerProviderTurnControlServiceProvided,
         layerProviderTurnStartServiceProvided,

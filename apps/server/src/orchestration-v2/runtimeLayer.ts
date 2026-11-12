@@ -334,6 +334,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.mergeAll(
       layerRunFinalizationServiceProvided,
       layerCheckpointRollbackServiceProvided,
+      layerCheckpointServiceProvided,
       layerProviderSessionManagerProvided,
       layerProviderTurnControlServiceProvided,
       layerProviderTurnStartServiceProvided,
