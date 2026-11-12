@@ -669,6 +669,22 @@ it.effect("reads the project's own repository when the server inherited GIT_DIR"
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reads config for a repository that does not exist yet without the enclosing one", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const cwd = yield* makeTmpDir();
+    yield* initRepoWithCommit(cwd);
+    yield* git(cwd, ["config", "filter.lfs.process", "git-lfs filter-process"]);
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const gitDir = path.join(cwd, "clone", ".git");
+    assert.equal(
+      yield* driver.readConfigValue(cwd, "filter.lfs.process"),
+      "git-lfs filter-process",
+    );
+    assert.isNull(yield* driver.readConfigValue(cwd, "filter.lfs.process", { gitDir }));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["on a branch", "detached", "unborn"] as const)(
   "reads only the repository root for review requests that ignore the branch when %s",
   (state) =>

@@ -88,6 +88,8 @@ const CLONE_ENV = {
 // What `git lfs install` writes. Other setups chose behavior that `git lfs pull` would not honor.
 const STOCK_LFS_FILTER = "git-lfs filter-process";
 const LFS_PROGRESS_INTERVAL_MS = 1_000;
+const isStockLfs = (filter: string | null, toleratesErrors: string | null) =>
+  filter === STOCK_LFS_FILTER && toleratesErrors === null;
 
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
   return Effect.mapError((cause: unknown) =>
@@ -420,15 +422,21 @@ export const make = Effect.gen(function* () {
   // The LFS filter stays silent until each whole file lands, so a healthy download looks stalled.
   // `git lfs pull` reports bytes as they arrive, which keeps stall detection honest.
   const canDeferLfs = Effect.fn("SourceControlRepositoryService.canDeferLfs")(
-    function* (cwd: string) {
+    function* (destinationPath: string) {
       const lfsSkipEnv = yield* Config.String("GIT_LFS_SKIP_SMUDGE").pipe(
         Config.orElse(() => Config.String("GIT_LFS_SKIP_DOWNLOAD_ERRORS")),
         Config.withDefault(""),
       );
       if (lfsSkipEnv) return false;
-      const filter = yield* git.readConfigValue(cwd, "filter.lfs.process");
-      const toleratesErrors = yield* git.readConfigValue(cwd, "lfs.skipdownloaderrors");
-      return filter === STOCK_LFS_FILTER && toleratesErrors === null;
+      // The checkout's own git dir does not exist yet, so an enclosing repository's config is not read.
+      const readUserConfig = (key: string) =>
+        git.readConfigValue(path.dirname(destinationPath), key, {
+          gitDir: path.join(destinationPath, ".git"),
+        });
+      return isStockLfs(
+        yield* readUserConfig("filter.lfs.process"),
+        yield* readUserConfig("lfs.skipdownloaderrors"),
+      );
     },
     Effect.orElseSucceed(() => false),
   );
@@ -438,9 +446,6 @@ export const make = Effect.gen(function* () {
     destinationPath: string,
     options?: SourceControlCloneOptions,
   ) {
-    // The pre-clone read can miss this checkout's config, which may not want LFS content at all.
-    const filter = yield* git.readConfigValue(destinationPath, "filter.lfs.process");
-    if (filter === null || filter.includes("--skip")) return;
     const lfsFiles = yield* git
       .execute({
         operation: "SourceControlRepositoryService.listLfsFiles",
@@ -456,6 +461,28 @@ export const make = Effect.gen(function* () {
         ),
       );
     if (lfsFiles.stdout.trim().length === 0) return;
+    // Config that only applies inside the checkout (an includeIf, say) is visible only now.
+    const deferrable = isStockLfs(
+      yield* git.readConfigValue(destinationPath, "filter.lfs.process"),
+      yield* git.readConfigValue(destinationPath, "lfs.skipdownloaderrors"),
+    );
+    if (!deferrable) {
+      // Redo the checkout through git's own filters, exactly as a plain clone would have.
+      const restore = (args: ReadonlyArray<string>) =>
+        runCloneCommand(
+          input,
+          {
+            operation: "SourceControlRepositoryService.restoreLfsCheckout",
+            cwd: destinationPath,
+            args,
+            env: CLONE_ENV,
+          },
+          options,
+        );
+      yield* restore(["read-tree", "--empty"]);
+      yield* restore(["reset", "--hard", "--quiet"]);
+      return;
+    }
     const onProgress = options?.onProgress;
     let lastReportedAt = Number.NEGATIVE_INFINITY;
     yield* runCloneCommand(
@@ -485,7 +512,7 @@ export const make = Effect.gen(function* () {
   ) {
     const prepared = yield* prepareClone(input);
     const httpsUrl = httpsFallbackUrl(input, prepared);
-    const deferLfs = yield* canDeferLfs(path.dirname(prepared.destinationPath));
+    const deferLfs = yield* canDeferLfs(prepared.destinationPath);
     const remoteUrl = yield* runClone(
       input,
       prepared.destinationPath,

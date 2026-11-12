@@ -303,44 +303,54 @@ const STOCK_LFS_CONFIG = { "filter.lfs.process": "git-lfs filter-process" };
 const lfsEnv = (skipSmudge?: string) =>
   ConfigProvider.fromEnv({ env: skipSmudge ? { GIT_LFS_SKIP_SMUDGE: skipSmudge } : {} });
 
-it.effect.each([
-  ["tracks LFS files", STOCK_LFS_CONFIG, "lfs", undefined, true, undefined],
-  ["tracks no LFS files", STOCK_LFS_CONFIG, "plain", undefined, false, undefined],
+type LfsCloneCase = {
+  readonly userConfig: Record<string, string>;
+  readonly contents?: "lfs" | "plain";
+  readonly skipSmudge?: string;
+  readonly enclosingConfig?: Record<string, string>;
+  readonly checkoutConfig?: Record<string, string>;
+  readonly defers: boolean;
+  readonly after?: "pull" | "restore";
+};
+
+it.effect.each<readonly [string, LfsCloneCase]>([
+  ["tracks LFS files", { userConfig: STOCK_LFS_CONFIG, defers: true, after: "pull" }],
+  ["tracks no LFS files", { userConfig: STOCK_LFS_CONFIG, contents: "plain", defers: true }],
   [
     "skips LFS content through the filter",
-    { "filter.lfs.process": "git-lfs filter-process --skip" },
-    "lfs",
-    undefined,
-    false,
-    undefined,
+    { userConfig: { "filter.lfs.process": "git-lfs filter-process --skip" }, defers: false },
   ],
   [
     "tolerates LFS download errors",
-    { ...STOCK_LFS_CONFIG, "lfs.skipdownloaderrors": "true" },
-    "lfs",
-    undefined,
-    false,
-    undefined,
-  ],
-  ["skips LFS content through the environment", STOCK_LFS_CONFIG, "lfs", "1", false, undefined],
-  ["sits inside a repo that alone enables LFS", STOCK_LFS_CONFIG, "lfs", undefined, false, {}],
-  [
-    "sits inside a repo that overrides a global LFS skip",
-    STOCK_LFS_CONFIG,
-    "lfs",
-    undefined,
-    false,
-    { "filter.lfs.process": "git-lfs filter-process --skip" },
+    { userConfig: { ...STOCK_LFS_CONFIG, "lfs.skipdownloaderrors": "true" }, defers: false },
   ],
   [
-    "uses a differently spelled LFS filter",
-    STOCK_LFS_CONFIG,
-    "lfs",
-    undefined,
-    true,
-    { "filter.lfs.process": "git lfs filter-process" },
+    "skips LFS content through the environment",
+    { userConfig: STOCK_LFS_CONFIG, skipSmudge: "1", defers: false },
   ],
-] as const)("LFS pull after a clone that %s", ([, config, contents, skipSmudge, pulls, checkout]) =>
+  [
+    "sits inside a repo that alone enables LFS",
+    { userConfig: {}, enclosingConfig: STOCK_LFS_CONFIG, defers: false },
+  ],
+  [
+    "tolerates LFS download errors only inside the checkout",
+    {
+      userConfig: STOCK_LFS_CONFIG,
+      checkoutConfig: { ...STOCK_LFS_CONFIG, "lfs.skipdownloaderrors": "true" },
+      defers: true,
+      after: "restore",
+    },
+  ],
+  [
+    "smudges LFS content without a process filter inside the checkout",
+    {
+      userConfig: STOCK_LFS_CONFIG,
+      checkoutConfig: { "filter.lfs.smudge": "git-lfs smudge -- %f" },
+      defers: true,
+      after: "restore",
+    },
+  ],
+])("LFS download after a clone that %s", ([, testCase]) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -348,29 +358,34 @@ it.effect.each([
     const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-lfs-" });
     const source = path.join(parent, "source");
     const destinationPath = path.join(parent, "checkout");
-    const runInSource = (...args: ReadonlyArray<string>) =>
-      git.execute({ operation: "test.source", cwd: source, args });
+    const runIn = (cwd: string, ...args: ReadonlyArray<string>) =>
+      git.execute({ operation: "test.setup", cwd, args });
     yield* fs.makeDirectory(source);
-    yield* runInSource("init");
-    if (contents === "lfs") {
+    yield* runIn(source, "init");
+    if (testCase.contents !== "plain") {
       yield* fs.writeFileString(path.join(source, ".gitattributes"), "*.bin filter=lfs\n");
     }
     yield* fs.writeFileString(path.join(source, "model.bin"), "weights\n");
-    yield* runInSource("add", "-A");
-    yield* runInSource("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init");
+    yield* runIn(source, "add", "-A");
+    yield* runIn(source, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init");
 
     const commands: Array<GitVcsDriver.ExecuteGitInput> = [];
     yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
       yield* service.cloneRepository({ remoteUrl: source, destinationPath });
     }).pipe(
-      Effect.provideService(ConfigProvider.ConfigProvider, lfsEnv(skipSmudge)),
+      Effect.provideService(ConfigProvider.ConfigProvider, lfsEnv(testCase.skipSmudge)),
       Effect.provide(
         layer({
           git: {
-            readConfigValue: (cwd, key) => {
-              const seen = cwd === destinationPath ? (checkout ?? config) : config;
-              return Effect.succeed((seen as Record<string, string>)[key] ?? null);
+            readConfigValue: (cwd, key, options) => {
+              const seen =
+                cwd === destinationPath
+                  ? (testCase.checkoutConfig ?? testCase.userConfig)
+                  : options?.gitDir
+                    ? testCase.userConfig
+                    : { ...testCase.userConfig, ...testCase.enclosingConfig };
+              return Effect.succeed(seen[key] ?? null);
             },
             // Only the pull is faked: machines running this suite need not have git-lfs.
             execute: (input) => {
@@ -382,15 +397,22 @@ it.effect.each([
       ),
     );
 
-    assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
-    const clone = commands.find((command) => command.args[0] === "clone");
     assert.strictEqual(
-      clone?.env?.GIT_LFS_SKIP_SMUDGE,
-      config === STOCK_LFS_CONFIG && skipSmudge === undefined ? "1" : undefined,
+      yield* fs.readFileString(path.join(destinationPath, "model.bin")),
+      "weights\n",
     );
-    const pull = commands.find((command) => command.args[0] === "lfs");
-    assert.deepStrictEqual(pull?.args, pulls ? ["lfs", "pull"] : undefined);
-    assert.strictEqual(pull?.cwd, pulls ? destinationPath : undefined);
+    const clone = commands.find((command) => command.args[0] === "clone");
+    assert.strictEqual(clone?.env?.GIT_LFS_SKIP_SMUDGE, testCase.defers ? "1" : undefined);
+    const after = commands.find(
+      (command) => command.args[0] === "lfs" || command.args[0] === "reset",
+    );
+    assert.deepStrictEqual(
+      after?.args,
+      { pull: ["lfs", "pull"], restore: ["reset", "--hard", "--quiet"], none: undefined }[
+        testCase.after ?? "none"
+      ],
+    );
+    if (after) assert.strictEqual(after.cwd, destinationPath);
   }).pipe(
     Effect.provide(
       GitVcsDriver.layer.pipe(
