@@ -1059,6 +1059,174 @@ it.effect("a compacted thread reads every run, and run records only for its rece
       yield* read([runId(3)], messageId(6)),
       expected([2, 3, 4, 6, 11, 12, 13, 14, 15]),
     );
+
+    // A command also skips the node and the provider thread of each settled task. Tasks ended on
+    // both sides of the compaction; one ran in the provider thread the thread's own runs use.
+    const addProviderThread = (id: ProviderThreadId, appThreadId: ThreadId) =>
+      store.apply({
+        id: EventId.make(`event:compacted:${id}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: created,
+        payload: {
+          id,
+          appThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          createdAt: created,
+          updatedAt: created,
+        },
+      });
+    yield* addProviderThread(providerThreadId, threadId);
+    for (const [name, ordinal, delivery] of [
+      ["old-delivered", 5, "delivered"],
+      ["old-pending", 5, "pending"],
+      ["old-own-thread", 5, "delivered"],
+      ["recent-delivered", 12, "delivered"],
+      ["recent-pending", 12, "pending"],
+    ] as const) {
+      const id = NodeId.make(`node:compacted:task:${name}`);
+      const taskProviderThreadId =
+        name === "old-own-thread"
+          ? providerThreadId
+          : ProviderThreadId.make(`provider-thread:compacted:task:${name}`);
+      if (taskProviderThreadId !== providerThreadId) {
+        yield* addProviderThread(
+          taskProviderThreadId,
+          ThreadId.make(`thread:compacted:child:${name}`),
+        );
+      }
+      const task = {
+        id,
+        threadId,
+        runId: runId(ordinal),
+        parentNodeId: rootNodeId(ordinal),
+        status: "completed",
+        startedAt: at(ordinal),
+        completedAt: at(ordinal),
+      } as const;
+      yield* store.apply({
+        id: EventId.make(`event:compacted:task:${name}`),
+        type: "subagent.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: id,
+        driver,
+        providerInstanceId,
+        occurredAt: at(ordinal),
+        payload: {
+          ...task,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: taskProviderThreadId,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Do the work",
+          title: name,
+          model: null,
+          completionDelivery: { state: delivery, observedByRunId: null },
+          result: null,
+          updatedAt: at(ordinal),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:task-node:${name}`),
+        type: "node.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: id,
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          ...task,
+          rootNodeId: rootNodeId(ordinal),
+          kind: "subagent",
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+        },
+      });
+    }
+    const names = (ids: ReadonlyArray<string>) => ids.map((id) => id.split(":").at(-1)).toSorted();
+    const readWithTasks = (filter: ProjectionStore.ProjectionRecordFilter) =>
+      store
+        .getThreadRecords(
+          threadId,
+          [
+            "runs",
+            "attempts",
+            "nodes",
+            "providerThreads",
+            "providerTurns",
+            "messages",
+            "turnItems",
+          ],
+          { messageRoles: ["user"], omitSettledLeafNodes: true, ...filter },
+        )
+        .pipe(
+          Effect.map((records) => ({
+            runs: names(records.runs.map((run) => run.id)),
+            turnItems: names(records.turnItems.map((row) => row.id)),
+            attempts: names(records.attempts.map((attempt) => attempt.id)),
+            rootNodes: names(
+              records.nodes.flatMap((node) => (node.kind === "root_turn" ? [node.id] : [])),
+            ),
+            taskNodes: names(
+              records.nodes.flatMap((node) => (node.kind === "subagent" ? [node.id] : [])),
+            ),
+            providerThreads: names(records.providerThreads.map((thread) => thread.id)),
+            providerTurns: names(records.providerTurns.map((turn) => turn.id)),
+            messages: names(records.messages.map((message) => message.id)),
+          })),
+        );
+    const window = {
+      sinceLastCompaction: { keepRunIds: [runId(3)], keepMessageId: messageId(6) },
+    };
+    const windowed = yield* readWithTasks(window);
+    const unsettled = yield* readWithTasks({ omitSettledSubagentRecords: true });
+    const both = yield* readWithTasks({ ...window, omitSettledSubagentRecords: true });
+    // Each filter alone keeps records the other one drops.
+    assert.deepEqual(windowed.taskNodes, ["recent-delivered", "recent-pending"]);
+    assert.lengthOf(windowed.providerThreads, 5);
+    assert.deepEqual(unsettled.taskNodes, ["old-pending", "recent-pending"]);
+    assert.deepEqual(unsettled.providerThreads, ["compacted", "old-pending", "recent-pending"]);
+    assert.lengthOf(unsettled.rootNodes, all.length);
+    assert.lengthOf(unsettled.runs, 15);
+    // Together: every run, every turn item and the provider thread the runs use stay, and the
+    // windowed records are read for the recent and named runs, less each settled task's node.
+    const recentRuns = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
+    assert.deepEqual(both, {
+      ...unsettled,
+      attempts: recentRuns,
+      rootNodes: recentRuns,
+      taskNodes: ["recent-pending"],
+      providerTurns: recentRuns,
+      messages: recentRuns,
+    });
+    const keptUnsettled = new Map(Object.entries(unsettled));
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(windowed).map(([key, kept]) => [
+          key,
+          kept.filter((name) => keptUnsettled.get(key)?.includes(name)),
+        ]),
+      ),
+      both,
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
