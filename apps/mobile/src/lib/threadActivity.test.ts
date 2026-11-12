@@ -1336,6 +1336,54 @@ describe("buildThreadFeed", () => {
       ),
     ).toEqual([]);
   });
+  it("keeps a failed tool call after the final answer outside the settled fold", () => {
+    const at = (second: number) => `2026-06-20T00:00:${String(second).padStart(2, "0")}.000Z`;
+    const ran = (name: string, second: number, status: "completed" | "failed") => ({
+      ...command(at(second)),
+      id: TurnItemId.make(name),
+      status,
+      ...(status === "failed" ? { exitCode: 1 } : {}),
+    });
+    const final = { ...assistantMessage(at(3)), phase: "final_answer" as const };
+    const rows = (
+      late: OrchestrationV2TurnItem,
+      toolCallVisibility: "showAll" | "hideSuccessful",
+    ) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed(
+          [userMessage(at(1)), ran("before", 2, "completed"), final, late].map((item, index) =>
+            projected(item, index),
+          ),
+        ),
+        { runId, status: "completed", startedAt: at(1), completedAt: at(5) },
+        new Set(),
+        new Set(),
+        null,
+        false,
+        undefined,
+        { toolCallVisibility, revealedMessageId: null },
+      ).map((row) =>
+        row.type === "activity-group"
+          ? row.activities.map((activity) => activity.projectedItem.item.id).join("+")
+          : row.type === "run-fold"
+            ? "fold"
+            : row.type,
+      );
+
+    expect(rows(ran("late", 4, "completed"), "showAll")).toEqual(["message", "fold", "message"]);
+    expect(rows(ran("late", 4, "failed"), "showAll")).toEqual([
+      "message",
+      "fold",
+      "message",
+      "late",
+    ]);
+    expect(rows(ran("late", 4, "failed"), "hideSuccessful")).toEqual([
+      "message",
+      "message",
+      "late",
+    ]);
+  });
+
   it("hides tool calls or everything but the final answer", () => {
     const at = (second: number) => `2026-06-20T00:00:${String(second).padStart(2, "0")}.000Z`;
     const say = (name: string, second: number, user = false, steer = false) => ({
