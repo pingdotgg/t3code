@@ -668,9 +668,7 @@ describe("pools", () => {
       usageLimits: {
         checkedAt: "2026-09-03T11:30:00.000Z",
         windows: [{ ...window, usedPercent: 90 }],
-        ...(workspaceId
-          ? { resetCredits: { availableCount: 1, nextCreditId: "grant-hub" } }
-          : {}),
+        ...(workspaceId ? { resetCredits: { availableCount: 1, nextCreditId: "grant-hub" } } : {}),
       },
     });
     const rows = (account: ReturnType<typeof hubAccount>) =>
@@ -700,7 +698,12 @@ describe("pools", () => {
       [
         "env-a:codex",
         90,
-        { sourceId: source.id, accountId: "claude.json", creditId: "grant-hub", workspaceId: "org-a" },
+        {
+          sourceId: source.id,
+          accountId: "claude.json",
+          creditId: "grant-hub",
+          workspaceId: "org-a",
+        },
       ],
     ]);
   });

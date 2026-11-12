@@ -828,11 +828,16 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             }
             if (request.url.endsWith("/reset_rate_limits")) {
               const body =
-                request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+                request.body._tag === "Uint8Array"
+                  ? new TextDecoder().decode(request.body.body)
+                  : "";
               claims.push({ url: request.url, requestId: decodeClaimRequest(body).request_id });
               if (claims.length === 1) yield* Deferred.succeed(posted, undefined);
               const status = claims.length === 1 ? yield* Deferred.await(answer) : 200;
-              return HttpClientResponse.fromWeb(request, Response.json({ result: "reset" }, { status }));
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({ result: "reset" }, { status }),
+              );
             }
             return HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }));
           }),

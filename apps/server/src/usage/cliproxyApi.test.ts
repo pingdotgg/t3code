@@ -67,9 +67,7 @@ function fixture(
       project_id?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
-    upstream?: (
-      request: RequestBody,
-    ) => Upstream | Effect.Effect<Upstream, never, never>;
+    upstream?: (request: RequestBody) => Upstream | Effect.Effect<Upstream, never, never>;
     cooldownStatus?: number;
   } = {},
 ) {
@@ -547,7 +545,7 @@ describe("CLIProxyAPI built-in management API", () => {
       let organization = "org-a";
       const posted = yield* Deferred.make<void>();
       const answer = yield* Deferred.make<Upstream>();
-      const claims: Array<{ signedIn: string; url?: string; requestId: string }> = [];
+      const claims: Array<{ signedIn: string; url: string | undefined; requestId: string }> = [];
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
         upstream: (request) => {

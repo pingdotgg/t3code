@@ -66,7 +66,8 @@ const RESET_CREDIT_FAILURES = {
   loginUnreadable: "Claude could not read its login.",
   accountUnreadable: "Claude could not read its account.",
   signedOut: "Sign in to Claude again to redeem resets.",
-  accountChanged: "The Claude login changed since this reset was shown. Refresh Limits and try again.",
+  accountChanged:
+    "The Claude login changed since this reset was shown. Refresh Limits and try again.",
   rateLimited: "Claude is rate limiting resets. Try again soon.",
   coolingDown: "Claude resets are cooling down. Try again later.",
   unconfirmed:
