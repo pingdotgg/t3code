@@ -366,7 +366,13 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
   };
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
-  const withThread = (isResolved: boolean) => (
+  const comment = {
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    body: "Rename this.",
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+  };
+  const withThread = (isResolved: boolean, oldSideToo = false) => (
     <PullRequestCodeTab
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
@@ -386,16 +392,21 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
             side: "right",
             isResolved,
             isOutdated: false,
-            comments: [
-              {
-                id: "comment",
-                author: { login: "reviewer", name: null, avatarUrl: null },
-                body: "Rename this.",
-                createdAt: "2026-09-01T00:00:00Z",
-                url: null,
-              },
-            ],
+            comments: [{ id: "comment", ...comment }],
           },
+          ...(oldSideToo
+            ? [
+                {
+                  id: "old-side",
+                  path: "a.ts",
+                  line: 3,
+                  side: "left" as const,
+                  isResolved: true,
+                  isOutdated: false,
+                  comments: [{ id: "old-side-comment", ...comment }],
+                },
+              ]
+            : []),
         ],
       }}
       selectedCommitOid={null}
@@ -438,4 +449,11 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
   await screen.rerender(withThread(true));
   await expect.element(marker()).toBeVisible();
   await expect.element(card("Resolved")).not.toBeInTheDocument();
+
+  // Stacked view draws a context row once, so both sides' conversations share its marker.
+  await screen.rerender(withThread(true, true));
+  await expect
+    .element(screen.getByRole("button", { name: "Show 2 resolved conversations" }))
+    .toBeVisible();
+  await expect.element(marker()).not.toBeInTheDocument();
 });

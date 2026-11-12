@@ -62,6 +62,7 @@ import {
   canEditPullRequestComment,
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
+import { fileDiffRows } from "@t3tools/client-runtime/review-guide-tour";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
@@ -655,9 +656,26 @@ function PullRequestCodeTab({
       return created;
     };
 
-    for (const thread of threadsByPath.get(path) ?? []) {
+    const fileThreads = threadsByPath.get(path) ?? [];
+    // Stacked view draws a context row once, so its old side's conversations join the new side's.
+    const contextNewLines =
+      diffLayout !== "split" && fileThreads.some((thread) => thread.side === "left")
+        ? new Map(
+            fileDiffRows(fileDiff).flatMap((row) =>
+              row.oldLine !== null && row.newLine !== null
+                ? [[row.oldLine, row.newLine] as const]
+                : [],
+            ),
+          )
+        : null;
+    for (const thread of fileThreads) {
       if (thread.line === null || !placedThreadIds.has(thread.id)) continue;
-      groupAt(thread.side, thread.line).threads.push(thread);
+      const contextLine = thread.side === "left" ? contextNewLines?.get(thread.line) : undefined;
+      const group =
+        contextLine === undefined
+          ? groupAt(thread.side, thread.line)
+          : groupAt("right", contextLine);
+      group.threads.push(thread);
     }
     if (commit === null) {
       for (const comment of pendingComments) {
