@@ -19,6 +19,7 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -237,6 +238,9 @@ const make = Effect.gen(function* () {
     Effect.asVoid,
   );
 
+  // One publish at a time: they share a staging path, and each one checks what is served after it.
+  const publishSemaphore = yield* Semaphore.make(1);
+
   const publish = Effect.fn("EnvironmentThemeService.publish")(function* (
     themeId: string,
     file: EnvironmentThemeFile,
@@ -258,19 +262,31 @@ const make = Effect.gen(function* () {
     const destination = `${environmentThemesDir}/${themeId}${THEME_FILE_SUFFIX}`;
     // The watcher reads only .json names, so it never sees a half-written file.
     const staging = `${destination}.staging-${process.pid}`;
-    yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
-      Effect.andThen(fs.writeFileString(staging, contents)),
-      Effect.andThen(fs.rename(staging, destination)),
-      Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
-      Effect.mapError((cause) => fail("not-published", cause)),
+    const replace = (next: string) =>
+      fs.writeFileString(staging, next).pipe(
+        Effect.andThen(fs.rename(staging, destination)),
+        Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
+      );
+
+    yield* publishSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const previous = yield* fs.readFileString(destination).pipe(Effect.option);
+        yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
+          Effect.andThen(replace(contents)),
+          Effect.mapError((cause) => fail("not-published", cause)),
+        );
+        // The reader skips files past its count and size limits, so confirm this one is served.
+        const { themes } = yield* refresh;
+        if (themes.some((theme) => theme.id === themeId)) return;
+        // Put back what was there, so a rejected update does not take a working theme away.
+        yield* Option.match(previous, {
+          onNone: () => fs.remove(destination, { force: true }),
+          onSome: replace,
+        }).pipe(Effect.ignore);
+        yield* refresh;
+        return yield* fail("not-published");
+      }),
     );
-    // The reader skips files past its count and size limits, so confirm this one is served.
-    const { themes } = yield* refresh;
-    if (!themes.some((theme) => theme.id === themeId)) {
-      yield* fs.remove(destination, { force: true }).pipe(Effect.ignore);
-      yield* refresh;
-      return yield* fail("not-published");
-    }
   });
 
   return {

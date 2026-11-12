@@ -2,15 +2,14 @@ import { THEME_COLOR_ROLES } from "./themePalettes.ts";
 
 const FETCHES_BY_STRING = /image-set\(|\bsrc\(/i;
 const URL_NOT_LOCAL = /url\((?!\s*["']?\s*(?:data:|#))/i;
-// Custom properties and var() values stay unparsed until use, so escapes survive in them.
-const UNPARSED_VALUE = /var\(|env\(|attr\(/i;
 
-/** Whether one parsed declaration can load a remote file. Clients drop those declarations. */
-export function themeCssValueFetches(property: string, value: string): boolean {
-  if (FETCHES_BY_STRING.test(value)) return true;
-  const unparsed = property.startsWith("--") || UNPARSED_VALUE.test(value);
-  if (unparsed && value.includes("\\")) return true;
-  return URL_NOT_LOCAL.test(value);
+/**
+ * Whether one declaration value can load a remote file. Clients drop those declarations.
+ * A value with var() stays unparsed until use, and an escape can spell `var` or `url` in it,
+ * so every value that still has a backslash is refused.
+ */
+export function themeCssValueFetches(value: string): boolean {
+  return value.includes("\\") || FETCHES_BY_STRING.test(value) || URL_NOT_LOCAL.test(value);
 }
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */

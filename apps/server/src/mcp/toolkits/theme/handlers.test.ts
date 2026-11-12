@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { EnvironmentThemeService } from "../../../environmentTheme.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -37,6 +38,7 @@ it.effect("publishes a theme, makes it the default, and refuses an unknown theme
     const published = yield* Ref.make<ReadonlyArray<EnvironmentTheme>>([]);
     const patches = yield* Ref.make<ReadonlyArray<ServerSettingsPatch>>([]);
     const layerDependencies = Layer.mergeAll(
+      ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId,
         requestNamespace: "provider:theme",

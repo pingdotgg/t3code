@@ -10,12 +10,12 @@ describe("themeCssValueFetches", () => {
     // An unparsed value keeps its escapes, so an escaped function name hides in it.
     ["--leak", "u\\72l(https://example.com/a)", true],
     ["background-image", "im\\61ge-set(var(--leak) 1x)", true],
+    ["background-image", "v\\61r(--none, u\\72l(https://example.com/a))", true],
     ["background-image", 'url("data:image/png;base64,AA")', false],
     ["filter", 'url("#blur")', false],
     ["background-image", "var(--pattern)", false],
-    ["content", '"\\201C"', false],
     ["color", "red", false],
-  ])("%s: %s", (property, value, fetches) => {
-    expect(themeCssValueFetches(property, value)).toBe(fetches);
+  ])("%s: %s", (_property, value, fetches) => {
+    expect(themeCssValueFetches(value)).toBe(fetches);
   });
 });

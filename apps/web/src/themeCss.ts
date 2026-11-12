@@ -8,18 +8,29 @@ import { themeCssValueFetches } from "@t3tools/shared/themeCss";
 let themeSheet: CSSStyleSheet | null = null;
 let appliedCss = "";
 
-function stripFetches(rules: CSSRuleList): void {
-  for (const rule of rules) {
-    if ("style" in rule && rule.style instanceof CSSStyleDeclaration) {
-      const style = rule.style;
-      for (let index = style.length - 1; index >= 0; index--) {
-        const property = style.item(index);
-        if (themeCssValueFetches(property, style.getPropertyValue(property))) {
-          style.removeProperty(property);
-        }
+type RuleParent = Pick<CSSStyleSheet, "cssRules" | "deleteRule">;
+
+const isRuleParent = (rule: CSSRule): rule is CSSRule & RuleParent =>
+  "cssRules" in rule && "deleteRule" in rule && !(rule instanceof CSSKeyframesRule);
+
+/** Keeps only rule shapes it can check, so a new at-rule that fetches is dropped by default. */
+function stripFetches(parent: RuleParent): void {
+  for (let index = parent.cssRules.length - 1; index >= 0; index--) {
+    const rule = parent.cssRules[index];
+    if (!rule) continue;
+    const style = "style" in rule && rule.style instanceof CSSStyleDeclaration ? rule.style : null;
+    if (style) {
+      for (let item = style.length - 1; item >= 0; item--) {
+        const property = style.item(item);
+        if (themeCssValueFetches(style.getPropertyValue(property))) style.removeProperty(property);
       }
     }
-    if ("cssRules" in rule && rule.cssRules instanceof CSSRuleList) stripFetches(rule.cssRules);
+    if (isRuleParent(rule)) stripFetches(rule);
+    else if (rule instanceof CSSKeyframesRule) continue;
+    else if (rule instanceof CSSPropertyRule) {
+      // A registered property's initial value is used wherever var() reads it.
+      if (themeCssValueFetches(rule.initialValue ?? "")) parent.deleteRule(index);
+    } else if (!style && !(rule instanceof CSSLayerStatementRule)) parent.deleteRule(index);
   }
 }
 
@@ -34,5 +45,5 @@ export function applyThemeCss(css: string | undefined): void {
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeSheet];
   }
   themeSheet.replaceSync(next);
-  stripFetches(themeSheet.cssRules);
+  stripFetches(themeSheet);
 }

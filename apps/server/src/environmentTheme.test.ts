@@ -185,6 +185,36 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect("keeps the served theme when an update does not fit the size limit", () => {
+    const large = (name: string): EnvironmentThemeFile => ({
+      ...NIGHTFALL_THEME,
+      name,
+      css: `/* ${"x".repeat(19_900)} */`,
+    });
+    return withEnvironmentThemes(
+      {
+        ...Object.fromEntries(
+          Array.from({ length: 9 }, (_, index) => [
+            `aa-${index}.json`,
+            encodeThemeFile(large(`Large ${index}`)),
+          ]),
+        ),
+        "zz-look.json": encodeThemeFile(NIGHTFALL_THEME),
+      },
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const served = Effect.map(themes.current, (all) =>
+          all.find((theme) => theme.id === "zz-look"),
+        );
+        assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
+
+        const refused = yield* themes.publish("zz-look", large("Too much")).pipe(Effect.flip);
+        assert.strictEqual(refused.reason, "not-published");
+        assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
+      }),
+    );
+  });
+
   it.effect("does not charge skipped files against the total size limit", () =>
     withEnvironmentThemes(
       {
