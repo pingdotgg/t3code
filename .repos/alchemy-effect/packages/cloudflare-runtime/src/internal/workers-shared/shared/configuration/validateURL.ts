@@ -26,17 +26,11 @@ export const validateUrl = (
   const host = URL_REGEX.exec(token);
   if (host && host.groups && host.groups.host) {
     if (onlyRelative) {
-      return [
-        undefined,
-        `Only relative URLs are allowed. Skipping absolute URL ${token}.`,
-      ];
+      return [undefined, `Only relative URLs are allowed. Skipping absolute URL ${token}.`];
     }
 
     if (disallowPorts && host.groups.host.match(HOST_WITH_PORT_REGEX)) {
-      return [
-        undefined,
-        `Specifying ports is not supported. Skipping absolute URL ${token}.`,
-      ];
+      return [undefined, `Specifying ports is not supported. Skipping absolute URL ${token}.`];
     }
 
     return [
