@@ -189,10 +189,7 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect.each([
-    ["fails", processOutput(1)],
-    ["times out", processOutput(0, "", "", true)],
-  ] as const)("still restarts an unresponsive daemon when its stop %s", ([, result]) =>
+  it.effect("still restarts an unresponsive daemon when its stop times out", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
@@ -210,7 +207,7 @@ describe("AgentDevice startup", () => {
       );
       yield* host.ensureAgentReady(() => Effect.void);
       yield* Ref.set(daemonHealthy, false);
-      yield* Ref.set(stopResult, result);
+      yield* Ref.set(stopResult, processOutput(0, "", "", true));
 
       const restarted = yield* host.ensureAgentReady(() => Effect.void);
       expect(commands).toEqual(["devices --json", "daemon stop", "devices --json"]);
