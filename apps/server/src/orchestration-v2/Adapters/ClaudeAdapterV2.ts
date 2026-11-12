@@ -7304,21 +7304,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (cwd === null) return;
           const configured = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim();
           const configDir = configured ? path.resolve(cwd, configured) : undefined;
-          const read = yield* readWorkflowAgentTranscript({
-            transcriptDir: path.join(
-              configDir ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
-              "projects",
-              cwd.replace(/[^a-zA-Z0-9]/g, "-"),
-              context.nativeThreadId,
-              "subagents",
-            ),
-            agentId: taskId,
-            cursor: initialWorkflowAgentTranscriptCursor,
-            ...(configDir === undefined ? {} : { configDir }),
-          }).pipe(Effect.option);
-          const effort = Option.isSome(read)
-            ? mergeWorkflowAgentMetadata(read.value.lines).effort
-            : undefined;
+          const transcriptDir = path.join(
+            configDir ?? path.join(yield* HostProcess.HomeDirectory, ".claude"),
+            "projects",
+            cwd.replace(/[^a-zA-Z0-9]/g, "-"),
+            context.nativeThreadId,
+            "subagents",
+          );
+          let cursor = initialWorkflowAgentTranscriptCursor;
+          let effort: string | undefined;
+          while (effort === undefined) {
+            const read = yield* readWorkflowAgentTranscript({
+              transcriptDir,
+              agentId: taskId,
+              cursor,
+              ...(configDir === undefined ? {} : { configDir }),
+            }).pipe(Effect.option);
+            if (Option.isNone(read)) return;
+            effort = mergeWorkflowAgentMetadata(read.value.lines).effort;
+            if (!read.value.truncated || read.value.cursor.offset === cursor.offset) break;
+            cursor = read.value.cursor;
+          }
           if (effort === undefined) return;
           yield* sdkMessageLock.withPermits(1)(
             Effect.gen(function* () {

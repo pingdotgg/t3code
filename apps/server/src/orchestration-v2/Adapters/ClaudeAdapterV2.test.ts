@@ -18323,7 +18323,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
         yield* fileSystem.writeFileString(
           NodePath.join(subagentsDir, `agent-task-${UNSPECIFIED_TOOL_USE_ID}.jsonl`),
-          `{"type":"assistant","effort":"low","uuid":"effort-line-1","message":{"role":"assistant","id":"msg_effort_child","content":[{"type":"text","text":"OK"}]}}\n`,
+          `${"x".repeat(512 * 1024 + 1)}\n{"type":"assistant","effort":"low","uuid":"effort-line-1","message":{"role":"assistant","id":"msg_effort_child","content":[{"type":"text","text":"OK"}]}}\n`,
         );
         const harness = yield* makeWakeHarnessWithOptions({
           environment: { CLAUDE_CONFIG_DIR: configDir },
