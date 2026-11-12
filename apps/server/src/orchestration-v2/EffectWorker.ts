@@ -97,6 +97,7 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
     const settlementCascade = yield* SettlementCascade.SettlementCascade;
+    const remoteSettlement = yield* SettlementCascade.RemoteSettlementRelay;
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
@@ -561,6 +562,24 @@ export const layerExecutor: Layer.Layer<
           case "thread-settlement.cascade":
             return settlementCascade
               .run({
+                commandId: effect.commandId,
+                threadId: effect.threadId,
+                request: effect.request,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "thread-settlement.remote":
+            return remoteSettlement
+              .run({
+                effectId: effect.id,
                 commandId: effect.commandId,
                 threadId: effect.threadId,
                 request: effect.request,

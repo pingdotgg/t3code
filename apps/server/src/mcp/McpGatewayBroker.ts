@@ -267,7 +267,17 @@ export const make = Effect.gen(function* () {
           refusals[environmentId] = refusal;
           continue;
         }
-        const allowed = scopes.filter(
+        // This machine's own app relays lifecycle to a full-access member it turned on, so a
+        // settle carries there; the app runs it only where that member's roster agrees.
+        const offered =
+          host.relayer === "desktop" &&
+          Option.isSome(target) &&
+          target.value === "full-access" &&
+          scopes.length > 0 &&
+          !scopes.includes("lifecycle")
+            ? [...scopes, "lifecycle" as const]
+            : scopes;
+        const allowed = offered.filter(
           (scope) => appScopes === undefined || appScopes.includes(scope),
         );
         const capped = allowed.filter((scope) => ceiling === undefined || ceiling.includes(scope));

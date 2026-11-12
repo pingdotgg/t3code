@@ -425,6 +425,44 @@ it.effect("relays a network member only through an app of the network, within it
   ).pipe(Effect.provide(layerDependencies())),
 );
 
+it.effect(
+  "this machine's own app settles on a full-access member it turned on, not a limited one",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* make;
+        const membership = yield* Membership.Membership;
+        const supervised = EnvironmentId.make("supervised");
+        for (const [environmentId, access] of [
+          [here, "full-access"],
+          [remote, "full-access"],
+          [supervised, "approval-required"],
+        ] as const) {
+          yield* membership.put({ environmentId, label: environmentId, nodeId: null, access });
+        }
+        const baseline = ["read", "create", "send"] as const;
+        yield* serve(
+          broker,
+          "desktop",
+          { remote: baseline, supervised: baseline, elsewhere: baseline },
+          (method) => ({ result: method === "settleThread" ? { status: "succeeded" } : method }),
+          DESKTOP_APP_SUBJECT,
+        );
+        expect((yield* broker.access).grants).toEqual({
+          remote: [...baseline, "lifecycle"],
+          supervised: baseline,
+          elsewhere: baseline,
+        });
+        expect(yield* broker.call("settleThread", [remote, ThreadId.make("child")])).toEqual({
+          status: "succeeded",
+        });
+        expect(
+          yield* failureMessage(broker.call("settleThread", [supervised, ThreadId.make("child")])),
+        ).not.toBe("ok");
+      }),
+    ).pipe(Effect.provide(layerDependencies())),
+);
+
 it.effect("relays nothing while linked environments is off", () =>
   Effect.scoped(
     Effect.gen(function* () {

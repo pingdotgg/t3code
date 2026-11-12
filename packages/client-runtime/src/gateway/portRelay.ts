@@ -47,6 +47,14 @@ class GatewayRelayUnreachable extends Schema.TaggedError<GatewayRelayUnreachable
 ) {}
 export const isGatewayRelayUnreachable = Schema.is(GatewayRelayUnreachable);
 
+const withMemberLifecycle = (grants: GatewayGrants): GatewayGrants =>
+  Object.fromEntries(
+    Object.entries(grants).map(([id, scopes]) => [
+      id,
+      scopes.includes("lifecycle") ? scopes : [...scopes, "lifecycle" as const],
+    ]),
+  );
+
 /** A call that names no modes, as from an older server, runs as the narrowest chat would. */
 const NARROWEST: ModeLimit = { runtimeMode: "approval-required", interactionMode: "plan" };
 
@@ -76,25 +84,19 @@ export async function answerGatewayPortCall(
   if (requirements === undefined) {
     throw new Error("T3 Agents access is not granted for this call on this device.");
   }
-  const ownUnmet = unmetGatewayScopes(grants, requirements);
-  if (ownUnmet !== undefined) {
-    throw new GatewayRelayUnreachable({
+  const ungranted = (environmentId: string, unmet: (typeof requirements)[number]) =>
+    new GatewayRelayUnreachable({
       message:
-        grants[ownUnmet.environmentId] === undefined
-          ? `T3 Agents access is not granted for ${ownUnmet.environmentId} on this device.`
-          : `T3 Agents access to ${ownUnmet.environmentId} on this device does not include ${describeGatewayScopes(ownUnmet)}.`,
+        grants[environmentId] === undefined
+          ? `T3 Agents access is not granted for ${environmentId} on this device.`
+          : `T3 Agents access to ${environmentId} on this device does not include ${describeGatewayScopes(unmet)}.`,
     });
-  }
-  for (const requirement of rosterCap === undefined ? [] : requirements) {
-    const cap = await rosterCap!(requirement.environmentId);
-    if (cap === undefined) continue;
-    const held = grants[requirement.environmentId]!.filter((scope) => cap.scopes.includes(scope));
-    if (unmetGatewayScopes({ [requirement.environmentId]: held }, [requirement]) !== undefined) {
-      throw new GatewayRelayUnreachable({
-        message: `${requirement.environmentId}'s device network ${cap.why}, so the calling machine may not ${describeGatewayScopes(requirement)} there.`,
-      });
-    }
-  }
+  // Lifecycle may still come from a target's roster below, so only what no roster adds fails here.
+  const ownUnmet = unmetGatewayScopes(
+    rosterCap === undefined ? grants : withMemberLifecycle(grants),
+    requirements,
+  );
+  if (ownUnmet !== undefined) throw ungranted(ownUnmet.environmentId, ownUnmet);
   const connected = new Set(
     (await port.listEnvironments())
       .filter((environment) => environment.connectionState === "connected")
@@ -105,6 +107,25 @@ export async function answerGatewayPortCall(
     throw new GatewayRelayUnreachable({
       message: `This T3 app is not connected to ${offline.environmentId} right now.`,
     });
+  }
+  for (const requirement of rosterCap === undefined ? [] : requirements) {
+    const { environmentId } = requirement;
+    const cap = await rosterCap!(environmentId);
+    // A machine the target's roster gives full access settles and restarts work there as its
+    // user could, without the per-machine lifecycle grant; Settings still grants the rest.
+    const own =
+      cap?.scopes.includes("lifecycle") === true
+        ? withMemberLifecycle(grants)[environmentId]!
+        : grants[environmentId]!;
+    const unmet = unmetGatewayScopes({ [environmentId]: own }, [requirement]);
+    if (unmet !== undefined) throw ungranted(environmentId, unmet);
+    if (cap === undefined) continue;
+    const held = own.filter((scope) => cap.scopes.includes(scope));
+    if (unmetGatewayScopes({ [environmentId]: held }, [requirement]) !== undefined) {
+      throw new GatewayRelayUnreachable({
+        message: `${environmentId}'s device network ${cap.why}, so the calling machine may not ${describeGatewayScopes(requirement)} there.`,
+      });
+    }
   }
   const guarded = withinModes(port, modeCeiling);
   const run = guarded[method as keyof GatewayRuntimePort] as

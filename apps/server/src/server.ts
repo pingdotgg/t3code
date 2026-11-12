@@ -9,7 +9,6 @@ import * as HeadlessGatewayHost from "./mcp/agents/HeadlessGatewayHost.ts";
 import * as LocalGatewayPort from "./mcp/agents/LocalGatewayPort.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
-import * as RemoteSettlementCascade from "./orchestration-v2/RemoteSettlementCascade.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
@@ -187,7 +186,6 @@ import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
-import * as EventStoreV2 from "./orchestration-v2/EventStore.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
@@ -640,12 +638,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
-  RemoteSettlementCascade.layer.pipe(
-    Layer.provide(McpGatewayBroker.layer),
-    Layer.provide(
-      Layer.merge(EventStoreV2.layerFromOrchestrationEventStore, ProjectionStoreV2.layer),
-    ),
-  ),
   AgentTempDirLive.layerSettledCleanup.pipe(Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,

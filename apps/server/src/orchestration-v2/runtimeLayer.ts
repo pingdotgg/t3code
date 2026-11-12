@@ -28,6 +28,7 @@ import * as SettlementCascade from "./SettlementCascade.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as RemoteParentSettlement from "./RemoteParentSettlement.ts";
+import * as RemoteSettlementCascade from "./RemoteSettlementCascade.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -345,7 +346,9 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
       SettlementCascade.layer.pipe(
-        Layer.provide(Layer.merge(ProjectionStore.layer, layerOrchestratorProvided)),
+        Layer.provide(
+          Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer, layerOrchestratorProvided),
+        ),
       ),
     ),
   ),
@@ -393,7 +396,15 @@ export const layerProduction = Layer.mergeAll(
   WorktreeBranchSync.layer.pipe(
     Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
   ),
-  layer.pipe(Layer.provide(layerProjectService)),
+  layer.pipe(
+    Layer.provide(layerProjectService),
+    // Remote settlement effects reach other environments through the server's broker.
+    Layer.provide(
+      RemoteSettlementCascade.layer.pipe(
+        Layer.provide(Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer)),
+      ),
+    ),
+  ),
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,

@@ -377,6 +377,16 @@ it("says it could not run a call on an environment it is not connected to", asyn
   ).catch((error: unknown) => error);
   expect(sendMessage).not.toHaveBeenCalled();
   expect(isGatewayRelayUnreachable(offline)).toBe(true);
+  // Its roster cannot be read while it is offline, and offline is the reason the user can act on.
+  const unread = await answerGatewayPortCall(
+    port("offline"),
+    { remote: ["send"] },
+    "sendMessage",
+    [send],
+    FULL,
+    async () => ({ scopes: [], why: "could not be read" }),
+  ).catch((error: unknown) => error);
+  expect(String(unread)).toContain("not connected to remote");
   // An error from the call itself is the environment's answer, not a failure to reach it.
   const failed = await answerGatewayPortCall(
     port("connected", failure),
@@ -387,4 +397,25 @@ it("says it could not run a call on an environment it is not connected to", asyn
   ).catch((error: unknown) => error);
   expect(failure).toHaveBeenCalledOnce();
   expect(isGatewayRelayUnreachable(failed)).toBe(false);
+});
+
+it("settles on a member whose roster gives the calling machine full access, without a lifecycle grant", async () => {
+  const settleThread = vi.fn(async () => ({ status: "succeeded" as const }));
+  const port = { settleThread, listEnvironments } as unknown as GatewayRuntimePort;
+  const baseline = { remote: ["read", "create", "send"] } as GatewayGrants;
+  const settle = (rosterCap?: Parameters<typeof answerGatewayPortCall>[5]) =>
+    answerGatewayPortCall(port, baseline, "settleThread", ["remote", "thread"], FULL, rosterCap)
+      .then(() => "settled")
+      .catch((error: unknown) => String(error));
+  const cap = (access: "full-access" | "read-only") => async () => ({
+    scopes: access === "full-access" ? (["read", "lifecycle"] as const) : (["read"] as const),
+    why: `gives the calling machine ${access} access`,
+  });
+
+  expect(await settle(cap("full-access"))).toBe("settled");
+  expect(await settle(cap("read-only"))).toContain("does not include");
+  // A target whose roster does not list the caller, or the relaying server itself, needs the grant.
+  expect(await settle(async () => undefined)).toContain("does not include");
+  expect(await settle()).toContain("does not include");
+  expect(settleThread).toHaveBeenCalledOnce();
 });

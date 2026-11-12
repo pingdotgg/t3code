@@ -639,6 +639,8 @@ scheduled task bound to the chat. A child chat starts with a **Child of** link t
 parent's details list its **Children** with their status.
 
 Manually settling a parent card also settles its child chats through the existing cascade.
+Child chats on another machine follow through the desktop app; one that is offline catches up
+once the desktop app reaches it again.
 Working child chats remain active and follow that manual choice when they finish. Un-settling
 the parent restores chats that settled with it; ones you settled earlier stay settled.
 
