@@ -40,6 +40,7 @@ import {
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
+import { CursorRulesWalkStop } from "./ancestorRules.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { loadCursorSdk } from "./sdk.ts";
 
@@ -683,7 +684,9 @@ describe("CursorAdapterV2", () => {
   it.effect("sends T3 instructions to each Cursor conversation that lacks them", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
+      const workspace = `${parent}/workspace`;
+      yield* fileSystem.makeDirectory(workspace);
       const sentMessages: Array<string> = [];
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
@@ -705,46 +708,59 @@ describe("CursorAdapterV2", () => {
         interactionMode: "default",
         cwd: workspace,
       });
-      const adapter = yield* makeCursorAdapterV2({
-        instanceId,
-        environment: { HOME: workspace },
-      }).pipe(
-        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-          assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
-              agentId: "native-cursor-device",
-              listMessages: Effect.succeed([]),
-              close: Effect.void,
-              send: (input) =>
-                Effect.sync(() => {
-                  sentMessages.push(
-                    typeof input.message === "string" ? input.message : input.message.text,
-                  );
-                  const runId = `native-cursor-run-${sentMessages.length}`;
-                  return {
-                    agentId: "native-cursor-device",
-                    runId,
-                    wait: Effect.succeed({
-                      id: runId,
-                      requestId: `native-request-${sentMessages.length}`,
-                      status: "finished" as const,
-                      model: { id: "composer-2.5" },
-                      durationMs: 1,
-                    }),
-                    cancel: Effect.void,
-                  };
-                }),
-            }),
-        }),
-        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
-      );
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("cursor-device-session"),
-        modelSelection,
-        runtimePolicy,
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-home-" });
+      const writeRule = Effect.fnUntraced(function* (body: string) {
+        yield* fileSystem.makeDirectory(`${parent}/.cursor/rules`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${parent}/.cursor/rules/global.mdc`,
+          `---\nalwaysApply: true\n---\n${body}`,
+        );
       });
+      yield* writeRule("RULE-MARKER-HAIKU");
+      const openRuntime = Effect.gen(function* () {
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          environment: { HOME: home },
+        }).pipe(
+          Effect.provideService(CursorRulesWalkStop, parent),
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-device",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: (input) =>
+                  Effect.sync(() => {
+                    sentMessages.push(
+                      typeof input.message === "string" ? input.message : input.message.text,
+                    );
+                    const runId = `native-cursor-run-${sentMessages.length}`;
+                    return {
+                      agentId: "native-cursor-device",
+                      runId,
+                      wait: Effect.succeed({
+                        id: runId,
+                        requestId: `native-request-${sentMessages.length}`,
+                        status: "finished" as const,
+                        model: { id: "composer-2.5" },
+                        durationMs: 1,
+                      }),
+                      cancel: Effect.void,
+                    };
+                  }),
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        return yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-device-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+      });
+      let runtime = yield* openRuntime;
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
@@ -806,23 +822,57 @@ describe("CursorAdapterV2", () => {
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
           devices: sent.includes("## T3 Code devices"),
+          rules: sent.includes("<user_rules>"),
         };
       });
-      const told = (orchestration: boolean, devices: boolean) => ({ orchestration, devices });
+      const told = (orchestration: boolean, devices: boolean, rules = false) => ({
+        orchestration,
+        devices,
+        rules,
+      });
 
       yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true));
+      assert.deepEqual(yield* send(), told(false, true, true), "first turn this process sees");
+      assert.deepEqual(yield* send(), told(false, false), "unchanged rules are not re-sent");
+      yield* writeRule("RULE-MARKER-SONNET");
+      assert.deepEqual(yield* send(), told(false, false, true), "changed rules are re-sent");
+      assert.include(sentMessages.at(-1)!, "RULE-MARKER-SONNET");
+      assert.notInclude(sentMessages.at(-1)!, "RULE-MARKER-HAIKU");
       assert.deepEqual(yield* send(), told(false, false));
+      yield* fileSystem.remove(`${parent}/.cursor/rules/global.mdc`);
+      assert.deepEqual(yield* send(), told(false, false, true), "removed rules are retracted");
+      assert.include(sentMessages.at(-1)!, "The user removed the Cursor rules");
+      assert.deepEqual(yield* send(), told(false, false));
+      yield* writeRule("RULE-MARKER-SONNET");
+      assert.deepEqual(yield* send(), told(false, false, true), "restored rules are re-sent");
       yield* send(true);
       assert.deepEqual(
         yield* send(),
-        told(true, true),
+        told(true, true, true),
         "compaction drops what the conversation was told",
       );
+      const afterCompaction = sentMessages.at(-1)!;
+      const orchestrationAt = afterCompaction.indexOf("## T3 Code orchestration");
+      const rulesAt = afterCompaction.indexOf("<user_rules>");
+      const messageAt = afterCompaction.indexOf("Open the app.");
+      assert.include(afterCompaction, "RULE-MARKER-SONNET");
+      assert.isAtLeast(orchestrationAt, 0);
+      assert.isAtLeast(rulesAt, 0);
+      assert.isAtLeast(messageAt, 0);
+      assert.isBelow(orchestrationAt, rulesAt);
+      assert.isBelow(rulesAt, messageAt);
       yield* setDeviceAccess(false);
       assert.deepEqual(yield* send(), told(false, false));
       yield* setDeviceAccess(true);
       assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
+      assert.deepEqual(yield* send(), told(false, false));
+      // A restarted process has no memory of what the conversation was told.
+      runtime = yield* openRuntime;
+      assert.deepEqual(
+        yield* send(),
+        told(false, true, true),
+        "rules are re-sent after a restart, orchestration is not",
+      );
       assert.deepEqual(yield* send(), told(false, false));
     }).pipe(
       Effect.scoped,

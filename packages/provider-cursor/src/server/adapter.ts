@@ -55,6 +55,11 @@ import {
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
 } from "./skills.ts";
+import {
+  CURSOR_RULES_REMOVED_NOTICE,
+  CursorRulesWalkStop,
+  readCursorRulesAboveWorkspace,
+} from "./ancestorRules.ts";
 import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -985,6 +990,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
   const platform = yield* HostProcess.Platform;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const rulesWalkStop = yield* CursorRulesWalkStop;
   const adapterOptions = options;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
 
@@ -1015,6 +1021,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly agent: string;
           readonly orchestration: boolean;
           readonly device: boolean;
+          /** The rules text the conversation was last sent, if T3 knows it. */
+          readonly rules: string | undefined;
         } | null>(null);
         // Cursor drops a cancelled run from the conversation, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
@@ -2348,23 +2356,36 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
           hasDeviceTools: boolean,
-          delivered: { readonly orchestration: boolean; readonly device: boolean },
+          delivered: {
+            readonly orchestration: boolean;
+            readonly device: boolean;
+            readonly rules: string | undefined;
+          },
           interrupted: string | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
-            return { message: "/compress", prompt: undefined };
+            return { message: "/compress", prompt: undefined, rules: undefined };
           }
+          const currentRules = yield* readCursorRulesAboveWorkspace(
+            [turnInput.runtimePolicy.cwd ?? process.cwd()],
+            rulesWalkStop,
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          );
+          const rules =
+            currentRules === delivered.rules
+              ? undefined
+              : (currentRules ?? CURSOR_RULES_REMOVED_NOTICE);
+          const resolved = yield* providerMessageTextWithAttachmentPaths({
+            text: yield* resolveCursorSkillText(rawText, turnInput.runtimePolicy.cwd ?? undefined),
+            attachments: turnInput.message.attachments,
+            resolveAttachmentPath: host.resolveAttachmentPath,
+            resolveExtractedTextPath: host.resolveExtractedTextPath,
+          });
           const newText = t3OrchestrationPrompt({
-            prompt: yield* providerMessageTextWithAttachmentPaths({
-              text: yield* resolveCursorSkillText(
-                rawText,
-                turnInput.runtimePolicy.cwd ?? undefined,
-              ),
-              attachments: turnInput.message.attachments,
-              resolveAttachmentPath: host.resolveAttachmentPath,
-              resolveExtractedTextPath: host.resolveExtractedTextPath,
-            }),
+            prompt: rules === undefined ? resolved : `${rules}\n\n${resolved}`,
             hasT3Mcp: mcpServers !== undefined,
             hasDeviceTools,
             orchestrationDelivered: delivered.orchestration,
@@ -2413,6 +2434,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           return {
             message: images.length === 0 ? text : ({ text, images } satisfies SDKUserMessage),
             prompt: userText,
+            rules: currentRules,
           };
         });
 
@@ -2440,13 +2462,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
-            // A conversation this process has not sent to was told on its first run.
+            // A conversation this process has not sent to was told the orchestration text on its
+            // first run; its rules may have changed since, so they are sent again.
             const delivered =
               known?.agent === agent.nativeThreadId
                 ? known
-                : { orchestration: turnInput.runOrdinal > 1, device: false };
+                : { orchestration: turnInput.runOrdinal > 1, device: false, rules: undefined };
             const interrupted = yield* Ref.get(interruptedPrompt);
-            const { message, prompt } = yield* resolveUserMessage(
+            const { message, prompt, rules } = yield* resolveUserMessage(
               turnInput,
               mcpServers,
               hasDeviceTools,
@@ -2480,6 +2503,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               agent: agent.nativeThreadId,
               orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
               device: !compacted && hasDeviceTools,
+              rules: compacted ? undefined : rules,
             });
             if (!compacted) {
               yield* Ref.set(interruptedPrompt, null);
