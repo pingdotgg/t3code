@@ -121,6 +121,31 @@ export class WorkspaceSearchIndex extends Context.Service<
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
+// fff globs any word containing "[" or "{" and has no escape. Fuzzy matching is
+// subsequence-based, so dropping "[" and every "{" that does not open a comma
+// alternation (the only brace glob fff expands) makes literal names like "[id]"
+// and "foo{bar}" findable while "foo{bar,baz}" keeps working.
+function toFffQuery(rawQuery: string): string {
+  const groups: Array<{ index: number; alternation: boolean }> = [];
+  const keptBraces = new Set<number>();
+  for (let index = 0; index < rawQuery.length; index++) {
+    const char = rawQuery[index];
+    if (char === "{") groups.push({ index, alternation: false });
+    else if (char === "," && groups.length > 0) groups[groups.length - 1]!.alternation = true;
+    else if (char === "}") {
+      const group = groups.pop();
+      if (group?.alternation) keptBraces.add(group.index);
+    }
+  }
+  let query = "";
+  for (let index = 0; index < rawQuery.length; index++) {
+    const char = rawQuery[index];
+    if (char === "[" || (char === "{" && !keptBraces.has(index))) continue;
+    query += char;
+  }
+  return query;
+}
+
 function toPosixPath(input: string): string {
   return input.replaceAll("\\", "/");
 }
@@ -450,9 +475,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
   )(function* (rawQuery, limit, kind, imageOnly) {
-    // fff parses any word containing "[" or "{" as a glob and has no escape for it;
-    // fuzzy matching is subsequence-based, so dropping them still matches "[id]" folders.
-    const query = rawQuery.replaceAll("[", "").replaceAll("{", "");
+    const query = toFffQuery(rawQuery);
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
     const incompleteBeforeQuery = hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
