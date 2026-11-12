@@ -73,7 +73,7 @@ export function composerSubmissionIntentForKey(input: {
   isRunning?: boolean;
   sendShortcut?: ClientSettings["sendShortcut"];
   prompt?: string;
-  startNewThreadsInBackground?: boolean;
+  startNewThreadsInBackground: boolean;
 }): ComposerSubmissionIntent | null {
   const { event } = input;
   if (event.isComposing || event.keyCode === 229 || event.repeat) return null;
@@ -91,7 +91,7 @@ export function composerSubmissionIntentForKey(input: {
   });
   const defaultIntent = composerDefaultSendIntent({
     isDraftThread: input.isDraftThread,
-    startNewThreadsInBackground: input.startNewThreadsInBackground === true,
+    startNewThreadsInBackground: input.startNewThreadsInBackground,
   });
   if (command === "composer.sendAlternate" && input.isRunning) return "alternate";
   // Start in Background does the opposite of a plain send, so it opens the thread when plain

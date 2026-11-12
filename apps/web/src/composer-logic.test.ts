@@ -100,6 +100,7 @@ describe("composerSubmissionIntentForKey", () => {
     platform: "Linux",
     isSoftwareKeyboardOpen: false,
     isDraftThread: false,
+    startNewThreadsInBackground: false,
   };
   const enter = { key: "Enter", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
 
