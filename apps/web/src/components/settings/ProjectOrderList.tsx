@@ -80,7 +80,7 @@ export function ProjectOrderList() {
 
   return (
     <div className="space-y-3">
-      <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
+      <p className="px-3 text-sm text-muted-foreground sm:px-4">
         Choose a project to manage its name, icon, checkouts and actions. Drag projects to fix their
         order in the sidebar.
       </p>
