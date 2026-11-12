@@ -705,6 +705,10 @@ describe("ssh tunnel scripts", () => {
           Effect.provide(layer),
           Effect.scoped,
         );
+
+        // Releasing the manager is app quit: it closes the forward and leaves the server running.
+        assert.equal(stops, 1);
+        assert.isTrue(remoteRunning);
       }),
   );
 
