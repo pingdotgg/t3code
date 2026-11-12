@@ -14,7 +14,6 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
-import * as TestClock from "effect/testing/TestClock";
 import type { OtlpTracer } from "effect/observability";
 
 import {
@@ -22,7 +21,6 @@ import {
   compactTraceAttributes,
   decodeOtlpTraceRecords,
   errorTag,
-  isRoutineTraceRecord,
   makeLocalFileTracer,
   makeTraceSink,
   type EffectTraceRecord,
@@ -175,7 +173,6 @@ describe("observability", () => {
           let span: Tracer.Span | undefined;
           const result = yield* Effect.gen(function* () {
             span = yield* Effect.currentSpan;
-            yield* TestClock.adjust("10 millis");
             return payload;
           }).pipe(
             Effect.withSpan("read-thread-projection"),
@@ -195,69 +192,6 @@ describe("observability", () => {
           );
         }
       }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("writes only slow, failed, or eventful spans to the file but exports every one", () =>
-    Effect.gen(function* () {
-      const exported: Array<string> = [];
-      const written: Array<string> = [];
-      const tracer = yield* makeLocalFileTracer({
-        filePath: "unused",
-        maxBytes: 1024,
-        maxFiles: 1,
-        batchWindowMs: 10_000,
-        sink: {
-          filePath: "unused",
-          push: (record) => written.push(record.name),
-          flush: Effect.void,
-          flushSync: () => {},
-          close: () => Effect.void,
-        },
-        delegate: Tracer.make({
-          span: (options) => {
-            exported.push(options.name);
-            return new Tracer.NativeSpan(options);
-          },
-        }),
-      });
-      yield* Effect.gen(function* () {
-        yield* Effect.void.pipe(Effect.withSpan("fast"));
-        yield* TestClock.adjust("10 millis").pipe(Effect.withSpan("slow"));
-        yield* Effect.fail("busy").pipe(Effect.withSpan("failed"), Effect.exit);
-        yield* Effect.currentSpan.pipe(
-          Effect.tap((span) => Effect.sync(() => span.event("note", 0n))),
-          Effect.withSpan("eventful"),
-        );
-      }).pipe(Effect.provideService(Tracer.Tracer, tracer));
-      assert.deepStrictEqual(written, ["slow", "failed", "eventful"]);
-      assert.deepStrictEqual(exported, ["fast", "slow", "failed", "eventful"]);
-
-      const forwarded = decodeOtlpTraceRecords(
-        cast({
-          resourceSpans: [
-            {
-              scopeSpans: [
-                {
-                  spans: [
-                    { name: "ok", startTimeUnixNano: "0", endTimeUnixNano: "0" },
-                    {
-                      name: "error",
-                      startTimeUnixNano: "0",
-                      endTimeUnixNano: "0",
-                      status: { code: 2 },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        }),
-      );
-      assert.deepStrictEqual(
-        forwarded.filter((record) => !isRoutineTraceRecord(record)).map((record) => record.name),
-        ["error"],
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {
@@ -396,6 +330,77 @@ describe("observability", () => {
             records.map((record) => record.name),
             ["before-exit"],
           );
+        }),
+      ),
+    );
+
+    it.effect("counts fast successful spans per name instead of writing each one", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "summary.trace.ndjson");
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1_000_000,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            summarizeRoutineSpans: true,
+          });
+          const at = (
+            name: string,
+            startMs: number,
+            durationMs: number,
+            extra: Partial<EffectTraceRecord> = {},
+          ): EffectTraceRecord => ({
+            ...makeRecord(name),
+            type: "effect-span",
+            exit: { _tag: "Success" },
+            startTimeUnixNano: String(startMs * 1_000_000),
+            endTimeUnixNano: String((startMs + durationMs) * 1_000_000),
+            durationMs,
+            ...extra,
+          });
+          const readLines = () =>
+            fileSystem.readFileString(tracePath).pipe(
+              Effect.map((text) =>
+                text
+                  .trim()
+                  .split("\n")
+                  .map((line) => JSON.parse(line) as Record<string, unknown>),
+              ),
+            );
+
+          sink.push(at("sqlite", 0, 1));
+          sink.push(at("slow", 0, 10));
+          sink.push(at("failed", 0, 1, { exit: { _tag: "Failure", cause: "x" } }));
+          sink.push(
+            at("eventful", 0, 1, { events: [{ name: "log", timeUnixNano: "1", attributes: {} }] }),
+          );
+          sink.push(at("sqlite", 60_000, 2));
+          yield* sink.flush;
+          assert.deepStrictEqual(
+            (yield* readLines()).map(({ type, name, count }) => [type, name, count]),
+            [
+              ["effect-span", "slow", undefined],
+              ["effect-span", "failed", undefined],
+              ["effect-span", "eventful", undefined],
+              ["span-summary", "sqlite", 2],
+            ],
+          );
+
+          sink.push(at("git", 61_000, 3));
+          yield* sink.close();
+          assert.deepStrictEqual((yield* readLines()).at(-1), {
+            type: "span-summary",
+            name: "git",
+            count: 1,
+            totalDurationMs: 3,
+            maxDurationMs: 3,
+            startTimeUnixNano: "61000000000",
+            endTimeUnixNano: "61003000000",
+          });
         }),
       ),
     );

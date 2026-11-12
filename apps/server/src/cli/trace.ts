@@ -36,6 +36,16 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
   ),
 );
 
+const SpanSummaryLine = Schema.Struct({
+  type: Schema.Literal("span-summary"),
+  name: Schema.String,
+  count: PositiveInt,
+  totalDurationMs: Schema.Finite,
+  maxDurationMs: Schema.Finite,
+  endTimeUnixNano: Schema.FiniteFromString,
+});
+const decodeSpanSummaryLine = Schema.decodeUnknownOption(Schema.fromJsonString(SpanSummaryLine));
+
 export function makeTraceSpanSummary(sinceMs = -Infinity) {
   const byName = new Map<string, { durations: number[]; interrupted: number; failures: number }>();
   let spanCount = 0;
@@ -43,8 +53,26 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
   let firstEndMs = Infinity;
   let lastEndMs = -Infinity;
 
+  // The trace sink folds fast successful spans into per-name counts. Their individual durations
+  // are gone, so the rest of the count sits at the mean; all of them were under 10 ms.
+  const addSpanSummary = (summary: typeof SpanSummaryLine.Type) => {
+    const endMs = summary.endTimeUnixNano / 1_000_000;
+    if (Option.isNone(DateTime.make(endMs)) || endMs < sinceMs) return;
+    spanCount += summary.count;
+    firstEndMs = Math.min(firstEndMs, endMs);
+    lastEndMs = Math.max(lastEndMs, endMs);
+    const stats = byName.get(summary.name) ?? { durations: [], interrupted: 0, failures: 0 };
+    stats.durations.push(summary.maxDurationMs);
+    const rest = summary.count - 1;
+    const mean = rest > 0 ? (summary.totalDurationMs - summary.maxDurationMs) / rest : 0;
+    for (let index = 0; index < rest; index += 1) stats.durations.push(mean);
+    byName.set(summary.name, stats);
+  };
+
   const addLine = (line: string) => {
     if (line.trim().length === 0) return;
+    const summary = Option.getOrUndefined(decodeSpanSummaryLine(line));
+    if (summary !== undefined) return addSpanSummary(summary);
     const span = Option.getOrUndefined(decodeTraceSpanLine(line));
     if (span === undefined) {
       skippedLineCount += 1;

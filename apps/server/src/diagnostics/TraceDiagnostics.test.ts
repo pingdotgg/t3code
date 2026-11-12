@@ -139,9 +139,18 @@ describe("TraceDiagnostics", () => {
             },
           ],
         }),
+        JSON.stringify({
+          type: "span-summary",
+          name: "sqlite",
+          count: 3,
+          totalDurationMs: 6,
+          maxDurationMs: 3,
+          startTimeUnixNano: ns(5_000),
+          endTimeUnixNano: ns(5_020),
+        }),
       ]);
 
-      assert.equal(diagnostics.recordCount, 4);
+      assert.equal(diagnostics.recordCount, 7);
       assert.equal(DateTime.formatIso(diagnostics.readAt), "2026-05-05T10:00:00.000Z");
       assert.equal(
         Option.match(diagnostics.firstSpanAt, {
@@ -168,7 +177,14 @@ describe("TraceDiagnostics", () => {
       assert.equal(diagnostics.latestFailures[0]?.traceId, "trace-c");
       assert.equal(diagnostics.slowestSpans[0]?.traceId, "trace-b");
       assert.equal(diagnostics.latestWarningAndErrorLogs[0]?.message, "status delayed");
-      assert.equal(diagnostics.topSpansByCount[0]?.name, "orchestration.dispatch");
+      assert.deepStrictEqual(
+        diagnostics.topSpansByCount.slice(0, 2).map((span) => [span.name, span.count]),
+        [
+          ["sqlite", 3],
+          ["orchestration.dispatch", 2],
+        ],
+      );
+      assert.equal(diagnostics.topSpansByCount[0]?.averageDurationMs, 2);
     }),
   );
 

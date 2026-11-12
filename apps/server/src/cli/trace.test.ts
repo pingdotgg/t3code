@@ -40,13 +40,25 @@ it("drops spans that ended before the window and counts unreadable lines", () =>
     JSON.stringify({ name: "no-duration" }),
     JSON.stringify({ name: "far-future", durationMs: 1, endTimeUnixNano: "9".repeat(22) }),
     span("recent", 4, 5 * MINUTE_MS),
+    JSON.stringify({
+      type: "span-summary",
+      name: "sqlite",
+      count: 3,
+      totalDurationMs: 5,
+      maxDurationMs: 3,
+      endTimeUnixNano: String(BigInt(5 * MINUTE_MS) * 1_000_000n),
+    }),
   ].forEach(summarizer.addLine);
   const summary = summarizer.finish();
 
   assert.strictEqual(summary.skippedLineCount, 3);
+  assert.strictEqual(summary.spanCount, 4);
   assert.deepStrictEqual(
-    summary.spans.map((entry) => [entry.name, entry.count, entry.perMinute]),
-    [["recent", 1, undefined]],
+    summary.spans.map((entry) => [entry.name, entry.count, entry.p50Ms, entry.maxMs]),
+    [
+      ["sqlite", 3, 1, 3],
+      ["recent", 1, 4, 4],
+    ],
   );
 });
 

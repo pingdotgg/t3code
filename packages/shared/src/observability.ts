@@ -163,6 +163,8 @@ export interface TraceSinkOptions {
   readonly maxFiles: number;
   readonly batchWindowMs: number;
   readonly onFlush?: (stats: TraceSinkFlushStats) => Effect.Effect<void>;
+  /** Writes fast successful spans as per-name `span-summary` counts instead of one record each. */
+  readonly summarizeRoutineSpans?: boolean;
 }
 
 export interface TraceSinkFlushStats {
@@ -415,10 +417,11 @@ const redactUrlCredentials = (text: string) =>
   text.replace(URL_CREDENTIAL_PARAMS, "$1$2=<redacted>");
 
 // Fast successful spans were most of the trace file and rotated its history out within minutes.
-// Exporters still receive them; the file keeps spans that are slow, failed, or carry events.
+// The file keeps them only as per-name counts, so trace summaries still see every span.
 const TRACE_FILE_MIN_SPAN_MS = 10;
+const SPAN_SUMMARY_WINDOW_NANOS = 60_000_000_000n;
 
-export const isRoutineTraceRecord = (record: TraceRecord) =>
+const isRoutineTraceRecord = (record: TraceRecord) =>
   record.durationMs < TRACE_FILE_MIN_SPAN_MS &&
   record.events.length === 0 &&
   (record.type === "effect-span"
@@ -445,6 +448,11 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     count: 0,
     durationMs: 0,
   };
+  const routineSpans = new Map<
+    string,
+    { count: number; totalDurationMs: number; maxDurationMs: number; start: bigint; end: bigint }
+  >();
+  let routineWindowStart: bigint | undefined;
 
   const flushBuffered = Effect.gen(function* () {
     if (buffer.length === 0) {
@@ -529,7 +537,67 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
     );
 
-  yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
+  const append = (record: unknown) => {
+    try {
+      const text = `${redactUrlCredentials(JSON.stringify(record))}\n`;
+      const bytes = Buffer.byteLength(text);
+      if (bytes > options.maxBytes) return;
+      if (bufferBytes + bytes > maxBufferBytes) {
+        droppedCount++;
+        return;
+      }
+      buffer.push({ text, bytes });
+      bufferBytes += bytes;
+      if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {
+        Queue.offerUnsafe(flushRequests, undefined);
+      }
+    } catch {
+      return;
+    }
+  };
+
+  const appendRoutineSummaries = () => {
+    for (const [name, tally] of routineSpans) {
+      append({
+        type: "span-summary",
+        name,
+        count: tally.count,
+        totalDurationMs: tally.totalDurationMs,
+        maxDurationMs: tally.maxDurationMs,
+        startTimeUnixNano: String(tally.start),
+        endTimeUnixNano: String(tally.end),
+      });
+    }
+    routineSpans.clear();
+    routineWindowStart = undefined;
+  };
+
+  const tallyRoutineSpan = (record: TraceRecord) => {
+    const start = BigInt(record.startTimeUnixNano);
+    const end = BigInt(record.endTimeUnixNano);
+    const tally = routineSpans.get(record.name);
+    if (tally === undefined) {
+      routineSpans.set(record.name, {
+        count: 1,
+        totalDurationMs: record.durationMs,
+        maxDurationMs: record.durationMs,
+        start,
+        end,
+      });
+    } else {
+      tally.count += 1;
+      tally.totalDurationMs += record.durationMs;
+      tally.maxDurationMs = Math.max(tally.maxDurationMs, record.durationMs);
+      if (start < tally.start) tally.start = start;
+      if (end > tally.end) tally.end = end;
+    }
+    routineWindowStart ??= start;
+    if (end - routineWindowStart >= SPAN_SUMMARY_WINDOW_NANOS) appendRoutineSummaries();
+  };
+
+  const close = () => Effect.sync(appendRoutineSummaries).pipe(Effect.andThen(flush));
+
+  yield* Effect.addFinalizer(() => close().pipe(Effect.ignore));
   yield* Effect.forkScoped(
     Queue.take(flushRequests).pipe(
       Effect.timeoutOption(`${options.batchWindowMs} millis`),
@@ -541,25 +609,19 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   return {
     filePath: options.filePath,
     push(record) {
+      if (options.summarizeRoutineSpans !== true || !isRoutineTraceRecord(record)) {
+        return append(record);
+      }
       try {
-        const text = `${redactUrlCredentials(JSON.stringify(record))}\n`;
-        const bytes = Buffer.byteLength(text);
-        if (bytes > options.maxBytes) return;
-        if (bufferBytes + bytes > maxBufferBytes) {
-          droppedCount++;
-          return;
-        }
-        buffer.push({ text, bytes });
-        bufferBytes += bytes;
-        if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {
-          Queue.offerUnsafe(flushRequests, undefined);
-        }
+        tallyRoutineSpan(record);
       } catch {
-        return;
+        // Forwarded spans can carry timestamps BigInt rejects; keep those as written.
+        append(record);
       }
     },
     flush,
     flushSync() {
+      appendRoutineSummaries();
       if (buffer.length === 0) return;
       const text = buffer.map((record) => record.text).join("");
       buffer = [];
@@ -570,7 +632,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
         return;
       }
     },
-    close: () => flush,
+    close,
   } satisfies TraceSink;
 });
 
@@ -644,8 +706,7 @@ class LocalFileSpan implements Tracer.Span {
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
     if (this.sampled) {
-      const record = spanToTraceRecord(this);
-      if (!isRoutineTraceRecord(record)) this.push(record);
+      this.push(spanToTraceRecord(this));
     }
   }
 

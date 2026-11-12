@@ -1,8 +1,4 @@
-import {
-  isRoutineTraceRecord,
-  type TraceRecord,
-  type TraceSink,
-} from "@t3tools/shared/observability";
+import type { TraceRecord, TraceSink } from "@t3tools/shared/observability";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,7 +16,7 @@ export const make = (sink: TraceSink): BrowserTraceCollector["Service"] =>
     record: Effect.fn("BrowserTraceCollector.record")(function (records) {
       return Effect.sync(() => {
         for (const record of records) {
-          if (!isRoutineTraceRecord(record)) sink.push(record);
+          sink.push(record);
         }
       });
     }),

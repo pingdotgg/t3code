@@ -50,10 +50,14 @@ Important fields common to both record types:
 - `attributes`: structured context
 - `events`: embedded logs and custom events
 
-The file keeps a span only when it failed, recorded an event, or took at least 10 ms; this applies
-to spans forwarded from clients too. Fast successful spans, mostly SQL statements and periodic git
-and polling work, would otherwise fill the rotation within minutes. An OTLP traces endpoint still
-receives every span.
+The server's file writes a span on its own line only when it failed, recorded an event, or took at
+least 10 ms; this applies to spans forwarded from clients too. Fast successful spans, mostly SQL
+statements and periodic git and polling work, would otherwise fill the rotation within minutes.
+They are counted instead: about once a minute, and on shutdown, the file gets one `span-summary`
+record per span name with `count`, `totalDurationMs`, `maxDurationMs`, and the time range covered.
+Settings > Diagnostics and `t3 trace summary` fold these into their counts, so totals and averages
+stay exact; `t3 trace summary` percentiles treat a summary's other spans as its mean. An OTLP traces
+endpoint still receives every span individually.
 
 `effect-span` records also contain `exit` with `Success`, `Failure`, or `Interrupted`. `otlp-span`
 records instead carry OTLP resource, scope, and optional status fields.
