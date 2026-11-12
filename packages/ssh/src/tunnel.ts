@@ -713,6 +713,31 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
+# Only one server owns this home, and editing a connection changes its state
+# key. When another key's record owns the live server (the runtime file names
+# it, or it has not published one yet), move that ownership here so updates
+# still replace it.
+if [ "$REMOTE_MANAGED" != "managed" ] || ! managed_server_running "$REMOTE_PID"; then
+  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+    SIBLING_PID="$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)"
+    [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    [ -z "$DEFAULT_RUNTIME_INFO" ] || [ "$SIBLING_PID" = "$DEFAULT_RUNTIME_PID" ] || continue
+    managed_server_running "$SIBLING_PID" || continue
+    SIBLING_PORT="\${DEFAULT_REMOTE_PORT:-$(cat "$SIBLING_DIR/port" 2>/dev/null || true)}"
+    [ -n "$SIBLING_PORT" ] || break
+    RUNNER_CHANGED=0
+    cmp -s "$RUNNER_FILE" "$SIBLING_DIR/run-t3.sh" || RUNNER_CHANGED=1
+    REMOTE_PID="$SIBLING_PID"
+    REMOTE_PORT="$SIBLING_PORT"
+    REMOTE_MANAGED="managed"
+    printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'managed\\n' >"$MANAGED_FILE"
+    rm -f "$SIBLING_DIR/pid"
+    printf 'external\\n' >"$SIBLING_DIR/managed"
+    break
+  done
+fi
 # The managed server runs on the default home, so it writes the default
 # runtime file too. When that file names the PID this launcher recorded as
 # managed, it describes our own server and its real port, not one to adopt.
@@ -773,25 +798,6 @@ else
   REMOTE_PID=""
   REMOTE_PORT=""
   REMOTE_MANAGED=""
-fi
-# The server may answer long before it publishes its runtime record, or never
-# publish one; another alias's launch record still names it. Only one server
-# owns the home, so the first live one decides.
-if [ -z "$REMOTE_PORT" ] && [ -z "$DEFAULT_RUNTIME_INFO" ]; then
-  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
-    [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
-    managed_server_running "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" || continue
-    REMOTE_PORT="$(cat "$SIBLING_DIR/port" 2>/dev/null || true)"
-    if [ -n "$REMOTE_PORT" ] && wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-      REMOTE_MANAGED="external"
-      rm -f "$PID_FILE"
-      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-      printf 'external\\n' >"$MANAGED_FILE"
-    else
-      REMOTE_PORT=""
-    fi
-    break
-  done
 fi
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true

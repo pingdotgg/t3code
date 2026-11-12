@@ -751,26 +751,31 @@ describe("ssh tunnel scripts", () => {
         const ownerPid = Number(
           yield* fs.readFileString(path.join(home, ".t3", "userdata", "server.lock")),
         );
-        assert.sameMembers(
+        // The later launch takes over the record, so both report managed.
+        assert.deepEqual(
           launches.map((launch) => launch.remoteServerKind),
-          ["managed", "external"],
+          ["managed", "managed"],
         );
         assert.equal(launches[0]!.remotePort, launches[1]!.remotePort);
         assert.deepEqual((yield* fs.readFileString(serversFile)).trim().split("\n"), [
           String(ownerPid),
         ]);
-        for (const [index, launch] of launches.entries()) {
-          if (launch.remoteServerKind !== "managed") continue;
-          const stateKey = yield* remoteStateKey(targets[index]!);
-          const recordedPid = yield* fs.readFileString(
-            path.join(home, ".t3", "ssh-launch", stateKey, "pid"),
-          );
-          assert.equal(
-            Number(recordedPid.trim()),
-            ownerPid,
-            `${targets[index]!.alias} reported a managed server, but its recorded PID is not the server that owns the remote home`,
-          );
-        }
+        const records = yield* Effect.forEach(targets, (target) =>
+          Effect.gen(function* () {
+            const stateDir = path.join(home, ".t3", "ssh-launch", yield* remoteStateKey(target));
+            return {
+              kind: (yield* fs.readFileString(path.join(stateDir, "managed"))).trim(),
+              pid: yield* fs.readFileString(path.join(stateDir, "pid")).pipe(
+                Effect.map((pid) => Number(pid.trim())),
+                Effect.orElseSucceed(() => null),
+              ),
+            };
+          }),
+        );
+        assert.sameDeepMembers(records, [
+          { kind: "managed", pid: ownerPid },
+          { kind: "external", pid: null },
+        ]);
         assert.isFalse(yield* fs.exists(launchLock));
       }).pipe(Effect.scoped),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -911,7 +916,10 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       const updatedServer = `${home}/fake-t3-next.cjs`;
       yield* fs.writeFileString(updatedServer, FAKE_SERVER);
       const renamed = { ...target, alias: "devbox-renamed" };
-      const launch = (launchTarget: typeof target, nodeScriptPath: string) =>
+      const launch = (
+        launchTarget: Parameters<typeof SshTunnel.launchOrReuseRemoteServer>[0],
+        nodeScriptPath: string,
+      ) =>
         SshTunnel.launchOrReuseRemoteServer(launchTarget, undefined, { nodeScriptPath }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
         );
