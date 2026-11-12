@@ -387,7 +387,7 @@ export const layer = Layer.effect(
       fallbackByInstance.set(source.instanceId, provider);
     }
 
-    const cachedProviders = yield* Effect.forEach(
+    const bootProviders = yield* Effect.forEach(
       bootSources,
       (source) =>
         Effect.gen(function* () {
@@ -403,7 +403,7 @@ export const layer = Layer.effect(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.flatMap((cachedProvider) => {
               if (cachedProvider === undefined) {
-                return Effect.void.pipe(Effect.as(undefined as ServerProvider | undefined));
+                return Effect.succeed(fallbackProvider);
               }
               const correlation = {
                 cachedProvider,
@@ -416,7 +416,7 @@ export const layer = Layer.effect(
                   cachedInstanceId: cachedProvider.instanceId ?? null,
                   driver: source.driverKind,
                   cachedDriver: cachedProvider.driver ?? null,
-                }).pipe(Effect.as(undefined as ServerProvider | undefined));
+                }).pipe(Effect.as(fallbackProvider));
               }
               return Effect.succeed(hydrateCachedProvider(correlation));
             }),
@@ -441,7 +441,7 @@ export const layer = Layer.effect(
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
+      bootProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
@@ -551,14 +551,8 @@ export const layer = Layer.effect(
     });
 
     const compatibilityRefreshRunning = yield* Ref.make(false);
-    const syncProvider = Effect.fn("syncProvider")(function* (
-      provider: ServerProvider,
-      options?: {
-        readonly publish?: boolean;
-      },
-    ) {
-      const providers = yield* upsertProviders([provider], options);
-      // Reclassify the current model after fetch; republishing the old probe could overwrite newer health results.
+    // Reclassify the current model after fetch; republishing the old probe could overwrite newer health results.
+    const refreshCompatibility = Effect.gen(function* () {
       if (!(yield* Ref.getAndSet(compatibilityRefreshRunning, true))) {
         yield* manifestService.refresh.pipe(
           Effect.andThen(upsertProviders([], { persist: false })),
@@ -566,6 +560,15 @@ export const layer = Layer.effect(
           Effect.forkIn(serviceScope),
         );
       }
+    });
+    const syncProvider = Effect.fn("syncProvider")(function* (
+      provider: ServerProvider,
+      options?: {
+        readonly publish?: boolean;
+      },
+    ) {
+      const providers = yield* upsertProviders([provider], options);
+      yield* refreshCompatibility;
       return providers;
     });
 
@@ -861,6 +864,10 @@ export const layer = Layer.effect(
             Effect.gen(function* () {
               const source = buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;
+              // Boot already merged this unprobed snapshot under the cached status; re-merging would overwrite and persist it.
+              if (provider === fallbackByInstance.get(source.instanceId)) {
+                return yield* refreshCompatibility;
+              }
               yield* correlateSnapshotWithSource(source, provider).pipe(
                 Effect.flatMap(syncProvider),
               );
@@ -918,7 +925,6 @@ export const layer = Layer.effect(
       Scope.provide(serviceScope),
     );
 
-    yield* upsertProviders(fallbackProviders, { publish: false });
     const instanceChanges = yield* instanceRegistry.subscribeChanges;
     yield* syncLiveSources;
     yield* Stream.runForEach(
