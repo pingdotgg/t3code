@@ -326,7 +326,7 @@ function OpenQuestionCard(props: {
       {revealed ? (
         <div className="mt-4 space-y-2 text-sm">
           {skipped || savedAnswer?.kind === "skipped" ? (
-            <p>I don't know.</p>
+            <p>{savedAnswer?.kind === "skipped" ? savedAnswer.label : "I don't know."}</p>
           ) : props.card.blanks ? (
             props.answered && !submitted && savedBlanks === undefined ? (
               <>
@@ -549,7 +549,7 @@ function MultipleChoiceCard(props: {
             }
           >
             {parsedAnswer?.kind === "skipped"
-              ? "I don't know."
+              ? parsedAnswer.label
               : sentAnswer === undefined
                 ? "Answered."
                 : sentAnswer === null
