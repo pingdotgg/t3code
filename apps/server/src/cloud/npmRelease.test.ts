@@ -49,6 +49,7 @@ const makeService = Effect.fnUntraced(function* (
     Effect.provideService(HostProcess.Environment, {
       PATH: npmInstalled ? npmBin : "",
       PATHEXT: ".CMD",
+      T3CODE_CLI_FALLBACK_DIRS: "",
     }),
   );
 }, Effect.provide(NodeServices.layer));
