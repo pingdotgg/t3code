@@ -98,6 +98,7 @@ const runningConfig = {
     t3Home: "/tmp/t3",
     host: "127.0.0.1",
     desktopBootstrapToken: "token",
+    desktopLaunchId: "launch-id",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
   },
@@ -128,7 +129,10 @@ function layerPool(
             backend === undefined
               ? Effect.die("unexpected HTTP request")
               : Effect.succeed(
-                  HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(JSON.stringify({ desktopLaunchId: "launch-id" })),
+                  ),
                 ),
           ),
         ),

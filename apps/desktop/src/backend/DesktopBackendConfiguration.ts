@@ -241,6 +241,7 @@ const readBackendObservabilitySettings = Effect.gen(function* () {
 
 interface SharedBootstrapInput {
   readonly bootstrapToken: string;
+  readonly desktopLaunchId: string;
   readonly bootstrapSecret: string;
   readonly observabilitySettings: BackendObservabilitySettings;
 }
@@ -509,6 +510,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       desktopBootstrapSecret: input.bootstrapSecret,
+      desktopLaunchId: input.desktopLaunchId,
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
@@ -580,6 +582,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
     desktopBootstrapSecret: input.bootstrapSecret,
+    desktopLaunchId: input.desktopLaunchId,
     // PortSchema rejects 0 even when Tailscale Serve is disabled.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
@@ -760,6 +763,7 @@ export const make = Effect.gen(function* () {
     );
     return {
       bootstrapToken,
+      desktopLaunchId: yield* random.uuidV4(),
       bootstrapSecret,
       observabilitySettings,
     } satisfies SharedBootstrapInput;

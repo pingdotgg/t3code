@@ -147,12 +147,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
                   mode: "desktop",
                   desktopTelemetryControlFd: 5,
                   desktopAppUpdate,
+                  desktopLaunchId: "launch-id",
                 }),
               ),
             ),
           ),
           Effect.provideService(HostProcess.Environment, {}),
         );
+        expect(descriptor.desktopLaunchId).toBe("launch-id");
         const capabilities = descriptor.capabilities;
         expect({
           serverSelfUpdate: capabilities.serverSelfUpdate,
