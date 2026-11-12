@@ -82,6 +82,8 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { isAutoModelSelection, resolveAutoModelSelection } from "@t3tools/shared/autoModel";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
@@ -16560,6 +16562,65 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
-> = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
-  Layer.provide(ThreadCommandExecutor.layer),
-);
+> = Layer.effect(
+  OrchestratorV2,
+  makeOrchestrator().pipe(Effect.flatMap((orchestrator) => withAutoModelRouting(orchestrator))),
+).pipe(Layer.provide(ThreadCommandExecutor.layer));
+
+/** Commands whose `auto` model keeps the thread's current model while it still fits. */
+const AUTO_STICKY_COMMANDS: ReadonlySet<string> = new Set([
+  "message.dispatch",
+  "thread.model-selection.set",
+  "provider.switch",
+]);
+
+/**
+ * Replaces the `auto` model in any command with the concrete model Auto picks from live usage
+ * limits, so every surface (web, mobile, MCP, scheduled tasks) gets the same routing.
+ */
+const withAutoModelRouting = Effect.fn("OrchestratorV2.withAutoModelRouting")(function* (
+  orchestrator: OrchestratorV2Shape,
+) {
+  // Optional so layers without provider snapshots (tests, CLI tools) still build; there, Auto
+  // is rejected instead of routed.
+  const registry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const resolve = Effect.fn("OrchestratorV2.resolveAutoModel")(function* (
+    command: OrchestrationV2ServerCommand,
+  ) {
+    const selection = (command as { readonly modelSelection?: ModelSelection }).modelSelection;
+    if (!isAutoModelSelection(selection) || selection === undefined) return command;
+    const threadId = (command as { readonly threadId?: ThreadId }).threadId;
+    const current =
+      threadId !== undefined && AUTO_STICKY_COMMANDS.has(command.type)
+        ? ((yield* orchestrator.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null)))
+            ?.modelSelection ?? null)
+        : null;
+    const resolution = resolveAutoModelSelection({
+      selection,
+      providers: Option.isSome(registry) ? yield* registry.value.getProviders : [],
+      now: DateTime.toEpochMillis(yield* DateTime.now),
+      current,
+    });
+    if (resolution === null) {
+      return yield* new OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: new Error(
+          "Auto found no usable model: every candidate is disabled, signed out, or at its usage limit.",
+        ),
+      });
+    }
+    yield* Effect.logInfo("auto model routing", {
+      commandType: command.type,
+      level: resolution.level,
+      sticky: resolution.sticky,
+      instanceId: resolution.selection.instanceId,
+      model: resolution.selection.model,
+    });
+    return { ...command, modelSelection: resolution.selection } as OrchestrationV2ServerCommand;
+  });
+  return {
+    ...orchestrator,
+    dispatch: (command) => resolve(command).pipe(Effect.flatMap(orchestrator.dispatch)),
+  } satisfies OrchestratorV2Shape;
+});
