@@ -9,7 +9,7 @@ import {
   WS_METHODS,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
-import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
+import { socketFrameSplitterFor } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeZlib from "node:zlib";
 import * as Cause from "effect/Cause";
@@ -280,6 +280,44 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
   );
 });
 
+/** Text that deflate cannot shrink much: 6 random bits per character. */
+const noise = (length: number) => {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let state = 0x9e3779b9;
+  let text = "";
+  for (let index = 0; index < length; index++) {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    text += alphabet[(state >>> 0) % 64];
+  }
+  return text;
+};
+
+/** The frames a server writes for one encoded RPC frame, given the parts the socket URL asks for. */
+const serverFrameParts = Effect.fn("TestRpcSessionFactory.serverFrameParts")(function* (
+  socketUrl: string,
+  frame: string | Uint8Array,
+) {
+  const split = socketFrameSplitterFor(new URL(socketUrl));
+  if (split === undefined) return [frame];
+  const written: Array<string | Uint8Array> = [];
+  const record = (chunk: string | Uint8Array | Socket.CloseEvent) => {
+    if (typeof chunk === "string" || chunk instanceof Uint8Array) written.push(chunk);
+  };
+  const socket = split(
+    Socket.make({
+      reader: Effect.die("unused"),
+      writer: Effect.succeed({
+        write: (chunk) => Effect.sync(() => void record(chunk)),
+        writeAll: (chunks) => Effect.sync(() => void chunks.forEach(record)),
+      }),
+    }),
+  );
+  yield* Effect.scoped(Effect.flatMap(socket.writer, (writer) => writer.write(frame)));
+  return written;
+});
+
 describe("RpcSessionFactory", () => {
   it.effect("reports a real config decoder failure as incompatible, not a transport outage", () =>
     Effect.gen(function* () {
@@ -305,34 +343,39 @@ describe("RpcSessionFactory", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
-    Effect.gen(function* () {
-      const { factory, sockets } = yield* makeFactory();
-      const session = yield* factory.connect(PREPARED);
-      const readyFiber = yield* Effect.forkChild(session.ready);
-      const socket = yield* awaitSocket(sockets);
-      socket.open();
-      const request = yield* awaitRequest(socket);
-      // Multi-byte text, so parts must be sized in UTF-8 bytes and never split a surrogate pair.
-      const config = { ...SERVER_CONFIG, cwd: "/" + "é€😀x".repeat(32 * 1024) };
-      const frame = encodeJson({
-        _tag: "Chunk",
-        requestId: request.id,
-        values: [{ version: 1, type: "snapshot", config: encodeServerConfig(config) }],
-      });
-      const parts = new URL(socket.url).searchParams.has("frameParts")
-        ? splitSocketFrame(frame)
-        : [frame];
+  it.effect.each([{ deflatedFrames: false }, { deflatedFrames: true }])(
+    "connects while a large config snapshot downloads at 4000 bytes per second (deflated: $deflatedFrames)",
+    ({ deflatedFrames }) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory({ deflatedFrames });
+        const session = yield* factory.connect(PREPARED);
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        const request = yield* awaitRequest(socket);
+        // Multi-byte text, so parts must be sized in UTF-8 bytes and never split a surrogate pair.
+        // Random text keeps the deflated frame large too.
+        const config = {
+          ...SERVER_CONFIG,
+          cwd: "/" + "é€😀x".repeat(32 * 1024) + noise(200 * 1024),
+        };
+        const encoded = encodeJson({
+          _tag: "Chunk",
+          requestId: request.id,
+          values: [{ version: 1, type: "snapshot", config: encodeServerConfig(config) }],
+        });
+        const frame = deflatedFrames ? NodeZlib.deflateRawSync(encoded) : encoded;
+        const parts = yield* serverFrameParts(socket.url, frame);
 
-      for (const part of parts) {
-        const bytes = new TextEncoder().encode(part);
-        yield* TestClock.adjust((bytes.length / 4000) * 1000);
-        socket.serverMessage(new TextDecoder().decode(bytes));
-      }
-      yield* Fiber.join(readyFiber);
+        for (const part of parts) {
+          const bytes = typeof part === "string" ? new TextEncoder().encode(part) : part;
+          yield* TestClock.adjust((bytes.length / 4000) * 1000);
+          socket.serverMessage(typeof part === "string" ? part : new Uint8Array(part).buffer);
+        }
+        yield* Fiber.join(readyFiber);
 
-      expect(yield* session.initialConfig).toEqual(config);
-    }),
+        expect(yield* session.initialConfig).toEqual(config);
+      }),
   );
 
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
@@ -342,7 +385,7 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1`);
+      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=2`);
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
