@@ -187,11 +187,12 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         onNone: () => "none",
         onSome: (stat) => `${stat.size}:${Option.getOrNull(stat.mtime)?.getTime()}`,
       });
-    // A replaced database can repeat rowids and change markers, so its identity is part of every key.
+    // A replaced or restored database can repeat rowids and change markers, so every key includes
+    // the main file; WAL commits leave it alone until a checkpoint.
     const identity = Option.match(main!, {
       onNone: () => "none",
       onSome: (stat) =>
-        `${stat.dev}:${Option.getOrNull(stat.ino)}:${Option.getOrNull(stat.birthtime)?.getTime()}`,
+        `${stat.dev}:${Option.getOrNull(stat.ino)}:${Option.getOrNull(stat.birthtime)?.getTime()}/${stamp(main!)}`,
     });
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -213,8 +214,7 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const updated = columns.has("time_updated") ? "time_updated" : "NULL";
         // Without time_updated an in-place edit can keep the length, so any database write counts.
-        const version =
-          updated === "NULL" ? `${identity}/${stamp(main!)}/${stamp(wal!)}` : identity;
+        const version = updated === "NULL" ? `${identity}/${stamp(wal!)}` : identity;
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
         // List rowids and change markers so SQLite can use time indexes without reading message

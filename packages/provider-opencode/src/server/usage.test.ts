@@ -197,7 +197,7 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("does not reuse rows from a replaced database file", () =>
+  it.effect("does not reuse rows from a replaced or restored database file", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -225,6 +225,11 @@ describe("readOpenCodeUsage", () => {
       yield* write("replacement.db", 900);
       yield* fileSystem.rename(path.join(dir, "replacement.db"), path.join(dir, "opencode.db"));
       assert.strictEqual(yield* input, 900);
+      // A backup restored in place keeps the inode and birth time, like `cp -p`.
+      yield* write("backup.db", 500);
+      yield* fileSystem.copyFile(path.join(dir, "backup.db"), path.join(dir, "opencode.db"));
+      yield* fileSystem.utimes(path.join(dir, "opencode.db"), new Date(0), new Date(0));
+      assert.strictEqual(yield* input, 500);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
