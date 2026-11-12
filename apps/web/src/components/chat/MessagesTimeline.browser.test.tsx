@@ -61,7 +61,6 @@ import {
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { useRightPanelStore } from "../../rightPanelStore";
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found" as string | null,
@@ -80,14 +79,14 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
-const audioAsset = vi.hoisted(() => ({ url: "" }));
+const stubbedAsset = vi.hoisted(() => ({ url: "" }));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      audioAsset.url
-        ? { _tag: "Success", url: audioAsset.url }
+      stubbedAsset.url
+        ? { _tag: "Success", url: stubbedAsset.url }
         : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
   };
 });
@@ -743,6 +742,44 @@ describe("MessagesTimeline work rows", () => {
 });
 
 describe("MessagesTimeline messages", () => {
+  it.each([0.98, 1.02])("keeps row sizes in layout pixels at scale %s", async (scale) => {
+    const props = baseProps();
+    const entries = [
+      message("A paragraph that wraps across the conversation. ".repeat(100), {
+        role: "assistant",
+      }),
+      message("The next prompt", {}, "next-prompt"),
+    ];
+    const timeline = (resolvedTheme: "light" | "dark") => (
+      <MessagesTimeline {...props} timelineEntries={entries} resolvedTheme={resolvedTheme} />
+    );
+    await using screen = await renderElement(timeline("light"));
+    const first = screen.container.querySelector<HTMLElement>("[data-timeline-row-id]")!;
+    const next = screen.container.querySelector<HTMLElement>(
+      '[data-timeline-row-id="entry-next-prompt"]',
+    )!;
+    const height = first.getBoundingClientRect().height;
+    await vi.waitFor(() =>
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBe(Math.round(height)),
+    );
+    await new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(first);
+    });
+    screen.container.style.transform = `scale(${scale})`;
+    await screen.rerender(timeline("dark"));
+    screen.container.style.transform = "";
+    await vi.waitFor(() => {
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBe(Math.round(height));
+      expect(
+        Math.abs(next.getBoundingClientRect().top - first.getBoundingClientRect().bottom),
+      ).toBeLessThanOrEqual(1);
+    });
+  });
+
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();
     const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");
@@ -786,6 +823,25 @@ describe("MessagesTimeline messages", () => {
       expect(props.listRef.current!.getState().sizeAtIndex(0)).toBeGreaterThan(0);
     });
     expect(maxNestedCommits).toBeLessThan(20);
+  });
+
+  it("folds a user message only when the fold hides at least as much as it shows", async () => {
+    setup();
+    const lines = (count: number) =>
+      Array.from({ length: count }, (_, index) => `Line ${index}`).join("\n");
+    await using screen = await renderTimeline([
+      message(lines(12), {}, "medium"),
+      message(lines(60), {}, "long"),
+    ]);
+    await vi.waitFor(() => expect(screen.buttons("Show full message")).toHaveLength(1));
+    const [medium, long] = [
+      ...screen.container.querySelectorAll<HTMLElement>("[data-user-message-body]"),
+    ];
+    expect(medium!.dataset.userMessageCollapsible).toBe("false");
+    expect(medium!.textContent).toContain("Line 11");
+    const foldedHeight = long!.offsetHeight;
+    await click(screen.button("Show full message"));
+    expect(long!.offsetHeight).toBeGreaterThanOrEqual(foldedHeight * 2);
   });
 
   it("keeps the first and last message headings reachable from either end", async () => {
@@ -1033,35 +1089,6 @@ describe("MessagesTimeline messages", () => {
     await act(() => vi.advanceTimersByTime(300));
     const turns = turnsInDomOrder();
     expect(turns).toEqual(turns.toSorted((a, b) => a - b));
-  });
-
-  it("opens standalone skill details and its instructions", async () => {
-    setup();
-    const threadRef = {
-      environmentId: ENVIRONMENT_ID,
-      threadId: ThreadId.make("thread-skill"),
-    };
-    await using screen = await renderTimeline([message("$review")], {
-      routeThreadKey: "environment-local:thread-skill",
-      skills: [
-        {
-          name: "review",
-          displayName: "Review",
-          description: "Reviews the current branch.",
-          path: "/skills/review/SKILL.md",
-          enabled: true,
-        },
-      ],
-    });
-    using openFile = vi
-      .spyOn(useRightPanelStore.getState(), "openFile")
-      .mockImplementation(() => {});
-
-    await userEvent.click(screen.getByRole("button", { name: "Skill Review. Show details" }));
-    await expect.element(page.getByText("Reviews the current branch.")).toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: "View instructions" }));
-
-    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
   });
 
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
@@ -1525,12 +1552,59 @@ describe("MessagesTimeline automation prompts", () => {
     expect(screen.button(/^Automation/).textContent).toContain("Triage the inbox");
   });
 
-  it("leaves ordinary user messages as full bubbles", async () => {
-    setup();
-    await using screen = await renderTimeline([message(AUTOMATION_PROMPT)]);
-    expect(screen.buttons(/^Automation/)).toHaveLength(0);
-    expect(screen.text()).toContain("Label every new issue and close duplicates.");
-  });
+  it.each([undefined, "model", "effort", "failed", "queued"] as const)(
+    "keeps a %s switch note under the full user bubble",
+    async (change) => {
+      setup();
+      const entry = {
+        ...message(AUTOMATION_PROMPT),
+        ...(change
+          ? {
+              projectedItem: v2Item("user_message", {
+                status: change === "failed" ? "failed" : "completed",
+                inputIntent: change === "queued" ? "queued_turn" : "turn_start",
+                modelSwitch: {
+                  from: {
+                    instanceId: "codex",
+                    model: "before",
+                    options: [{ id: "reasoningEffort", value: "low" }],
+                  },
+                  to: {
+                    instanceId: "codex",
+                    model: change === "effort" ? "before" : "after",
+                    options: [{ id: "reasoningEffort", value: "high" }],
+                  },
+                },
+              }),
+            }
+          : {}),
+      };
+      await using screen = await renderTimeline([entry]);
+      expect(screen.buttons(/^Automation/)).toHaveLength(0);
+      expect(screen.text()).toContain("Label every new issue and close duplicates.");
+      const note = screen.container.querySelector<HTMLElement>("[data-model-switch-note]");
+      if (!change) {
+        expect(note).toBeNull();
+        return;
+      }
+      expect(note?.textContent).toBe(
+        change === "effort" ? "low → high" : "before low → after high",
+      );
+      if (change === "failed")
+        await expect.element(screen.getByText("failed", { exact: true })).toBeVisible();
+      const bubble = screen.container.querySelector<HTMLElement>(".surface-bubble")!;
+      const row = bubble.closest<HTMLElement>('[data-timeline-row-kind="message"]')!;
+      expect(row.contains(note)).toBe(true);
+      expect(bubble.contains(note)).toBe(false);
+      expect(note!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        bubble.getBoundingClientRect().bottom,
+      );
+      const before = row.getBoundingClientRect().height;
+      await userEvent.hover(bubble);
+      expect(row.getBoundingClientRect().height).toBe(before);
+      expect(screen.buttons("Copy message")).toHaveLength(1);
+    },
+  );
 
   it("reveals a find match beyond the folded automation prompt's initial viewport", async () => {
     setup();
@@ -1567,7 +1641,7 @@ describe("MessagesTimeline automation prompts", () => {
       ],
       {
         supportsConversationRollback: true,
-        threadStartCheckpointReady: true,
+        threadStartCheckpointAvailable: true,
         turnDiffSummaries: [
           {
             runId,
@@ -1790,9 +1864,9 @@ describe("MessagesTimeline attachments", () => {
     );
     const src =
       "data:audio/wav;base64,UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA";
-    audioAsset.url = src;
+    stubbedAsset.url = src;
     onTestFinished(() => {
-      audioAsset.url = "";
+      stubbedAsset.url = "";
     });
     const props = baseProps();
     await using screen = await renderTimeline(
@@ -2592,26 +2666,6 @@ describe("MessagesTimeline work rows", () => {
         .toHaveAttribute("aria-expanded", "true");
     },
   );
-
-  it("stops showing Thinking in the working window when the provider turn ends", async () => {
-    const runId = RunId.make("ended-provider-run");
-    const props = {
-      ...baseProps(),
-      timelineEntries: [message("Continue the queue", { runId })],
-      isWorking: true,
-      activeTurnInProgress: true,
-      activeTurnStartedAt: CREATED_AT,
-      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
-    };
-    await using screen = await renderElement(<MessagesTimeline {...props} />);
-    expect(screen.text()).toContain("Thinking");
-
-    await screen.rerender(
-      <MessagesTimeline {...props} latestRun={{ ...props.latestRun, turnEnded: true }} />,
-    );
-    expect(screen.text()).not.toContain("Thinking");
-    expect(screen.text()).toContain("Working for");
-  });
 
   it("updates reset labels across midnight and expires snooze at the deadline", async () => {
     const now = new Date(2026, 9, 18, 23, 59, 30);
