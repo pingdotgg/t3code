@@ -18,6 +18,7 @@ import {
   selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
+  selectWindowEndPanes,
   showLayoutContent,
   type LayoutState,
   type LayoutTab,
@@ -457,6 +458,26 @@ describe("replaceLayoutTabContent", () => {
   });
 });
 
+describe("selectLayoutPaneSlots", () => {
+  it("keeps a full-width column on screen when the strip narrows after it was arranged", () => {
+    // Arranged with the sidebar closed, then the sidebar opens and the strip narrows.
+    const state: LayoutState = {
+      focusedWorkspaceId: "workspace",
+      workspaces: [
+        {
+          id: "workspace",
+          name: null,
+          focusedPaneId: null,
+          cameraWidth: 1300,
+          columns: [column("chat", 1), column("terminal", 0.5)],
+        },
+      ],
+    };
+    expect(drawnRightEdges(state, 1300)).toEqual([1300, 1950]);
+    expect(drawnRightEdges(state, 1000)).toEqual([1000, 1500]);
+  });
+});
+
 describe("resizeLayoutColumnEdge", () => {
   it("keeps the dragged edge under the pointer when the strip was arranged wider than the window", () => {
     const viewportWidth = 1000;
@@ -542,5 +563,31 @@ describe("moveLayoutTabToWorkspace", () => {
     expect(tabContents(moved)).toEqual([[second], [first], []]);
     expect(selectFocusedWorkspace(moved)).toBe(moved.workspaces[0]);
     expect(selectFocusedTab(moved)?.content).toBe(second);
+  });
+});
+
+describe("selectWindowEndPanes", () => {
+  const slot = (paneId: string, left: number, width: number, hasAbove = false) => ({
+    paneId,
+    activeTabId: null,
+    rect: { left, top: 0, width, height: 1 },
+    hasLeft: left > 0,
+    hasRight: left + width < 1,
+    hasAbove,
+    hasBelow: false,
+  });
+
+  it("finds the panes under the caption buttons and how far each runs past the window", () => {
+    // Three 600px columns in a 1000px window.
+    const slots = [slot("a", 0, 1 / 3), slot("b", 1 / 3, 1 / 3), slot("c", 2 / 3, 1 / 3)];
+    expect(selectWindowEndPanes(slots, 0, 1800, 1000)).toEqual([{ paneId: "b", clipPx: 200 }]);
+    expect(selectWindowEndPanes(slots, 800, 1800, 1000)).toEqual([{ paneId: "c", clipPx: 0 }]);
+    expect(selectWindowEndPanes(slots, 300, 1800, 1000)).toEqual([
+      { paneId: "b", clipPx: 0 },
+      { paneId: "c", clipPx: 500 },
+    ]);
+    expect(selectWindowEndPanes([slot("a", 0, 1), slot("b", 0, 1, true)], 0, 1000, 1000)).toEqual([
+      { paneId: "a", clipPx: 0 },
+    ]);
   });
 });

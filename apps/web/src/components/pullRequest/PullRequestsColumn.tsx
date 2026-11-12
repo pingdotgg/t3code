@@ -80,7 +80,6 @@ export function PullRequestsColumn({
   sortMenu,
   filtersMenu,
   compactMenu,
-  rightPanelOpen,
   maximizedAway,
   split,
   listBody,
@@ -99,7 +98,6 @@ export function PullRequestsColumn({
   filtersMenu: ReactNode;
   /** State, sort, filters and refresh in one menu, for a narrow column. */
   compactMenu: ReactNode;
-  rightPanelOpen: boolean;
   maximizedAway: boolean;
   /** Whether the list sits beside an open review as its own pane. */
   split: boolean;
@@ -141,9 +139,9 @@ export function PullRequestsColumn({
         split && "overflow-hidden md:rounded-pane md:rounded-ss-none",
       )}
     >
-      {/* A closed right panel leaves this column full-width, so the header reserves native
-          window controls. */}
-      <SettingsPaneHeader transparent trailingEdge={!rightPanelOpen}>
+      {/* Beside an open review that pane holds the window's top-right corner; otherwise
+          the layout pane's own edge decides. */}
+      <SettingsPaneHeader transparent trailingEdge={split ? false : undefined}>
         <SettingsTabNotch
           title="Pull requests"
           icon={

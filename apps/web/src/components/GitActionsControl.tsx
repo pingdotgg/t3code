@@ -1391,7 +1391,8 @@ export default function GitActionsControl({
                   <TooltipPopup side="top">{changesBaseLabel}</TooltipPopup>
                 </Tooltip>
               ) : null}
-              <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+              {/* Ends where the other rows' trailing chevrons and labels do. */}
+              <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 pe-1 text-caption tabular-nums">
                 <span
                   className={
                     changesTotals?.insertions ? "text-diff-addition" : "text-muted-foreground"

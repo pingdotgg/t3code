@@ -5,6 +5,7 @@ import "~/index.css";
 import { render } from "../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
+import { stripCameraPosition } from "../motion/stripCamera";
 import { createLayoutLauncherContent, createLayoutState, selectFocusedTab } from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
 import { LayoutSurfaceHost } from "./SurfaceHost";
@@ -98,7 +99,9 @@ const joinOffset = (strip: HTMLElement) =>
   strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx");
 const tabOffset = (strip: HTMLElement, tabId: string) => {
   const tab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabId}"]`)!;
-  const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+  const bounds = strip.getBoundingClientRect();
+  const scale = bounds.width / strip.offsetWidth;
+  const left = (tab.getBoundingClientRect().left - bounds.left) / scale;
   return `${Math.round(left + strip.scrollLeft)}px`;
 };
 
@@ -128,24 +131,15 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   expect(strip.isConnected).toBe(true);
 });
 
-it("shows an unfocused pane's active tab as a pill, and black chrome keeps the notch", async () => {
-  using tabs = setup();
+it("joins an unfocused pane's active tab too, and black chrome keeps the notch", async () => {
+  using _tabs = setup();
   await using _screen = await renderHost({ insetSidebar: true });
   const notch = inSecondPane('[data-pane-notch=""]');
   expect(notch.hasAttribute("data-pane-notch-unfocused")).toBe(true);
   // The bar runs the pane's whole width; the notch ends at its tabs.
   expect(getComputedStyle(notch, "::before").right).not.toBe("0px");
   const join = inSecondPane("[data-pane-join]");
-  // Focus moving between panes cross-fades the joined tab and the pill.
-  await vi.waitFor(() => {
-    expect(getComputedStyle(join.querySelector("[data-jp]")!).opacity).toBe("1");
-    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("0");
-  });
-
-  useLayoutStore.getState().focusTab(tabs.second.id);
-  await vi.waitFor(() =>
-    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1"),
-  );
+  await vi.waitFor(() => expect(getComputedStyle(join).display).toBe("block"));
 
   document.documentElement.classList.add("black-chrome");
   try {
@@ -155,4 +149,60 @@ it("shows an unfocused pane's active tab as a pill, and black chrome keeps the n
   } finally {
     document.documentElement.classList.remove("black-chrome");
   }
+});
+
+const strip = () => document.querySelector<HTMLElement>("[data-layout-strip]")!;
+const paneRect = (column: number) => {
+  const paneId = useLayoutStore.getState().layout.workspaces[0]!.columns[column]!.panes[0]!.id;
+  return document
+    .querySelector<HTMLElement>(`[data-layout-pane-id="${paneId}"]`)!
+    .getBoundingClientRect();
+};
+
+it("keeps a full-width focused column in place, without a camera move, as the sidebar toggles", async () => {
+  using _tabs = setup();
+  // At the default pace, so a camera move would spring rather than land.
+  __setClientSettingsForTests({ ...getClientSettings(), panelAnimationDurationMs: 150 });
+  const { layout } = useLayoutStore.getState();
+  const workspace = layout.workspaces[0]!;
+  const [details, thread] = workspace.columns;
+  // Arranged with the sidebar closed: the thread fills the strip, its details off to the left.
+  useLayoutStore.setState({
+    layout: {
+      ...layout,
+      workspaces: [
+        {
+          ...workspace,
+          cameraWidth: 900,
+          columns: [
+            { ...details!, width: 0.5 },
+            { ...thread!, width: 1 },
+          ],
+          focusedPaneId: thread!.panes[0]!.id,
+        },
+      ],
+    },
+  });
+  const sidebar = document.createElement("div");
+  sidebar.style.cssText = "flex:none;width:0";
+  await using screen = await renderHost();
+  screen.container.prepend(sidebar);
+  await vi.waitFor(() => expect(strip().scrollLeft).toBe(450));
+  // The camera and pane slides from mounting are not the toggle's.
+  for (const animation of document.getAnimations()) animation.finish();
+  const gap = paneRect(1).left - strip().getBoundingClientRect().left;
+  expect(gap).toBeLessThan(10);
+
+  const stage = () => document.querySelector<HTMLElement>("[data-layout-stage]")!;
+  const toggle = async (width: number, scrollLeft: number) => {
+    sidebar.style.width = `${width}px`;
+    // The strip draws its columns at the new width in the resize's own flush.
+    await vi.waitFor(() => expect(stage().offsetWidth).toBe(1.5 * (900 - width)));
+    // The camera lands with the layout: no spring across from where the old one stood.
+    expect(strip().scrollLeft).toBe(scrollLeft);
+    expect(stripCameraPosition(strip())).toBe(scrollLeft);
+    expect(paneRect(1).left - strip().getBoundingClientRect().left).toBeCloseTo(gap, 0);
+  };
+  await toggle(200, 350);
+  await toggle(0, 450);
 });

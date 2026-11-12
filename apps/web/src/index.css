@@ -235,6 +235,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
        44px under a pane inset 8px on a 52px row). */
     --pane-notch-height: calc(var(--workspace-chrome-row-height) - var(--workspace-pane-inset-top));
   }
+
+  /* A pane under the caption buttons that runs on past the window's edge
+     (--pane-window-end-clip, SurfaceHost.tsx) keeps its room for them on screen. */
+  .wco
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id] {
+    --workspace-native-controls-inset: calc(
+      var(--workspace-controls-edge-right) + 0.75rem + var(--pane-window-end-clip, 0px)
+    );
+    --workspace-pane-local-controls-right: calc(
+      var(--workspace-pane-controls-right) - var(--workspace-pane-inset) +
+        var(--pane-window-end-clip, 0px)
+    );
+  }
 }
 
 /* The pane notch (pen maP8m, see PaneNotch.tsx): the pane gives up its
@@ -6279,9 +6294,9 @@ body {
    Each pane's top is a bar in the chrome's color; the focused pane's active
    tab is a piece of the pane rising into it, joined by concave ears, with
    one lit rim from its top round the ears and out along the pane's edge,
-   where it fades. An unfocused pane's active tab is a soft pill on the bar.
-   [data-pane-join] (PaneTabs.tsx) is that tab: one shape per pane strip that
-   slides to the active tab. Light, black chrome keeps the notch instead. */
+   where it fades. An unfocused pane's active tab joins its pane the same
+   way, its label a tier down. [data-pane-join] (PaneTabs.tsx) is that tab:
+   one shape per pane strip that slides to the active tab. Light, black chrome keeps the notch instead. */
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
   --pane-join-fill: var(--background);
@@ -6310,27 +6325,29 @@ body {
     --pane-join-rim-k: 1.6;
     /* The rim's run along the pane's top edge, out from each ear. */
     --pane-join-tail: 36px;
-    --workspace-chrome-controls-top: var(--pane-join-shift);
+
+    /* The row the tabs centre in. Windows' 40px caption row leaves less than
+       the topbar's height under the shift, and padding cannot go negative. */
+    --pane-join-row: min(
+      var(--workspace-topbar-height),
+      var(--pane-notch-height) - var(--pane-join-shift)
+    );
 
     & [data-pane-header] {
       padding-block: var(--pane-join-shift)
-        calc(var(--pane-notch-height) - var(--workspace-topbar-height) - var(--pane-join-shift));
+        calc(var(--pane-notch-height) - var(--pane-join-row) - var(--pane-join-shift));
       /* From a tab's foot to the pane's top edge. */
       --pane-join-drop: calc(
-        var(--pane-notch-height) - var(--pane-join-shift) -
-          (var(--workspace-topbar-height) + 1.75rem) / 2
+        var(--pane-notch-height) - var(--pane-join-shift) - (var(--pane-join-row) + 1.75rem) / 2
       );
       /* Above a tab, up to 2px under the header's top. */
-      --pane-join-rise: calc(
-        var(--pane-join-shift) + (var(--workspace-topbar-height) - 1.75rem) / 2 - 2px
-      );
+      --pane-join-rise: calc(var(--pane-join-shift) + (var(--pane-join-row) - 1.75rem) / 2 - 2px);
       --pane-join-h: calc(var(--pane-join-rise) + 1.75rem + var(--pane-join-drop));
       --pane-join-rim-size: 100% calc(var(--pane-join-h) * var(--pane-join-rim-k));
     }
 
     /* The bar: the leading row's block runs the pane's whole width. */
     & [data-pane-notch=""] {
-      --pane-bar-fg: var(--foreground);
       --pane-bar-muted: var(--muted-foreground);
       padding-inline-start: var(--pane-join-lead);
 
@@ -6427,17 +6444,27 @@ body {
       --foreground: var(--pane-join-fg);
     }
 
-    /* An unfocused pane's tab sits on the bar, in the bar's colors. */
-    & [data-pane-notch-unfocused] [data-layout-tab-strip] [data-joined] {
-      color: var(--pane-bar-fg);
-      --contrast-strong-foreground: var(--pane-bar-fg);
-      --strong-foreground: var(--pane-bar-fg);
-      --foreground: var(--pane-bar-fg);
+    /* Inactive tabs keep their pill hover distinct from the joined active tab. */
+    &
+      [data-pane-notch=""]
+      [data-layout-tab-strip]
+      :is([data-layout-pane-tab], [data-tab-key]):not([data-joined]):hover {
+      @apply surface-ghost-hover;
+      color: var(--pane-join-fg);
     }
 
-    /* The bar's own controls follow the tabs down. */
+    /* An unfocused pane's joined label steps down a tier, as its other labels do. */
+    & [data-pane-notch-unfocused] [data-layout-tab-strip] [data-joined] {
+      color: var(--pane-join-muted);
+      --contrast-strong-foreground: var(--pane-join-muted);
+      --strong-foreground: var(--pane-join-muted);
+      --foreground: var(--pane-join-muted);
+    }
+
+    /* The bar's own controls follow the tabs down, centred on their row. */
     & [data-workspace-titlebar-controls] {
-      translate: 0 var(--pane-join-shift);
+      translate: 0
+        calc(var(--pane-join-shift) - (var(--workspace-topbar-height) - var(--pane-join-row)) / 2);
     }
 
     /* The pane's corner cuts sit at the bar's foot; the end one at the pane's
@@ -6459,7 +6486,6 @@ body {
       width: 0;
       height: var(--pane-join-h);
       pointer-events: none;
-      color: var(--pane-bar-fg);
       --jx: 0px;
       --jw: 0px;
       --jm: 0;
@@ -6567,12 +6593,13 @@ body {
         mask: linear-gradient(to right, transparent, #000);
       }
 
+      /* Sized, not a 1px column scaled up: Windows' compositor filters a
+         stretched 1px layer, fading the tab's fill out towards its end. */
       & [data-jm] {
-        width: 1px;
+        width: calc(var(--jm) * 1px);
         height: calc(100% + 1px);
         transform-origin: 0 0;
         translate: calc(var(--jx) + var(--r)) 0;
-        scale: var(--jm) 1;
         background: var(--pane-join-fill);
       }
       & [data-jm]::after {
@@ -6581,31 +6608,6 @@ body {
         inset: 0 0 auto;
         height: 1px;
         background: var(--pane-join-rim) 0 0 / var(--pane-join-rim-size) no-repeat;
-      }
-
-      /* An unfocused pane's active tab: a soft pill on the bar. */
-      & [data-jp] {
-        inset-block-start: var(--pane-join-rise);
-        height: 1.75rem;
-        width: var(--jw);
-        translate: var(--jx) 0;
-        border-radius: var(--radius-control);
-        background: color-mix(in srgb, currentColor 10%, transparent);
-        opacity: 0;
-      }
-
-      /* Focus moving between panes cross-fades the joined tab and the pill. */
-      & :is([data-jb], [data-jp]) {
-        transition: opacity var(--panel-animation-duration, 150ms) ease-out;
-      }
-    }
-
-    & [data-pane-notch-unfocused] [data-pane-join] {
-      & [data-jb] {
-        opacity: 0;
-      }
-      & [data-jp] {
-        opacity: 1;
       }
     }
   }
@@ -6619,12 +6621,6 @@ body {
       background: var(--chrome-art-paint);
       background-attachment: fixed;
       background-blend-mode: var(--chrome-art-blend, normal);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    :root:not(.black-chrome) [data-pane-notch=""] [data-pane-join] * {
-      transition: none;
     }
   }
 }

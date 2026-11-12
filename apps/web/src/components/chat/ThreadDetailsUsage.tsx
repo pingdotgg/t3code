@@ -15,7 +15,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -31,10 +31,10 @@ import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
-// The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
-// The trailing column is only as wide as the section's longest reset label, so meters fill the row.
+// Every usage and context row shares one set of columns, so meters end and percentages line up
+// across both sections. The trailing column fits a reset label ("23h 59m") or the compact button.
 const USAGE_ROW_CLASS =
-  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_var(--usage-value,2.25rem)_var(--usage-trailing,1.5rem)] items-center gap-x-2 ps-3 pe-2 text-meta";
+  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_2.25rem_2.75rem] items-center gap-x-2 ps-3 pe-2 text-meta";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -74,21 +74,7 @@ export function ThreadDetailsUsage({
           tooltip={notice ?? "No usage windows reported."}
         />
       ) : (
-        <div
-          className="contents"
-          style={
-            {
-              "--usage-trailing": `${Math.max(
-                0,
-                ...limits.windows.map((window) => resetLabel(window, now)?.length ?? 0),
-              )}ch`,
-            } as CSSProperties
-          }
-        >
-          {limits.windows.map((window) => (
-            <LimitRow key={window.id} window={window} now={now} />
-          ))}
-        </div>
+        limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
       )}
     </ThreadDetailsSection>
   );
@@ -133,8 +119,7 @@ export function ThreadDetailsContext({
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
       <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
-        {/* One row, so the percentage hugs its text and the bar takes the rest. */}
-        <div className={cn(USAGE_ROW_CLASS, "h-8 [--usage-value:max-content]")}>
+        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
           <CollapsibleTrigger
             render={<ThreadDetailsControl part="usage" />}
             aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
@@ -146,7 +131,7 @@ export function ThreadDetailsContext({
               {used !== null ? `${Math.round(used)}%` : ""}
             </span>
           </CollapsibleTrigger>
-          <span className="flex">
+          <span className="flex justify-end">
             {onCompact ? (
               <Tooltip>
                 <TooltipTrigger
