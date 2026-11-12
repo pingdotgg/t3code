@@ -178,6 +178,11 @@ describe("CloudManagedEndpointRuntime", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput("2026-06-17T02:00:00Z PNC runtime panic"),
     ).toBe("warning");
+    expect(
+      ManagedEndpointRuntime.classifyRelayClientOutput(
+        '2026-10-07T00:00:00Z ERR  error="Incoming request ended abruptly: context canceled" connIndex=0 event=1 ingressRule=0 originService=http://127.0.0.1:3773',
+      ),
+    ).toBe("debug");
   });
 
   it("classifies connection unregistration apart from registration and routine output", () => {
