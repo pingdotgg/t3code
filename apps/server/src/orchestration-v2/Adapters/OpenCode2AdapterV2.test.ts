@@ -2217,6 +2217,24 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       Effect.forkScoped,
     );
 
+  // regression: #30193 an unanswered Stop showed the turn interrupted while its tool kept running
+  it.effect("reports a Stop OpenCode never answers as an interrupt timeout", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(stopTimedOut);
+      yield* runtime.startTurn(turnInput(thread));
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* TestClock.adjust("11 seconds");
+      const exit = yield* Fiber.join(interrupt);
+      assert.propertyVal(
+        Exit.isFailure(exit) ? Cause.squash(exit.cause) : { _tag: "interrupt succeeded" },
+        "_tag",
+        "ProviderAdapterInterruptTimeoutError",
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("never lets a timed-out Stop's late end finish the next turn", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
