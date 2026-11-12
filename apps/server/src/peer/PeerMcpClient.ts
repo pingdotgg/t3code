@@ -177,7 +177,8 @@ const make = Effect.gen(function* () {
                 // Whole code points, so a cut never leaves half an emoji for encodeURIComponent.
                 Array.from(input.sender.title).slice(0, SENDER_TITLE_MAX_LENGTH).join(""),
               ]
-                .map(encodeURIComponent)
+                // encodeURIComponent throws on an unpaired surrogate, which a title can hold.
+                .map((part) => encodeURIComponent(part.toWellFormed()))
                 .join("/"),
             };
       const sessionKey = `${input.environmentId} ${resolved.url}`;

@@ -95,6 +95,9 @@ it.effect("tells the peer which thread a call is made for", () =>
       // A long title is cut to whole characters rather than breaking the call.
       const long = yield* call({ sender: { ...sender, title: "🧵".repeat(5000) } });
       expect(long.senderThread?.title).toBe("🧵".repeat(200));
+      // A title holding an unpaired surrogate still lets the call through.
+      const broken = yield* call({ sender: { ...sender, title: "Review \ud800" } });
+      expect(broken.senderThread?.title).toBe("Review \ufffd");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
