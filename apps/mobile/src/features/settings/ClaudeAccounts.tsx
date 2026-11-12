@@ -67,6 +67,7 @@ export function ClaudeAccount({
   const { run, pending, error } = useProviderInstanceMutation(environment);
   const instance = environment.serverConfig.settings.providerInstances[provider.instanceId];
   const configDir = claudeConfigDir(instance);
+  const folder = configDir || "Default config folder";
   const name = provider.displayName ?? "Claude";
   const status = !provider.enabled
     ? "Turned off"
@@ -119,9 +120,26 @@ export function ClaudeAccount({
           <Text textRole="body" className="text-foreground" numberOfLines={1}>
             {name}
           </Text>
-          <Text textRole="footnote" className="text-foreground-muted" numberOfLines={2}>
-            {[status, configDir || "Default config folder"].filter(Boolean).join(" · ")}
-          </Text>
+          <View
+            accessible
+            accessibilityLabel={[status, folder].filter(Boolean).join(", ")}
+            className="flex-row"
+          >
+            {status ? (
+              <Text textRole="footnote" className="text-foreground-muted">
+                {`${status} · `}
+              </Text>
+            ) : null}
+            {/* The folder's last segments tell accounts apart, so a long path loses its start. */}
+            <Text
+              textRole="footnote"
+              className="min-w-0 shrink text-foreground-muted"
+              numberOfLines={1}
+              ellipsizeMode="head"
+            >
+              {folder}
+            </Text>
+          </View>
         </View>
         {editing ? null : (
           <Menu
@@ -172,12 +190,7 @@ export function AddClaudeAccount({ environment }: { readonly environment: Settin
           onDone={() => setAdding(false)}
         />
       ) : (
-        <ListActionRow
-          icon="plus"
-          label="Add Claude account"
-          description="Use a Claude config folder that is already signed in on this server."
-          onPress={() => setAdding(true)}
-        />
+        <ListActionRow icon="plus" label="Add Claude account" onPress={() => setAdding(true)} />
       )}
     </View>
   );
