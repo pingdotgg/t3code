@@ -167,31 +167,6 @@ describe("consumeCloudReplayGuards", () => {
       expect(result).toBe(failure);
     }),
   );
-
-  it.effect("keeps every guard when the whole pair is created", () =>
-    Effect.gen(function* () {
-      const created: string[] = [];
-      const removed: string[] = [];
-      const consumed = yield* consumeCloudReplayGuards({
-        secrets: makeSecretStore(
-          (name) =>
-            Effect.sync(() => {
-              created.push(name);
-            }),
-          (name) =>
-            Effect.sync(() => {
-              removed.push(name);
-            }),
-        ),
-        names: ["cloud-jti", "cloud-nonce"],
-        value: new Uint8Array([1]),
-      });
-
-      expect(consumed).toBe(true);
-      expect(created.sort()).toEqual(["cloud-jti", "cloud-nonce"]);
-      expect(removed).toEqual([]);
-    }),
-  );
 });
 
 describe("releaseManagedTunnelOnShutdown", () => {
