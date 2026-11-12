@@ -35,6 +35,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -3886,6 +3887,13 @@ describe("OrchestratorMcpService thread list", () => {
     shell("thread:a-snoozed", "project:a", true),
     shell("thread:a-awake", "project:a", false),
     shell("thread:b-snoozed", "project:b", true),
+    {
+      ...shell("thread:a-awaiting-command", "project:a", false),
+      activityRunStatus: null,
+      pendingBackgroundTasks: [
+        { taskId: "sleep-600", kind: "command" as const, awaited: true as const },
+      ],
+    },
   ];
   const service = layerOrchestratorService.pipe(
     Layer.provide(
@@ -3905,7 +3913,21 @@ describe("OrchestratorMcpService thread list", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) =>
+            shells.some((thread) => thread.projectId === id)
+              ? Effect.succeedSome({
+                  id,
+                  title: id,
+                  workspaceRoot: `/projects/${id}`,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                })
+              : Effect.succeedNone,
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -3928,6 +3950,34 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:a-snoozed", "project:a"],
           ["thread:b-snoozed", "project:b"],
         ],
+      );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("refuses a projectId that names no project", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp
+        .listThreads(client, { projectId: ProjectId.make("project:missing") })
+        .pipe(Effect.result);
+      if (Result.isSuccess(listed)) {
+        assert.fail(`listed threads for a missing project: ${JSON.stringify(listed.success)}`);
+      }
+      assert.equal(listed.failure.code, "invalid_request");
+      assert.include(listed.failure.message, "not found");
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("counts a thread holding awaited background work as live in the status filter", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:a"),
+        statuses: ["preparing", "queued", "starting", "running", "waiting"],
+      });
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => thread.threadId),
+        ["thread:a-awaiting-command"],
       );
     }).pipe(Effect.provide(service)),
   );

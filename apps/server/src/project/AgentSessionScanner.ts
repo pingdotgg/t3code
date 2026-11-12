@@ -38,7 +38,7 @@ import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.t
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
+import { piHome, resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import {
@@ -824,7 +824,8 @@ export const make = Effect.gen(function* () {
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
-  const isWindows = (yield* HostProcess.Platform) === "win32";
+  const platform = yield* HostProcess.Platform;
+  const isWindows = platform === "win32";
   const foldWorktreeCase = isWindows;
   const hostEnvironment = yield* HostProcess.Environment;
   const homeDir = yield* HostProcess.HomeDirectory;
@@ -1591,7 +1592,11 @@ export const make = Effect.gen(function* () {
             instance.environment,
             hostEnvironment,
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
-          homePath = resolvePiSessionsDir(environment, homeDir, path);
+          homePath = resolvePiSessionsDir(
+            environment,
+            piHome(environment, homeDir, platform),
+            path,
+          );
         } else if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
