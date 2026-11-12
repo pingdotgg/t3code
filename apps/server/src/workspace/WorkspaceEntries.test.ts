@@ -457,6 +457,34 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("matches glob metacharacters in the query literally", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-brackets-" });
+        yield* writeTextFile(cwd, "src/app/game/[id]/index.tsx");
+        yield* writeTextFile(cwd, "src/foo{bar}.ts");
+        yield* writeTextFile(cwd, "src/main.ts");
+        yield* writeTextFile(cwd, "src/notes.md");
+
+        const search = (query: string) =>
+          searchWorkspaceEntries({ cwd, query, limit: 10 }).pipe(
+            Effect.map((result) => result.entries.map((entry) => entry.path)),
+          );
+
+        for (const query of ["game/[i", "game/[id]"]) {
+          expect(yield* search(query)).toContain("src/app/game/[id]/index.tsx");
+        }
+        expect(yield* search("foo{bar}.ts")).toContain("src/foo{bar}.ts");
+        expect((yield* search("*.{ts,tsx}")).toSorted()).toEqual([
+          "src/app/game/[id]/index.tsx",
+          "src/foo{bar}.ts",
+          "src/main.ts",
+        ]);
+        expect((yield* search("*.{ts}")).toSorted()).toEqual(["src/foo{bar}.ts", "src/main.ts"]);
+        expect(yield* search("src/{main}.ts")).toEqual(["src/main.ts"]);
+        expect(yield* search("src/{foo{bar},notes}.md")).toEqual(["src/notes.md"]);
+      }),
+    );
+
     it.effect("excludes gitignored paths for git repositories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
@@ -494,6 +522,35 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
+      }),
+    );
+
+    it.effect("finds a path inside a gitignored nested git worktree only by its exact path", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-worktree-", git: true });
+        const env = {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Test",
+          GIT_AUTHOR_EMAIL: "test@example.com",
+          GIT_COMMITTER_NAME: "Test",
+          GIT_COMMITTER_EMAIL: "test@example.com",
+        };
+        yield* writeTextFile(cwd, ".gitignore", ".worktrees/\n");
+        yield* git(cwd, ["add", ".gitignore"]);
+        yield* git(cwd, ["commit", "-m", "init"], env);
+        yield* git(cwd, ["worktree", "add", "-b", "x", ".worktrees/x"]);
+        yield* writeTextFile(cwd, ".worktrees/x/src/foo.py", "print(1)");
+
+        const exact = yield* searchWorkspaceEntries({
+          cwd,
+          query: "src/foo.py",
+          limit: 25,
+          kind: "file",
+        });
+        expect(exact.entries).toEqual([{ path: ".worktrees/x/src/foo.py", kind: "file" }]);
+
+        const partial = yield* searchWorkspaceEntries({ cwd, query: "src/fo", limit: 25 });
+        expect(partial.entries.map((entry) => entry.path)).not.toContain(".worktrees/x/src/foo.py");
       }),
     );
   });
@@ -756,10 +813,14 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           if (created.ok) {
             const finder = created.value;
             finders += 1;
-            const scanFiles = finder.scanFiles.bind(finder);
+            // The synchronous rescan waits on fff's picker lock on the event loop.
             finder.scanFiles = () => {
+              throw new Error("refresh must not rescan on the JS thread");
+            };
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
               rescans += 1;
-              return scanFiles();
+              return scanFilesAsync();
             };
             const waitForIndexReady = finder.waitForIndexReady.bind(finder);
             finder.waitForIndexReady = (timeoutMs) =>

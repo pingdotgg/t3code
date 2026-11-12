@@ -1,10 +1,16 @@
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
+import {
+  AssetWorkspaceAssetNotFoundError,
+  EnvironmentId,
+  SOURCE_CONTROL_MEDIA_ASSET,
+  ThreadId,
+} from "@t3tools/contracts";
 
 const harness = vi.hoisted(() => ({
-  refreshAssetUrl: vi.fn<(environmentId: string, resource: { url: string }) => Promise<string>>(),
+  refreshAssetUrl:
+    vi.fn<(environmentId: string, resource: { url: string }) => Promise<string | null>>(),
   alert: vi.fn(),
   previews: [] as unknown[],
   mounts: 0,
@@ -143,4 +149,25 @@ it("closes the preview when the selected image cannot be resolved", async () => 
 
   expect(preview.onRequestClose).toHaveBeenCalledOnce();
   expect(harness.alert).toHaveBeenCalledOnce();
+});
+
+it("names the checked path when the server cannot find the file", async () => {
+  const resource = {
+    _tag: "media-file" as const,
+    threadId: ThreadId.make("thread"),
+    path: "v2/extended/duo-color-3-extended-FINAL.png",
+  };
+  const checkedPath = "/repo/v2/extended/duo-color-3-extended-FINAL.png";
+  harness.refreshAssetUrl.mockRejectedValue(
+    new AssetWorkspaceAssetNotFoundError({ resource, checkedPath }),
+  );
+  const selected: FilePreviewItem = { kind: "image", environmentId, resource };
+  await using preview = await openGallery(selected, [selected], false);
+
+  expect(preview.onRequestClose).toHaveBeenCalledOnce();
+  expect(harness.alert).toHaveBeenCalledWith(
+    "Could not open preview",
+    expect.stringContaining(checkedPath),
+  );
+  expect(harness.alert.mock.calls[0]?.[1]).not.toMatch(/reconnect/i);
 });
