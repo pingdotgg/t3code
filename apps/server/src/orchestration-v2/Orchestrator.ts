@@ -876,15 +876,17 @@ function worktreeSetupPending(
   );
 }
 
-/** Saving or cancelling an edit lets the queue continue past its run. */
+/** Saving, cancelling an edit, or removing its run lets the queue continue. */
 function releasesQueuedRunEdit(
   command: OrchestrationV2ServerCommand,
 ): command is Extract<
   OrchestrationV2Command,
-  { readonly type: "queued-run.edit" | "queued-run.edit.hold" }
+  { readonly type: "queued-run.edit" | "queued-run.edit.hold" | "queued-run.cancel" }
 > {
   return (
-    command.type === "queued-run.edit" || (command.type === "queued-run.edit.hold" && !command.held)
+    command.type === "queued-run.edit" ||
+    command.type === "queued-run.cancel" ||
+    (command.type === "queued-run.edit.hold" && !command.held)
   );
 }
 
