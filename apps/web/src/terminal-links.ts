@@ -46,6 +46,8 @@ const REQUEST_ROUTE_PATTERN =
 // The tail of `redis://host/0` or `file:///a.mjs` is not a path. One-letter schemes stay drives,
 // a diff's `+` or `-` may lead, and the lookbehind keeps runs from being rescanned at every suffix.
 const SCHEME_URL_PATTERN = /(?<![A-Za-z\d+.-])[+-]?[A-Za-z][A-Za-z\d+.-]+:\/\/[^\s"'`<>]+/gu;
+// Nor is the tail of an SCP-style Git remote such as `git@github.com:acme/widgets.git`.
+const SCP_REMOTE_PATTERN = /(?<![\w.@-])[\w.-]+@[\w.-]+:[^\s"'`<>]+/gu;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
@@ -116,7 +118,11 @@ export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
     ? [{ kind: "path", text: promptPath, start: 3, end: 3 + promptPath.length }]
     : [];
   const nonPathRanges = Array.from(
-    [...line.matchAll(REQUEST_ROUTE_PATTERN), ...line.matchAll(SCHEME_URL_PATTERN)],
+    [
+      ...line.matchAll(REQUEST_ROUTE_PATTERN),
+      ...line.matchAll(SCHEME_URL_PATTERN),
+      ...line.matchAll(SCP_REMOTE_PATTERN),
+    ],
     (match) => ({ start: match.index, end: match.index + match[0].length }),
   );
   const urlMatches = collectMatches(line, "url", URL_PATTERN, promptMatches);
