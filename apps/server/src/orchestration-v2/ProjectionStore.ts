@@ -5845,6 +5845,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    // A live run fork shows its source's history through the fork run without copying it.
+    const shownByLiveFork = (threadId: ThreadId, runIdColumn: string) => sql`
+      EXISTS (
+        SELECT 1
+        FROM orchestration_v2_projection_threads AS fork
+        JOIN orchestration_v2_projection_runs AS fork_run
+          ON fork_run.run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
+        LEFT JOIN orchestration_v2_projection_runs AS item_run
+          ON item_run.run_id = ${sql.literal(runIdColumn)}
+        WHERE fork_run.thread_id = ${threadId}
+          AND fork.deleted_at IS NULL
+          AND json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+          AND json_extract(fork.payload_json, '$.forkedFrom.threadId') = ${threadId}
+          AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
+          AND (${sql.literal(runIdColumn)} IS NULL OR item_run.ordinal <= fork_run.ordinal)
+      )
+    `;
+
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
       Effect.all([
         sql<{ id: string }>`
@@ -5852,14 +5870,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
+        AND NOT ${shownByLiveFork(threadId, "message.run_id")}
     `,
         sql<{ payload_json: string }>`
-      SELECT payload_json
-      FROM orchestration_v2_projection_turn_items
-      WHERE thread_id = ${threadId}
-        AND type = 'dynamic_tool'
-        AND (payload_json LIKE '%htmlRender%' OR payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
-          OR payload_json LIKE '%preview_recording_stop%')
+      SELECT item.payload_json
+      FROM orchestration_v2_projection_turn_items AS item
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'dynamic_tool'
+        AND (item.payload_json LIKE '%htmlRender%'
+          OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
+          OR item.payload_json LIKE '%preview_recording_stop%')
+        AND NOT ${shownByLiveFork(threadId, "item.run_id")}
     `,
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
@@ -5868,6 +5889,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         json_each(question.value) AS attachment
       WHERE item.thread_id = ${threadId}
         AND item.type = 'user_input_request'
+        AND NOT ${shownByLiveFork(threadId, "item.run_id")}
     `,
         // A guest's waiting files are pending uploads that no message row holds yet.
         sql<{ id: string }>`
