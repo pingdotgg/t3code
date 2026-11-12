@@ -470,29 +470,36 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData.mock.calls).toEqual([["echo hi"], ["echo hi"]]);
   });
 
+  it.each([
+    ["blur, then a menu paste", "menu"],
+    ["the gesture window, then a menu paste", "menu"],
+    ["an empty native paste, blur, then a menu paste", "menu"],
+    ["a middle-click selection paste", "selection"],
+  ])("a pending shortcut read gives way to %s", async (scenario, pasted) => {
+    const harness = createHarness();
+    let resolveRead: (text: string) => void = () => {};
+    const read = new Promise<string>((resolve) => {
+      resolveRead = resolve;
+    });
+    vi.stubGlobal("navigator", { platform: "Linux x86_64", clipboard: { readText: () => read } });
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("selection");
+    surface.selectAll();
+
+    key(surface, "V", "KeyV", { ctrlKey: true, shiftKey: true });
+    key(surface, "V", "KeyV", { ctrlKey: true, shiftKey: true }, "keyup");
+    if (scenario.startsWith("an empty")) paste(surface, "");
+    if (scenario.includes("blur")) surface.input.dispatchEvent(new Event("blur"));
+    if (scenario.startsWith("the gesture window")) vi.advanceTimersByTime(2_001);
+    if (scenario.startsWith("a middle-click")) harness.pointer("pointerdown", 5, 0, {}, 1);
+    else paste(surface, "menu");
+    resolveRead("stale shortcut");
+    await read;
+
+    expect(harness.onData.mock.calls).toEqual([[pasted]]);
+  });
+
   // A dictation tool posts Cmd+V and lets go of V at once; Chromium's native paste comes last.
-  it.each(["blur", "the gesture window"])(
-    "a native paste still drops a pending shortcut read after %s",
-    async (end) => {
-      const harness = createHarness();
-      let resolveRead: (text: string) => void = () => {};
-      const read = new Promise<string>((resolve) => {
-        resolveRead = resolve;
-      });
-      vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText: () => read } });
-      const surface = await harness.create({ beforeKey: () => true });
-
-      key(surface, "v", "KeyV", { metaKey: true });
-      if (end === "blur") surface.input.dispatchEvent(new Event("blur"));
-      else vi.advanceTimersByTime(2_001);
-      paste(surface, "menu");
-      resolveRead("shortcut");
-      await read;
-
-      expect(harness.onData.mock.calls).toEqual([["menu"]]);
-    },
-  );
-
   it("pastes once when V comes up before the late native paste", async () => {
     const harness = createHarness();
     const read = Promise.resolve("echo hi");

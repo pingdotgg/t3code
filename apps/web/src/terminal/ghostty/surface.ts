@@ -47,9 +47,8 @@ const PASTE_GESTURE_WINDOW_MS = 2_000;
 type PasteGesture = {
   readonly at: number;
   read: "pending" | "sent" | "settled";
-  cancelled: boolean;
-  /** Set when it leaves the queue unpaired: any later paste then supersedes its read, as on main. */
-  droppedAtToken?: number;
+  /** Its read is dropped once a native or menu paste moves `pasteSupersedeCount` past this. */
+  readonly supersedeCount: number;
 };
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
@@ -638,6 +637,8 @@ export class GhosttyTerminalSurface {
   // A paste shortcut starts a clipboard read, and Chromium sends its own paste event, in either order.
   // Open gestures, oldest first, pair the two: one paste per press, whatever text each path read.
   private readonly pasteGestures: PasteGesture[] = [];
+  // Native and menu pastes supersede pending shortcut reads; a later shortcut press does not.
+  private pasteSupersedeCount = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -991,6 +992,7 @@ export class GhosttyTerminalSurface {
     isCurrent: () => boolean = () => true,
   ): Promise<void> {
     const token = ++this.pasteShortcutToken;
+    this.pasteSupersedeCount += 1;
     const text = await readText();
     if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
     this.pasteShortcutToken += 1;
@@ -1009,13 +1011,7 @@ export class GhosttyTerminalSurface {
     const firstOpen = this.pasteGestures.findIndex(
       (gesture) => now - gesture.at <= PASTE_GESTURE_WINDOW_MS,
     );
-    this.dropPasteGestures(firstOpen === -1 ? this.pasteGestures.length : firstOpen);
-  }
-
-  private dropPasteGestures(count: number): void {
-    for (const gesture of this.pasteGestures.splice(0, count)) {
-      gesture.droppedAtToken = this.pasteShortcutToken;
-    }
+    this.pasteGestures.splice(0, firstOpen === -1 ? this.pasteGestures.length : firstOpen);
   }
 
   // The terminal selection is the only browser-readable PRIMARY-like buffer.
@@ -1227,7 +1223,11 @@ export class GhosttyTerminalSurface {
     if (isTerminalPasteShortcut(event)) {
       const now = performance.now();
       this.expirePasteGestures(now);
-      const gesture: PasteGesture = { at: now, read: "settled", cancelled: false };
+      const gesture: PasteGesture = {
+        at: now,
+        read: "settled",
+        supersedeCount: this.pasteSupersedeCount,
+      };
       this.pasteGestures.push(gesture);
       // A later shortcut supersedes a pending menu paste read.
       this.pasteShortcutToken += 1;
@@ -1237,13 +1237,7 @@ export class GhosttyTerminalSurface {
         gesture.read = "pending";
         void clipboard.readText().then(
           (text) => {
-            if (this.disposed || gesture.cancelled) return;
-            if (
-              gesture.droppedAtToken !== undefined &&
-              gesture.droppedAtToken !== this.pasteShortcutToken
-            ) {
-              return;
-            }
+            if (this.disposed || this.pasteSupersedeCount !== gesture.supersedeCount) return;
             gesture.read = text.length === 0 ? "settled" : "sent";
             if (text.length > 0) this.options.onData(this.core.encodePaste(text));
           },
@@ -1295,7 +1289,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
-    this.dropPasteGestures(this.pasteGestures.length);
+    this.pasteGestures.length = 0;
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
@@ -1348,8 +1342,8 @@ export class GhosttyTerminalSurface {
     if (data.length === 0) return;
     // Its gesture's read already pasted: this is the duplicate, whatever text Chromium read.
     if (gesture?.read === "sent") return;
-    // The native paste won: neither its gesture's read nor a pending menu read may double it.
-    if (gesture) gesture.cancelled = true;
+    // The native paste won: no pending shortcut or menu read may double it.
+    this.pasteSupersedeCount += 1;
     this.pasteShortcutToken += 1;
     this.options.onData(this.core.encodePaste(data));
   };
