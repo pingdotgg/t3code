@@ -447,6 +447,10 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
+    // Capture builds stay full screen with one window, so every shot is of the same scene.
+    ...(process.env.T3_SHOWCASE_CAPTURE_BUILD === "1"
+      ? []
+      : ["./plugins/withIosMultipleWindows.cjs"]),
     // Compile out the unused pedometer to avoid an iOS motion purpose string.
     ["expo-sensors", { motionPermission: false }],
     // Mods run in reverse order; expo-widgets must create and wipe the target before assets are added.

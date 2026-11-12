@@ -10,8 +10,9 @@ import {
 } from "./thread-list-v2-row-appearance";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
+import { useAppWindowId } from "../../lib/appWindows";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { threadArrangementOpenAtom } from "../../state/thread-order";
+import { threadArrangementWindowAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -1023,6 +1024,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     thread.branch,
     titleMenuItems,
   ]);
+  const windowId = useAppWindowId();
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
@@ -1033,7 +1035,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
       if (nativeEvent.event === "auto-settle:disabled") handleSetAutoSettle(false);
-      if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
+      if (nativeEvent.event === "arrange") {
+        appAtomRegistry.set(threadArrangementWindowAtom, windowId);
+      }
       if (nativeEvent.event === "move-up") handleMoveUp();
       if (nativeEvent.event === "move-down") handleMoveDown();
       if (nativeEvent.event === "archive") handleArchive();
@@ -1091,6 +1095,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       setCustomSnoozeOpen,
       snoozePresets,
       props.snoozePresets,
+      windowId,
     ],
   );
   const primaryAction = useMemo(() => {

@@ -4,6 +4,7 @@ import * as Linking from "expo-linking";
 import { AppState, Dimensions, Platform } from "react-native";
 
 import { environmentCatalog } from "../../../connection/catalog";
+import type { AppWindowId } from "../../../lib/appWindows";
 import { deriveLayout } from "../../../lib/layout";
 import {
   NATIVE_METRICS_TIMEOUT_MS,
@@ -118,8 +119,7 @@ export const workspaceSelectionCheck: WorkspaceSelectionCheck = {
 };
 
 /** Whether the window lays the workspace out in columns, by the rule the layout itself uses. */
-export function workspaceHasColumns() {
-  const metrics = currentNativeLayoutMetrics();
+export function workspaceHasColumns(metrics = currentNativeLayoutMetrics()) {
   const { width, height } = metrics ?? Dimensions.get("window");
   return deriveLayout({
     width,
@@ -139,9 +139,9 @@ export function settingsLinkPage() {
  * chat beside the list instead of an empty detail column; a compact window opens on the list.
  * It waits for the first layout metrics as long as the workspace itself does.
  */
-export async function launchWorkspaceURL(): Promise<string | null> {
+export async function launchWorkspaceURL(windowId: AppWindowId): Promise<string | null> {
   if (!REMEMBERS) return null;
-  const metrics = firstNativeLayoutMetrics(NATIVE_METRICS_TIMEOUT_MS);
+  const metrics = firstNativeLayoutMetrics(windowId, NATIVE_METRICS_TIMEOUT_MS);
   await hydrateWorkspaceSelections();
   const thread = selections.threads;
   // Read the chat's cached copy while the layout metrics are still on their way.
@@ -151,8 +151,11 @@ export async function launchWorkspaceURL(): Promise<string | null> {
       thread.threadId as ThreadId,
     );
   }
-  await metrics;
-  if (!thread || !workspaceHasColumns() || !workspaceSelectionCheck.thread(thread)) return null;
+  // The opening window's own layout: another window may have columns while this one does not.
+  const windowMetrics = await metrics;
+  if (!thread || !workspaceHasColumns(windowMetrics) || !workspaceSelectionCheck.thread(thread)) {
+    return null;
+  }
   return Linking.createURL(
     `threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`,
   );
