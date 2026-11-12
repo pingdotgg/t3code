@@ -1365,13 +1365,10 @@ describe("VcsStatusBroadcaster", () => {
 
   it.effect("a checkout read that fails while index.lock is held retries until it succeeds", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const gitDir = yield* fs.makeTempDirectoryScoped({ prefix: "vcs-head-watch-" });
-      const headPath = path.join(gitDir, "HEAD");
-      yield* fs.writeFileString(headPath, "ref: refs/heads/main\n");
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const headPath = "/repo/.git/HEAD";
       const failed = yield* Deferred.make<void>();
-      const state = {
+      const state: Parameters<typeof layerTestFor>[0] = {
         currentLocalStatus: { ...baseLocalStatus, isDefaultRef: true, refName: "main" },
         currentRemoteStatus: null,
         localStatusCalls: 0,
@@ -1379,6 +1376,12 @@ describe("VcsStatusBroadcaster", () => {
         localInvalidationCalls: 0,
         remoteInvalidationCalls: 0,
         headPath,
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: () => Effect.succeed(true),
+          watch: (_target, options) =>
+            Stream.fromQueue(events).pipe(Stream.onStart(Effect.sync(() => options?.onReady?.()))),
+        }),
         failLocalStatus: false,
         onLocalStatusFailure: Deferred.succeed(failed, undefined).pipe(Effect.asVoid),
       };
@@ -1402,9 +1405,7 @@ describe("VcsStatusBroadcaster", () => {
         // A terminal commit holds index.lock across the checkout, so the HEAD event's read fails.
         state.failLocalStatus = true;
         state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName: "repro" };
-        const lockPath = path.join(gitDir, "HEAD.lock");
-        yield* fs.writeFileString(lockPath, "ref: refs/heads/repro\n");
-        yield* fs.rename(lockPath, headPath);
+        yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
         yield* Deferred.await(failed);
         const failedCalls = state.localStatusCalls;
 
@@ -1414,7 +1415,7 @@ describe("VcsStatusBroadcaster", () => {
         yield* Deferred.await(checkedOut);
         assert.strictEqual(state.localStatusCalls, failedCalls + 1);
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("subscribers share one HEAD watch that ends with the last of them", () =>
@@ -1525,6 +1526,50 @@ describe("VcsStatusBroadcaster", () => {
         yield* Deferred.await(first.sawRef("two"));
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("a HEAD watch ends when its git directory is removed", () =>
+    Effect.gen(function* () {
+      const gitDir = "/repo/.git/worktrees/feature";
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const closed = yield* Deferred.make<void>();
+      let gitDirExists = true;
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, refName: "main" },
+        currentRemoteStatus: null,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        headPath: `${gitDir}/HEAD`,
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: (target) => Effect.succeed(target !== gitDir || gitDirExists),
+          watch: (_target, options) =>
+            Stream.fromQueue(events).pipe(
+              Stream.onStart(Effect.sync(() => options?.onReady?.())),
+              Stream.ensuring(Deferred.succeed(closed, undefined)),
+            ),
+        }),
+      };
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
+        assert.deepEqual(yield* branches, [{ refName: "main", isRepo: true }]);
+
+        // Every checkout removes HEAD.lock, which leaves the watch running.
+        state.currentLocalStatus = { ...baseLocalStatus, refName: "other" };
+        yield* Queue.offer(events, { _tag: "Remove", path: "HEAD.lock" });
+        yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
+        assert.deepEqual(yield* branches, [{ refName: "other", isRepo: true }]);
+
+        // `git worktree remove` deletes the watched directory; Windows keeps reporting it.
+        gitDirExists = false;
+        yield* Queue.offer(events, { _tag: "Remove", path: gitDir });
+        yield* Deferred.await(closed);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    }),
   );
 
   it.effect("releases remote demand while passive observers remain", () => {

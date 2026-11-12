@@ -33,6 +33,13 @@ Running `codex login` does not change a managed ChatGPT connection. In
 and complete the wizard. Then select that instance from the thread's model
 picker. See [Use multiple accounts](#use-multiple-accounts).
 
+## Allow more time for provider checks
+
+If an authenticated Codex installation reports “Timed out while checking Codex
+app-server provider status,” set `T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` in the
+T3 server's environment and restart it. See [Provider check timeouts](./install.md#provider-check-timeouts)
+for configuration and other providers.
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account
@@ -99,6 +106,15 @@ Codex tools can request access to another app. Respond to the named app's reques
 in the thread on web, desktop, or mobile. Some tools offer access for one request,
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
+
+## Use Daybreak
+
+Models with cyber access programs show a Cyber Access option in the model
+options. It starts on Standard, or on Daybreak when `config.toml` in your Codex
+home sets `daybreak = true` or the model only runs under Daybreak. Your choice carries
+over to new threads. Custom models do not offer it. If Codex rejects a turn
+because your login lacks the program, switch Cyber Access back to Standard or
+sign in to Codex with an account that has it.
 
 ## Codex says I hit a usage limit
 

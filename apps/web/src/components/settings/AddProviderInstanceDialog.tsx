@@ -552,6 +552,7 @@ export function AddProviderInstanceDialog({
                                 environment={localEnvironment}
                                 onChange={setLocalEnvironment}
                                 secretSources={secretSources}
+                                environmentId={environmentId}
                               />
                             ) : null}
                           </SettingsGroup>

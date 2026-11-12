@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,7 +13,6 @@ import { vi } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { WorkspaceFinderOpener } from "./WorkspaceFinderThread.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -457,17 +457,31 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("matches square brackets in the query literally", () =>
+    it.effect("matches glob metacharacters in the query literally", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-brackets-" });
         yield* writeTextFile(cwd, "src/app/game/[id]/index.tsx");
+        yield* writeTextFile(cwd, "src/foo{bar}.ts");
+        yield* writeTextFile(cwd, "src/main.ts");
+        yield* writeTextFile(cwd, "src/notes.md");
+
+        const search = (query: string) =>
+          searchWorkspaceEntries({ cwd, query, limit: 10 }).pipe(
+            Effect.map((result) => result.entries.map((entry) => entry.path)),
+          );
 
         for (const query of ["game/[i", "game/[id]"]) {
-          const result = yield* searchWorkspaceEntries({ cwd, query, limit: 10 });
-          expect(result.entries.map((entry) => entry.path)).toContain(
-            "src/app/game/[id]/index.tsx",
-          );
+          expect(yield* search(query)).toContain("src/app/game/[id]/index.tsx");
         }
+        expect(yield* search("foo{bar}.ts")).toContain("src/foo{bar}.ts");
+        expect((yield* search("*.{ts,tsx}")).toSorted()).toEqual([
+          "src/app/game/[id]/index.tsx",
+          "src/foo{bar}.ts",
+          "src/main.ts",
+        ]);
+        expect((yield* search("*.{ts}")).toSorted()).toEqual(["src/foo{bar}.ts", "src/main.ts"]);
+        expect(yield* search("src/{main}.ts")).toEqual(["src/main.ts"]);
+        expect(yield* search("src/{foo{bar},notes}.md")).toEqual(["src/notes.md"]);
       }),
     );
 
@@ -479,6 +493,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, "ignored.txt", "ignore me");
         yield* writeTextFile(cwd, ".convex/local-storage/data.json", "{}");
         yield* writeTextFile(cwd, "convex/UOoS-l/convex_local_storage/modules/data.json", "{}");
+        yield* writeTextFile(cwd, ".git/info/exclude", "info-excluded.txt\n");
+        yield* writeTextFile(cwd, "info-excluded.txt", "ignore me");
+        yield* writeTextFile(cwd, ".git/configured-excludes", "configured-excluded.txt\n");
+        yield* git(cwd, ["config", "core.excludesFile", ".git/configured-excludes"]);
+        yield* writeTextFile(cwd, "configured-excluded.txt", "ignore me");
 
         const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
         const paths = result.entries.map((entry) => entry.path);
@@ -486,6 +505,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
         expect(paths).not.toContain("ignored.txt");
+        expect(paths).not.toContain("info-excluded.txt");
+        expect(paths).not.toContain("configured-excluded.txt");
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
         expect(paths.some((entryPath) => entryPath.startsWith("convex/"))).toBe(false);
       }),
@@ -577,6 +598,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, ".gitignore", "ignored.txt\n");
         yield* writeTextFile(cwd, "src/keep.ts", "square\nSquare\n");
         yield* writeTextFile(cwd, "ignored.txt", "Square\n");
+        yield* writeTextFile(cwd, ".git/info/exclude", "info-excluded.txt\n");
+        yield* writeTextFile(cwd, "info-excluded.txt", "Square\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const result = yield* workspaceEntries.searchContents({
@@ -793,42 +816,43 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         let scansOutlastWait = false;
         let finders = 0;
         let rescans = 0;
-        const openFinder = yield* WorkspaceFinderOpener;
-        const countingOpener: typeof openFinder = async (options) => {
-          const opened = await openFinder(options);
-          if (!opened.ok) return opened;
-          finders += 1;
-          const call: typeof opened.value.call = (method, ...args) => {
-            if (method === "scanFiles") rescans += 1;
-            if (method === "waitForIndexReady" && scansOutlastWait) {
-              return Promise.resolve({ ok: true, value: false } as never);
-            }
-            return opened.value.call(method, ...args);
-          };
-          return { ok: true, value: { ...opened.value, call } };
-        };
-        const result = yield* Effect.gen(function* () {
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          const searchNeedle = workspaceEntries.searchContents({
-            cwd,
-            query: "needle",
-            limit: 100,
-            caseSensitive: true,
-            wholeWord: false,
-            useRegex: false,
-          });
-          yield* searchNeedle;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            finders += 1;
+            // The synchronous rescan waits on fff's picker lock on the event loop.
+            finder.scanFiles = () => {
+              throw new Error("refresh must not rescan on the JS thread");
+            };
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
+              rescans += 1;
+              return scanFilesAsync();
+            };
+            const waitForIndexReady = finder.waitForIndexReady.bind(finder);
+            finder.waitForIndexReady = (timeoutMs) =>
+              scansOutlastWait
+                ? Promise.resolve({ ok: true, value: false })
+                : waitForIndexReady(timeoutMs);
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searchNeedle = workspaceEntries.searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+        yield* searchNeedle;
 
-          scansOutlastWait = true;
-          yield* workspaceEntries.refresh(cwd);
-          return yield* searchNeedle;
-        }).pipe(
-          Effect.provide(
-            Layer.fresh(WorkspaceEntries.layer).pipe(
-              Layer.provide(Layer.succeed(WorkspaceFinderOpener, countingOpener)),
-            ),
-          ),
-        );
+        scansOutlastWait = true;
+        yield* workspaceEntries.refresh(cwd);
+        const result = yield* searchNeedle;
 
         expect(result.matches.map((match) => match.path)).toEqual(["src/notes.ts"]);
         // The second search ran on the rescanned live finder, not a rebuild.
