@@ -1,34 +1,26 @@
-import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import type { MenuAction } from "@react-native-menu/menu";
-import { EnvironmentId } from "@t3tools/contracts";
-import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { useRef, useState } from "react";
-import { Platform, View } from "react-native";
-
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
-  AndroidHeaderIconButton,
-  AndroidScreenHeader,
-} from "../../components/ui/AndroidScreenHeader";
-import { DelimitedFilePreview } from "./DelimitedFilePreview";
-import { AudioFilePreview } from "./AudioFilePreview";
-import { Menu } from "../../components/ui/Menu";
-import { EmptyState } from "../../components/ui/EmptyState";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+  clampFileAttachmentUploadBytes,
+  formatAttachmentSize,
+} from "@t3tools/client-runtime/state/attachments";
+import { useRef, useState } from "react";
+import { View } from "react-native";
+
+import { AppBar, type AppBarMenu } from "../../components/ui/AppBar";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { nativeViewerErrorMessage } from "../../lib/attachmentDownload";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { removeComposerDraftAttachment, useComposerDraft } from "../../state/use-composer-drafts";
-import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
-import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { useEnvironmentServerConfig } from "../../state/entities";
+import { useRefreshAssetUrl } from "../../state/assets";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { SourceFileSurface } from "./SourceFileSurface";
-import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
-import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
+import { isZipFile, ZipArchiveView } from "./ZipArchiveView";
+import { AttachmentDocumentBody, nativeViewerKind } from "./AttachmentDocumentBody";
 
 export type AttachmentFileRouteParams = {
   readonly environmentId?: string;
@@ -43,97 +35,9 @@ export type AttachmentFileRouteParams = {
 
 type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
 
-function nativeViewerKind(kind: ReturnType<typeof useAttachmentDocument>["kind"]) {
-  if (kind === "image") return "image" as const;
-  if (kind === "pdf") return "pdf" as const;
-  if (kind === "video" || kind === "unsupported") return "document" as const;
-  return null;
-}
-
-function AttachmentDocumentBody(props: {
-  readonly document: ReturnType<typeof useAttachmentDocument>;
-  readonly name: string;
-  readonly environmentId: EnvironmentId | null;
-  readonly htmlRender: boolean;
-  readonly nativeViewer: "pending" | "open" | "unavailable" | null;
-  readonly nativeError: string | null;
-  readonly onOpenNative: () => void;
-}) {
-  const { document } = props;
-  if (document.error) {
-    return (
-      <View className="flex-1 items-center justify-center bg-sheet px-6">
-        <EmptyState
-          title="File unavailable"
-          detail={document.error}
-          actionLabel="Try again"
-          onAction={document.retry}
-        />
-      </View>
-    );
-  }
-  if (props.nativeViewer !== null && props.nativeViewer !== "unavailable") {
-    return <FilePreviewLoading message="Opening in file viewer..." />;
-  }
-  if (!document.uri || (document.needsText && !document.content)) {
-    return <FilePreviewLoading message="Loading file..." />;
-  }
-  if (document.needsText && document.content) {
-    const { content, table } = document;
-    return (
-      <View className="flex-1 bg-sheet">
-        {content.truncated ? (
-          <FilePreviewNotice title="Partial file">
-            Preview limited to the first 1 MB. Save or share the file to read it in full.
-          </FilePreviewNotice>
-        ) : null}
-        {table && document.activeMode === "table" ? (
-          <DelimitedFilePreview table={table} />
-        ) : document.activeMode === "markdown" && props.environmentId ? (
-          <FileMarkdownPreview
-            cwd=""
-            relativePath=""
-            environmentId={props.environmentId}
-            threadId={null}
-            markdown={content.text}
-            captured
-          />
-        ) : (
-          <SourceFileSurface contents={content.text} path={props.name} selectable />
-        )}
-      </View>
-    );
-  }
-  if (document.kind === "audio") {
-    return <AudioFilePreview key={document.revision} uri={document.uri} onRetry={document.retry} />;
-  }
-  if (document.kind === "html") {
-    return props.htmlRender ? (
-      <HtmlRenderWebView key={document.uri} uri={document.uri} title={props.name} nested={false} />
-    ) : (
-      <WorkspaceFileWebPreview uri={document.uri} />
-    );
-  }
-  return (
-    <View className="flex-1 items-center justify-center bg-sheet px-6">
-      <EmptyState
-        title="No preview for this file"
-        detail={
-          props.nativeError ??
-          "No app on this device can show this format. Save or share it to open it elsewhere."
-        }
-        actionLabel="Try again"
-        onAction={props.onOpenNative}
-      />
-    </View>
-  );
-}
-
 export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const navigation = useNavigation();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
-  const iconColor = useUniwindTheme()["--color-icon"];
-  const isAndroid = Platform.OS === "android";
   const params = props.route.params;
   const environmentId = params.environmentId?.trim()
     ? EnvironmentId.make(params.environmentId)
@@ -273,78 +177,72 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
       : null,
   ].filter((action) => action !== null);
   const selectedAction = activeMode === "source" ? "source" : "preview";
-  const androidMenuActions = menuActions.map((action) => ({
-    id: action.id,
-    title: action.title,
-    image: action.icon,
-    state: action.inline ? (action.id === selectedAction ? "on" : "off") : undefined,
-    ...("destructive" in action ? { attributes: { destructive: true } } : {}),
-  })) satisfies MenuAction[];
-  const handleAndroidMenuAction = (event: { nativeEvent: { event: string } }) => {
-    menuActions.find(({ id }) => id === event.nativeEvent.event)?.onPress();
+  const fileMenu: AppBarMenu = {
+    title: "File actions",
+    icon: "ellipsis",
+    items: [
+      ...(renderedMode
+        ? [
+            {
+              id: "modes",
+              inline: true,
+              items: menuActions
+                .filter(({ inline }) => inline)
+                .map((action) => ({
+                  id: action.id,
+                  title: action.title,
+                  icon: action.icon,
+                  selected: action.id === selectedAction,
+                  onPress: action.onPress,
+                })),
+            },
+          ]
+        : []),
+      ...menuActions
+        .filter(({ inline }) => !inline)
+        .map((action) => ({
+          id: action.id,
+          title: action.title,
+          icon: action.icon,
+          destructive: "destructive" in action,
+          onPress: action.onPress,
+        })),
+    ],
   };
   const subtitle = `${draftKey ? "Draft attachment" : "Attachment"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
+  const refresh = useRefreshAssetUrl(environmentId, resource);
+  const capabilities = useEnvironmentServerConfig(environmentId)?.environment.capabilities;
+
+  if (document.kind === "archive" && isZipFile(params) && !document.error) {
+    const threadDraftKey =
+      environmentId && params.threadId
+        ? scopedThreadKey(environmentId, ThreadId.make(params.threadId))
+        : null;
+    return (
+      <ZipArchiveView
+        name={params.name}
+        subtitle={subtitle}
+        sizeBytes={sizeBytes}
+        uri={uri}
+        isLocal={localAttachment !== null}
+        refresh={refresh}
+        environmentId={environmentId}
+        // Entries go to the thread's chat composer, also from a question-answer draft.
+        draftKey={threadDraftKey ?? draftKey}
+        maxAttachmentBytes={
+          capabilities?.attachmentUploads && capabilities.fileAttachments
+            ? clampFileAttachmentUploadBytes(capabilities.fileAttachments.maxUploadBytes)
+            : undefined
+        }
+        onSave={() => void share()}
+        onRemove={draftKey ? removeFromDraft : null}
+      />
+    );
+  }
 
   return (
     <View className="flex-1 bg-sheet">
-      <NativeStackScreenOptions
-        options={{
-          headerShown: !isAndroid,
-          headerTintColor: iconColor,
-          headerTitle: params.name,
-          title: params.name,
-          unstable_headerSubtitle: Platform.OS === "ios" ? subtitle : undefined,
-        }}
-      />
-      {isAndroid ? (
-        <AndroidScreenHeader
-          title={params.name}
-          subtitle={subtitle}
-          onBack={handleBack}
-          trailing={
-            <Menu
-              actions={androidMenuActions}
-              isAnchoredToRight
-              title="File actions"
-              onPressAction={handleAndroidMenuAction}
-            >
-              <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
-            </Menu>
-          }
-        />
-      ) : null}
-      <Toolbar placement="right">
-        <Toolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
-          {renderedMode ? (
-            <Toolbar.Menu inline>
-              {menuActions
-                .filter(({ inline }) => inline)
-                .map((action) => (
-                  <Toolbar.MenuAction
-                    key={action.id}
-                    icon={action.icon}
-                    isOn={action.id === selectedAction}
-                    onPress={action.onPress}
-                  >
-                    {action.title}
-                  </Toolbar.MenuAction>
-                ))}
-            </Toolbar.Menu>
-          ) : null}
-          {menuActions
-            .filter(({ inline }) => !inline)
-            .map((action) => (
-              <Toolbar.MenuAction
-                key={action.id}
-                icon={action.icon}
-                destructive={"destructive" in action}
-                onPress={action.onPress}
-              >
-                {action.title}
-              </Toolbar.MenuAction>
-            ))}
-        </Toolbar.Menu>
-      </Toolbar>
+      <AppBar title={params.name} subtitle={subtitle} onBack={handleBack} menus={[fileMenu]} />
       <AttachmentDocumentBody
         document={document}
         name={params.name}

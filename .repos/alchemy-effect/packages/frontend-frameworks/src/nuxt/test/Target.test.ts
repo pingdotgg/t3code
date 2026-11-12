@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  makeCloudflareTarget,
-  NITRO_HANDLER_SPECIFIER,
-  NITRO_PRESET,
-} from "../cloudflare.ts";
+import { makeCloudflareTarget, NITRO_HANDLER_SPECIFIER, NITRO_PRESET } from "../cloudflare.ts";
 import type { NitroConfigSlice } from "../UserConfig.ts";
 
 describe("makeCloudflareTarget", () => {
@@ -11,12 +7,7 @@ describe("makeCloudflareTarget", () => {
     const target = makeCloudflareTarget();
     expect(target.platform).toBe("cloudflare");
     expect(target.nitroPreset).toBe(NITRO_PRESET);
-    expect(target.bundle?.conditions).toEqual([
-      "workerd",
-      "worker",
-      "module",
-      "browser",
-    ]);
+    expect(target.bundle?.conditions).toEqual(["workerd", "worker", "module", "browser"]);
     expect(target.bundle?.external).toEqual(["cloudflare:"]);
     // No wholesale build and no finishing pass: nitro's cloudflare_module
     // output is already workerd ESM.
@@ -79,8 +70,6 @@ describe("makeCloudflareTarget", () => {
   });
 
   it("exports the wrappable-handler specifier for user entries", () => {
-    expect(NITRO_HANDLER_SPECIFIER).toBe(
-      "nitropack/presets/cloudflare/runtime/cloudflare-module",
-    );
+    expect(NITRO_HANDLER_SPECIFIER).toBe("nitropack/presets/cloudflare/runtime/cloudflare-module");
   });
 });

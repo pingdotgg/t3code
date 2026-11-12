@@ -51,9 +51,7 @@ layer(localRuntimeLayer)("Service.self binding", (it) => {
       expect(yield* worker.fetchText("/")).toBe("<h1>home</h1>\n");
       // Through the self binding, the same path reaches the worker's own
       // fetch handler directly, bypassing the assets middleware.
-      expect(yield* worker.fetchText("/self-root")).toBe(
-        "self:worker-fallthrough",
-      );
+      expect(yield* worker.fetchText("/self-root")).toBe("self:worker-fallthrough");
     }),
   );
 });

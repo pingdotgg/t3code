@@ -10,17 +10,27 @@ import {
   officePreviewKind,
   FILE_TEXT_PREVIEW_MAX_BYTES,
 } from "@t3tools/shared/filePreview";
-import { ChevronRightIcon, DownloadIcon, Trash2Icon, WrapTextIcon, XIcon } from "lucide-react";
-import { Check, Code2, Copy, Eye, Table2 } from "lucide";
+import {
+  ChevronRightIcon,
+  DownloadIcon,
+  Trash2Icon,
+  WrapTextIcon,
+  XIcon,
+  CheckIcon,
+  Code2Icon,
+  CopyIcon,
+  EyeIcon,
+  Table2Icon,
+} from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
-import { MorphIcon } from "~/components/MorphIcon";
+import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 import { BinaryFilePreview } from "./BinaryFilePreview";
@@ -54,7 +64,16 @@ const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 
 const STALE_URL_MS = 5 * 60_000;
 
-export function ReadOnlySourcePreview(props: { name: string; text: string }) {
+const blobKeys = new WeakMap<Blob, string>();
+let nextBlobKey = 0;
+
+function blobKey(blob: Blob) {
+  const key = blobKeys.get(blob) ?? `blob:${nextBlobKey++}`;
+  blobKeys.set(blob, key);
+  return key;
+}
+
+export function ReadOnlySourcePreview(props: { name: string; text: string; wordWrap?: boolean }) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
       <SourcePreview {...props} />
@@ -138,6 +157,7 @@ export function AttachmentFilePreview(props: {
   const [contentError, setContentError] = useState<string | null>(null);
   const copyContents = useRef<(() => Promise<string>) | null>(null);
   const authorizedAt = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates an object URL for the local file and revokes it on cleanup
   useEffect(() => {
     if (!props.file) return;
     const url = URL.createObjectURL(props.file);
@@ -145,6 +165,7 @@ export function AttachmentFilePreview(props: {
     setLocalUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [props.file]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- authorizes a remote attachment URL from the server and ignores the result after cleanup
   useEffect(() => {
     if (props.file) return;
     let cancelled = false;
@@ -174,6 +195,7 @@ export function AttachmentFilePreview(props: {
       (props.sizeBytes === 0 && (!resource || resource._tag === "attachment")));
   const needsText =
     kind === "text" || kind === "markdown" || kind === "mermaid" || (kind === "html" && !rendered);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the file's text from its URL or Blob stream and aborts the request on cleanup
   useEffect(() => {
     if (!needsText || streamsText || !url) return;
     const controller = new AbortController();
@@ -210,7 +232,9 @@ export function AttachmentFilePreview(props: {
     return () => controller.abort();
   }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, refresh]);
   const failure = error ?? (needsText ? contentError : null);
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const showsRawText =
     failure === null &&
     needsText &&
@@ -268,6 +292,7 @@ export function AttachmentFilePreview(props: {
         onRetry={() => setRevision((value) => value + 1)}
         delimiter={rendered ? delimiter : null}
         copyContents={copyContents}
+        wordWrap={wordWrap}
       />
     </Suspense>
   ) : !url || (needsText && !content) ? (
@@ -281,10 +306,14 @@ export function AttachmentFilePreview(props: {
       </Suspense>
     ) : kind === "markdown" && rendered ? (
       <ScrollArea className="min-h-0 flex-1">
-        <ChatMarkdown text={content.text} cwd={undefined} className="mx-auto max-w-4xl px-6 py-5" />
+        <ChatMarkdown
+          text={maskMarkdownFrontmatter(content.text)}
+          cwd={undefined}
+          className="mx-auto max-w-4xl px-6 py-5"
+        />
       </ScrollArea>
     ) : (
-      <ReadOnlySourcePreview name={props.name} text={content.text} />
+      <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
     )
   ) : kind === "archive" || kind === "sqlite" ? (
     <BinaryFilePreview
@@ -314,6 +343,17 @@ export function AttachmentFilePreview(props: {
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
       threadRef={props.threadRef}
+      // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.
+      // A draft keeps its Blob key after upload, so finishing the upload does not reload the PDF.
+      documentKey={
+        kind !== "pdf"
+          ? undefined
+          : props.file
+            ? blobKey(props.file)
+            : props.asset && "attachmentId" in props.asset
+              ? `${props.asset.environmentId}:${props.asset.attachmentId}`
+              : undefined
+      }
     />
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />
@@ -369,17 +409,20 @@ export function AttachmentFilePreview(props: {
             pressed={rendered}
             onPress={() => setRendered((value) => !value)}
           >
-            <MorphIcon
-              className="size-3.5"
-              icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
-            />
+            {rendered ? (
+              <Code2Icon className="size-3.5" />
+            ) : renderedMode === "table" ? (
+              <Table2Icon className="size-3.5" />
+            ) : (
+              <EyeIcon className="size-3.5" />
+            )}
           </FileSurfaceAction>
         ) : null}
         {showsRawText ? (
           <FileSurfaceAction
             label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
             pressed={wordWrap}
-            onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            onPress={() => setWordWrapOverride(!wordWrap)}
           >
             <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>
@@ -412,7 +455,7 @@ export function AttachmentFilePreview(props: {
                 );
             }}
           >
-            <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+            {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
           </FileSurfaceAction>
         ) : null}
         {url ? (

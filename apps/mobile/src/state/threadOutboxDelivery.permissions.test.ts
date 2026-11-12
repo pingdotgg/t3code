@@ -41,7 +41,7 @@ const state = vi.hoisted(() => ({
   },
   config: {
     shellThreadFamilies: false,
-    providers: [{ instanceId: "codex", driver: "codex" }],
+    providers: [{ instanceId: "codex", driver: "codex", models: [] }],
     environment: { capabilities: {} },
   },
 }));
@@ -100,7 +100,7 @@ vi.mock("./threads", async () => {
       familyAtom: () => Atom.make(AsyncResult.success({})),
       refresh: vi.fn(),
     },
-    environmentThreadDetails: { threadAtom: () => Atom.make(null) },
+    environmentThreadDetails: { stateAtom: () => Atom.make(null) },
   };
 });
 vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
@@ -136,6 +136,7 @@ vi.mock("./use-thread-outbox", async () => {
   return {
     editingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     dispatchingQueuedMessageIdAtom: Atom.make<MessageId | null>(null).pipe(Atom.keepAlive),
+    retryingQueuedMessageIdsAtom: Atom.make({}).pipe(Atom.keepAlive),
     threadOutboxShellStatusesAtom: Atom.make(new Map([["secondary", "live"]])),
   };
 });
@@ -151,6 +152,7 @@ vi.mock("./use-composer-drafts", async () => {
       state.draftText += `\n${input.text}`;
     }),
     replaceComposerDraftAttachments: vi.fn(),
+    setFreshSessionPending: vi.fn(),
     undoComposerDraftMerge: vi.fn(),
     updateComposerDraftSettings: vi.fn(),
     waitForComposerDraftsLoaded: vi.fn(),
@@ -224,6 +226,7 @@ beforeEach(() => {
   ]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
+  state.start.mockResolvedValue(AsyncResult.success({}));
   state.prepare.mockReset().mockImplementation(async ({ attachments }) => ({
     status: "ready",
     attachments: [],
@@ -427,7 +430,8 @@ describe("queued task operation access", () => {
       );
       await state.manager.enqueue(queued);
       const started = Promise.withResolvers<void>();
-      const delivery = Promise.withResolvers<AsyncResult.AsyncResult<void, Error>>();
+      const delivery =
+        Promise.withResolvers<AsyncResult.AsyncResult<{ readonly sequence?: number }, Error>>();
       state.start.mockImplementationOnce(() => {
         started.resolve();
         return delivery.promise;
@@ -437,7 +441,7 @@ describe("queued task operation access", () => {
       setOperateGrant("secondary", false);
       delivery.resolve(
         accepted
-          ? AsyncResult.success(undefined)
+          ? AsyncResult.success({})
           : AsyncResult.failure(Cause.fail(new Error("This connection cannot control this task."))),
       );
       await drained;
@@ -495,4 +499,53 @@ describe("queued task operation access", () => {
       expect(remaining()).toEqual([queued]);
     },
   );
+});
+
+describe("compaction before a queued send", () => {
+  const compactTurn = {
+    commandId: "command:compact",
+    message: {
+      messageId: "message:compact",
+      role: "user",
+      text: "/compact",
+      attachments: [],
+      idleCompaction: "onReturn",
+    },
+    dispatchMode: "queue",
+  };
+
+  it("queues /compact ahead of the message and resends the same /compact on a retry", async () => {
+    setOperateGrant("secondary", true);
+    const queued = message({ compactBeforeSend: true, dispatchMode: "queue" });
+    await state.manager.enqueue(queued);
+    state.start
+      .mockResolvedValueOnce(AsyncResult.success({}))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))));
+    await runDrain();
+    expect(remaining()).toEqual([queued]);
+
+    // A restarted app delivers the persisted message again.
+    state.cleanups.splice(0).forEach((cleanup) => cleanup());
+    await runDrain();
+    expect(state.start.mock.calls.map(([call]) => call.input)).toEqual([
+      expect.objectContaining(compactTurn),
+      expect.objectContaining({ commandId: "command", dispatchMode: "queue" }),
+      expect.objectContaining(compactTurn),
+      expect.objectContaining({ commandId: "command", dispatchMode: "queue" }),
+    ]);
+    expect(remaining()).toEqual([]);
+  });
+
+  it("holds the message when its /compact cannot be sent", async () => {
+    setOperateGrant("secondary", true);
+    const queued = message({ compactBeforeSend: true, dispatchMode: "queue" });
+    await state.manager.enqueue(queued);
+    state.start.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Socket is not connected"))),
+    );
+    await runDrain();
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input).toMatchObject(compactTurn);
+    expect(remaining()).toEqual([queued]);
+  });
 });
