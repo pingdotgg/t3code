@@ -184,6 +184,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can transcribe 16 kHz mono PCM audio on the environment machine. */
   voiceTranscription: Schema.optionalKey(Schema.Boolean),
   cloudVoiceTranscription: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The server config's flags of the same names. A server that names them here lets a client
+   * load the shell snapshot before the socket opens, and answers its `resumeFrom`.
+   */
+  shellThreadFamilies: Schema.optionalKey(Schema.Boolean),
+  shellOlderSettled: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
