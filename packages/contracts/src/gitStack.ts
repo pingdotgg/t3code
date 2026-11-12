@@ -41,6 +41,7 @@ export const GitStackStatusResult = Schema.Struct({
     Schema.Struct({
       branch: Schema.String,
       cwd: Schema.String,
+      publishThrough: Schema.optional(Schema.String),
       phase: Schema.Literals(["rebase", "push", "hooks"]),
     }),
   ),

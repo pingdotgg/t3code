@@ -1,5 +1,5 @@
 import * as WorkflowProgress from "./WorkflowProgress.ts";
-import type { GitWorkflowProgress } from "@t3tools/contracts";
+import type { GitWorkflowProgress, GitWorkflowStep } from "@t3tools/contracts";
 import type { GitStartCommitWorkflowInput, GitStartCommitWorkflowResult } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
@@ -2768,6 +2768,7 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
+    stackParent?: string,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2805,12 +2806,14 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const { baseBranch, baseRef } = yield* resolvePrBase(
-      cwd,
-      branch,
-      details.upstreamRef,
-      headContext,
-    );
+    const { baseBranch, baseRef } = stackParent
+      ? {
+          baseBranch: stackParent,
+          baseRef: (yield* gitCore.resolveBranchName(cwd, `refs/heads/${stackParent}`))
+            ? `refs/heads/${stackParent}`
+            : yield* resolveBaseRangeRef(cwd, stackParent),
+        }
+      : yield* resolvePrBase(cwd, branch, details.upstreamRef, headContext);
     yield* emit({
       kind: "phase_started",
       phase: "pr",
@@ -4260,7 +4263,12 @@ export const make = Effect.gen(function* () {
             input.action !== "adopt" &&
             input.action !== "edit" &&
             input.action !== "abort" &&
-            input.action !== "untrack"
+            input.action !== "untrack" &&
+            (!status.operation?.publishThrough ||
+              updated.layers.findIndex((item) => item.branch === layer.branch) <=
+                updated.layers.findIndex(
+                  (item) => item.branch === status.operation!.publishThrough,
+                ))
           ) {
             const pr = yield* branchPullRequest(
               { cwd: input.cwd, branch: layer.branch },
@@ -4313,7 +4321,10 @@ export const make = Effect.gen(function* () {
         const initialStatus = yield* input.forceWithLease
           ? gitCore.statusDetailsLocal(input.cwd)
           : gitCore.statusDetails(input.cwd);
-        const localStack = yield* branchStacks.inspect(input.cwd, false);
+        const publishing = ["push", "create_pr", "commit_push", "commit_push_pr"].includes(
+          input.action,
+        );
+        let localStack = yield* branchStacks.inspect(input.cwd, publishing);
         if (localStack.operation)
           return yield* new GitManagerError({
             operation: "runStackedAction",
@@ -4324,22 +4335,37 @@ export const make = Effect.gen(function* () {
         const layerIndex = localStack.layers.findIndex(
           (layer) => layer.branch === initialStatus.branch,
         );
-        const maintainStack =
-          localStack.managed &&
-          layerIndex >= 0 &&
-          layerIndex < localStack.layers.length - 1 &&
-          ["push", "create_pr", "commit_push", "commit_push_pr"].includes(input.action);
-        const stackReview = maintainStack
-          ? yield* branchPullRequest({ cwd: input.cwd, branch: initialStatus.branch! })
+        const explicitBase =
+          !localStack.managed && publishing && initialStatus.branch
+            ? ((yield* gitCore.readConfigValue(
+                input.cwd,
+                `branch.${initialStatus.branch}.t3-merge-base-ref`,
+              )) ?? (yield* gitCore.readBranchBase(input.cwd, initialStatus.branch)))
+            : null;
+        const explicitBranch = explicitBase
+          ? yield* gitCore.resolveBranchName(input.cwd, explicitBase)
           : null;
-        if (maintainStack && stackReview?.state !== "open") {
-          return yield* new GitManagerError({
-            operation: "runStackedAction",
-            cwd: input.cwd,
-            detail:
-              "This middle stack layer has no open change request. Update the stack or reopen its existing review before publishing.",
-          });
-        }
+        const respectsExplicitBase =
+          (!explicitBranch || explicitBranch === localStack.layers[layerIndex]?.parent) &&
+          !(
+            explicitBase &&
+            localStack.layers.some((layer) => !layer.current && layer.worktreePath !== null)
+          );
+        const autoTrackingAllowed =
+          localStack.managed ||
+          (publishing &&
+            localStack.layers.length > 1 &&
+            (yield* branchStacks.canAutoTrack(
+              input.cwd,
+              localStack.layers.map((layer) => layer.branch),
+            )));
+        const maintainStack =
+          !input.featureBranch &&
+          respectsExplicitBase &&
+          autoTrackingAllowed &&
+          publishing &&
+          layerIndex >= 0 &&
+          (localStack.managed || localStack.layers.length > 1);
         const featureBranch = input.featureBranch === true || input.action === "create_branch";
         const branchOnly =
           input.action === "create_branch" ||
@@ -4355,6 +4381,7 @@ export const make = Effect.gen(function* () {
             ((input.action === "commit_push" || input.action === "commit_push_pr") &&
               input.commitMessage === undefined));
         const wantsPush =
+          maintainStack ||
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
@@ -4393,7 +4420,7 @@ export const make = Effect.gen(function* () {
           ...(featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),
           ...(wantsPush ? (["push"] as const) : []),
-          ...(wantsPr ? (["pr"] as const) : []),
+          ...(wantsPr || maintainStack ? (["pr"] as const) : []),
         ];
 
         yield* progress.emit({
@@ -4477,8 +4504,18 @@ export const make = Effect.gen(function* () {
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
         const commitAction = wantsCommit && isCommitAction(input.action) ? input.action : null;
-        const changeRequestTerms = wantsPr ? yield* changeRequestTermsFor(input.cwd) : null;
+        const changeRequestTerms =
+          wantsPr || maintainStack ? yield* changeRequestTermsFor(input.cwd) : null;
 
+        if (maintainStack && !localStack.managed) {
+          localStack = yield* branchStacks.manage({
+            cwd: input.cwd,
+            action: "adopt",
+            expectedBranch: currentBranch,
+            base: localStack.base,
+            branches: localStack.layers.map((layer) => layer.branch),
+          });
+        }
         const commit = useLogicalCommits
           ? yield* progress
               .emit({
@@ -4516,6 +4553,114 @@ export const make = Effect.gen(function* () {
             : { status: "skipped_not_requested" as const };
         const commitSummary: GitActionCompletionCommit = commit;
 
+        let stackPr: GitRunStackedActionResult["pr"] = { status: "skipped_not_requested" };
+        const publishStack = Effect.fn("GitManager.publishStack")(function* (
+          onProgress: WorkflowProgress.ProgressReporter,
+        ) {
+          let prefix = localStack.layers.slice(0, layerIndex + 1);
+          const mergedBranches: string[] = [];
+          for (const layer of prefix) {
+            const review = yield* branchPullRequest(
+              { cwd: input.cwd, branch: layer.branch },
+              { refresh: true },
+            );
+            if (review?.state !== "merged") break;
+            mergedBranches.push(layer.branch);
+          }
+          prefix = prefix.filter((layer) => !mergedBranches.includes(layer.branch));
+          let coreSteps: readonly GitWorkflowStep[] = [];
+          let reviewSteps: readonly GitWorkflowStep[] = localStack.layers
+            .filter((layer) => !mergedBranches.includes(layer.branch))
+            .map((layer) => ({
+              id: `${layer.branch}:review`,
+              group: layer.branch,
+              label: changeRequestTerms?.singular ?? "Review",
+              state: prefix.some((item) => item.branch === layer.branch) ? "pending" : "skipped",
+            }));
+          yield* branchStacks.update(input.cwd, {
+            publishThrough: currentBranch!,
+            mergedBranches,
+            afterPush: completePush,
+            onProgress: (update) => {
+              coreSteps = update.steps;
+              return onProgress({ ...update, steps: [...coreSteps, ...reviewSteps] });
+            },
+            report: (label) => progress.emit({ kind: "phase_started", phase: "push", label }),
+          });
+          localStack = yield* branchStacks.inspect(input.cwd, false);
+          prefix = localStack.layers.slice(
+            0,
+            localStack.layers.findIndex((layer) => layer.branch === currentBranch) + 1,
+          );
+          const restore = gitCore.switchRef({
+            cwd: input.cwd,
+            refName: currentBranch!,
+            requireClean: true,
+          });
+          const reviews = Effect.fn("GitManager.publishStackReviews")(function* () {
+            for (const layer of prefix) {
+              const label = `Publishing review for ${layer.branch}...`;
+              reviewSteps = reviewSteps.map((step) =>
+                step.group === layer.branch ? { ...step, state: "running" } : step,
+              );
+              yield* onProgress({ label, steps: [...coreSteps, ...reviewSteps] });
+              yield* Ref.set(currentPhase, Option.some("pr"));
+              yield* progress.emit({ kind: "phase_started", phase: "pr", label });
+              yield* gitCore.switchRef({
+                cwd: input.cwd,
+                refName: layer.branch,
+                requireClean: true,
+              });
+              yield* gitCore.writeConfigValue({
+                cwd: input.cwd,
+                key: `branch.${layer.branch}.t3-merge-base`,
+                value: layer.parent,
+              });
+              const pr = yield* runPrStep(
+                textGenerationSettings,
+                input.cwd,
+                layer.branch,
+                input.threadId,
+                progress.emit,
+                layer.parent,
+              );
+              if (
+                (pr.status === "created" || pr.status === "opened_existing") &&
+                pr.baseBranch !== layer.parent &&
+                pr.url
+              ) {
+                const provider = yield* sourceControlProvider(input.cwd);
+                if (!provider.retargetChangeRequest)
+                  return yield* new GitManagerError({
+                    operation: "publishStack",
+                    cwd: input.cwd,
+                    detail: "This host cannot retarget the existing review to its stack parent.",
+                  });
+                yield* provider.retargetChangeRequest({
+                  cwd: input.cwd,
+                  reference: pr.url,
+                  baseBranch: layer.parent,
+                });
+              }
+              if (layer.branch === currentBranch) stackPr = { ...pr, baseBranch: layer.parent };
+              reviewSteps = reviewSteps.map((step) =>
+                step.group === layer.branch ? { ...step, state: "completed" } : step,
+              );
+              yield* onProgress({
+                label: `Published review for ${layer.branch}`,
+                steps: [...coreSteps, ...reviewSteps],
+              });
+            }
+          });
+          yield* reviews().pipe(Effect.onError(() => restore.pipe(Effect.ignore)));
+          yield* restore;
+          return {
+            status: "pushed" as const,
+            branch: currentBranch!,
+            upstreamBranch: `${localStack.remote}/${currentBranch}`,
+          };
+        });
+
         const push = wantsPush
           ? yield* progress
               .emit({
@@ -4532,30 +4677,7 @@ export const make = Effect.gen(function* () {
                 Effect.flatMap(
                   (): Effect.Effect<GitRunStackedActionResult["push"], GitManagerServiceError> =>
                     maintainStack
-                      ? workflowProgress.run(
-                          input.cwd,
-                          "stack",
-                          "Preparing stack...",
-                          (onProgress) =>
-                            branchStacks
-                              .update(input.cwd, {
-                                afterPush: completePush,
-                                onProgress,
-                                report: (label) =>
-                                  progress.emit({
-                                    kind: "phase_started",
-                                    phase: "push",
-                                    label,
-                                  }),
-                              })
-                              .pipe(
-                                Effect.as({
-                                  status: "pushed" as const,
-                                  branch: currentBranch!,
-                                  upstreamBranch: `${localStack.remote}/${currentBranch}`,
-                                }),
-                              ),
-                        )
+                      ? workflowProgress.run(input.cwd, "stack", "Preparing stack...", publishStack)
                       : localStack.managed && currentBranch
                         ? branchStacks.pushCurrent(input.cwd, currentBranch, input.forceWithLease)
                         : pushCurrentBranch(
@@ -4572,16 +4694,10 @@ export const make = Effect.gen(function* () {
             ? completePush(input.cwd, push.branch)
             : Effect.void;
         const runPr: Effect.Effect<GitRunStackedActionResult["pr"], GitManagerServiceError> =
-          wantsPr
-            ? maintainStack && stackReview
-              ? Effect.succeed({
-                  status: "opened_existing" as const,
-                  url: stackReview.url,
-                  number: stackReview.number,
-                  baseBranch: localStack.layers[layerIndex]!.parent,
-                  headBranch: currentBranch!,
-                })
-              : progress
+          maintainStack
+            ? Effect.succeed(stackPr)
+            : wantsPr
+              ? progress
                   .emit({
                     kind: "phase_started",
                     phase: "pr",
@@ -4599,7 +4715,7 @@ export const make = Effect.gen(function* () {
                       ),
                     ),
                   )
-            : Effect.succeed({ status: "skipped_not_requested" as const });
+              : Effect.succeed({ status: "skipped_not_requested" as const });
 
         // Wait for both operations even if one fails: an MR creation already in
         // flight should not be interrupted because the local after-push hook failed.

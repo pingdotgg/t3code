@@ -29,6 +29,7 @@ const Journal = Schema.Struct({
   cwd: Schema.String,
   index: Schema.Number,
   phase: Schema.Literals(["rebase", "push", "hooks"]),
+  publishBranches: Schema.optional(Schema.Array(Schema.String)),
   pushedBranches: Schema.optional(Schema.Array(Schema.String)),
   hookIndex: Schema.optional(Schema.Number),
   hookCwd: Schema.optional(Schema.String),
@@ -43,6 +44,7 @@ type Stack = typeof StackState.Type;
 type Operation = typeof Journal.Type;
 type AfterPush = (cwd: string, branch: string) => Effect.Effect<void, GitManagerError>;
 interface UpdateOptions {
+  readonly publishThrough?: string;
   readonly includeLatestBase?: boolean | undefined;
   readonly mergedBranches?: readonly string[];
   readonly report?: (branch: string) => Effect.Effect<void>;
@@ -57,7 +59,10 @@ const GlabRef = Schema.Struct({
 });
 
 function stackProgress(
-  journal: Pick<Operation, "stack" | "index" | "phase" | "pushedBranches" | "hookIndex">,
+  journal: Pick<
+    Operation,
+    "stack" | "index" | "phase" | "pushedBranches" | "hookIndex" | "publishBranches"
+  >,
 ): GitWorkflowStep[] {
   return journal.stack.layers.flatMap((layer, index) => [
     {
@@ -71,24 +76,28 @@ function stackProgress(
       group: layer.branch,
       label: "Push",
       state:
-        journal.phase === "hooks"
-          ? journal.pushedBranches?.includes(layer.branch)
-            ? "completed"
-            : "skipped"
-          : "pending",
+        journal.publishBranches && !journal.publishBranches.includes(layer.branch)
+          ? "skipped"
+          : journal.phase === "hooks"
+            ? journal.pushedBranches?.includes(layer.branch)
+              ? "completed"
+              : "skipped"
+            : "pending",
     },
     {
       id: `${layer.branch}:hooks`,
       group: layer.branch,
       label: "Post-push hooks",
       state:
-        journal.phase === "hooks"
-          ? !journal.pushedBranches?.includes(layer.branch)
-            ? "skipped"
-            : journal.pushedBranches.indexOf(layer.branch) < (journal.hookIndex ?? 0)
-              ? "completed"
-              : "pending"
-          : "pending",
+        journal.publishBranches && !journal.publishBranches.includes(layer.branch)
+          ? "skipped"
+          : journal.phase === "hooks"
+            ? !journal.pushedBranches?.includes(layer.branch)
+              ? "skipped"
+              : journal.pushedBranches.indexOf(layer.branch) < (journal.hookIndex ?? 0)
+                ? "completed"
+                : "pending"
+            : "pending",
     },
   ]);
 }
@@ -405,6 +414,9 @@ export const make = Effect.gen(function* () {
                   ? (journal.pushedBranches?.[journal.hookIndex ?? 0] ?? journal.originalBranch)
                   : (journal.stack.layers[journal.index]?.branch ?? journal.originalBranch),
               cwd: journal.cwd,
+              ...(journal.publishBranches?.at(-1)
+                ? { publishThrough: journal.publishBranches.at(-1)! }
+                : {}),
               phase: journal.phase,
             }
           : null,
@@ -550,7 +562,7 @@ export const make = Effect.gen(function* () {
       yield* step(`${layer.branch}:rebase`, "completed", `Restacked ${layer.branch}`);
     }
     if (journal.phase !== "hooks") {
-      const branches = journal.stack.layers.map((layer) => layer.branch);
+      const branches = journal.publishBranches ?? journal.stack.layers.map((layer) => layer.branch);
       journal = Object.assign({}, journal, {
         phase: "push" as const,
         pushedBranches:
@@ -641,7 +653,10 @@ export const make = Effect.gen(function* () {
       ...journal.stack,
       layers: journal.stack.layers.map((layer) => ({
         ...layer,
-        remoteHead: journal.installedHeads[layer.branch]!,
+        remoteHead:
+          !journal.publishBranches || journal.publishBranches.includes(layer.branch)
+            ? journal.installedHeads[layer.branch]!
+            : layer.remoteHead,
       })),
     };
     yield* saveStack(cwd, stack, oldBranches);
@@ -694,12 +709,18 @@ export const make = Effect.gen(function* () {
             `Stack branch ${layer.branch} is checked out at ${owner}. Move that checkout off the branch before restacking.`,
           );
       }
+      const publishIndex =
+        options.publishThrough === undefined
+          ? layers.length - 1
+          : layers.findIndex((layer) => layer.branch === options.publishThrough);
+      if (publishIndex < 0) return yield* failure(cwd, "The publish branch is not in this stack.");
+      const publishLayers = layers.slice(0, publishIndex + 1);
       const remote = yield* remoteHeads(
         cwd,
         saved.remote,
-        layers.map((layer) => layer.branch),
+        publishLayers.map((layer) => layer.branch),
       );
-      for (const layer of layers) {
+      for (const layer of publishLayers) {
         const remoteHead = remote[layer.branch];
         const localHead = yield* head(cwd, layer.branch);
         if (remoteHead && remoteHead !== localHead) {
@@ -757,6 +778,9 @@ export const make = Effect.gen(function* () {
         originalHeads,
         installedHeads: originalHeads,
         expectedRemoteHeads: remote,
+        ...(options.publishThrough
+          ? { publishBranches: publishLayers.map((layer) => layer.branch) }
+          : {}),
         targetBase,
         hookCwd: cwd,
       };

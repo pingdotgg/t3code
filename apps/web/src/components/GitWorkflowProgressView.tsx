@@ -45,7 +45,10 @@ export function GitWorkflowProgressView({ progress }: { readonly progress: GitWo
         ) : null}
       </div>
       {progress.kind === "stack" ? (
-        <p className="text-2xs text-muted-foreground">Rebase · Push · Hooks</p>
+        <p className="text-2xs text-muted-foreground">
+          Rebase · Push · Hooks
+          {progress.steps.some((step) => step.id.endsWith(":review")) ? " · Review" : ""}
+        </p>
       ) : null}
       <div className="max-h-40 space-y-2 overflow-y-auto">
         {[...groups].map(([group, steps]) => (

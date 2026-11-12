@@ -57,6 +57,71 @@ const fixture = Effect.gen(function* () {
 
 it.layer(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)))("branch stacks", (it) => {
   it.effect(
+    "keeps untracked branches opted out of automatic tracking until explicitly adopted again",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        yield* f.adopt;
+        yield* f.stacks.manage({ cwd: f.cwd, action: "untrack" });
+        expect(yield* f.stacks.canAutoTrack(f.cwd, ["a", "b", "c"])).toBe(false);
+        yield* f.adopt;
+        expect(yield* f.stacks.canAutoTrack(f.cwd, ["a", "b", "c"])).toBe(true);
+      }).pipe(Effect.scoped),
+  );
+  it.effect("keeps the publication boundary when continuing unfinished hooks", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.adopt;
+      const oldC = yield* f.remoteHead("fork", "c");
+      yield* f.commit("boundary.txt", "middle change\n");
+      yield* f.stacks
+        .update(f.cwd, {
+          publishThrough: "b",
+          afterPush: () =>
+            Effect.fail(
+              new GitManagerError({ operation: "test", cwd: f.cwd, detail: "Hook stopped" }),
+            ),
+        })
+        .pipe(Effect.flip);
+      expect((yield* f.stacks.inspect(f.cwd)).operation?.publishThrough).toBe("b");
+      const retried: string[] = [];
+      yield* f.stacks.manage({ cwd: f.cwd, action: "continue" }, [], (_cwd, branch) =>
+        Effect.sync(() => {
+          retried.push(branch);
+        }),
+      );
+      expect(retried).toEqual(["b"]);
+      expect(yield* f.remoteHead("fork", "c")).toBe(oldC);
+      expect(yield* f.git(["rev-parse", "c"])).not.toBe(oldC);
+    }).pipe(Effect.scoped),
+  );
+  it.effect(
+    "publishes only through the selected layer while restacking upper branches locally",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        yield* f.adopt;
+        const oldC = yield* f.remoteHead("fork", "c");
+        yield* f.commit("review.txt", "middle update\n");
+        const hooks: string[] = [];
+        yield* f.stacks.update(f.cwd, {
+          publishThrough: "b",
+          afterPush: (_cwd, branch) =>
+            Effect.sync(() => {
+              hooks.push(branch);
+            }),
+        });
+        expect(hooks).toEqual(["b"]);
+        expect(yield* f.remoteHead("fork", "b")).toBe(yield* f.git(["rev-parse", "b"]));
+        expect(yield* f.remoteHead("fork", "c")).toBe(oldC);
+        expect(yield* f.git(["rev-parse", "c"])).not.toBe(oldC);
+        expect(yield* f.git(["show", "c:review.txt"])).toBe("middle update");
+        yield* f.git(["checkout", "c"]);
+        yield* f.stacks.update(f.cwd, { publishThrough: "c" });
+        expect(yield* f.remoteHead("fork", "c")).toBe(yield* f.git(["rev-parse", "c"]));
+      }).pipe(Effect.scoped),
+  );
+  it.effect(
     "edits an adopted hierarchy without rewriting branches and preserves it on invalid edits",
     () =>
       Effect.gen(function* () {
