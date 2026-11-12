@@ -227,7 +227,7 @@ export const make = Effect.gen(function* () {
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
-    const requestedPath = input.relativePath.trim();
+    const requestedPath = input.relativePath;
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
       : requestedPath;
