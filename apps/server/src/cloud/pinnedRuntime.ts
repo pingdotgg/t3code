@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -119,6 +120,20 @@ interface PinnedRuntimeInstallInput {
   readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
 
+// GitHub release downloads intermittently answer 5xx during incidents; a retry usually lands.
+const DOWNLOAD_RETRY = { times: 3, schedule: Schedule.exponential("2 seconds") } as const;
+
+const isTransientDownloadFailure = (
+  error: HttpClientError.HttpClientError | Cause.TimeoutError,
+): boolean => {
+  // No answer or a stall means the host cannot reach the release source; retrying only delays that.
+  if (error._tag === "TimeoutError") return false;
+  // Body bytes are read raw, so a DecodeError is a body that failed after the host answered.
+  if (error.reason._tag === "DecodeError") return true;
+  const status = error.response?.status;
+  return status !== undefined && (status >= 500 || status === 429 || status === 408);
+};
+
 const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(function* (
   httpClient: HttpClient.HttpClient,
   url: string,
@@ -161,6 +176,7 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         return bytes;
       }),
     ),
+    Effect.retry({ ...DOWNLOAD_RETRY, while: isTransientDownloadFailure }),
     Effect.mapError(
       (cause) =>
         new PinnedRuntimeInstallError({
@@ -494,6 +510,9 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
+  const inVersionsDir = (candidate: string) =>
+    launcherOwnsVersionsDir(path, versionsDir, candidate) ||
+    launcherOwnsVersionsDir(path, realVersionsDir, candidate);
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
   for (const launcher of [...recorded, ...found]) {
@@ -506,13 +525,19 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
         : // Fully resolved, through chained links and a symlinked T3 home alike.
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
     if (target === undefined) continue;
-    targets.push(target);
+    // A runtime's own entry, on the macOS service PATH or recorded by an earlier prune, is no launcher.
+    // It is named as `versions/<version>/t3`, and neither it nor its directory is a link.
+    const entryDir = path.dirname(path.resolve(launcher));
+    const parent = path.dirname(entryDir);
     if (
-      (launcherOwnsVersionsDir(path, versionsDir, target) ||
-        launcherOwnsVersionsDir(path, realVersionsDir, target)) &&
-      !recorded.includes(launcher) &&
-      !unrecorded.includes(launcher)
+      platform !== "win32" &&
+      (parent === versionsDir || parent === realVersionsDir) &&
+      target === path.join(realVersionsDir, path.basename(entryDir), path.basename(launcher))
     ) {
+      continue;
+    }
+    targets.push(target);
+    if (inVersionsDir(target) && !recorded.includes(launcher) && !unrecorded.includes(launcher)) {
       unrecorded.push(launcher);
     }
   }
