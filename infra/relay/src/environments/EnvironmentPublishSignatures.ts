@@ -11,7 +11,8 @@ import {
 } from "@t3tools/shared/relayJwt";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -56,21 +57,9 @@ export class EnvironmentPublishSignatureInvalid extends Schema.TaggedError<Envir
   }
 }
 
-export class EnvironmentPublishPublicKeyMissing extends Schema.TaggedError<EnvironmentPublishPublicKeyMissing>()(
-  "EnvironmentPublishPublicKeyMissing",
-  {
-    environmentId: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Environment '${this.environmentId}' has no publish public key`;
-  }
-}
-
 export type EnvironmentPublishSignatureError =
   | EnvironmentPublishSignatureExpired
   | EnvironmentPublishSignatureInvalid
-  | EnvironmentPublishPublicKeyMissing
   | DpopProofs.DpopProofReplayPersistenceError;
 
 export class EnvironmentPublishSignatures extends Context.Service<
@@ -84,8 +73,6 @@ export class EnvironmentPublishSignatures extends Context.Service<
     }) => Effect.Effect<void, EnvironmentPublishSignatureError>;
   }
 >()("t3code-relay/environments/EnvironmentPublishSignatures") {}
-
-const decodeProof = Schema.decodeUnknownEffect(RelayAgentActivityPublishProofPayload);
 
 function environmentPublishReplayThumbprintData(input: {
   readonly environmentId: string;
@@ -105,7 +92,8 @@ const formatEnvironmentPublishReplayThumbprint = (digest: Uint8Array) =>
 const make = Effect.gen(function* () {
   const proofReplay = yield* DpopProofs.DpopProofReplay;
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
+  const signature = yield* Signature.Signature;
 
   return EnvironmentPublishSignatures.of({
     verify: Effect.fn("relay.environment_publish_signatures.verify")(function* (input) {
@@ -114,17 +102,18 @@ const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
       });
       const now = yield* DateTime.now;
-      const decoded = yield* Effect.try({
-        try: () => decodeRelayJwt(input.request.proof),
-        catch: (cause) =>
-          new EnvironmentPublishSignatureInvalid({
-            environmentId: input.environmentId,
-            threadId: input.threadId,
-            reason: "invalid_signature_or_payload",
-            stage: "decode_token",
-            cause,
-          }),
-      });
+      const decoded = yield* decodeRelayJwt(input.request.proof).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentPublishSignatureInvalid({
+              environmentId: input.environmentId,
+              threadId: input.threadId,
+              reason: "invalid_signature_or_payload",
+              stage: "decode_token",
+              cause,
+            }),
+        ),
+      );
       if (
         typeof decoded.exp === "number" &&
         decoded.exp <= Math.floor(now.epochMilliseconds / 1_000)
@@ -135,15 +124,14 @@ const make = Effect.gen(function* () {
           expiresAt: DateTime.formatIso(DateTime.makeUnsafe(decoded.exp * 1_000)),
         });
       }
-      const proof = yield* verifyRelayJwt({
+      const proof = yield* verifyRelayJwt(RelayAgentActivityPublishProofPayload, {
         publicKey: input.environmentPublicKey,
         token: input.request.proof,
         typ: RELAY_ACTIVITY_PUBLISH_TYP,
         issuer: `t3-env:${input.environmentId}`,
         audience: normalizeRelayIssuer(config.relayIssuer),
-        nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
       }).pipe(
-        Effect.flatMap(decodeProof),
+        Effect.provideService(Signature.Signature, signature),
         Effect.mapError(
           (cause) =>
             new EnvironmentPublishSignatureInvalid({
@@ -182,7 +170,7 @@ const make = Effect.gen(function* () {
       }
       const thumbprint = yield* crypto
         .digest(
-          "SHA-256",
+          Digest.sha256,
           environmentPublishReplayThumbprintData({
             environmentId: input.environmentId,
             environmentPublicKey: input.environmentPublicKey,

@@ -1,19 +1,16 @@
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import {
   type CommandId,
-  pullRequestHostOf,
   type GitRunStackedActionResult,
   type OrchestrationProjectShell,
-  type SourceControlProviderKind,
   type ThreadId,
 } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 export interface CreatedPullRequestKey {
   readonly host: string;
@@ -30,14 +27,16 @@ export function createdPullRequestKey(
   if ((status !== "created" && status !== "opened_existing") || number === undefined || !url) {
     return null;
   }
-  const parsed = parseChangeRequestUrl(url);
-  if (parsed !== null) return { ...parsed, url };
+  const parsed = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
+  if (parsed !== undefined) {
+    return { host: parsed.host, repository: parsed.repository, number: parsed.number, url };
+  }
   const identity = project?.repositoryIdentity;
-  const kind = identity?.provider as SourceControlProviderKind | undefined;
-  const repository = sourceControlRepositorySelector(identity);
+  const kind = identity?.provider;
+  const repository = sourceControlDefinitions.repositorySelector(identity);
   if (!identity || kind === undefined || repository === null) return null;
   return {
-    host: pullRequestHostOf(identity, kind),
+    host: sourceControlDefinitions.changeRequestHost(identity, kind),
     repository: repository.toLowerCase(),
     number,
     url,

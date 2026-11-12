@@ -46,14 +46,8 @@ export function resolveDeviceMiniPlayerSourceSize(
   return landscape ? { width: long, height: short } : { width: short, height: long };
 }
 
-/**
- * The Android emulator composites the skin's rounded corners into its
- * framebuffer as black wedges (measured at ~13% of the short side on a
- * Pixel 9), so its player clips at a matching phone-like radius; the sliver
- * lost under the curve is status-bar padding. iOS simulators stream an
- * edge-to-edge rectangle and keep the frame radius, which matters for iPads
- * whose real corners are far tighter than a phone's.
- */
+/** Android frames include black corner wedges; clip at a matching radius. iOS streams rectangles and
+ * retains the frame radius. */
 export function resolveDeviceMiniPlayerCornerRadius(
   platform: DevicePlatform,
   player: PreviewMiniPlayerSize,
@@ -75,7 +69,7 @@ export interface PreviewMiniPlayerObstacles {
   readonly detailsCard: (HorizontalSpan & { readonly bottom: number }) | null;
 }
 
-export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
+const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
   composer: null,
   detailsCard: null,
 };
@@ -113,18 +107,21 @@ const availableArea = (
     PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
 });
 
+const minimumPreviewMiniPlayerWidth = (source: PreviewMiniPlayerSize) =>
+  Math.max(
+    PREVIEW_MINI_PLAYER_MIN_SIZE.width,
+    (PREVIEW_MINI_PLAYER_MIN_SIZE.height * source.width) / source.height,
+  );
+
 function fitPreviewMiniPlayerWidth(
   desiredWidth: number,
   source: PreviewMiniPlayerSize,
   max: PreviewMiniPlayerSize,
+  minimumWidth = minimumPreviewMiniPlayerWidth(source),
 ): PreviewMiniPlayerSize {
   const aspectRatio = source.width / source.height;
   const width = Math.min(
-    Math.max(
-      desiredWidth,
-      PREVIEW_MINI_PLAYER_MIN_SIZE.width,
-      PREVIEW_MINI_PLAYER_MIN_SIZE.height * aspectRatio,
-    ),
+    Math.max(desiredWidth, minimumWidth),
     Math.max(1, max.width),
     Math.max(1, max.height * aspectRatio),
   );
@@ -227,10 +224,7 @@ export function clampPreviewMiniPlayerPosition(
   return best;
 }
 
-/**
- * Clamping happens here on every layout pass instead of being written back to the store, so a
- * temporarily narrow container never destroys the user's chosen width.
- */
+/** Clamp per layout without persisting so narrow containers preserve the chosen width. */
 export function resolvePreviewMiniPlayerFrame(input: {
   readonly width: number | null;
   readonly position: PreviewMiniPlayerPosition | null;
@@ -253,6 +247,7 @@ export function resolvePreviewMiniPlayerFrame(input: {
       position && width ? { composer: obstacles.composer, detailsCard: null } : obstacles,
       position && width ? spanOf(position.x, width) : null,
     ),
+    width ?? undefined,
   );
   const { detailsCard } = obstacles;
   const anchored =
@@ -308,15 +303,20 @@ export function resizePreviewMiniPlayer(input: {
   const horizontal = east || west;
   const vertical = north || south;
   const aspectRatio = source.width / source.height;
-  // Project corner motion onto the aspect-ratio diagonal. Switching between
-  // dominant axes jumps when one axis grows while the other shrinks.
+  // Project onto the aspect-ratio diagonal; dominant-axis switching jumps when axes move in opposite
+  // directions.
   const desired =
     horizontal && vertical
       ? (desiredWidth + desiredHeight / aspectRatio) / (1 + 1 / aspectRatio ** 2)
       : horizontal
         ? desiredWidth
         : desiredHeight * aspectRatio;
-  const size = fitPreviewMiniPlayerWidth(desired, source, max);
+  const size = fitPreviewMiniPlayerWidth(
+    desired,
+    source,
+    max,
+    Math.min(start.width, minimumPreviewMiniPlayerWidth(source)),
+  );
   const position = clampPreviewMiniPlayerPosition(
     { x: west ? right - size.width : start.x, y: north ? bottom - size.height : start.y },
     container,

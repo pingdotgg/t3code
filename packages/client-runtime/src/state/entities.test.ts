@@ -22,7 +22,7 @@ import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 const environmentId = EnvironmentId.make("environment-v2");
 
 describe("V2 client presentation", () => {
-  it("keeps async questions in Working until the run completes", () => {
+  it("an async question allows snooze and wakes an older snooze", () => {
     const runId = RunId.make("run-async-question");
     const running = {
       ...v2ThreadShell,
@@ -39,9 +39,9 @@ describe("V2 client presentation", () => {
       },
     };
     const active = presentThreadShell(environmentId, running);
-    expect(active.hasPendingUserInput).toBe(false);
-    expect(isThreadWorking(active)).toBe(true);
-    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+    expect(active.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(active)).toBe(false);
+    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(true);
 
     const completed = presentThreadShell(environmentId, {
       ...running,
@@ -53,8 +53,8 @@ describe("V2 client presentation", () => {
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
 
-  it("keeps blocking and legacy questions out of Working", () => {
-    for (const capability of [{ blocking: true }, {}]) {
+  it("moves a running thread with any question out of Working", () => {
+    for (const capability of [{ blocking: false }, { blocking: true }, {}]) {
       const shell = presentThreadShell(environmentId, {
         ...v2ThreadShell,
         latestRunId: RunId.make("run-blocking-question"),
@@ -73,7 +73,11 @@ describe("V2 client presentation", () => {
   });
 
   it("parks a thread that never ran at idle while a pull request watch holds it", () => {
-    const watch = { taskId: "pull-request-watch:github.com/acme/app#1", kind: "monitor" as const };
+    const watch = {
+      taskId: "pull-request-watch:github.com/acme/app#1",
+      kind: "monitor" as const,
+      awaited: true as const,
+    };
     const watched = presentThreadShell(environmentId, {
       ...v2ThreadShell,
       latestRunId: null,
@@ -141,7 +145,9 @@ describe("V2 client presentation", () => {
       activeRunId: null,
       status: "failed",
       lastError: "Provider turn failed",
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
+      pendingBackgroundTasks: [
+        { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
+      ],
     });
 
     expect(shell.runtime).toMatchObject({ status: "failed", lastError: "Provider turn failed" });
@@ -192,7 +198,9 @@ describe("V2 client presentation", () => {
       latestRunId: runId,
       activeRunId: runId,
       status: "running",
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
+      pendingBackgroundTasks: [
+        { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
+      ],
     });
 
     expect(shell.latestRun).toMatchObject({ runId, status: "running" });
@@ -201,7 +209,7 @@ describe("V2 client presentation", () => {
       activeRunId: runId,
     });
     expect(shell.pendingBackgroundTasks).toEqual([
-      { taskId: "bg-1", description: "Watch build", kind: "monitor" },
+      { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
     ]);
   });
 
@@ -403,7 +411,7 @@ describe("V2 client presentation", () => {
       ).toMatchObject({ status, activeRunId: null });
     }
 
-    for (const kind of ["monitor", "background_task"] as const) {
+    for (const held of [{ kind: "monitor", awaited: true }, { kind: "background_task" }] as const) {
       const providerThread = {
         id: ProviderThreadId.make("provider-thread-background"),
         driver: ProviderDriverKind.make("claudeCode"),
@@ -418,7 +426,7 @@ describe("V2 client presentation", () => {
         lastRunOrdinal: 1,
         handoffIds: [],
         forkedFrom: null,
-        pendingBackgroundTasks: [{ taskId: "background-task", kind }],
+        pendingBackgroundTasks: [{ taskId: "background-task", ...held }],
         createdAt: now,
         updatedAt: now,
       };

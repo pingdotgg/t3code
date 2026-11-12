@@ -1,5 +1,5 @@
 import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts";
-import { readToolOutputImage, toolOutputImages } from "@t3tools/shared/toolOutput";
+import { toolOutputImageBlocks, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
 const MAX_TEXT_BLOCK_DEPTH = 4;
@@ -12,18 +12,22 @@ function isSummarizedValue(value: unknown): boolean {
   return isRecord(value) && value.truncated === true && typeof value.summary === "string";
 }
 
-function textFromBlocks(value: unknown, depth: number): string | null {
+function textFromBlocks(
+  value: unknown,
+  depth: number,
+  imageBlocks: ReadonlyArray<unknown>,
+): string | null {
   if (depth > MAX_TEXT_BLOCK_DEPTH) return null;
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
-    const parts = value.map((block) => textFromBlocks(block, depth + 1));
+    const parts = value.map((block) => textFromBlocks(block, depth + 1, imageBlocks));
     return parts.every((part) => part !== null)
       ? parts.filter((part) => part !== "").join("\n")
       : null;
   }
   if (!isRecord(value)) return null;
   if (value.type === "text" && typeof value.text === "string") return value.text;
-  if (value.type === "image") return readToolOutputImage(value) ? "" : "[image]";
+  if (value.type === "image") return imageBlocks.includes(value) ? "" : "[image]";
   if (value.type === "resource_link" && typeof value.uri === "string") return value.uri;
   if (value.type === "resource" && isRecord(value.resource)) {
     const resource = value.resource;
@@ -31,9 +35,18 @@ function textFromBlocks(value: unknown, depth: number): string | null {
     if (typeof resource.uri === "string") return resource.uri;
   }
   const keys = Object.keys(value).filter((key) => key !== "isError" && key !== "is_error");
-  if (keys.length === 1 && keys[0] === "content") return textFromBlocks(value.content, depth + 1);
+  if (keys.length === 1 && keys[0] === "content")
+    return textFromBlocks(value.content, depth + 1, imageBlocks);
   if (keys.length === 2 && keys.includes("content") && keys.includes("structuredContent")) {
-    const text = textFromBlocks(value.content, depth + 1);
+    const text = textFromBlocks(value.content, depth + 1, imageBlocks);
+    const images = Array.isArray(value.content)
+      ? value.content.filter((block) => isRecord(block) && block.type === "image")
+      : [];
+    const structured = formatJsonValue(value.structuredContent);
+    if (structured !== null && (images.length > 0 || !text?.trim())) {
+      const markers = textFromBlocks(images, depth + 1, imageBlocks);
+      return [structured, markers].filter(Boolean).join("\n");
+    }
     return text?.trim() ? text : null;
   }
   return null;
@@ -47,6 +60,12 @@ function parseJson(text: string): unknown {
   }
 }
 
+export function isJsonToolText(text: string): boolean {
+  if (parseJson(text) !== undefined) return true;
+  const documents = text.trim().split(/\n\s*\n/);
+  return documents.length > 1 && documents.every((document) => parseJson(document) !== undefined);
+}
+
 function prettyJsonText(text: string): string {
   const trimmed = text.trim();
   if (!/^[[{]/.test(trimmed)) return text;
@@ -58,11 +77,9 @@ function prettyJsonText(text: string): string {
   return documents.map((document) => JSON.stringify(document, null, 2)).join("\n\n");
 }
 
-function formatToolValue(value: unknown, hasImagePreview = false): string | null {
+function formatJsonValue(value: unknown): string | null {
   if (value === undefined || value === null) return null;
-  if (hasImagePreview && isRecord(value) && value.type === "image") return null;
-  const text = textFromBlocks(value, 0);
-  if (text !== null) return text.trim() ? prettyJsonText(text) : null;
+  if (typeof value === "string" && !value.trim()) return null;
   let json: string | undefined;
   try {
     json = JSON.stringify(value, null, 2);
@@ -71,6 +88,14 @@ function formatToolValue(value: unknown, hasImagePreview = false): string | null
   }
   if (json === undefined || json === "{}" || json === "[]") return null;
   return json;
+}
+
+function formatToolValue(value: unknown, hasImagePreview = false): string | null {
+  if (value === undefined || value === null) return null;
+  if (hasImagePreview && isRecord(value) && value.type === "image") return null;
+  const text = textFromBlocks(value, 0, toolOutputImageBlocks(value));
+  if (text !== null) return text.trim() ? prettyJsonText(text) : null;
+  return formatJsonValue(value);
 }
 
 export function toolCallLines(input: {
