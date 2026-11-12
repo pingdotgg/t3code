@@ -387,12 +387,14 @@ it.effect("checkpoint capture refuses a truncated nested repository listing", ()
 );
 
 // A clean filter that kills its `git add` stands in for the timeout kill, deterministically.
+// Without batch fsync or bulk-checkin, finished loose objects outlive the kill so retries reuse them.
 it.effect.each([
-  { platform: "darwin" as const, bigFileThreshold: null },
-  { platform: "linux" as const, bigFileThreshold: "1" },
+  { platform: "darwin" as const, bigFileThreshold: null, keepsFinished: false },
+  { platform: "linux" as const, bigFileThreshold: "1", keepsFinished: false },
+  { platform: "linux" as const, bigFileThreshold: null, keepsFinished: true },
 ])(
-  "checkpoint capture killed mid-add leaves no Git temporary objects on $platform",
-  ({ platform, bigFileThreshold }) =>
+  "checkpoint capture killed mid-add leaves no Git temporary objects on $platform (threshold $bigFileThreshold)",
+  ({ platform, bigFileThreshold, keepsFinished }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -423,7 +425,52 @@ it.effect.each([
         ),
       ];
       assert.deepEqual(leftovers, []);
+      assert.deepEqual(
+        (yield* fs.readDirectory(objects)).filter((name) => name.startsWith("t3-checkpoint-")),
+        [],
+      );
+      const largeOid = (yield* git(["hash-object", "a-large.txt"])).stdout.trim();
+      const kept = yield* driver.execute({
+        operation: "checkpoint-test",
+        cwd,
+        args: ["cat-file", "-e", largeOid],
+        allowNonZeroExit: true,
+      });
+      assert.strictEqual(kept.exitCode === 0, keepsFinished);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint capture runs clean filters against their own repository's objects", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-filter-" });
+    const other = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-filter-other-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const otherGit = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "checkpoint-test", cwd: other, args });
+    yield* otherGit(["init"]);
+    yield* fs.writeFileString(path.join(other, "prefix"), "header\n");
+    yield* otherGit(["add", "prefix"]);
+    yield* otherGit([
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@test.com",
+      "commit",
+      "-m",
+      "p",
+    ]);
+    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.meta filter=metadata\n");
+    yield* fs.writeFileString(path.join(cwd, "a.meta"), "body\n");
+    yield* git(["config", "filter.metadata.required", "true"]);
+    yield* git(["config", "filter.metadata.clean", `git -C '${other}' show HEAD:prefix && cat`]);
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:a.meta`])).stdout, "header\nbody\n");
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint capture skips an ignored project while keeping its allowed sibling", () =>
@@ -1093,6 +1140,7 @@ it.effect.each(["committed", "unborn"] as const)(
         "rev-parse",
         "config",
         ...(head === "committed" ? ["read-tree", "ls-files"] : []),
+        "config",
         "add",
         "write-tree",
         "commit-tree",
@@ -1152,6 +1200,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         "rev-parse",
         "read-tree",
         "ls-files",
+        "config",
         "add",
         "write-tree",
         "commit-tree",

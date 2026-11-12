@@ -1331,6 +1331,33 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
+        // Filters inherit the private store; restore the caller's object env so a filter that
+        // runs Git, possibly in another repository, sees the objects it would without it.
+        const filterConfig = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["config", "-z", "--get-regexp", "^filter\\..+\\.(clean|process)$"],
+          allowNonZeroExit: true,
+          outputMode: "error",
+        });
+        const restoreObjectEnv = (
+          ["GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"] as const
+        )
+          .map((name) => {
+            const value = hostEnv[name];
+            return value === undefined
+              ? `unset ${name};`
+              : `export ${name}='${value.replaceAll("'", "'\\''")}';`;
+          })
+          .join(" ");
+        const filterOverrides = filterConfig.stdout
+          .split("\0")
+          .filter((record) => record.includes("\n"))
+          .flatMap((record) => {
+            const separator = record.indexOf("\n");
+            const command = record.slice(separator + 1);
+            return ["-c", `${record.slice(0, separator)}=${restoreObjectEnv} ${command}`];
+          });
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
           execute({
             operation,
@@ -1339,6 +1366,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...indexConfig,
               ...durableWrite,
               ...longPaths,
+              ...filterOverrides,
               // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
               "-c",
               "core.safecrlf=false",
@@ -1410,6 +1438,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }),
               ),
           }),
+          // Finished loose objects and packs survive a killed add, so the next capture reuses them.
+          Effect.tapError(() => publishPrivateObjects.pipe(Effect.ignore)),
         );
         yield* publishPrivateObjects;
 
