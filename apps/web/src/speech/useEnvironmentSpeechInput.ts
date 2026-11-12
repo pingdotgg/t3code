@@ -71,6 +71,8 @@ function probeSpeechStatus(prepared: PreparedConnection, refresh = false) {
 type ParkedSend = {
   readonly draftText: string;
   readonly submit: (text: string) => void;
+  /** The grant the audio was sent under; revoking or replacing it cancels the send. */
+  readonly hasAudioConsent: () => boolean;
   readonly result?: { readonly text: string; readonly selection: DraftInput["selection"] };
   readonly committed?: boolean;
 };
@@ -425,7 +427,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       if (!pending || !voiceInputBlocksSubmission(controller.currentState)) return false;
       pendingSubmissionRef.current = null;
       detached = pending;
-      setParkedSend(pending.ownerKey, { draftText: pending.draft.text, submit: pending.submit });
+      setParkedSend(pending.ownerKey, {
+        draftText: pending.draft.text,
+        submit: pending.submit,
+        hasAudioConsent,
+      });
       controller.detach();
       return true;
     };
@@ -504,6 +510,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- commits a parked send's transcript to its reopened draft, then sends it on the next commit
   useEffect(() => {
     if (state.phase !== "idle" || input.disabled || !parked?.result) return;
+    if (!parked.hasAudioConsent()) {
+      setParkedSend(input.ownerKey, null);
+      return;
+    }
     if (parked.committed) {
       setParkedSend(input.ownerKey, null);
       parked.submit(parked.result.text);

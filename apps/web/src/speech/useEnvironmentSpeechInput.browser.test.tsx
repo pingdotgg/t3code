@@ -368,9 +368,15 @@ it.each([
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
-it.each(["owner change", "remount"] as const)(
-  "delivers a confirmed send once to its own draft after a %s during transcription",
-  async (navigation) => {
+it.each([
+  ["owner change", undefined],
+  ["remount", undefined],
+  ["owner change", null],
+  ["remount", "env-b"],
+  ["remount", "env-a"],
+] as const)(
+  "delivers a confirmed send to its own draft after a %s during transcription unless consent became %s",
+  async (navigation, consent) => {
     setup({ destination: "env-a" });
     let finishTranscription = () => {};
     mocks.transcribeGate = new Promise<void>((resolve) => {
@@ -397,6 +403,7 @@ it.each(["owner change", "remount"] as const)(
     await act(() => mocks.voice.cancel());
     expect(mocks.committed).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();
+    if (consent !== undefined) setDestination(consent);
     await screen.rerender(
       navigation === "remount" ? (
         <Probe key="a" ownerKey="thread-a" />
@@ -404,6 +411,11 @@ it.each(["owner change", "remount"] as const)(
         <Probe ownerKey="thread-a" />
       ),
     );
+    if (consent !== undefined) {
+      expect(mocks.committed).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+      return;
+    }
     await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
     expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
   },
