@@ -592,7 +592,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
                 {remainingPercent(window)}% left
               </Text>
-              {formatSpend(window) ? (
+              {window.spend ? (
                 <Text selectable className="text-sm tabular-nums text-foreground-muted">
                   {formatSpend(window)} spent
                 </Text>
