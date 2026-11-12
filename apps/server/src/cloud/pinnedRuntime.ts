@@ -71,6 +71,8 @@ export class PinnedRuntimeInstallError extends Schema.TaggedError<PinnedRuntimeI
     exitCode: Schema.optional(Schema.Number),
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.optional(Schema.Number),
+    httpStatus: Schema.optional(Schema.Number),
+    downloadHost: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -163,6 +165,13 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
       (cause) =>
         new PinnedRuntimeInstallError({
           step: cause._tag === "TimeoutError" ? `${step} (timed out)` : step,
+          httpStatus:
+            HttpClientError.isHttpClientError(cause) && cause.reason._tag === "StatusCodeError"
+              ? cause.reason.response.status
+              : undefined,
+          downloadHost: URL.parse(
+            HttpClientError.isHttpClientError(cause) ? cause.request.url : url,
+          )?.host,
           cause,
         }),
     ),
@@ -485,6 +494,9 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
+  const inVersionsDir = (candidate: string) =>
+    launcherOwnsVersionsDir(path, versionsDir, candidate) ||
+    launcherOwnsVersionsDir(path, realVersionsDir, candidate);
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
   for (const launcher of [...recorded, ...found]) {
@@ -497,13 +509,19 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
         : // Fully resolved, through chained links and a symlinked T3 home alike.
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
     if (target === undefined) continue;
-    targets.push(target);
+    // A runtime's own entry, on the macOS service PATH or recorded by an earlier prune, is no launcher.
+    // It is named as `versions/<version>/t3`, and neither it nor its directory is a link.
+    const entryDir = path.dirname(path.resolve(launcher));
+    const parent = path.dirname(entryDir);
     if (
-      (launcherOwnsVersionsDir(path, versionsDir, target) ||
-        launcherOwnsVersionsDir(path, realVersionsDir, target)) &&
-      !recorded.includes(launcher) &&
-      !unrecorded.includes(launcher)
+      platform !== "win32" &&
+      (parent === versionsDir || parent === realVersionsDir) &&
+      target === path.join(realVersionsDir, path.basename(entryDir), path.basename(launcher))
     ) {
+      continue;
+    }
+    targets.push(target);
+    if (inVersionsDir(target) && !recorded.includes(launcher) && !unrecorded.includes(launcher)) {
       unrecorded.push(launcher);
     }
   }
