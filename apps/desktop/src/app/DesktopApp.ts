@@ -224,10 +224,12 @@ const bootstrap = Effect.gen(function* () {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
-  // A backend started while another server holds this home's lock can only exit with code 78.
+  // A backend started while another server holds this home's lock can only exit
+  // with code 78, but a previous server keeps the lock through its shutdown
+  // drain, so give a draining owner a short grace to release first.
   if (
     !(settings.wslOnly && settings.wslBackendEnabled) &&
-    (yield* DesktopHomeOwner.isHomeOwnershipLocked())
+    !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())
   ) {
     const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
     yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Probes the server's native SQLite ownership lock.
 import * as NodeSqlite from "node:sqlite";
 
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -55,6 +56,31 @@ export const isHomeOwnershipLocked = Effect.fn("DesktopHomeOwner.isHomeOwnership
         return cause instanceof Error && "errcode" in cause && cause.errcode === 5;
       }
     });
+  },
+);
+
+const HOME_OWNERSHIP_RELEASE_GRACE = Duration.seconds(15);
+const HOME_OWNERSHIP_RELEASE_POLL_INTERVAL = Duration.millis(250);
+
+/**
+ * Whether the ownership lock frees within a grace window. The previous owner
+ * holds the lock through its shutdown drain, so a launch that checks during
+ * the drain must wait rather than read the home as permanently owned.
+ */
+export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOwnershipRelease")(
+  function* (options?: { readonly grace?: Duration.Input; readonly interval?: Duration.Input }) {
+    const released = Effect.gen(function* () {
+      while (yield* isHomeOwnershipLocked()) {
+        yield* Effect.sleep(options?.interval ?? HOME_OWNERSHIP_RELEASE_POLL_INTERVAL);
+      }
+      return true;
+    });
+    return yield* released.pipe(
+      Effect.timeoutOrElse({
+        duration: options?.grace ?? HOME_OWNERSHIP_RELEASE_GRACE,
+        orElse: () => Effect.succeed(false),
+      }),
+    );
   },
 );
 

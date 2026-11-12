@@ -2,11 +2,14 @@ import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -104,6 +107,40 @@ describe("DesktopHomeOwner.isHomeOwnershipLocked", () => {
         assert.isTrue(yield* DesktopHomeOwner.isHomeOwnershipLocked());
         lock.close();
         assert.isFalse(yield* DesktopHomeOwner.isHomeOwnershipLocked());
+      }),
+    ),
+  );
+});
+
+describe("DesktopHomeOwner.awaitHomeOwnershipRelease", () => {
+  it.effect("resolves as soon as a draining owner releases the lock", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        assert.isTrue(yield* DesktopHomeOwner.awaitHomeOwnershipRelease());
+
+        const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        lock.exec("BEGIN EXCLUSIVE;");
+        const awaiting = yield* Effect.forkChild(DesktopHomeOwner.awaitHomeOwnershipRelease());
+        yield* TestClock.adjust(Duration.seconds(5));
+        assert.isUndefined(awaiting.pollUnsafe());
+
+        // A previous server releases the lock when its shutdown drain finishes.
+        lock.close();
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.isTrue(yield* Fiber.join(awaiting));
+      }),
+    ),
+  );
+
+  it.effect("reports a home still owned after the release grace", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        lock.exec("BEGIN EXCLUSIVE;");
+        const awaiting = yield* Effect.forkChild(DesktopHomeOwner.awaitHomeOwnershipRelease());
+        yield* TestClock.adjust(Duration.minutes(1));
+        assert.isFalse(yield* Fiber.join(awaiting));
+        lock.close();
       }),
     ),
   );
