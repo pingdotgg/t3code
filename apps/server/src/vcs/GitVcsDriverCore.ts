@@ -77,6 +77,8 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
+// git diff --numstat reads every untracked byte (~5 ms/MB), so status totals skip larger untracked input.
+const UNTRACKED_TOTALS_MAX_BYTES = 256 * 1024 * 1024;
 // The listing walks the whole untracked tree before the cap applies, so a folder whose listing
 // failed (too many files, output limit, timeout) is not listed again on every status poll.
 const UNTRACKED_TOTALS_RETRY_MIN_MS = 60_000;
@@ -3227,6 +3229,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
+    maxBytes?: number,
   ) {
     const untracked = yield* executeGit(
       "GitVcsDriver.review.listUntracked",
@@ -3248,6 +3251,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (paths.length === 0) return { env: undefined };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES)
       return { unavailable: "Too many untracked files to count." };
+    if (maxBytes !== undefined) {
+      const sizes = yield* Effect.forEach(
+        paths,
+        (relativePath) =>
+          fileSystem.lstat(path.resolve(cwd, relativePath)).pipe(
+            Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
+            Effect.orElseSucceed(() => 0),
+          ),
+        { concurrency: 16 },
+      );
+      if (sizes.reduce((total, size) => total + size, 0) > maxBytes)
+        return { unavailable: "Untracked files are too large to count." };
+    }
     const env = yield* prepareReviewIndex(cwd, paths).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
@@ -3361,7 +3377,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     // Empty status can mean untracked files are hidden; retain the full scan.
-    const untracked = yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs);
+    const untracked = yield* prepareUntrackedReviewIndexOrReason(
+      cwd,
+      pathspecs,
+      undefined,
+      UNTRACKED_TOTALS_MAX_BYTES,
+    );
     if ("unavailable" in untracked) {
       const count = remembered?.roots === rootsKey ? remembered.count + 1 : 1;
       untrackedTotalsFailures.delete(cwd);
