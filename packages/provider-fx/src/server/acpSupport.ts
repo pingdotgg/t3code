@@ -25,6 +25,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 export const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
 /** T3's slug for "Default": the model `fx status` reports, never an fx model id. */
 export const FX_DEFAULT_MODEL_SLUG = "default";
+const FX_PROVIDER_CONFIG_ID = "provider";
 const FX_MODEL_CONFIG_ID = "model";
 const FX_MODE_CONFIG_ID = "mode";
 const FX_EFFORT_CONFIG_ID = "effort";
@@ -157,36 +158,98 @@ export function withFxSessionMode(
   };
 }
 
-/**
- * Writes config id `model` (fx's `provider` option shares its category).
- * "Default" picks the model `fx status` reports when the session lists it.
- * An unlisted model the thread picked is still sent: fx's backends accept or
- * refuse it themselves, so a thread never runs on a model it did not pick.
- */
+/** A model on one fx backend (`gateway`, `codex`, `grok`, or a configured endpoint's id). */
+export interface FxModelChoice {
+  readonly backend: string | undefined;
+  readonly model: string;
+}
+
+/** fx backend ids never contain `:`, so the first one ends the backend. */
+export const fxModelSlug = (backend: string, model: string) => `${backend}:${model}`;
+
+/** A slug without a known backend is a model id for the session's current backend. */
+function parseFxModelSlug(slug: string, backends: ReadonlyArray<string>): FxModelChoice {
+  const separator = slug.indexOf(":");
+  const backend = separator > 0 ? slug.slice(0, separator) : undefined;
+  return backend !== undefined && backends.includes(backend)
+    ? { backend, model: slug.slice(separator + 1) }
+    : { backend: undefined, model: slug };
+}
+
+const selectOption = (
+  options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  id: string,
+): Extract<EffectAcpSchema.SessionConfigOption, { type: "select" }> | undefined => {
+  const option = options.find((entry) => entry.id === id);
+  return option?.type === "select" ? option : undefined;
+};
+
+/** fx's model catalog changes with its backend, so it must be read after the provider write. */
 export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function* (
-  runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setConfigOption"
+  >,
   modelSelection: ModelSelection,
-  defaultModel: Effect.Effect<string | undefined> | undefined,
+  defaultChoice: Effect.Effect<FxModelChoice | undefined> | undefined,
 ): Effect.fn.Return<string | undefined, EffectAcpErrors.AcpError> {
-  const option = (yield* runtime.getConfigOptions).find(
-    (entry) => entry.id === FX_MODEL_CONFIG_ID && entry.type === "select",
-  );
-  const current = option?.type === "select" ? option.currentValue : undefined;
+  const originalOptions = yield* runtime.getConfigOptions;
+  const backendOption = selectOption(originalOptions, FX_PROVIDER_CONFIG_ID);
+  const originalBackend = backendOption?.currentValue;
+  const originalModel = selectOption(originalOptions, FX_MODEL_CONFIG_ID)?.currentValue;
   const requested = modelSelection.model.trim();
   const isDefault = requested.length === 0 || requested === FX_DEFAULT_MODEL_SLUG;
-  const target = isDefault ? defaultModel && (yield* defaultModel) : requested;
-  if (target === undefined || target === current) return current;
-  // The status default can belong to another fx backend than the session's
-  // (after `fx provider`, or a loaded older session); then the session's
-  // own model stands.
-  if (
-    isDefault &&
-    (option === undefined || !collectSessionConfigOptionValues(option).includes(target))
-  ) {
-    return current;
-  }
-  yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target, { allowUnlistedValue: true });
-  return target;
+  const target = isDefault
+    ? defaultChoice && (yield* defaultChoice)
+    : parseFxModelSlug(
+        requested,
+        backendOption ? collectSessionConfigOptionValues(backendOption) : [],
+      );
+  const canSelectBackend =
+    target?.backend === undefined ||
+    (backendOption !== undefined &&
+      (target.backend === backendOption.currentValue ||
+        collectSessionConfigOptionValues(backendOption).includes(target.backend)));
+  const changingBackend =
+    target?.backend !== undefined &&
+    backendOption !== undefined &&
+    canSelectBackend &&
+    target.backend !== backendOption.currentValue;
+  return yield* Effect.gen(function* () {
+    if (changingBackend && target?.backend !== undefined) {
+      yield* runtime.setConfigOption(FX_PROVIDER_CONFIG_ID, target.backend);
+    }
+    const modelOption = selectOption(yield* runtime.getConfigOptions, FX_MODEL_CONFIG_ID);
+    const current = modelOption?.currentValue;
+    if (target === undefined || target.model === current) return current;
+    if (isDefault && !canSelectBackend) return current;
+    if (
+      isDefault &&
+      (modelOption === undefined ||
+        !collectSessionConfigOptionValues(modelOption).includes(target.model))
+    ) {
+      return yield* new EffectAcpErrors.AcpRequestError({
+        code: -32602,
+        errorMessage: "The default fx model is unavailable on its configured backend.",
+        data: { configId: FX_MODEL_CONFIG_ID },
+      });
+    }
+    yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target.model, { allowUnlistedValue: true });
+    return target.model;
+  }).pipe(
+    Effect.onError(() => {
+      if (!changingBackend || originalBackend === undefined) return Effect.void;
+      return Effect.gen(function* () {
+        yield* runtime.setConfigOption(FX_PROVIDER_CONFIG_ID, originalBackend);
+        const restoredModel = selectOption(yield* runtime.getConfigOptions, FX_MODEL_CONFIG_ID);
+        if (originalModel !== undefined && restoredModel?.currentValue !== originalModel) {
+          yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, originalModel, {
+            allowUnlistedValue: true,
+          });
+        }
+      }).pipe(Effect.ignoreCause({ log: true }));
+    }),
+  );
 });
 
 /** The shared option loop writes a stored effort; a thread without one starts at medium. */

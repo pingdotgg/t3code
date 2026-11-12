@@ -147,6 +147,10 @@
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
     },
+    "./providerSubProviders": {
+      "types": "./src/providerSubProviders.ts",
+      "default": "./src/providerSubProviders.ts"
+    },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"

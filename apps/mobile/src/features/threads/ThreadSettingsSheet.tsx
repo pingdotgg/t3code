@@ -68,6 +68,7 @@ import {
   type ModelOption,
   type ProviderGroup,
 } from "../../lib/modelOptions";
+import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import {
@@ -148,6 +149,10 @@ function ProviderHeader(props: {
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
   readonly label: string;
+  /** A backend inside a provider's section, such as one of fx's: no icon. */
+  readonly nested?: boolean;
+  /** Why the section has no usable models, such as a signed-out backend. */
+  readonly detail?: string | undefined;
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
@@ -155,8 +160,17 @@ function ProviderHeader(props: {
 }) {
   const content = (
     <>
-      <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
-      <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      {props.nested ? null : (
+        <ProviderIcon iconUrl={props.iconUrl} provider={props.driver} size={15} />
+      )}
+      {props.detail ? (
+        <View className="min-w-0 flex-1 py-1">
+          <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+          <Text className="text-xs text-foreground-muted">{props.detail}</Text>
+        </View>
+      ) : (
+        <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      )}
       {props.collapsible ? (
         <>
           <View className="flex-1" />
@@ -191,7 +205,10 @@ function ProviderHeader(props: {
   }
 
   return (
-    <View accessibilityRole="header" className="mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1">
+    <View
+      accessibilityRole="header"
+      className={cn("mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1", props.nested && "mt-1")}
+    >
       {content}
     </View>
   );
@@ -690,6 +707,15 @@ type ThreadSettingsCatalogItem =
       readonly provider: ThreadSettingsProviderCatalog;
     }
   | {
+      readonly kind: "subProvider";
+      readonly key: string;
+      readonly expansionKey: string;
+      readonly label: string;
+      readonly detail: string | undefined;
+      readonly collapsed: boolean;
+      readonly modelCount: number;
+    }
+  | {
       readonly kind: "model";
       readonly key: string;
       readonly option: ModelOption;
@@ -755,6 +781,88 @@ function ThreadSettingsProviderListHeader(props: {
       onToggle={onToggle}
     />
   );
+}
+
+function ThreadSettingsSubProviderListHeader(props: {
+  readonly item: Extract<ThreadSettingsCatalogItem, { kind: "subProvider" }>;
+}) {
+  const session = useThreadSettingsSession();
+  const onToggle = () => session.toggleProvider(props.item.expansionKey);
+
+  return (
+    <ProviderHeader
+      nested
+      collapsible={props.item.detail === undefined}
+      collapsed={props.item.collapsed}
+      detail={props.item.detail}
+      driver={undefined}
+      iconUrl={undefined}
+      label={props.item.label}
+      modelCount={props.item.modelCount}
+      onToggle={onToggle}
+    />
+  );
+}
+
+const modelItems = (models: ReadonlyArray<ModelOption>) =>
+  models.map((option, index) => ({
+    kind: "model" as const,
+    key: `model:${option.key}`,
+    option,
+    isFirst: index === 0,
+    isLast: index === models.length - 1,
+  }));
+
+/**
+ * A provider whose models run on several backends, such as fx, lists each
+ * backend under its own collapsible heading; the thread's backend opens.
+ * Search and Favorites stay flat.
+ */
+function subProviderCatalogItems(
+  session: ThreadSettingsSessionValue,
+  group: ProviderGroup,
+  models: ReadonlyArray<ModelOption>,
+): ReadonlyArray<ThreadSettingsCatalogItem> | null {
+  if (
+    !group.subProviders?.length ||
+    session.searchQuery.trim().length > 0 ||
+    session.providerFilter === FAVORITES_PROVIDER_FILTER
+  ) {
+    return null;
+  }
+  const { ungrouped, groups } = groupModelsBySubProvider(
+    models,
+    group.subProviders,
+    (option) => option.subtitle,
+  );
+  return [
+    ...modelItems(ungrouped),
+    ...groups.flatMap(({ subProvider, models: backendModels }) => {
+      const expansionKey = `${group.providerKey}:sub-provider:${subProvider.name}`;
+      const collapsed =
+        subProvider.unavailableReason !== undefined ||
+        providerSectionIsCollapsed({
+          defaultExpanded: backendModels.some(session.isApplied),
+          hasExpansionOverride: session.providerExpansionOverrides.has(expansionKey),
+          isNarrowed: false,
+        });
+      return [
+        {
+          kind: "subProvider" as const,
+          key: `sub-provider:${expansionKey}`,
+          expansionKey,
+          label: subProvider.name,
+          detail: subProvider.unavailableReason,
+          collapsed,
+          modelCount: backendModels.length,
+        },
+        // The heading names the backend, so rows drop it.
+        ...(collapsed
+          ? []
+          : modelItems(backendModels.map((option) => ({ ...option, subtitle: "" })))),
+      ];
+    }),
+  ];
 }
 
 function buildThreadSettingsCatalogItems(
@@ -823,13 +931,8 @@ function buildThreadSettingsCatalogItems(
         key: `provider:${group.providerKey}`,
         provider,
       },
-      ...provider.models.map((option, index) => ({
-        kind: "model" as const,
-        key: `model:${option.key}`,
-        option,
-        isFirst: index === 0,
-        isLast: index === provider.models.length - 1,
-      })),
+      ...((collapsed ? null : subProviderCatalogItems(session, group, provider.models)) ??
+        modelItems(provider.models)),
       ...(!collapsed && updateRequiredNotice
         ? [
             {
@@ -998,6 +1101,8 @@ function ThreadSettingsMainContent(props: {
 
     if (item.kind === "provider") {
       content = <ThreadSettingsProviderListHeader provider={item.provider} />;
+    } else if (item.kind === "subProvider") {
+      content = <ThreadSettingsSubProviderListHeader item={item} />;
     } else if (item.kind === "model") {
       content = (
         <ThreadSettingsModelListRow
