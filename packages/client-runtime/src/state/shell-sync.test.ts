@@ -1172,6 +1172,7 @@ describe("environment shell cold start", () => {
     early?: {
       readonly serverResumes: boolean;
       readonly holdLoads?: boolean | "uninterruptible";
+      readonly cached?: false;
     },
   ) {
     yield* TestClock.setTime(NOW);
@@ -1223,11 +1224,13 @@ describe("environment shell cold start", () => {
     } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
     const cache = Persistence.EnvironmentCacheStore.of({
       loadShell: () =>
-        Effect.succeedSome({
-          ...v2ShellSnapshot,
-          snapshotSequence: CACHED_SEQUENCE,
-          ...(origin === undefined ? {} : { origin }),
-        }),
+        early?.cached === false
+          ? Effect.succeedNone
+          : Effect.succeedSome({
+              ...v2ShellSnapshot,
+              snapshotSequence: CACHED_SEQUENCE,
+              ...(origin === undefined ? {} : { origin }),
+            }),
       saveShell: (_environmentId, snapshot, origin?: Persistence.ShellCacheOrigin) =>
         Queue.offer(saved, { snapshot, origin }).pipe(Effect.asVoid),
       loadThread: () => Effect.succeedNone,
@@ -1553,6 +1556,43 @@ describe("environment shell cold start", () => {
       expect(yield* SubscriptionRef.get(h.shellState)).toMatchObject({
         status: "live",
         snapshot: Option.some({ snapshotSequence: HTTP_SEQUENCE + 1 }),
+      });
+    }),
+  );
+
+  it.effect("loads the shell on the socket when no rows are held and HTTP does not answer", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(undefined, {
+        serverResumes: false,
+        holdLoads: true,
+        cached: false,
+      });
+      yield* Queue.take(h.loadOptions);
+      const claimed = yield* Deferred.make<void>();
+      yield* h.connect(FAMILY_CONFIG, claimed);
+      yield* Deferred.await(claimed);
+      // Lets the subscription run on from its config read to its wait for the load.
+      yield* TestClock.adjust("1 millis");
+
+      // A proxy that stalls /api while /ws works must not leave the list empty for long.
+      yield* TestClock.adjust("5 seconds");
+      expect(yield* Queue.size(h.subscriptions)).toBe(1);
+      const first = yield* Queue.take(h.subscriptions);
+      expect(first.input).not.toHaveProperty("afterSequence");
+      const socketSequence = HTTP_SEQUENCE + 5;
+      yield* Queue.offer(first.events, {
+        kind: "snapshot",
+        snapshot: { ...v2ShellSnapshot, snapshotSequence: socketSequence },
+      });
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* h.liveAt(socketSequence);
+
+      // The late answer is an older snapshot. It must not replace the rows the socket sent.
+      yield* h.releaseLoads;
+      yield* TestClock.adjust("1 millis");
+      expect(yield* SubscriptionRef.get(h.shellState)).toMatchObject({
+        status: "live",
+        snapshot: Option.some({ snapshotSequence: socketSequence }),
       });
     }),
   );
