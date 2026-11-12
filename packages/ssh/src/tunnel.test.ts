@@ -230,6 +230,41 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
+  it.each(["tar", "gzip"])("reports a missing %s prerequisite before downloading", (missing) => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-prereq-"));
+    try {
+      const bin = NodePath.join(root, "bin");
+      NodeFS.mkdirSync(bin);
+      NodeFS.mkdirSync(NodePath.join(root, "home"));
+      for (const command of ["mkdir", "mktemp", "cat", "rm", "tar", "gzip"]) {
+        if (command !== missing) {
+          NodeFS.symlinkSync(NodePath.join("/usr/bin", command), NodePath.join(bin, command));
+        }
+      }
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "uname"),
+        '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
+        { mode: 0o755 },
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "curl"),
+        '#!/bin/sh\necho "download attempt" >&2\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const runner = NodePath.join(root, "run-t3.sh");
+      NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+      const result = NodeChildProcess.spawnSync("/bin/sh", [runner, "--version"], {
+        encoding: "utf8",
+        env: { HOME: NodePath.join(root, "home"), PATH: bin },
+      });
+      assert.notEqual(result.status, 0);
+      assert.include(result.stderr, `Remote host needs ${missing} to unpack`);
+      assert.notInclude(result.stderr, "download attempt");
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
       alias: "devbox",

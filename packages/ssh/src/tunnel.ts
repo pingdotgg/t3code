@@ -503,6 +503,14 @@ if ! t3_runtime_ready; then
     "Linux x86_64" | "Linux amd64") T3_PLATFORM_KEY="linux-x64" ;;
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s) $(uname -m)" >&2; exit 1 ;;
   esac
+  if ! command -v tar >/dev/null 2>&1; then
+    printf 'Remote host needs tar to unpack the t3 release archive.\\n' >&2
+    exit 1
+  fi
+  if ! command -v gzip >/dev/null 2>&1; then
+    printf 'Remote host needs gzip to unpack the t3 release archive.\\n' >&2
+    exit 1
+  fi
   T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"
   T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
