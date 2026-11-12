@@ -7794,9 +7794,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE json_type(link.value, '$.watch') IS NOT NULL
             )
           ) AS may_be_live,
-          EXISTS (
-            SELECT 1 FROM orchestration_v2_projection_subagents subagent
-            WHERE subagent.thread_id = t.thread_id
+          -- One list for the whole read, found through the child_thread_id index. A lookup per
+          -- thread would parse the payload of every subagent row.
+          t.thread_id IN (
+            SELECT subagent.thread_id FROM orchestration_v2_projection_subagents subagent
+            WHERE subagent.origin = 'app_owned'
+              AND subagent.child_thread_id IS NULL
               AND json_type(subagent.payload_json, '$.remoteChild') = 'object'
           ) AS has_remote_tasks
         FROM orchestration_v2_projection_threads t

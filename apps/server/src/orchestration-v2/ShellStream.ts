@@ -145,13 +145,14 @@ function hiddenChildAncestorIds(
 
 function omitIdleSubagentShellsWith(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
-  facts: Pick<ShellTrimFacts, "subagentParentIds">,
+  facts: Pick<ShellTrimFacts, "subagentParentIds" | "remoteTaskParentIds">,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   return threads.filter(
     (thread) =>
       thread.lineage.relationshipToParent !== "subagent" ||
       isLiveSubagentShell(thread) ||
-      facts.subagentParentIds.has(thread.id),
+      facts.subagentParentIds.has(thread.id) ||
+      facts.remoteTaskParentIds.has(thread.id),
   );
 }
 
@@ -194,7 +195,8 @@ function omitOlderSettledShellsWith(
 /**
  * Idle subagent children have no sidebar row, so clients that opt in read them from their thread
  * family instead. A child stays while it is live or the parent of another child, so the request
- * and working walks over shell rows never meet a gap in a nested chain.
+ * and working walks over shell rows never meet a gap in a nested chain. It also stays as the
+ * parent of a task in a linked environment, whose clients nest that task under it.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -270,7 +272,10 @@ function shellSubscriberThreadIds(
   const subagents = index.filter(
     (entry) =>
       entry.lineage.relationshipToParent === "subagent" &&
-      (!options.omitIdleSubagents || entry.mayBeLive || facts.subagentParentIds.has(entry.id)),
+      (!options.omitIdleSubagents ||
+        entry.mayBeLive ||
+        entry.hasRemoteTasks ||
+        facts.subagentParentIds.has(entry.id)),
   );
   const ancestorIds = hiddenChildAncestorIds([
     ...subagents,
