@@ -368,6 +368,53 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 
+  it.effect("rechecks a ready provider after one failed periodic check before publishing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const failedSnapshot: ServerProvider = {
+          ...refreshedSnapshot,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Codex app-server provider probe failed: workspace routing discovery timed out.",
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Effect.void,
+            ),
+            Effect.map((count) => (count === 2 ? failedSnapshot : refreshedSnapshot)),
+          ),
+          refreshInterval: "5 minutes",
+        });
+        yield* Deferred.await(initialCheckDone);
+        const published = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+        yield* provider.streamChanges.pipe(
+          Stream.runForEach((snapshot) => Ref.update(published, (all) => [...all, snapshot])),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust("5 minutes");
+        yield* TestClock.adjust("1 minute");
+
+        assert.strictEqual((yield* provider.getSnapshot).status, "ready");
+        assert.deepStrictEqual(
+          (yield* Ref.get(published)).filter((snapshot) => snapshot.status === "error"),
+          [],
+        );
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
   it.effect("reruns the provider check when streamed settings change", () =>
     Effect.scoped(
       Effect.gen(function* () {
