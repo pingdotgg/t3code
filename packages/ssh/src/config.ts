@@ -16,7 +16,9 @@ const NO_HOSTS: ReadonlyArray<string> = [] as const;
 // escapes \\ \" \' and unquoted "\ ", and "#" starting a comment only at
 // the start of a token. Invalid quoting leaves hostname resolution uncertain.
 function parseSshConfigLine(line: string) {
-  const match = /^\s*([^\s=]+)\s*=?\s*(.*)$/u.exec(line);
+  const match = /^[ \t\r]*([^ \t\r=]+)[ \t\r]*=?[ \t\r]*(.*)$/su.exec(
+    line.replace(/[ \t\r\f]+$/u, ""),
+  );
   if (!match) {
     return null;
   }
@@ -44,7 +46,7 @@ function parseSshConfigLine(line: string) {
     } else if (char === '"' || char === "'") {
       quote = char;
       token ??= "";
-    } else if (/\s/u.test(char)) {
+    } else if (/[ \t]/u.test(char)) {
       if (token !== null) {
         args.push(token);
         token = null;
@@ -112,6 +114,7 @@ const expandGlob = Effect.fnUntraced(function* (pattern: string) {
   const entries = yield* fs.readDirectory(directory);
   const matchedPaths: string[] = [];
   for (const entry of entries) {
+    if (entry.startsWith(".") && !basePattern.startsWith(".")) continue;
     if (!matcher.test(entry)) {
       continue;
     }
@@ -234,23 +237,32 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   }
 });
 
-function normalizeKnownHostsHostname(rawHost: string): string {
+interface KnownHost {
+  readonly hostname: string;
+  readonly port: number | null;
+}
+
+function parseKnownHostsHost(rawHost: string): KnownHost | null {
   const bracketMatch = /^\[([^\]]+)\]:(\d+)$/u.exec(rawHost);
   if (bracketMatch?.[1]) {
-    return bracketMatch[1];
+    const port = Number(bracketMatch[2]);
+    return port >= 1 && port <= 65535 ? { hostname: bracketMatch[1], port } : null;
   }
 
   if (!rawHost.includes(":")) {
-    return rawHost;
+    return { hostname: rawHost, port: null };
   }
 
   const firstColonIndex = rawHost.indexOf(":");
   const lastColonIndex = rawHost.lastIndexOf(":");
-  return firstColonIndex === lastColonIndex ? rawHost.slice(0, lastColonIndex) : rawHost;
+  return {
+    hostname: firstColonIndex === lastColonIndex ? rawHost.slice(0, lastColonIndex) : rawHost,
+    port: null,
+  };
 }
 
-export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
-  const hostnames = new Set<string>();
+export function parseKnownHosts(raw: string): ReadonlyArray<KnownHost> {
+  const hosts = new Map<string, KnownHost>();
 
   for (const line of raw.split(/\r?\n/u)) {
     const trimmed = line.trim();
@@ -267,23 +279,28 @@ export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
     }
 
     for (const rawHost of hostField.split(",")) {
-      const host = normalizeKnownHostsHostname(rawHost).trim();
-      if (host.length === 0 || hasSshPattern(host)) {
+      const parsed = parseKnownHostsHost(rawHost.trim());
+      if (parsed === null) continue;
+      const hostname = parsed.hostname.trim();
+      if (hostname.length === 0 || hasSshPattern(hostname)) {
         continue;
       }
-      hostnames.add(host);
+      hosts.set(`${hostname}\u0000${parsed.port ?? ""}`, { hostname, port: parsed.port });
     }
   }
 
-  return [...hostnames].toSorted((left, right) => left.localeCompare(right));
+  return [...hosts.values()].toSorted(
+    (left, right) =>
+      left.hostname.localeCompare(right.hostname) || (left.port ?? 0) - (right.port ?? 0),
+  );
 }
 
-const readKnownHostsHostnames = Effect.fnUntraced(function* (filePath: string) {
+const readKnownHosts = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
   if (!(yield* fs.exists(filePath))) {
-    return NO_HOSTS;
+    return [];
   }
-  return parseKnownHostsHostnames(yield* fs.readFileString(filePath));
+  return parseKnownHosts(yield* fs.readFileString(filePath));
 });
 
 export const discoverSshHosts = Effect.fnUntraced(
@@ -313,7 +330,7 @@ export const discoverSshHosts = Effect.fnUntraced(
       hostNameRules,
       [],
     );
-    const knownHosts = yield* readKnownHostsHostnames(path.join(sshDirectory, "known_hosts"));
+    const knownHosts = yield* readKnownHosts(path.join(sshDirectory, "known_hosts"));
     const discovered = new Map<string, DesktopDiscoveredSshHost>();
 
     const configuredHostnames = new Set<string>();
@@ -329,15 +346,15 @@ export const discoverSshHosts = Effect.fnUntraced(
       });
     }
 
-    for (const hostname of knownHosts) {
+    for (const { hostname, port } of knownHosts) {
       if (discovered.has(hostname) || configuredHostnames.has(hostname.toLowerCase())) {
         continue;
       }
-      discovered.set(hostname, {
+      discovered.set(`${hostname}\u0000${port ?? ""}`, {
         alias: hostname,
         hostname,
         username: null,
-        port: null,
+        port,
         source: "known-hosts",
       });
     }

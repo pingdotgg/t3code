@@ -4,6 +4,7 @@ import {
   type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
+  type DeviceServiceState,
   type DeviceSummary,
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
@@ -93,6 +94,29 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
   ),
 );
 
+export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
+  hosts: ReadonlyArray<DeviceHostSummary>,
+  hostId: string | undefined,
+): Effect.fn.Return<DeviceHostId | undefined, DeviceToolUnavailableError> {
+  if (!hostId) return undefined;
+  const exact = hosts.find((host) => host.id === hostId);
+  if (exact) return exact.id;
+  const labelMatches = hosts.filter((host) => host.label.toLowerCase() === hostId.toLowerCase());
+  if (labelMatches.length === 1) return labelMatches[0]!.id;
+  const candidates = labelMatches.length > 1 ? labelMatches : hosts;
+  const listed = [
+    ...candidates.slice(0, 10).map((host) => `${host.label.slice(0, 64)} (${host.id})`),
+    ...(candidates.length > 10 ? [`${candidates.length - 10} more`] : []),
+  ].join(", ");
+  const selector = hostId.slice(0, 128);
+  return yield* new DeviceToolUnavailableError({
+    reason:
+      labelMatches.length > 1
+        ? `Several device hosts are named ${selector}; pass one id: ${listed}.`
+        : `No device host ${selector}. Known hosts: ${listed || "none"}.`,
+  });
+});
+
 const hostName = (host: { readonly id: DeviceHostId; readonly label?: string | undefined }) =>
   host.label === undefined ? `hostId ${host.id}` : `'${host.label}' (hostId ${host.id})`;
 
@@ -120,9 +144,19 @@ const mapLocateErrors = <A, R>(
     }),
   );
 
+const failedHosts = <H extends { readonly id: DeviceHostId }>(
+  state: { readonly hostStatuses: DeviceServiceState["hostStatuses"] },
+  hosts: ReadonlyArray<H>,
+) =>
+  hosts.flatMap((host) => {
+    const status = state.hostStatuses[host.id];
+    return status?.status === "failed" && status.detail ? [{ host, detail: status.detail }] : [];
+  });
+
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   state: {
     readonly hosts: ReadonlyArray<DeviceHostSummary>;
+    readonly hostStatuses: DeviceServiceState["hostStatuses"];
     readonly devices: ReadonlyArray<DeviceSummary>;
   },
   input: {
@@ -136,8 +170,19 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
     const devices = yield* DeviceService.DeviceService;
     const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(mapLocateErrors);
     if (Option.isSome(located)) return located.value;
+    const target =
+      hostId === undefined
+        ? undefined
+        : (state.hosts.find((host) => host.id === hostId) ?? { id: hostId });
+    const failures = failedHosts(state, target === undefined ? state.hosts : [target]).map(
+      ({ host, detail }) => `${hostName(host)} failed to start: ${detail}`,
+    );
     return yield* new DeviceToolUnavailableError({
-      reason: `No device ${deviceId} on ${hostId === undefined ? "any host" : hostName(state.hosts.find((host) => host.id === hostId) ?? { id: hostId })}. Call device_list for current ids.`,
+      reason: [
+        `No device ${deviceId} on ${target === undefined ? "any host" : hostName(target)}.`,
+        ...failures,
+        "Call device_list for current ids.",
+      ].join(" "),
     });
   }
   const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
@@ -147,11 +192,14 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
       (input.platform === undefined || device.platform === input.platform),
   );
   if (candidates.length === 0) {
+    const [failure] = failedHosts(state, [{ id: hostId }]);
     return yield* new DeviceToolUnavailableError({
       reason:
-        input.platform === undefined
-          ? "No simulators or emulators were found. Call device_list to see why."
-          : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
+        failure !== undefined
+          ? failure.detail
+          : input.platform === undefined
+            ? "No simulators or emulators were found. Call device_list to see why."
+            : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
     });
   }
   const platforms = new Set(candidates.map((device) => device.platform));
@@ -177,7 +225,7 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const hostId = input?.hostId;
+      const hostId = yield* resolveHostId(state.hosts, input?.hostId);
       const open = state.sessions
         .filter((session) => session.threadId === scope.thread.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
@@ -204,7 +252,8 @@ const handlers = {
             "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
         });
       }
-      const target = yield* pickDevice(state, input);
+      const hostId = yield* resolveHostId(state.hosts, input.hostId);
+      const target = yield* pickDevice(state, { ...input, hostId });
       // Resolve consent and agent connectivity before booting or registering a session.
       if (!(yield* devices.agentReadinessIfSupported(target.hostId))) {
         return yield* new DeviceToolUnavailableError({
@@ -273,14 +322,18 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const threadId = scope.thread.threadId;
+      const hostId =
+        input.hostId === undefined
+          ? undefined
+          : yield* resolveHostId((yield* devices.state).hosts, input.hostId);
       const target =
         input.deviceId === undefined
           ? (yield* devices.sessionsForThread(threadId)).findLast(
-              (session) => input.hostId === undefined || session.hostId === input.hostId,
+              (session) => hostId === undefined || session.hostId === hostId,
             )
           : Option.getOrUndefined(
               yield* devices
-                .locateSession({ threadId, deviceId: input.deviceId, hostId: input.hostId })
+                .locateSession({ threadId, deviceId: input.deviceId, hostId })
                 .pipe(mapLocateErrors),
             );
       if (!target) {
@@ -307,13 +360,17 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const deviceId = input.deviceId;
+      const inputHostId =
+        input.hostId === undefined
+          ? undefined
+          : yield* resolveHostId((yield* devices.state).hosts, input.hostId);
       const open =
         deviceId === undefined
           ? Option.none()
           : yield* devices
-              .locateSession({ threadId: scope.thread.threadId, deviceId, hostId: input.hostId })
+              .locateSession({ threadId: scope.thread.threadId, deviceId, hostId: inputHostId })
               .pipe(mapLocateErrors);
-      const hostId = Option.isSome(open) ? open.value.hostId : input.hostId;
+      const hostId = Option.isSome(open) ? open.value.hostId : inputHostId;
       yield* devices.close({
         threadId: scope.thread.threadId,
         ...(hostId === undefined ? {} : { hostId }),

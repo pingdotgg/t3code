@@ -9,22 +9,22 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isTailnetHost } from "@t3tools/shared/hostClassification";
-
-import * as ServerConfig from "../config.ts";
 import {
   formatHostForUrl,
-  isLoopbackHost,
-  isPrivateNetworkAddress,
+  isTailnetHost,
   isWildcardHost,
-  VIRTUAL_INTERFACE,
-} from "../startupAccess.ts";
+} from "@t3tools/shared/hostClassification";
+
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
+import { isLoopbackHost, isPrivateNetworkAddress, VIRTUAL_INTERFACE } from "../startupAccess.ts";
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
@@ -34,6 +34,7 @@ const TAILSCALE_ENDPOINT_TIMEOUT = Duration.seconds(3);
 export class DirectEndpoints extends Context.Service<
   DirectEndpoints,
   {
+    readonly resolveAvailable: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
     readonly resolve: () => Effect.Effect<ReadonlyArray<ServerDirectEndpoint>>;
   }
 >()("t3/environment/DirectEndpoints") {}
@@ -120,6 +121,7 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const platform = yield* HostProcess.Platform;
+  const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
   // the first client does not wait for its timeout.
@@ -128,7 +130,8 @@ export const make = Effect.gen(function* () {
     : Effect.succeed(false);
   yield* Effect.forkDetach(onCloudVm);
 
-  const resolve = Effect.gen(function* () {
+  const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
+  const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
     const endpoints = [
       ...resolveBoundEndpoints({
         platform,
@@ -138,6 +141,12 @@ export const make = Effect.gen(function* () {
         onCloudVm: yield* onCloudVm,
       }),
     ];
+    const servedUrl = yield* Ref.get(servedEndpoint);
+    if (Option.isSome(servedUrl)) endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
+    return endpoints;
+  });
+
+  const resolve = Effect.gen(function* () {
     // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
       const servedUrl = yield* readTailscaleStatus.pipe(
@@ -148,7 +157,7 @@ export const make = Effect.gen(function* () {
             magicDnsName,
             servePort: config.tailscaleServePort,
           });
-          return probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl }).pipe(
+          return probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl, environmentId }).pipe(
             Effect.map((reachable) => (reachable ? httpBaseUrl : null)),
           );
         }),
@@ -158,14 +167,13 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
-      if (Option.isSome(servedUrl)) {
-        endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
-      }
+      yield* Ref.set(servedEndpoint, servedUrl);
     }
-    return endpoints;
+    return yield* resolveAvailable();
   });
 
   return DirectEndpoints.of({
+    resolveAvailable,
     resolve: Effect.fn("DirectEndpoints.resolve")(function () {
       return resolve;
     }),

@@ -148,7 +148,8 @@ export const make = Effect.gen(function* () {
     // path makes Windows sign in to its host with the user's NTLM credentials.
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
     const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
-    if (stat._tag === "None") return null;
+    // Server state files answer like missing paths, as readFile refuses them.
+    if (stat._tag === "None" || (yield* isServerInternalPath(expandedPath))) return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
     if (stat.value.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
@@ -226,7 +227,7 @@ export const make = Effect.gen(function* () {
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
-    const requestedPath = input.relativePath.trim();
+    const requestedPath = input.relativePath;
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
       : requestedPath;
@@ -405,19 +406,24 @@ export const make = Effect.gen(function* () {
 
           const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
           const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = yield* Effect.tryPromise({
-            try: () => handle.read(buffer, 0, bytesToRead, 0),
-            catch: (cause) =>
-              new WorkspaceFileSystemOperationError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: realTargetPath,
-                operationPath: realTargetPath,
-                operation: "read",
-                cause,
-              }),
-          });
-          const fileBytes = buffer.subarray(0, bytesRead);
+          let offset = 0;
+          while (offset < bytesToRead) {
+            const { bytesRead } = yield* Effect.tryPromise({
+              try: () => handle.read(buffer, offset, bytesToRead - offset, offset),
+              catch: (cause) =>
+                new WorkspaceFileSystemOperationError({
+                  workspaceRoot: input.cwd,
+                  relativePath: input.relativePath,
+                  resolvedPath: realTargetPath,
+                  operationPath: realTargetPath,
+                  operation: "read",
+                  cause,
+                }),
+            });
+            if (bytesRead <= 0) break;
+            offset += bytesRead;
+          }
+          const fileBytes = buffer.subarray(0, offset);
           if (fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,

@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 /**
  * Cloudflare zone the example operates on. The same zone is used for
@@ -18,8 +18,7 @@ export const SENDER = process.env.CLOUDFLARE_EMAIL_FROM ?? `bot@${ZONE}`;
  * address to be verified (recipient clicks a confirmation link) before
  * `send_email` will deliver.
  */
-export const DESTINATION =
-  process.env.CLOUDFLARE_EMAIL_TO ?? "michael@alchemy.run";
+export const DESTINATION = process.env.CLOUDFLARE_EMAIL_TO ?? "michael@alchemy.run";
 
 /**
  * Inbox address the Worker subscribes to. Mail addressed here is routed
