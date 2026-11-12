@@ -19,14 +19,6 @@ const isChoiceQuestion = Schema.is(
     oneOf: Schema.Array(choice),
   }),
 );
-const isMultiChoiceQuestion = Schema.is(
-  Schema.Struct({
-    type: Schema.Literal("array"),
-    title: TrimmedNonEmptyString,
-    description: Schema.optional(Schema.String),
-    items: Schema.Struct({ anyOf: Schema.Array(choice) }),
-  }),
-);
 const isTextQuestion = Schema.is(
   Schema.Struct({
     type: Schema.Literal("string"),
@@ -59,9 +51,9 @@ type Option = OrchestrationV2UserInputQuestion["options"][number];
 const findChoice = (options: ReadonlyArray<Option>, value: string) =>
   options.find((option) => option.value === value);
 
-const optionValue = (option: Option) => option.value ?? option.label;
-
-/** OpenCode 2.1 asks through ACP with a `qN` choice field plus a `qN_custom` companion. */
+// OpenCode 2.1 asks through ACP with a `qN` choice field plus a `qN_custom` companion.
+// Multi-select forms stay with the generic mapping: it keeps the companion as its own
+// question, and clients cannot yet send selected choices and custom text as one answer.
 export const extractOpenCodeElicitationForm: NonNullable<
   AcpAdapterV2Flavor["extractElicitationForm"]
 > = (request) => {
@@ -81,19 +73,15 @@ export const extractOpenCodeElicitationForm: NonNullable<
     const companion = properties[`${id}${companionSuffix}`];
     const hasCompanion = companion !== undefined;
     if (hasCompanion && !isCustomCompanion(companion)) return undefined;
-    const fieldChoices = isChoiceQuestion(field)
-      ? field.oneOf
-      : isMultiChoiceQuestion(field)
-        ? field.items.anyOf
-        : undefined;
-    if (fieldChoices === undefined) {
-      if (!isTextQuestion(field)) return undefined;
-      // Unsupported choice schemas belong to the generic mapping.
-      if ("enum" in field || "oneOf" in field || "anyOf" in field || "items" in field) {
-        return undefined;
-      }
+    if (!isTextQuestion(field)) return undefined;
+    const fieldChoices = isChoiceQuestion(field) ? field.oneOf : undefined;
+    // Unsupported choice schemas belong to the generic mapping.
+    if (
+      fieldChoices === undefined &&
+      ("enum" in field || "oneOf" in field || "anyOf" in field || "items" in field)
+    ) {
+      return undefined;
     }
-    if (!isTextQuestion(field) && !isMultiChoiceQuestion(field)) return undefined;
     const options = (fieldChoices ?? []).map((option) => ({
       label: option.title,
       description: option.description?.trim() || option.title,
@@ -106,7 +94,6 @@ export const extractOpenCodeElicitationForm: NonNullable<
       header: field.title,
       question: field.description?.trim() || field.title,
       options,
-      ...(field.type === "array" ? { multiSelect: true } : {}),
       allowCustomAnswer: hasCompanion || options.length === 0,
     });
   }
@@ -115,45 +102,32 @@ export const extractOpenCodeElicitationForm: NonNullable<
   return {
     questions,
     respond: (answers) => {
-      const content: Record<string, string | ReadonlyArray<string>> = {};
+      const content: Record<string, string> = {};
       for (const question of questions) {
         const answer = Object.hasOwn(answers, question.id) ? answers[question.id] : undefined;
-        const values = Array.isArray(answer)
-          ? answer.filter(Predicate.isString)
-          : Predicate.isString(answer)
-            ? [answer]
-            : [];
-        if (values.length === 0 || (question.multiSelect !== true && values.length > 1)) {
+        if (!Predicate.isString(answer)) return { action: "cancel" };
+        const companionId = `${question.id}${companionSuffix}`;
+        const exact = findChoice(question.options, answer);
+        if (exact !== undefined) {
+          content[question.id] = answer;
+          continue;
+        }
+        if (answer.trim().length === 0) return { action: "cancel" };
+        const split = splitAttachments(answer);
+        const attached =
+          split === undefined ? undefined : findChoice(question.options, split.prefix);
+        if (withCompanion.has(question.id)) {
+          if (attached !== undefined && split !== undefined) {
+            content[question.id] = split.prefix;
+            content[companionId] = `${attached.label}${split.suffix}`;
+          } else {
+            content[companionId] = answer;
+          }
+        } else if (question.options.length === 0) {
+          content[question.id] = answer;
+        } else {
           return { action: "cancel" };
         }
-        const companion = withCompanion.has(question.id);
-        const selected: Array<string> = [];
-        const custom: Array<string> = [];
-        for (const value of values) {
-          const exact = findChoice(question.options, value);
-          if (exact !== undefined) {
-            selected.push(optionValue(exact));
-            continue;
-          }
-          if (value.trim().length === 0) return { action: "cancel" };
-          const split = splitAttachments(value);
-          const attached =
-            split === undefined ? undefined : findChoice(question.options, split.prefix);
-          if (companion && attached !== undefined && split !== undefined) {
-            selected.push(optionValue(attached));
-            custom.push(`${attached.label}${split.suffix}`);
-          } else if (companion) {
-            custom.push(value);
-          } else if (question.options.length === 0) {
-            selected.push(value);
-          } else {
-            return { action: "cancel" };
-          }
-        }
-        if (selected.length > 0) {
-          content[question.id] = question.multiSelect === true ? selected : selected[0]!;
-        }
-        if (custom.length > 0) content[`${question.id}${companionSuffix}`] = custom.join("\n");
       }
       return { action: "accept", content };
     },

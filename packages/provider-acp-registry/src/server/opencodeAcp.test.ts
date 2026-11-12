@@ -106,33 +106,14 @@ describe("OpenCode ACP question form", () => {
     });
   });
 
-  it("keeps multi-select values and custom answers together", () => {
-    const form = extractOpenCodeElicitationForm(
-      request({ q0: multiColorQuestion, q0_custom: multiColorCompanion }),
-    );
-
-    expect(form?.questions[0]).toMatchObject({ multiSelect: true, allowCustomAnswer: true });
-    expect(form?.respond({ q0: ["red", "green"] })).toEqual({
-      action: "accept",
-      content: { q0: ["red"], q0_custom: "green" },
-    });
-  });
-
   it("keeps attachment text with the selected option", () => {
-    const single = extractOpenCodeElicitationForm(
+    const form = extractOpenCodeElicitationForm(
       request({ q0: colorQuestion, q0_custom: colorCompanion }),
     );
-    const multi = extractOpenCodeElicitationForm(
-      request({ q0: multiColorQuestion, q0_custom: multiColorCompanion }),
-    );
 
-    expect(single?.respond({ q0: `blue${attachment}` })).toEqual({
+    expect(form?.respond({ q0: `blue${attachment}` })).toEqual({
       action: "accept",
       content: { q0: "blue", q0_custom: `Blue${attachment}` },
-    });
-    expect(multi?.respond({ q0: ["red", `blue${attachment}`] })).toEqual({
-      action: "accept",
-      content: { q0: ["red", "blue"], q0_custom: `Blue${attachment}` },
     });
   });
 
@@ -149,6 +130,7 @@ describe("OpenCode ACP question form", () => {
   it.each([
     ["a text-only form", { q0: { type: "string", title: "Name", description: "Who?" } }],
     ["an unrelated field", { q0: colorQuestion, q0_custom: colorCompanion, extra: {} }],
+    ["a multi-select choice", { q0: multiColorQuestion, q0_custom: multiColorCompanion }],
     ["an orphan companion", { q0_custom: colorCompanion }],
     ["an enum choice", { q0: colorQuestion, q1: { type: "string", title: "Size", enum: ["S"] } }],
     [
