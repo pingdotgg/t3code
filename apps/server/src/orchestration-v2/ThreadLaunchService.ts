@@ -166,6 +166,20 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+export class ThreadLaunchBranchConflictError extends Schema.TaggedError<ThreadLaunchBranchConflictError>()(
+  "ThreadLaunchBranchConflictError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    branch: Schema.String,
+    conflictingBranch: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Branch "${this.branch}" cannot be created in project "${this.projectTitle}": branch "${this.conflictingBranch}" exists.`;
+  }
+}
+
 export class ThreadLaunchNotRepositoryError extends Schema.TaggedError<ThreadLaunchNotRepositoryError>()(
   "ThreadLaunchNotRepositoryError",
   {
@@ -188,10 +202,16 @@ export class ThreadLaunchService extends Context.Service<
       ThreadLaunchResult,
       ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
-    /** Check before creation for early errors; launch otherwise accepts and reports base failures inside the thread. */
+    /** Check a new worktree's base ref and branch name before creation for early errors; launch otherwise accepts and reports these failures inside the thread. */
     readonly checkWorktreeBase: (
-      input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
-    ) => Effect.Effect<void, ThreadLaunchBaseRefError | ThreadLaunchNotRepositoryError>;
+      input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy"> & {
+        /** Skips the check when this launch was already accepted, so its retry replays. */
+        readonly commandId?: CommandId;
+      },
+    ) => Effect.Effect<
+      void,
+      ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError | ThreadLaunchNotRepositoryError
+    >;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -279,6 +299,12 @@ const make = Effect.gen(function* () {
     // launch() turns a Scratch worktree request into a root launch.
     if (strategy.type !== "worktree" || (yield* managedFolders.isScratchProject(input.projectId)))
       return;
+    if (input.commandId !== undefined) {
+      const receipt = yield* receipts
+        .getByCommandId(input.commandId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isSome(receipt) && receipt.value.status === "accepted") return;
+    }
     const project = Option.getOrUndefined(
       yield* projects.getById(input.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
     );
@@ -293,28 +319,43 @@ const make = Effect.gen(function* () {
         projectTitle: project.title,
         workspaceRoot: cwd,
       });
-    // `:/text` is a commit search, which cannot be asked for a commit type.
-    if (strategy.baseRef.startsWith(":")) return;
-    const { baseRef } = strategy;
-    const unresolved = yield* Effect.gen(function* () {
-      // `git worktree add` reads `-` as the previous checkout.
-      if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
-        return undefined;
-      if (
-        strategy.startFromOrigin === true &&
-        (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
-      )
-        return undefined;
-      // git worktree add accepts remote-tracking branches; let Git decide when any matching ref exists.
-      if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return undefined;
-      return (yield* git.hasCommit({ cwd, refName: "HEAD" })) ? project : undefined;
-    }).pipe(Effect.orElseSucceed(() => undefined));
-    if (unresolved !== undefined)
+    const { baseRef, branch } = strategy;
+    const baseResolves =
+      // `:/text` is a commit search, which cannot be asked for a commit type.
+      baseRef.startsWith(":") ||
+      (yield* Effect.gen(function* () {
+        // `git worktree add` reads `-` as the previous checkout.
+        if (yield* git.hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef }))
+          return true;
+        if (
+          strategy.startFromOrigin === true &&
+          (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
+        )
+          return true;
+        // git worktree add accepts remote-tracking branches; let Git decide when any matching ref exists.
+        if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return true;
+        return !(yield* git.hasCommit({ cwd, refName: "HEAD" }));
+      }).pipe(Effect.orElseSucceed(() => true)));
+    if (!baseResolves)
       return yield* new ThreadLaunchBaseRefError({
-        projectId: unresolved.id,
-        projectTitle: unresolved.title,
-        workspaceRoot: unresolved.workspaceRoot,
+        projectId: project.id,
+        projectTitle: project.title,
+        workspaceRoot: project.workspaceRoot,
         baseRef,
+      });
+    // Provisioning flattens temporary names that collide, so only explicit names are refused.
+    if (branch === undefined || isTemporaryWorktreeBranch(branch)) return;
+    const conflictingBranch = (yield* git
+      .listLocalBranchNames(cwd)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).find(
+      (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
+    );
+    if (conflictingBranch !== undefined)
+      return yield* new ThreadLaunchBranchConflictError({
+        projectId: project.id,
+        projectTitle: project.title,
+        branch,
+        conflictingBranch,
       });
   });
 
