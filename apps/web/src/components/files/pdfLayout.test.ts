@@ -67,6 +67,8 @@ describe("mixed-height page layout", () => {
     expect(indexes(0, 100)).toEqual([0, 1]);
     expect(indexes(1100, 100)).toEqual([2]);
     expect(indexes(1100, 900)).toEqual([1, 2]);
+    // Page 2 starts 180px (1.8 viewports) below the visible bottom of 800.
+    expect(indexes(700, 100)).toEqual([1, 2]);
     expect(visiblePdfPages(ratios, offsets, 0, 100)[0]).toEqual({ index: 0, ratio: ratios[0] });
   });
 
