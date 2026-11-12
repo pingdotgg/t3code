@@ -44,6 +44,9 @@ it("keeps draft previews current through edits, promotion and removal", async ()
     initial.setPrompt(draftId, "First draft preview");
   });
   await expect.element(row).toHaveAccessibleName("First draft preview, Unsent draft");
+  // Screen readers drop a button's descendants, so row actions must sit beside the row's button.
+  const discard = screen.getByRole("button", { name: "Discard draft" }).element();
+  expect(discard.parentElement?.closest('[role="button"], button')).toBeNull();
 
   const rendersBeforeOtherComposer = onRender.mock.calls.length;
   await act(() =>
