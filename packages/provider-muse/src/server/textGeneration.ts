@@ -25,12 +25,14 @@ import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textG
 import {
   generatedThreadTitle,
   investigationUnsupported,
+  validFolderPick,
   TranscriptionPostProcessingOutput,
 } from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadFolderClassificationPrompt,
   buildThreadTitlePrompt,
 } from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
@@ -348,7 +350,10 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       ...buildThreadTitlePrompt(input),
       modelSelection: input.modelSelection,
     });
-    return { title: yield* generatedThreadTitle(generated.title) };
+    return {
+      title: yield* generatedThreadTitle(generated.title),
+      ...validFolderPick(input, generated),
+    };
   });
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
     Effect.fn("MuseTextGeneration.generateTranscriptionPostProcessing")(function* (input) {
@@ -361,12 +366,22 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     });
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
+  const classifyThreadFolder: ProviderTextGeneration["classifyThreadFolder"] = Effect.fn(
+    "MuseTextGeneration.classifyThreadFolder",
+  )(function* (input) {
+    return yield* runMuseJson({
+      operation: "classifyThreadFolder",
+      ...buildThreadFolderClassificationPrompt(input),
+      modelSelection: input.modelSelection,
+    });
+  });
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    classifyThreadFolder,
     generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 });

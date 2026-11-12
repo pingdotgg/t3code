@@ -1,3 +1,9 @@
+import {
+  layoutThreadFolders,
+  type EnvironmentThreadFolder,
+} from "@t3tools/client-runtime/state/thread-folders";
+import { sortActiveThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
@@ -53,6 +59,69 @@ import { isModelPickerOpen, subscribeToModelPickerVisibility } from "../modelPic
 import { shortcutModifierStore } from "../shortcutModifierState";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+
+export type SidebarFolderSection = "pinned" | "active" | "snoozed" | "settled";
+
+/**
+ * Folders own every member, whatever its shelf: rows leave the shared sections and
+ * render inside the folder as pinned, active (working first), snoozed, then settled.
+ * A collapsed folder still shows the open thread.
+ */
+export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input: {
+  readonly pinnedThreads: readonly T[];
+  readonly activeThreads: readonly T[];
+  readonly workingThreads: readonly T[];
+  readonly snoozedThreads: readonly T[];
+  readonly settledThreads: readonly T[];
+  readonly folders: readonly EnvironmentThreadFolder[];
+  readonly collapsedKeys: ReadonlySet<string>;
+  readonly routeThreadKey: string | null;
+  /** A closed Settled shelf folds settled folders away like a collapsed folder. */
+  readonly settledShelfExpanded: boolean;
+}) {
+  const ordered: Array<{ readonly thread: T; readonly section: SidebarFolderSection }> = [
+    ...input.pinnedThreads.map((thread) => ({ thread, section: "pinned" as const })),
+    ...sortActiveThreadsByOrderKey([...input.workingThreads, ...input.activeThreads]).map(
+      (thread) => ({ thread, section: "active" as const }),
+    ),
+    ...input.snoozedThreads.map((thread) => ({ thread, section: "snoozed" as const })),
+    ...input.settledThreads.map((thread) => ({ thread, section: "settled" as const })),
+  ];
+  const layout = layoutThreadFolders({
+    threads: ordered.map(({ thread }) => thread),
+    folders: input.folders,
+  });
+  const unfiled = new Set(layout.unfiled);
+  const sectionOf = new Map(ordered.map(({ thread, section }) => [thread, section]));
+  const isRoute = (thread: T) => `${thread.environmentId}:${thread.id}` === input.routeThreadKey;
+  return {
+    pinnedThreads: input.pinnedThreads.filter((thread) => unfiled.has(thread)),
+    activeThreads: input.activeThreads.filter((thread) => unfiled.has(thread)),
+    workingThreads: input.workingThreads.filter((thread) => unfiled.has(thread)),
+    snoozedThreads: input.snoozedThreads.filter((thread) => unfiled.has(thread)),
+    settledThreads: input.settledThreads.filter((thread) => unfiled.has(thread)),
+    blocks: layout.blocks.map((block) => {
+      const rows = block.threads.map((thread) => ({ thread, section: sectionOf.get(thread)! }));
+      // A folder whose every member is settled moves to the Settled shelf, card and all.
+      const settled = rows.length > 0 && rows.every((row) => row.section === "settled");
+      // Settled folders start collapsed, so a stored key flips each folder from its default.
+      const collapsed =
+        input.collapsedKeys.has(block.key) !== settled || (settled && !input.settledShelfExpanded);
+      const hidden = collapsed ? rows.filter((row) => !isRoute(row.thread)) : [];
+      return {
+        ...block,
+        collapsed,
+        settled,
+        rows: collapsed ? rows.filter((row) => isRoute(row.thread)) : rows,
+        hiddenThreads: hidden.map((row) => row.thread),
+        // Parked members never light the folder's status dot.
+        hiddenLiveThreads: hidden
+          .filter((row) => row.section === "pinned" || row.section === "active")
+          .map((row) => row.thread),
+      };
+    }),
+  };
+}
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -205,6 +274,7 @@ export function resolveSidebarThreadSection(input: {
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
+  | "thread-folder"
   | "pinned-header"
   | "active-placeholder"
   | "settled-placeholder"
@@ -219,10 +289,10 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 
 export type SidebarListItem =
   | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
-  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+  | { readonly kind: "marker"; readonly marker: SidebarListMarker; readonly folderKey?: string };
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  return item.kind === "thread" ? item.key : (item.folderKey ?? sidebarMarkerId(item.marker));
 }
 
 function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {

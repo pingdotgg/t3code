@@ -1,4 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { ProjectIconOverride } from "@t3tools/contracts";
 import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
@@ -38,41 +39,8 @@ export function ProjectFavicon(input: {
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const { project } = input;
-  if (project.projectIcon?.kind === "monogram") {
-    return (
-      <ProjectMonogram
-        text={project.projectIcon.text}
-        color={project.projectIcon.color}
-        className={input.className}
-      />
-    );
-  }
-  if (project.projectIcon?.kind === "emoji") {
-    return (
-      <ProjectFaviconFallback
-        className={input.className}
-        icon={FolderCodeIcon}
-        emoji={project.projectIcon.emoji}
-      />
-    );
-  }
-  if (project.projectIcon?.kind === "lucide") {
-    const colorClassName = projectIconColorClassName(project.projectIcon.color);
-    const iconClassName = cn(
-      "inline-flex size-3.5 shrink-0 items-center justify-center",
-      colorClassName,
-      input.className,
-    );
-    return (
-      <span aria-hidden="true" className={iconClassName}>
-        <Suspense fallback={<DynamicProjectIconFallback />}>
-          <LucideProjectIcon
-            name={project.projectIcon.name}
-            className={cn("size-full", colorClassName)}
-          />
-        </Suspense>
-      </span>
-    );
+  if (project.projectIcon) {
+    return <ProjectIconOverrideGlyph icon={project.projectIcon} className={input.className} />;
   }
   return <AutomaticProjectFavicon {...input} />;
 }
@@ -112,6 +80,39 @@ function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
       fallbackIcon={FallbackIcon}
       fallbackProjectName={project.title}
     />
+  );
+}
+
+/** A saved icon override; projects and thread folders share the picker and the glyph. */
+export function ProjectIconOverrideGlyph({
+  icon,
+  className,
+}: {
+  readonly icon: ProjectIconOverride;
+  readonly className?: string | undefined;
+}) {
+  if (icon.kind === "monogram") {
+    return <ProjectMonogram text={icon.text} color={icon.color} className={className} />;
+  }
+  if (icon.kind === "emoji") {
+    return (
+      <ProjectFaviconFallback className={className} icon={FolderCodeIcon} emoji={icon.emoji} />
+    );
+  }
+  const colorClassName = projectIconColorClassName(icon.color);
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-flex size-3.5 shrink-0 items-center justify-center",
+        colorClassName,
+        className,
+      )}
+    >
+      <Suspense fallback={<DynamicProjectIconFallback />}>
+        <LucideProjectIcon name={icon.name} className={cn("size-full", colorClassName)} />
+      </Suspense>
+    </span>
   );
 }
 

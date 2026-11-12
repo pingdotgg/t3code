@@ -11,13 +11,16 @@ import {
   nextSnoozeWakeAfter,
 } from "../features/threads/threadListV2";
 import { appAtomRegistry } from "./atom-registry";
-import { environmentServerConfigsAtom } from "./server";
+import { threadFoldersAtom, environmentServerConfigsAtom } from "./server";
 import { steadyNavigationThreadShellsAtom } from "./threads";
 import { queuedThreadKeysAtom } from "./use-thread-outbox";
 
 export const threadArrangementOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
 
 export const threadDropBusyAtom = Atom.make(false).pipe(Atom.keepAlive);
+
+/** Scoped keys of folders whose related threads are being added. */
+export const addingRelatedThreadsAtom = Atom.make<ReadonlyArray<string>>([]).pipe(Atom.keepAlive);
 
 export const pendingThreadOrderAtom = Atom.make<PendingThreadOrder | null>(null).pipe(
   Atom.keepAlive,
@@ -68,6 +71,7 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
     const nowMs = Date.now();
     const ordered = getThreadListV2OrderedSection({
       threads,
+      folders: appAtomRegistry.get(threadFoldersAtom),
       section: current.section,
       now: new Date(nowMs).toISOString(),
       queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
@@ -89,6 +93,7 @@ export function beginPendingThreadOrder(pending: PendingThreadOrder) {
   unsubscribers.push(
     appAtomRegistry.subscribe(steadyNavigationThreadShellsAtom, refresh),
     appAtomRegistry.subscribe(environmentServerConfigsAtom, refresh),
+    appAtomRegistry.subscribe(threadFoldersAtom, refresh),
     appAtomRegistry.subscribe(queuedThreadKeysAtom, refresh),
     minuteTick.subscribe(refresh),
   );

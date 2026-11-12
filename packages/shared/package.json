@@ -255,6 +255,10 @@
       "types": "./src/threadTranscript.ts",
       "import": "./src/threadTranscript.ts"
     },
+    "./threadFolderRule": {
+      "types": "./src/threadFolderRule.ts",
+      "import": "./src/threadFolderRule.ts"
+    },
     "./paletteSearch": {
       "types": "./src/paletteSearch.ts",
       "import": "./src/paletteSearch.ts"

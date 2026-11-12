@@ -98,7 +98,7 @@ It is a JSON array of rules:
 
 ```json
 [
-  { "key": "mod+g", "command": "terminal.toggle" },
+  { "key": "mod+alt+t", "command": "terminal.toggle" },
   { "key": "mod+shift+g", "command": "terminal.new", "when": "terminalFocus" }
 ]
 ```
@@ -181,6 +181,9 @@ actions of the same kind undo together. The notice remains available for five
 seconds after the latest action. Right after an action, the shortcut works even
 in a text field such as the composer. Once you type or press another key, the
 field gets its own undo back. Terminals always keep their native shortcut.
+
+`thread.folder` (`mod+g` by default) moves the open thread into a new folder and starts
+renaming it. If the thread is already in a folder, it takes the thread out instead.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.

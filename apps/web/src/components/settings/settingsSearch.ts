@@ -466,6 +466,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "thread-folder-style",
+    title: "Folder style",
+    to: "/settings/general",
+    searchTerms: ["thread folders cards tabs tab groups helium color line sidebar look"],
+  },
+  {
     id: "boring-sidebar",
     title: "Boring sidebar (group by project)",
     to: "/settings/labs",

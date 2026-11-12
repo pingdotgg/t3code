@@ -84,6 +84,14 @@ export function HomeRouteScreen() {
   };
 
   const {
+    moveThreadToFolder,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    moveFolder,
+    setFolderCollect,
+    applyFolderRule,
+    settleFolder,
     archiveThread,
     confirmDeleteThread,
     settleThread,
@@ -201,6 +209,14 @@ export function HomeRouteScreen() {
           onPinThread={pinThread}
           onUnpinThread={unpinThread}
           onSetThreadAutoSettle={setThreadAutoSettle}
+          onMoveThreadToFolder={moveThreadToFolder}
+          onCreateFolder={createFolder}
+          onMoveFolder={moveFolder}
+          onFolderCollect={setFolderCollect}
+          onApplyFolderRule={applyFolderRule}
+          onSettleFolder={settleFolder}
+          onRenameFolder={renameFolder}
+          onDeleteFolder={deleteFolder}
           onMoveThread={moveThread}
           onRenameThread={renameThread}
           onRegenerateThreadTitle={regenerateThreadTitle}

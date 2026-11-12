@@ -62,6 +62,15 @@ import { ThreadStatusLine } from "./ThreadStatusLine";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readEnvironmentScope } from "../../state/session";
+import {
+  createThreadFolder,
+  moveThreadsToFolder,
+  readEnvironmentSupportsThreadFolders,
+  readThreadFolder,
+  readThreadFoldersLoaded,
+  requestThreadFolderRename,
+} from "../../state/threadFolders";
+import { scopedThreadFolderKey } from "@t3tools/client-runtime/state/thread-folders";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
@@ -683,6 +692,25 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread",
         ),
       );
+    },
+    "thread.folder": ({ event }) => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (
+        !activeThreadShell ||
+        !activeThreadRef ||
+        !readEnvironmentSupportsThreadFolders(activeThreadRef.environmentId)
+      ) {
+        return false;
+      }
+      if (event.repeat || !readThreadFoldersLoaded(environmentId)) return;
+      const { threadId } = activeThreadRef;
+      if (readThreadFolder(activeThreadRef) !== null) {
+        void moveThreadsToFolder({ environmentId, threadIds: [threadId], folderId: null });
+        return;
+      }
+      void createThreadFolder({ environmentId, threadIds: [threadId] }).then((id) => {
+        if (id !== null) requestThreadFolderRename(scopedThreadFolderKey({ environmentId, id }));
+      });
     },
     "thread.regenerateTitle": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;

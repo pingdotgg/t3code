@@ -347,6 +347,10 @@
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
     },
+    "./state/thread-folders": {
+      "types": "./src/state/threadFolders.ts",
+      "default": "./src/state/threadFolders.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"

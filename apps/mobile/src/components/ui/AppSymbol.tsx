@@ -46,3 +46,5 @@ function AppSymbolView(props: AppSymbolViewProps) {
 }
 
 export const SymbolView = withUniwind(AppSymbolView);
+
+export { isAppSymbolName } from "./AppSymbol.android";

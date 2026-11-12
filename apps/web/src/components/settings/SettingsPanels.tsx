@@ -23,6 +23,7 @@ import {
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarThreadFolderStyle,
   ScreenReaderAnnouncements,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
@@ -137,6 +138,12 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: msg("Manual"),
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_THREAD_FOLDER_STYLE_LABELS: Record<SidebarThreadFolderStyle, string> = {
+  cards: "Cards",
+  tabs: "Tab groups",
+};
+const isSidebarThreadFolderStyle = Schema.is(SidebarThreadFolderStyle);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: msg("System default"),
@@ -490,6 +497,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarThreadFolderStyle !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadFolderStyle
+      ? ["Folder style"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -668,6 +678,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarThreadFolderStyle: DEFAULT_UNIFIED_SETTINGS.sidebarThreadFolderStyle,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -911,6 +922,46 @@ export function GeneralSettingsPanel() {
               }
               aria-label={gt("Working section")}
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("thread-folder-style")}
+          description="Cards tint each folder. Tab groups color the folder name and draw a line beside its threads."
+          resetAction={
+            settings.sidebarThreadFolderStyle !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarThreadFolderStyle ? (
+              <SettingResetButton
+                label="folder style"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadFolderStyle: DEFAULT_UNIFIED_SETTINGS.sidebarThreadFolderStyle,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarThreadFolderStyle}
+              onValueChange={(value) => {
+                if (isSidebarThreadFolderStyle(value)) {
+                  updateSettings({ sidebarThreadFolderStyle: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Folder style">
+                <SelectValue>
+                  {SIDEBAR_THREAD_FOLDER_STYLE_LABELS[settings.sidebarThreadFolderStyle]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarThreadFolderStyle.literals.map((style) => (
+                  <SelectItem hideIndicator key={style} value={style}>
+                    {SIDEBAR_THREAD_FOLDER_STYLE_LABELS[style]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
       </SettingsSection>

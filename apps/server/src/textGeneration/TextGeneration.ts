@@ -34,6 +34,8 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  ThreadFolderClassificationInput,
+  ThreadFolderClassificationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
   TranscriptionPostProcessingInput,
@@ -50,6 +52,7 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle"
   | "generateReviewGuide"
+  | "classifyThreadFolder"
   | "generateTranscriptionPostProcessing";
 
 const resolveInstance = (
@@ -197,6 +200,14 @@ export const make = Effect.gen(function* () {
         null,
         (service, modelSelection) =>
           service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
+      );
+    }),
+    classifyThreadFolder: Effect.fn("TextGeneration.classifyThreadFolder")(function (input) {
+      return generate(
+        "classifyThreadFolder",
+        input.modelSelection,
+        null,
+        (service, modelSelection) => service.classifyThreadFolder({ ...input, modelSelection }),
       );
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {

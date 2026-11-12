@@ -224,6 +224,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
+    classifyThreadFolder: (input) =>
+      byOpenCodeRuntime(resolve, {
+        v1: v1.classifyThreadFolder(input),
+        v2: v2.classifyThreadFolder(input),
+      }),
     generateTranscriptionPostProcessing: (input) =>
       byOpenCodeRuntime(resolve, {
         v1: v1.generateTranscriptionPostProcessing(input),

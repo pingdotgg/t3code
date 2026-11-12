@@ -443,6 +443,30 @@ resultant title, title-regeneration marker, and linked pull request. Reusing a
 receipt. Thread list and read results expose the linked pull request, and thread
 detail also exposes an in-flight title regeneration.
 
+### `t3_thread_folder`
+
+Lists, creates, updates, reorders, deletes, and fills the sidebar's thread folders. Folders
+belong to the environment, not a project, and a thread is in at most one.
+They are presentation state in `thread_folders`, not orchestration events, so
+moving a thread never changes its `updatedAt` or sidebar order. `list` is a read;
+`create` and `move` check each named thread like other thread writes; `update`,
+`reorder`, and `delete` are refused to fenced linked callers. The web and mobile sidebars use
+the same `ThreadFolderService` through `threadFolders.mutate`. New folders go first;
+`reorder` places a folder before `beforeFolderId`, or last with null.
+`create` and `update` accept `rule` and `autoFile`; auto-file is off unless `autoFile` is true.
+Rules match new threads only;
+explicitly moved threads are never auto-filed again. A thread a rule filed moves on when it
+stops matching that deterministic rule. Smart-filed threads stay until moved.
+`rule: {smart:true}` files by the folder name's meaning through the existing title call.
+`smart`, `branches`, and `worktrees` each add threads; other rule conditions must also match.
+A null rule clears it.
+`apply_rule` files existing unfiled, unsettled threads that match the rule now, including ones
+moved out by hand. A folder without a rule uses its name: a member's branch or worktree it is named
+for, else `{smart:true}`. For a smart rule, threads whose project, branch, worktree, or title names
+the folder are filed without a model call; the rest are classified in parallel calls of 50.
+A rule-free folder whose name matches a member's branch or worktree gets that rule, with
+`autoFile` on, when it is created, renamed, or given threads.
+
 ### `t3_thread_send`
 
 Sends a message to any ordinary or delegated thread in the environment:

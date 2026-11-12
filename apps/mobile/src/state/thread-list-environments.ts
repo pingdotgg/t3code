@@ -12,7 +12,7 @@ export type ThreadListProvider = Pick<
   "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
-const capabilityKeys = ["threadAutoSettleOptOut"] as const;
+const capabilityKeys = ["threadAutoSettleOptOut", "threadFolders"] as const;
 
 function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {
@@ -60,6 +60,7 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const machineByEnvironmentId = new Map<EnvironmentId, EnvironmentMachineKind>();
   // Every protocol-2 server supports these thread actions; they only wait for its config.
   const loadedEnvironmentIds = new Set<EnvironmentId>();
+  const threadFolderEnvironmentIds = new Set<EnvironmentId>();
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
   const reorderableEnvironmentIds = new Set<EnvironmentId>();
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
@@ -71,10 +72,12 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
+    if (capabilities.threadFolders === true) threadFolderEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
     if (isConnected) reorderableEnvironmentIds.add(id);
   }
   return {
+    threadFolderEnvironmentIds,
     providersByEnvironmentId,
     machineByEnvironmentId,
     settlementEnvironmentIds: loadedEnvironmentIds,

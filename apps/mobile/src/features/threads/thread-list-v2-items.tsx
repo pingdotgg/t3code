@@ -1,3 +1,15 @@
+import {
+  findThreadFolder,
+  type EnvironmentThreadFolder,
+  type ThreadFolderCollectChoice,
+  threadFolderCollect,
+  threadFolderCollectLabel,
+} from "@t3tools/client-runtime/state/thread-folders";
+import { useAtomValue } from "@effect/atom-react";
+import { ThreadFolderId } from "@t3tools/contracts";
+import type { ReactNode } from "react";
+import { projectIconColorClassNames } from "../../lib/projectIcon";
+import type { ThreadListV2FolderHeaderListItem } from "./threadListV2";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -11,7 +23,7 @@ import {
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { threadArrangementOpenAtom } from "../../state/thread-order";
+import { addingRelatedThreadsAtom, threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -31,7 +43,14 @@ import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
+import {
+  Platform,
+  Pressable,
+  type PressableProps,
+  Text as RNText,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -191,6 +210,7 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 
 function ThreadListV2Section(props: {
   readonly label: string;
+  readonly leading?: ReactNode;
   readonly pane?: "screen" | "sidebar";
   readonly tone?: "default" | "snoozed";
   readonly disclosure?: {
@@ -200,6 +220,9 @@ function ThreadListV2Section(props: {
     readonly accessibilityLabel: string;
     readonly accessibilityHint: string;
   };
+  readonly onLongPress?: PressableProps["onLongPress"];
+  readonly onTouchStart?: PressableProps["onTouchStart"];
+  readonly onPress?: PressableProps["onPress"];
 }) {
   const snoozed = props.tone === "snoozed";
   const sidebarPane = props.pane === "sidebar";
@@ -209,9 +232,11 @@ function ThreadListV2Section(props: {
   );
   const content = (
     <>
+      {props.leading}
       <Text
+        numberOfLines={1}
         className={cn(
-          "text-xs font-t3-medium",
+          "shrink text-xs font-t3-medium",
           sidebarPane
             ? "text-drawer-foreground-muted"
             : snoozed
@@ -256,7 +281,9 @@ function ThreadListV2Section(props: {
       }}
       className={className}
       disabled={props.disclosure.disabled}
-      onPress={props.disclosure.onToggle}
+      onLongPress={props.onLongPress}
+      onTouchStart={props.onTouchStart}
+      onPress={props.onPress ?? props.disclosure.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
       {content}
@@ -302,6 +329,172 @@ function ThreadListV2ShelfHeader(
     />
   );
 }
+
+export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(props: {
+  readonly item: ThreadListV2FolderHeaderListItem;
+  readonly pane?: "screen" | "sidebar";
+  readonly environmentLabel?: string | null;
+  readonly onToggle: (key: string) => void;
+  readonly onRename: (folder: EnvironmentThreadFolder) => void;
+  readonly onDelete: (folder: EnvironmentThreadFolder, withThreads: boolean) => void;
+  readonly onMove: (
+    folder: EnvironmentThreadFolder,
+    direction: "up" | "down",
+    shown: ReadonlyArray<EnvironmentThreadFolder>,
+  ) => Promise<boolean>;
+  readonly onCollect: (
+    folder: EnvironmentThreadFolder,
+    choice: ThreadFolderCollectChoice,
+  ) => Promise<boolean>;
+  readonly onApplyRule: (folder: EnvironmentThreadFolder) => Promise<boolean>;
+  readonly onSettle: (folder: EnvironmentThreadFolder, settled: boolean) => Promise<boolean>;
+}) {
+  const { item } = props;
+  const folders = item.sectionFolders.filter(
+    (folder) => folder.environmentId === item.environmentId,
+  );
+  const collect = threadFolderCollect(item.folder);
+  const addingRelated = useAtomValue(addingRelatedThreadsAtom).includes(item.folderKey);
+  const choiceActions = (by: "branch" | "worktree", values: ReadonlyArray<string>, prefix = "") =>
+    values.length === 0
+      ? [{ id: `collect:${by}:none`, title: `${prefix}None yet`, attributes: { disabled: true } }]
+      : values.map((value) => ({
+          id: `collect:${by}:${value}`,
+          title: `${prefix}${value}`,
+          state: (by === "branch" ? collect.branches : collect.worktrees).includes(value)
+            ? ("on" as const)
+            : ("off" as const),
+        }));
+  const folderIndex = folders.findIndex((folder) => folder.id === item.folder.id);
+  const icon = item.folder.icon;
+  const colors = projectIconColorClassNames(icon && "color" in icon ? icon.color : "blue");
+  return (
+    <Menu
+      shouldOpenOnLongPress
+      actions={[
+        { id: "rename", title: "Rename", image: "square.and.pencil" },
+        ...(folderIndex > 0 ? [{ id: "move-up", title: "Move up", image: "arrow.up" }] : []),
+        ...(folderIndex >= 0 && folderIndex < folders.length - 1
+          ? [{ id: "move-down", title: "Move down", image: "arrow.down" }]
+          : []),
+        {
+          id: "collect",
+          title: "Collect new threads",
+          image: "tray.and.arrow.down",
+          subactions: [
+            {
+              id: "collect:off",
+              title: "Off",
+              state:
+                !item.folder.autoFile || item.folder.rule === null
+                  ? ("on" as const)
+                  : ("off" as const),
+            },
+            {
+              id: "collect:topic",
+              title: "By topic",
+              state: collect.topic ? ("on" as const) : ("off" as const),
+            },
+            // Android menus nest one level, so branches and worktrees sit inline there.
+            ...(Platform.OS === "android"
+              ? [
+                  ...choiceActions("branch", item.collectChoices.branches, "Branch: "),
+                  ...choiceActions("worktree", item.collectChoices.worktrees, "Worktree: "),
+                ]
+              : [
+                  {
+                    id: "collect:branch",
+                    title: threadFolderCollectLabel("By branch", collect.branches),
+                    subactions: choiceActions("branch", item.collectChoices.branches),
+                  },
+                  {
+                    id: "collect:worktree",
+                    title: threadFolderCollectLabel("By worktree", collect.worktrees),
+                    subactions: choiceActions("worktree", item.collectChoices.worktrees),
+                  },
+                ]),
+            ...(collect.custom
+              ? [
+                  {
+                    id: "collect:custom",
+                    title: "Set by an agent",
+                    state: "on" as const,
+                    attributes: { disabled: true },
+                  },
+                ]
+              : []),
+          ],
+        },
+        {
+          id: "apply-rule",
+          title: addingRelated ? "Adding related threads…" : "Add related threads",
+          image: "folder.badge.plus",
+          ...(addingRelated ? { attributes: { disabled: true } } : {}),
+        },
+        item.settled
+          ? { id: "unsettle", title: "Un-settle folder", image: "arrow.uturn.backward" }
+          : { id: "settle", title: "Settle folder", image: "checkmark.circle" },
+        {
+          id: "delete-menu",
+          title: "Delete folder",
+          image: "trash",
+          attributes: { destructive: true },
+          subactions: [
+            { id: "delete", title: "Keep its threads" },
+            {
+              id: "delete-threads",
+              title: `Delete its threads too (${item.count})`,
+              attributes: { destructive: true, ...(item.count === 0 ? { disabled: true } : {}) },
+            },
+          ],
+        },
+      ]}
+      onPressAction={({ nativeEvent }) => {
+        if (nativeEvent.event === "rename") props.onRename(item.folder);
+        if (nativeEvent.event === "delete") props.onDelete(item.folder, false);
+        if (nativeEvent.event === "delete-threads") props.onDelete(item.folder, true);
+        if (nativeEvent.event === "move-up") void props.onMove(item.folder, "up", folders);
+        if (nativeEvent.event === "move-down") void props.onMove(item.folder, "down", folders);
+        if (nativeEvent.event === "apply-rule") void props.onApplyRule(item.folder);
+        const [, by, ...value] = nativeEvent.event.split(":");
+        if (nativeEvent.event.startsWith("collect:")) {
+          if (by === "off" || by === "topic") void props.onCollect(item.folder, { by });
+          if ((by === "branch" || by === "worktree") && value.length > 0)
+            void props.onCollect(item.folder, { by, value: value.join(":") });
+        }
+        if (nativeEvent.event === "settle") void props.onSettle(item.folder, true);
+        if (nativeEvent.event === "unsettle") void props.onSettle(item.folder, false);
+      }}
+    >
+      <ThreadListV2Section
+        pane={props.pane}
+        label={`${item.folder.name} (${item.count})${props.environmentLabel ? " · " + props.environmentLabel : ""}`}
+        onPress={() => props.onToggle(item.folderKey)}
+        leading={
+          <View className={cn("h-7 w-7 items-center justify-center rounded-lg", colors.background)}>
+            {icon ? (
+              <ProjectFavicon
+                environmentId={item.environmentId}
+                projectTitle={item.folder.name}
+                projectIcon={icon}
+                size={18}
+              />
+            ) : (
+              <SymbolView name="folder" size={16} tintColorClassName={colors.tint} />
+            )}
+          </View>
+        }
+        disclosure={{
+          expanded: item.expanded,
+          disabled: item.disabled,
+          onToggle: () => props.onToggle(item.folderKey),
+          accessibilityLabel: `${item.folder.name}, ${item.count} threads`,
+          accessibilityHint: item.expanded ? "Collapse folder." : "Expand folder.",
+        }}
+      />
+    </Menu>
+  );
+});
 
 export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
@@ -685,6 +878,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
   readonly titleRegenerationSupported: boolean;
+  readonly folders?: ReadonlyArray<EnvironmentThreadFolder>;
+  readonly foldersSupported?: boolean;
+  readonly onMoveThreadToFolder?: (
+    thread: EnvironmentThreadShell,
+    folderId: ThreadFolderId | null,
+  ) => void;
+  readonly onCreateFolder?: (thread: EnvironmentThreadShell) => void;
   readonly reorderSupported?: boolean;
   readonly onMoveThread?: (
     thread: EnvironmentThreadShell,
@@ -714,6 +914,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     thread,
     variant,
     onSelectThread,
+    onCreateFolder,
+    onMoveThreadToFolder,
     onOpenThreadPullRequests,
     onDeleteThread,
     onRenameThread,
@@ -861,6 +1063,28 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [snoozePresets],
   );
+  const folderMenuItems: MenuAction[] = props.foldersSupported
+    ? [
+        {
+          id: "folder",
+          title: "Move to folder",
+          image: "folder",
+          subactions: [
+            ...(props.folders ?? [])
+              .filter((folder) => folder.environmentId === thread.environmentId)
+              .map((folder): MenuAction => ({
+                id: `folder:${folder.id}`,
+                title: folder.name,
+                state: folder.threadIds.includes(thread.id) ? "on" : "off",
+              })),
+            { id: "folder:new", title: "New folder…" },
+            ...(findThreadFolder(props.folders ?? [], thread)
+              ? [{ id: "folder:none", title: "Remove from folder" }]
+              : []),
+          ],
+        },
+      ]
+    : [];
   const reorderMenuItems = useMemo<MenuAction[]>(
     () =>
       props.reorderSupported === true
@@ -961,6 +1185,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         reorder: [],
         pin: [],
         secondary: [
+          ...folderMenuItems,
           ...titleMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
@@ -974,7 +1199,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         direct: [...direct, LEGACY_MENU_ACTIONS[0]!],
         reorder: reorderMenuItems,
         pin: pinMenuItems,
-        secondary: [...titleMenuItems, LEGACY_MENU_ACTIONS[1]!],
+        secondary: [...folderMenuItems, ...titleMenuItems, LEGACY_MENU_ACTIONS[1]!],
       });
     }
     if (canUnsettle) {
@@ -986,6 +1211,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ),
         pin: pinMenuItems,
         secondary: [
+          ...folderMenuItems,
           ...titleMenuItems,
           ...autoSettleMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
@@ -1005,6 +1231,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       reorder: reorderMenuItems,
       pin: pinMenuItems,
       secondary: [
+        ...folderMenuItems,
         ...titleMenuItems,
         ...autoSettleMenuItems,
         LEGACY_MENU_ACTIONS[0]!,
@@ -1013,6 +1240,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     });
   }, [
     autoSettleMenuItems,
+    folderMenuItems,
     canUnsettle,
     pinMenuItems,
     props.settlementSupported,
@@ -1025,6 +1253,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   ]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "folder:new") onCreateFolder?.(thread);
+      else if (nativeEvent.event.startsWith("folder:"))
+        onMoveThreadToFolder?.(
+          thread,
+          nativeEvent.event === "folder:none"
+            ? null
+            : ThreadFolderId.make(nativeEvent.event.slice(7)),
+        );
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -1074,6 +1310,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      onCreateFolder,
+      onMoveThreadToFolder,
       thread,
       handleArchive,
       handleDelete,

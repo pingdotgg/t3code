@@ -1,3 +1,8 @@
+import IconGauge from "@tabler/icons-react-native/IconGauge";
+import IconShieldCheck from "@tabler/icons-react-native/IconShieldCheck";
+import IconBulb from "@tabler/icons-react-native/IconBulb";
+import IconRocket from "@tabler/icons-react-native/IconRocket";
+import IconBug from "@tabler/icons-react-native/IconBug";
 import type { Icon } from "@tabler/icons-react-native/types";
 /* Package-root imports eagerly register the entire Tabler icon set in Metro. */
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
@@ -257,6 +262,12 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "point.topleft.down.curvedto.point.bottomright.up": IconGitMerge,
   safari: IconExternalLink,
   "server.rack": IconServer,
+  ladybug: IconBug,
+  paperplane: IconRocket,
+  lightbulb: IconBulb,
+  "checkmark.shield": IconShieldCheck,
+  cylinder: IconDatabase,
+  "gauge.with.dots.needle.33percent": IconGauge,
   stethoscope: IconStethoscope,
   "sidebar.left": IconLayoutSidebar,
   "sidebar.right": IconLayoutSidebarRight,

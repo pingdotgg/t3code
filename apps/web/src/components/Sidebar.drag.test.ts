@@ -474,6 +474,29 @@ describe("sidebar drag projection", () => {
     },
   );
 
+  it("keeps settled folder space above loose settled rows", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+      thread("s1", "settled"),
+      thread("s2", "settled"),
+    ];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: ["s2", "s1"],
+      settledExpanded: true,
+    });
+    const args = layout(items, "s2", "s1");
+    for (const rect of args.rects.slice(5)) {
+      rect.top += 50;
+      rect.bottom += 50;
+    }
+    expect(strategy({ ...args, index: 5 })?.y).toBe(36);
+  });
+
   it("removes the snoozed header when its last row leaves", () => {
     const items = [
       pinnedHeader,

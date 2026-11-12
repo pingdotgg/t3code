@@ -63,6 +63,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadFolderService from "../threadFolders/ThreadFolderService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -271,6 +272,11 @@ function makeHarness(options: HarnessOptions = {}) {
       ),
   });
   const layerTitleRegeneration = ThreadTitleRegeneration.layer.pipe(
+    Layer.provide(
+      Layer.mock(ThreadFolderService.ThreadFolderService)({
+        smartCandidates: () => Effect.succeed([]),
+      }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         layerThreadManagement,

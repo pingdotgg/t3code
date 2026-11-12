@@ -18,6 +18,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
+import * as ThreadFolderService from "../threadFolders/ThreadFolderService.ts";
+import { visibleThreadPullRequests } from "../sourceControl/threadPullRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
@@ -51,8 +53,10 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const folders = yield* ThreadFolderService.ThreadFolderService;
   const fileSystem = yield* FileSystem.FileSystem;
 
+  // True when this request was still current; a replaced or cancelled one records no event.
   const complete = (input: {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
@@ -66,7 +70,7 @@ const make = Effect.gen(function* () {
         requestId: input.requestId,
         ...(input.title === undefined ? {} : { title: input.title }),
       })
-      .pipe(Effect.asVoid);
+      .pipe(Effect.map((result) => result.storedEvents.length > 0));
 
   const messagesThroughRun = Effect.fn("ThreadTitleRegenerationService.messagesThroughRun")(
     function* (threadId: ThreadId, runId: RunId) {
@@ -112,100 +116,123 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const outcome:
       | { readonly type: "stale" }
-      | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
-      const projection = yield* threads.getThreadRecords(
-        input.threadId,
-        ["messages"],
-        input.kind.type === "initial"
-          ? { messageIds: [input.kind.messageId] }
-          : { messageRoles: ["user", "assistant"] },
-      );
-      if (projection.thread.titleRegeneration?.requestId !== input.requestId) {
-        return { type: "stale" as const };
-      }
-
-      const project = yield* projects.get(projection.thread.projectId);
-      if (Option.isNone(project)) {
-        return { type: "complete" as const };
-      }
-
-      let context: {
-        readonly message: string;
-        readonly attachments: ReadonlyArray<ChatAttachment>;
-      };
-      if (input.kind.type === "initial") {
-        const messageId = input.kind.messageId;
-        const message = projection.messages.find(
-          (candidate) => candidate.id === messageId && !candidate.streaming,
+      | { readonly type: "complete"; readonly title?: string; readonly folderId?: string } =
+      yield* Effect.gen(function* () {
+        const projection = yield* threads.getThreadRecords(
+          input.threadId,
+          ["messages"],
+          input.kind.type === "initial"
+            ? { messageIds: [input.kind.messageId] }
+            : { messageRoles: ["user", "assistant"] },
         );
-        context =
-          message === undefined
-            ? { message: "", attachments: [] }
-            : {
-                message: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
-                attachments: message.attachments,
-              };
-      } else {
-        context = formatThreadTitleContext(
-          projection.messages.filter((message) => !message.streaming),
-        );
-      }
-      if (context.message.length === 0 && context.attachments.length === 0) {
-        return { type: "complete" as const };
-      }
+        if (projection.thread.titleRegeneration?.requestId !== input.requestId) {
+          return { type: "stale" as const };
+        }
 
-      // A deleted source should not cost the fork its title.
-      const inherited = yield* forkSource(projection.thread).pipe(
-        Effect.orElseSucceed(() => undefined),
+        const project = yield* projects.get(projection.thread.projectId);
+        if (Option.isNone(project)) {
+          return { type: "complete" as const };
+        }
+
+        let context: {
+          readonly message: string;
+          readonly attachments: ReadonlyArray<ChatAttachment>;
+        };
+        if (input.kind.type === "initial") {
+          const messageId = input.kind.messageId;
+          const message = projection.messages.find(
+            (candidate) => candidate.id === messageId && !candidate.streaming,
+          );
+          context =
+            message === undefined
+              ? { message: "", attachments: [] }
+              : {
+                  message: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
+                  attachments: message.attachments,
+                };
+        } else {
+          context = formatThreadTitleContext(
+            projection.messages.filter((message) => !message.streaming),
+          );
+        }
+        if (context.message.length === 0 && context.attachments.length === 0) {
+          return { type: "complete" as const };
+        }
+
+        // A deleted source should not cost the fork its title.
+        const inherited = yield* forkSource(projection.thread).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        const settings = resolveProjectSettings(
+          yield* serverSettings.getSettings,
+          projection.thread.projectId,
+        ).settings;
+        const worktreePath = projection.thread.worktreePath;
+        const worktreeExists =
+          worktreePath !== null &&
+          (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
+        const candidates = yield* folders
+          .smartCandidates(input.threadId)
+          .pipe(Effect.orElseSucceed(() => []));
+        const result = yield* textGeneration.generateThreadTitle({
+          folders: candidates,
+          folderContext: {
+            branch: projection.thread.branch,
+            worktreeName: projection.thread.worktreePath?.split(/[\\/]/).findLast(Boolean) ?? null,
+            projectName: project.value.title,
+            hasPullRequest:
+              visibleThreadPullRequests(projection.thread.pullRequests ?? []).length > 0,
+          },
+          cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
+          projectTitle: project.value.title,
+          projectId: projection.thread.projectId,
+          message: context.message,
+          attachments: context.attachments,
+          ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
+          ...(inherited === undefined ? {} : { forkSource: inherited }),
+          instructions: settings.threadTitleInstructions,
+          modelSelection: settings.textGenerationModelSelection,
+        });
+        const placement =
+          result.folderId && candidates.some((folder) => folder.id === result.folderId)
+            ? { folderId: result.folderId }
+            : {};
+        const generatedTitle = result.title.trim();
+        return generatedTitle === "New thread" ||
+          (input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim())
+          ? { type: "complete" as const, ...placement }
+          : { type: "complete" as const, title: result.title, ...placement };
+      }).pipe(
+        Effect.retry({
+          times: input.kind.type === "initial" ? 2 : 0,
+          schedule: Schedule.exponential("2 seconds"),
+        }),
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("Thread title generation failed", {
+                threadId: input.threadId,
+                requestId: input.requestId,
+                cause,
+              }).pipe(Effect.as({ type: "complete" as const })),
+        ),
       );
-      const settings = resolveProjectSettings(
-        yield* serverSettings.getSettings,
-        projection.thread.projectId,
-      ).settings;
-      // Storage cleanup removes worktrees but keeps the path; CLIs cannot spawn in a missing cwd.
-      const worktreePath = projection.thread.worktreePath;
-      const worktreeExists =
-        worktreePath !== null &&
-        (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
-      const result = yield* textGeneration.generateThreadTitle({
-        cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
-        message: context.message,
-        projectTitle: project.value.title,
-        attachments: context.attachments,
-        ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
-        ...(inherited === undefined ? {} : { forkSource: inherited }),
-        instructions: settings.threadTitleInstructions,
-        modelSelection: settings.textGenerationModelSelection,
-        projectId: projection.thread.projectId,
-      });
-      const generatedTitle = result.title.trim();
-      return generatedTitle === "New thread" ||
-        (input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim())
-        ? { type: "complete" as const }
-        : { type: "complete" as const, title: result.title };
-    }).pipe(
-      Effect.retry({
-        times: input.kind.type === "initial" ? 2 : 0,
-        schedule: Schedule.exponential("2 seconds"),
-      }),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.logWarning("Thread title generation failed", {
-              threadId: input.threadId,
-              requestId: input.requestId,
-              cause,
-            }).pipe(Effect.as({ type: "complete" as const })),
-      ),
-    );
 
     if (outcome.type === "stale") {
       return;
     }
-    yield* complete({
+    // A replaced or cancelled request must not file the thread, even if its title was ignored.
+    const accepted = yield* complete({
       ...input,
       ...(outcome.title === undefined ? {} : { title: outcome.title }),
     });
+    if (outcome.folderId && accepted) {
+      yield* folders
+        .applySmartPick(input.threadId, outcome.folderId)
+        .pipe(
+          Effect.catch((cause) => Effect.logWarning("Smart folder placement failed", { cause })),
+        );
+    }
   });
 
   return ThreadTitleRegenerationService.of({ execute });

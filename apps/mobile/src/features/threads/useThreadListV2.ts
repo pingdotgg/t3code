@@ -1,6 +1,12 @@
+import { createThreadFolderMemberKeysAtom } from "@t3tools/client-runtime/state/thread-folders";
+import { environmentSnapshotAtom } from "../../state/shell";
+import { threadFamilies } from "../../state/threads";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { useAtomValue } from "@effect/atom-react";
+import { threadFoldersAtom } from "../../state/server";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo, useSyncExternalStore } from "react";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -26,6 +32,11 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
   );
 }
 
+const threadFolderMemberKeysAtom = createThreadFolderMemberKeysAtom(
+  threadFoldersAtom,
+  environmentSnapshotAtom,
+);
+
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
 /**
@@ -44,6 +55,7 @@ function observeInbox(
  * its own memo boundary to preserve the list's identity during unrelated navigation renders.
  */
 export function useThreadListV2(input: {
+  readonly collapsedFolders: readonly string[];
   readonly threads: LayoutInput["threads"];
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly environmentId: EnvironmentId | null;
@@ -67,6 +79,18 @@ export function useThreadListV2(input: {
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
+  const folders = useAtomValue(threadFoldersAtom);
+  const memberKeys = useAtomValue(threadFolderMemberKeysAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains paged-out folder member shells in the family registry while the list is mounted
+  useEffect(() => {
+    const releases = (JSON.parse(memberKeys) as ReadonlyArray<ScopedThreadRef>).map((ref) =>
+      threadFamilies.mount(appAtomRegistry, ref.environmentId, ref.threadId),
+    );
+    return () => {
+      for (const release of releases) release();
+    };
+  }, [memberKeys]);
+  const collapsedFolderKeys = useKeySet([...input.collapsedFolders].sort().join("\n"));
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
@@ -91,6 +115,7 @@ export function useThreadListV2(input: {
           section === "pinned" ? input.pinReorderEnvironmentIds : input.activeReorderEnvironmentIds,
         ordered: getThreadListV2OrderedSection({
           threads,
+          folders,
           section,
           pendingOrder: input.pendingOrder,
           now: layoutTime,
@@ -105,6 +130,7 @@ export function useThreadListV2(input: {
     ]);
   }, [
     threads,
+    folders,
     input.pendingOrder,
     input.pinReorderEnvironmentIds,
     input.activeReorderEnvironmentIds,
@@ -134,6 +160,8 @@ export function useThreadListV2(input: {
   const layout = useMemo(
     () =>
       buildThreadListV2Items({
+        folders,
+        collapsedFolderKeys,
         pendingOrder: input.pendingOrder,
         threads: threads.filter((thread) => thread.archivedAt === null),
         environmentId: input.environmentId,
@@ -166,6 +194,8 @@ export function useThreadListV2(input: {
         ),
       }),
     [
+      folders,
+      collapsedFolderKeys,
       input.pendingOrder,
       threads,
       input.environmentId,
@@ -213,6 +243,7 @@ export function useThreadListV2(input: {
     () =>
       buildThreadListV2ListItems({
         items: layout.items,
+        folderHeaders: layout.folderHeaders,
         pendingTasks,
         workingCount: layout.workingCount,
         workingShelfExpanded: input.workingShelfExpanded,
@@ -242,7 +273,7 @@ export function useThreadListV2(input: {
       input.shelfPreferencesLoaded,
     ],
   );
-  return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
+  return { layout, items, folders, contentOnlyThreadKeys, olderSettledShelf };
 }
 
 /** The list's scope per environment: its projects there, or every project. */

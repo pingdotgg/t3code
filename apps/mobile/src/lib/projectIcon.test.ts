@@ -1,7 +1,12 @@
 import type { ProjectIconOverride } from "@t3tools/contracts";
+import { THREAD_FOLDER_ICONS } from "@t3tools/shared/threadFolderRule";
 import { describe, expect, it } from "vite-plus/test";
 
-import { projectAutoMonogram, resolveProjectChipIcon } from "./projectIcon";
+import {
+  projectAutoMonogram,
+  resolveProjectChipIcon,
+  resolveProjectIconSymbol,
+} from "./projectIcon";
 
 const project = (title: string, projectIcon?: ProjectIconOverride) => ({
   title,
@@ -77,5 +82,16 @@ describe("projectAutoMonogram", () => {
   it("leaves untitled projects to the folder icon, like desktop", () => {
     expect(projectAutoMonogram("")).toBeNull();
     expect(projectAutoMonogram("   ")).toBeNull();
+  });
+});
+
+describe("resolveProjectIconSymbol", () => {
+  it("draws every icon a new folder can pick, not its letters", () => {
+    for (const name of ["folder", ...THREAD_FOLDER_ICONS.map(([, icon]) => icon)]) {
+      expect(
+        resolveProjectIconSymbol({ kind: "lucide", name, color: "gray" }),
+        name,
+      ).not.toBeNull();
+    }
   });
 });

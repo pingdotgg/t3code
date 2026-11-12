@@ -1,12 +1,18 @@
 import {
   type CommandId,
+  type ProjectIconOverride,
   type RuntimeRequestId,
+  type ThreadFolderError,
+  type ThreadFolderRule,
+  ThreadFolderId,
+  type ThreadFolderMutation,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
@@ -21,6 +27,7 @@ import {
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadFolders from "../../../threadFolders/ThreadFolderService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -86,6 +93,105 @@ const required = <A>(value: A | undefined, name: string) =>
         }),
       )
     : Effect.succeed(value);
+const folderFailure = (error: ThreadFolderError) =>
+  error.cause === undefined
+    ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
+    : unavailable();
+
+const listFolders = Effect.fn("mcp.listThreadFolders")(function* () {
+  yield* readCaller();
+  const folders = yield* ThreadFolders.ThreadFolderService;
+  return yield* folders.list().pipe(Effect.mapError(unavailable));
+});
+
+const writeFolders = Effect.fn("mcp.writeThreadFolders")(function* (input: {
+  readonly action: "create" | "update" | "delete" | "move" | "reorder" | "apply_rule";
+  readonly beforeFolderId?: ThreadFolderId | null | undefined;
+  readonly rule?: ThreadFolderRule | null | undefined;
+  readonly autoFile?: boolean | undefined;
+  readonly folderId?: ThreadFolderId | null | undefined;
+  readonly name?: string | undefined;
+  readonly icon?: ProjectIconOverride | null | undefined;
+  readonly threadIds?: ReadonlyArray<ThreadId> | undefined;
+  readonly inferRules?: boolean;
+}) {
+  const { caller } = yield* readCaller();
+  const folders = yield* ThreadFolders.ThreadFolderService;
+  const folderId = () => required(input.folderId ?? undefined, "folderId");
+  let mutation: ThreadFolderMutation;
+  switch (input.action) {
+    case "create": {
+      const crypto = yield* SecureRandom.SecureRandom;
+      mutation = {
+        type: "folder.create",
+        folderId: ThreadFolderId.make(`folder:${yield* crypto.uuidV4().pipe(Effect.orDie)}`),
+        name: yield* required(input.name, "name"),
+        ...(input.icon === undefined ? {} : { icon: input.icon }),
+        ...(input.rule === undefined ? {} : { rule: input.rule }),
+        ...(input.autoFile === undefined ? {} : { autoFile: input.autoFile }),
+        ...(input.threadIds === undefined || input.threadIds.length === 0
+          ? {}
+          : { threadIds: input.threadIds }),
+      };
+      break;
+    }
+    case "update":
+      if (
+        input.name === undefined &&
+        input.icon === undefined &&
+        input.rule === undefined &&
+        input.autoFile === undefined
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "update needs `name`, `icon`, `rule`, or `autoFile`.",
+        });
+      }
+      mutation = {
+        type: "folder.update",
+        folderId: yield* folderId(),
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.icon === undefined ? {} : { icon: input.icon }),
+        ...(input.rule === undefined ? {} : { rule: input.rule }),
+        ...(input.autoFile === undefined ? {} : { autoFile: input.autoFile }),
+      };
+      break;
+    case "reorder":
+      mutation = {
+        type: "folder.reorder",
+        folderId: yield* folderId(),
+        beforeFolderId: yield* required(input.beforeFolderId, "beforeFolderId"),
+      };
+      break;
+    case "apply_rule":
+      mutation = { type: "folder.applyRule", folderId: yield* folderId() };
+      break;
+    case "delete":
+      mutation = { type: "folder.delete", folderId: yield* folderId() };
+      break;
+    case "move": {
+      const threadIds =
+        input.threadIds === undefined || input.threadIds.length === 0
+          ? caller === undefined
+            ? undefined
+            : [caller.id]
+          : input.threadIds;
+      mutation = {
+        type: "folder.move",
+        threadIds: yield* required(threadIds, "threadIds"),
+        folderId: yield* required(input.folderId, "folderId"),
+      };
+      break;
+    }
+  }
+  const result = yield* folders
+    .mutate(mutation, { inferRules: input.inferRules ?? true })
+    .pipe(Effect.mapError(folderFailure));
+  return mutation.type === "folder.create"
+    ? { folderId: mutation.folderId, folders: result.folders }
+    : { folders: result.folders };
+});
+
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -330,6 +436,38 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             }));
         }
       }),
+    ),
+  ),
+  t3_thread_folder: McpToolAccess.either(
+    (input) => input.action === "list",
+    McpToolAccess.reads(() => listFolders()),
+    McpToolAccess.either(
+      // A rule reaches threads the caller never named, so only rule-free creates are thread writes.
+      (input) => input.action === "move" || (input.action === "create" && input.rule == null),
+      McpToolAccess.writesThreads(
+        (input) => input.threadIds ?? [undefined],
+        // A rule a folder's name implies still reaches unnamed threads, so these writes infer none.
+        (input) =>
+          writeFolders({
+            ...input,
+            action: input.action === "move" ? "move" : "create",
+            inferRules: false,
+          }),
+      ),
+      McpToolAccess.writes(
+        (input) =>
+          writeFolders({
+            ...input,
+            action:
+              input.action === "create" ||
+              input.action === "delete" ||
+              input.action === "reorder" ||
+              input.action === "apply_rule"
+                ? input.action
+                : "update",
+          }),
+        { refusal: "change this environment's sidebar folders" },
+      ),
     ),
   ),
   t3_thread_organize: writesThread((input) =>

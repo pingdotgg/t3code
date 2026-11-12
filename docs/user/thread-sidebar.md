@@ -159,6 +159,49 @@ Pinned threads stay above the folders, and Snoozed and Settled stay below them. 
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
 section is off. Each device keeps its own choice.
 
+## Thread folders
+
+Folders group threads from one environment. They show above **Pinned** and work the same on
+every device connected to that environment.
+
+To make a folder, right-click empty space in the sidebar and choose **New folder**, open a
+thread's menu and choose **Move to folder → New folder…**, or press `mod+g` on the open thread.
+To start one from several threads, select them and right-click → **New folder from selection**.
+Type the name right away, or double-click a folder later to rename it. Drag a thread onto a folder
+to file it, or drag it onto a loose thread to take it out. Press `mod+g` again, or choose
+**Remove from folder**, to do the same from the keyboard or menu. Drag a folder to reorder it.
+
+A folder holds all of its threads, including pinned, snoozed, and settled ones, so they collapse
+with it. Choose **Customize…** in its menu to set an icon (any Lucide icon, an emoji, or letters)
+and a color. Hover a folder and click the check to settle every thread in it. When every thread in
+a folder is settled, the folder moves to **Settled**, collapsed, still holding its threads; click
+the undo arrow to bring it back. **Delete folder** asks whether to keep its threads, which move
+back to your thread list, or to delete them too. To show folders as tab groups, with a colored
+name and a line beside their threads, set **Settings → General → Folder style** to **Tab groups**.
+
+A folder can also collect new threads for you. Open its menu and choose **Collect new threads**:
+
+- **By topic** files new threads whose work fits the folder's name. Your text model judges this
+  while it titles the thread, so it costs no extra call. Threads you filed there by hand teach it
+  what the folder means.
+- **By branch** or **By worktree** lists recent branches and worktrees to pick from.
+- **Off** stops collecting.
+
+Turn on as many as you need. A folder that collects by topic, two branches, and a worktree files
+a new thread that fits its name or is on any of them. Choose an option again to turn it off.
+
+A folder named for a branch or worktree that one of its threads uses collects that branch or
+worktree by itself. For example, a "Login" folder that holds a thread on `feature/login` collects
+new threads on `feature/login`. Choose **Off** to stop it.
+
+**Add related threads** files the unfiled, unsettled threads that belong in the folder now: the ones
+that match how it collects, or, when it collects nothing, the ones that fit its name. Threads whose
+project, branch, worktree, or title names the folder go in at once; your text model judges the rest.
+New threads you move out by hand are never collected automatically again.
+
+Agents connected through T3 Code can create folders, set rules, and file threads for you. For
+example, ask for "put the review threads in a Reviews folder".
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

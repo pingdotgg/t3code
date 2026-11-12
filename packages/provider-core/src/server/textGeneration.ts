@@ -9,7 +9,10 @@ import type {
 import type * as Effect from "effect/Effect";
 
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
-import type { ThreadTitleForkSource } from "./textGenerationPrompts.ts";
+import type {
+  ThreadFolderClassificationOutput,
+  ThreadTitleForkSource,
+} from "./textGenerationPrompts.ts";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
@@ -61,6 +64,22 @@ export interface BranchNameGenerationResult {
 }
 
 export interface ThreadTitleGenerationInput {
+  /** `examples` are titles of threads people filed there by hand. */
+  folders?:
+    | ReadonlyArray<{
+        readonly id: string;
+        readonly name: string;
+        readonly examples: ReadonlyArray<string>;
+      }>
+    | undefined;
+  folderContext?:
+    | {
+        readonly branch: string | null;
+        readonly worktreeName: string | null;
+        readonly projectName: string;
+        readonly hasPullRequest: boolean;
+      }
+    | undefined;
   linkedContext?: string | undefined;
   cwd: string;
   message: string;
@@ -75,6 +94,7 @@ export interface ThreadTitleGenerationInput {
 
 export interface ThreadTitleGenerationResult {
   title: string;
+  folderId?: string | null | undefined;
   needsRefinement?: boolean | undefined;
 }
 
@@ -103,6 +123,26 @@ export type ReviewGuideGenerationResult = Omit<
   PullRequestReviewGuide,
   "headSha" | "generatedAt" | "modelSelection"
 >;
+
+export interface ThreadFolderClassificationInput {
+  cwd: string;
+  folderName: string;
+  /** Titles of threads people filed in this folder by hand. */
+  examples: ReadonlyArray<string>;
+  threads: ReadonlyArray<ThreadFolderSample>;
+  modelSelection: ModelSelection;
+}
+
+export interface ThreadFolderSample {
+  readonly id: string;
+  readonly title: string;
+  readonly branch: string | null;
+  readonly worktreeName: string | null;
+  readonly hasPullRequest: boolean;
+  readonly projectName: string | null;
+}
+
+export type ThreadFolderClassificationResult = typeof ThreadFolderClassificationOutput.Type;
 
 export interface TranscriptionPostProcessingInput {
   cwd: string;
@@ -138,4 +178,8 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  readonly classifyThreadFolder: (
+    input: ThreadFolderClassificationInput,
+  ) => Effect.Effect<ThreadFolderClassificationResult, TextGenerationError>;
 }

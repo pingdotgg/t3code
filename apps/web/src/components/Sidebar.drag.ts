@@ -208,6 +208,14 @@ export function createSidebarSortingStrategy(input: {
             ? fallback
             : (rect?.height ?? fallback);
     });
+    const settledPlaceholder = items.findIndex(
+      (item) => item.kind === "marker" && item.marker === "settled-placeholder",
+    );
+    const afterPlaceholder = rects[settledPlaceholder + 1];
+    let settledFolderSpace =
+      settledPlaceholder >= 0 && afterPlaceholder
+        ? Math.max(0, afterPlaceholder.top - rects[settledPlaceholder]!.bottom - 1)
+        : 0;
     const firstShelf = items.findIndex(isShelfHeader);
     const shelfRect = rects[firstShelf];
     const beforeShelf = rects[firstShelf - 1];
@@ -216,7 +224,10 @@ export function createSidebarSortingStrategy(input: {
       shelfRect && beforeShelf && lastRect && shelfRect.top > beforeShelf.bottom + 1
         ? Math.max(
             0,
-            lastRect.bottom - rects[0].top - heights.reduce((sum, height) => sum + height + 1, -1),
+            lastRect.bottom -
+              rects[0].top -
+              settledFolderSpace -
+              heights.reduce((sum, height) => sum + height + 1, -1),
           )
         : 0;
     const result = items.map(() => hidden);
@@ -225,6 +236,10 @@ export function createSidebarSortingStrategy(input: {
       if (isShelfHeader(item)) {
         top += shelfSpace;
         shelfSpace = 0;
+      }
+      if (item.kind === "thread" && item.section === "settled") {
+        top += settledFolderSpace;
+        settledFolderSpace = 0;
       }
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];

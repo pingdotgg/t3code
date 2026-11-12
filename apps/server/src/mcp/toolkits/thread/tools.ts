@@ -19,6 +19,12 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  ProjectIconOverride,
+  MAX_THREAD_FOLDER_MOVE_THREADS,
+  ThreadFolder,
+  ThreadFolderId,
+  ThreadFolderName,
+  ThreadFolderRule,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
@@ -26,6 +32,7 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadFolderService from "../../../threadFolders/ThreadFolderService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -237,12 +244,48 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadFolderTool = Tool.make("t3_thread_folder", {
+  description:
+    'Sidebar folders that group T3 Code threads (not filesystem directories); "a folder of my X threads" means one, so find the threads with t3_thread_search or t3_thread_list. Actions: list, create (name), update/delete (folderId), reorder (folderId before beforeFolderId; null=end), move (threadIds default this thread, folderId null=out), apply_rule (folderId: add related unsettled threads now). create/update: icon (Lucide name + color; create picks one from the name), rule, autoFile (true to auto-file new threads); null clears icon/rule. Rules: group by branch = one folder per branch, branches:[branch]; {smart:true} files by folder name meaning; worktree X = {worktrees:[X]}; smart, branches, and worktrees combine as any-of.',
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    action: Schema.Literals([
+      "list",
+      "create",
+      "update",
+      "delete",
+      "move",
+      "reorder",
+      "apply_rule",
+    ]),
+    folderId: Schema.optional(Schema.NullOr(ThreadFolderId)),
+    beforeFolderId: Schema.optional(Schema.NullOr(ThreadFolderId)),
+    rule: Schema.optional(Schema.NullOr(ThreadFolderRule)),
+    autoFile: Schema.optional(Schema.Boolean),
+    name: Schema.optional(ThreadFolderName),
+    icon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+    threadIds: Schema.optional(
+      Schema.Array(ThreadId).check(Schema.isMaxLength(MAX_THREAD_FOLDER_MOVE_THREADS)),
+    ),
+  }),
+  success: Schema.Struct({
+    folderId: Schema.optional(ThreadFolderId),
+    folders: Schema.Array(ThreadFolder),
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [...commandTool.dependencies, ThreadFolderService.ThreadFolderService],
+})
+  .annotate(Tool.Title, "Organize sidebar folders")
+  .annotate(Tool.Destructive, true);
+
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadConfigureTool,
   ThreadTransferTool,
   ThreadOrganizeTool,
+  ThreadFolderTool,
   PendingRequestTool,
   QueueTool,
 );

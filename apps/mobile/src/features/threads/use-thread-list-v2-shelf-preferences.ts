@@ -41,8 +41,25 @@ export function useThreadListV2ShelfPreferences() {
     });
   };
 
+  const collapsedFolders = loaded ? (preferencesResult.value.threadListCollapsedFolders ?? []) : [];
+  const toggleFolder = (key: string) => {
+    if (!loaded) return;
+    savePreferences({
+      transform: (current) => {
+        const keys = current.threadListCollapsedFolders ?? [];
+        return {
+          threadListCollapsedFolders: keys.includes(key)
+            ? keys.filter((value) => value !== key)
+            : [...keys, key],
+        };
+      },
+    });
+  };
+
   return {
     loaded,
+    collapsedFolders,
+    toggleFolder,
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,

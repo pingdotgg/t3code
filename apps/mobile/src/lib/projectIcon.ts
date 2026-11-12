@@ -2,6 +2,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { ProjectIconColor, type ProjectIconOverride } from "@t3tools/contracts";
 import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
 import type { AppSymbolName } from "../components/ui/AppSymbol";
+import { PullRequestGlyph } from "../features/pull-requests/pullRequestGlyphs";
 
 export type ProjectIconGlyph =
   | { readonly kind: "emoji"; readonly emoji: string }
@@ -66,6 +67,25 @@ export function resolveProjectIconGlyph(
 
 const SYMBOL_BY_LUCIDE_NAME: Partial<Record<string, AppSymbolName>> = {
   "message-square-dashed": "text.bubble",
+  smartphone: "iphone",
+  eye: "eye",
+  "git-pull-request": PullRequestGlyph.pullRequest,
+  "book-open": "doc.text",
+  palette: "paintbrush",
+  server: "server.rack",
+  globe: "globe",
+  monitor: "desktopcomputer",
+  search: "magnifyingglass",
+  bot: "robot",
+  wrench: "hammer",
+  folder: "folder",
+  bug: "ladybug",
+  "flask-conical": "flask",
+  rocket: "paperplane",
+  lightbulb: "lightbulb",
+  "shield-check": "checkmark.shield",
+  database: "cylinder",
+  gauge: "gauge.with.dots.needle.33percent",
 };
 
 export function resolveProjectIconSymbol(

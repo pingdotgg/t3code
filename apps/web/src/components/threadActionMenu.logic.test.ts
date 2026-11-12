@@ -65,6 +65,26 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it("places the folder menu after the snooze group and disables it without permission", () => {
+    const folderMenu = {
+      id: "folder" as const,
+      label: "Move to folder",
+      children: [{ id: "folder:new" as const, label: "New folder…" }],
+    };
+    const ids = (canOperate: boolean, menu: typeof folderMenu | null) =>
+      buildThreadActionMenuItems({ ...baseState, canOperate, folderMenu: menu });
+    const items = ids(true, folderMenu).map((item) => item.id);
+    expect(items.slice(items.indexOf("snooze"), items.indexOf("rename") + 1)).toEqual([
+      "snooze",
+      "folder",
+      "rename",
+    ]);
+    expect(ids(true, null).some((item) => item.id === "folder")).toBe(false);
+    const locked = ids(false, folderMenu).find((item) => item.id === "folder");
+    expect(locked?.disabled).toBe(true);
+    expect(locked?.children?.every((child) => child.disabled)).toBe(true);
+  });
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
