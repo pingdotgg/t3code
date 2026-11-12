@@ -69,7 +69,8 @@ export function resolveWindowTitle(input: {
   }
 
   const projectTitle = input.projectTitle?.trim() ?? "";
-  const thread = input.threadStatus ? `${threadTitle}, ${input.threadStatus}` : threadTitle;
-  const context = projectTitle === "" ? thread : `${projectTitle} / ${thread}`;
+  const names = projectTitle === "" ? threadTitle : `${projectTitle} / ${threadTitle}`;
+  // Status leads so a screen reader says it first on Alt+Tab.
+  const context = input.threadStatus ? `${input.threadStatus}: ${names}` : names;
   return input.desktop ? context : `${context} - ${input.appDisplayName}`;
 }

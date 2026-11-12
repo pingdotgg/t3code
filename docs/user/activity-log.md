@@ -43,7 +43,8 @@ The agent's reasoning text is never read. The setting follows the agent's real a
 **Tool calls in chat** hides, and applies to this browser or device only.
 
 To hear what the open thread is doing when you switch to T3 Code, turn on **Thread status in
-window title** in the same section. The window title then adds **Working**, **Needs approval**, or
-**Needs your input** after the thread's name, and goes back to just the name when the turn ends.
+window title** in the same section. The window title then starts with **Working**, **Needs
+approval**, or **Needs your input**, so a screen reader says it first, and goes back to just the
+project and thread name when the turn ends.
 Anyone who can see your taskbar, window switcher, or shared screen sees it too, and time trackers
 that group by window title count each status separately.

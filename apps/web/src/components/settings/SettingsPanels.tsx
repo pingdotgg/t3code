@@ -1417,7 +1417,7 @@ function WindowTitleThreadStatusRow() {
   return (
     <SettingsRow
       {...searchableSetting("window-title-thread-status")}
-      description="Add Working, Needs approval, or Needs your input after the thread's name in the window title, which screen readers read when you switch apps. Taskbars, shared screens, and time trackers see it too."
+      description="Start the window title with Working, Needs approval, or Needs your input, which screen readers read first when you switch apps. Taskbars, shared screens, and time trackers see it too."
       resetAction={
         settings.windowTitleThreadStatus !== DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus ? (
           <SettingResetButton
