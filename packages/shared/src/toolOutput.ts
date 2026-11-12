@@ -100,7 +100,11 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     value.is_error === true ||
     value._tag === "OrchestratorMcpFailure" ||
     value.error != null;
-  const content = value.structuredContent ?? value.content;
+  // Grok CLI wraps MCP results as { type: "MCP", output: { OkayOutput: "<result json>" } }.
+  const content =
+    value.structuredContent ??
+    value.content ??
+    (Predicate.isObject(value.output) ? value.output.OkayOutput : undefined);
   if (content !== undefined) {
     const nested = readResult(content, budget, depth + 1);
     return { ...nested, failed: failed || nested.failed };
