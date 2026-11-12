@@ -711,6 +711,8 @@ export default function ChatView(props: ChatViewProps) {
   }, [isWorkspaceFileDragActive]);
   const prefersPlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
+  // Programmatic focus during a tap's user activation opens the on-screen keyboard.
+  const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -1850,6 +1852,7 @@ export default function ChatView(props: ChatViewProps) {
     [embedded, focusComposerStable],
   );
   const scheduleComposerFocus = () => {
+    if (isCoarsePointer) return;
     window.requestAnimationFrame(() => {
       // The model picker stays open through its own changes, so it keeps focus.
       if (!isModelPickerOpen()) focusComposer();
@@ -2139,7 +2142,7 @@ export default function ChatView(props: ChatViewProps) {
 
   useFocusComposerOnThreadOpen(
     activeThread?.id,
-    !embedded && !terminalUiState.terminalOpen,
+    !embedded && !terminalUiState.terminalOpen && !isCoarsePointer,
     focusComposerStable,
   );
 

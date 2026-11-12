@@ -445,7 +445,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             unlock?.();
           };
         }}
-        initialFocus={searchInputRef}
+        // Base UI's default focuses the popup on touch so the on-screen keyboard stays closed.
+        initialFocus={(openType) => openType === "touch" || searchInputRef.current}
         align={props.popupAlign ?? "start"}
         // Docked, the popup opens above the composer and slides over it when that space is short,
         // so a short window gets its full height (Floating UI sizes to the viewport) instead of a sliver.
