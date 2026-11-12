@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -22,6 +23,7 @@ import {
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
+  type AuthAccessStreamEvent,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2StoredEvent,
@@ -43,6 +45,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
@@ -1823,6 +1826,170 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
     Effect.provide(
       Layer.mergeAll(
         Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+const authAccessRpcs = WsRpcGroup.omit(
+  ...[...WsRpcGroup.requests.keys()].filter(
+    (
+      tag,
+    ): tag is Exclude<
+      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      typeof WS_METHODS.subscribeAuthAccess
+    > => tag !== WS_METHODS.subscribeAuthAccess,
+  ),
+);
+const layerAuthAccessSources = EnvironmentAuth.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ManagedPolicy.layerTest(),
+      ServerSecretStore.layer,
+      ServerEnvironment.layerIdentity,
+    ),
+  ),
+  Layer.provideMerge(layerConfigSources),
+);
+
+it.effect("auth access keeps changes made during the snapshot read and its ACK wait", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
+    const sessions = yield* SessionStore.SessionStore;
+    const current = yield* sessions.issue({ subject: "current-client" });
+    const subscribed = yield* Queue.unbounded<void>();
+    const released = yield* Queue.unbounded<void>();
+    // Signal subscription on either accessor so the test also fails, rather
+    // than hangs, against a handler that subscribes after the snapshot.
+    const tracked = <A>(changes: Effect.Effect<Stream.Stream<A>, never, Scope.Scope>) =>
+      changes.pipe(
+        Effect.tap(() => Queue.offer(subscribed, undefined)),
+        Effect.tap(() => Effect.addFinalizer(() => Queue.offer(released, undefined))),
+      );
+    const pairingLinkChanges = tracked(pairingLinks.subscribeChanges);
+    const clientChanges = tracked(sessions.subscribeChanges);
+    const snapshotRead = yield* Deferred.make<void>();
+    const releaseSnapshot = yield* Deferred.make<void>();
+    const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
+    const chunkSizes = yield* Queue.unbounded<number>();
+    const exited = yield* Deferred.make<void>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
+        ...auth,
+        // Hold the snapshot after both reads so a change lands before the client gets it.
+        listClientSessions: (sessionId) =>
+          auth.listClientSessions(sessionId).pipe(
+            Effect.tap(() => Deferred.succeed(snapshotRead, undefined)),
+            Effect.tap(() => Deferred.await(releaseSnapshot)),
+          ),
+      }),
+      Layer.succeed(PairingGrantStore.PairingGrantStore, {
+        ...pairingLinks,
+        streamChanges: Stream.unwrap(pairingLinkChanges),
+        subscribeChanges: pairingLinkChanges,
+      }),
+      Layer.succeed(SessionStore.SessionStore, {
+        ...sessions,
+        streamChanges: Stream.unwrap(clientChanges),
+        subscribeChanges: clientChanges,
+      }),
+    );
+    const server = yield* RpcServer.makeNoSerialization(authAccessRpcs, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Chunk"
+          ? Queue.offer(chunkSizes, response.values.length).pipe(
+              Effect.andThen(Queue.offerAll(responses, response.values)),
+              Effect.asVoid,
+            )
+          : response._tag === "Exit"
+            ? Deferred.succeed(exited, undefined)
+            : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: current.sessionId,
+            subject: "current-client",
+            method: "browser-session-cookie",
+            scopes: [AuthAccessReadScope],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer([AuthAccessReadScope]))),
+      ),
+    );
+    const requestId = RpcMessage.RequestId("auth-access");
+    const acknowledge = server.write(0, { _tag: "Ack", requestId });
+    yield* server.write(0, {
+      _tag: "Request",
+      id: requestId,
+      tag: WS_METHODS.subscribeAuthAccess,
+      payload: {},
+      headers: Headers.empty,
+    });
+
+    yield* Deferred.await(snapshotRead);
+    yield* sessions.markConnected(current.sessionId);
+    yield* Deferred.succeed(releaseSnapshot, undefined);
+    assert.equal(yield* Queue.take(chunkSizes), 1);
+    const snapshot = yield* Queue.take(responses);
+    if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
+    const currentClient = snapshot.payload.clientSessions.find(
+      (client) => client.sessionId === current.sessionId,
+    );
+    assert.isFalse(currentClient?.connected);
+    const duringAck = yield* pairingLinks.issueOneTimeToken({ label: "during-ack" });
+    yield* acknowledge;
+    yield* Queue.take(subscribed);
+    yield* Queue.take(subscribed);
+
+    // Later changes expose a dropped buffered change as a value mismatch, not a timeout.
+    const latest = yield* pairingLinks.issueOneTimeToken({ label: "latest" });
+    yield* sessions.markDisconnected(current.sessionId);
+    const expectedConnected = [true, false];
+    const expectedLinkIds = [duringAck.id, latest.id];
+    // The two sources can interleave, but each must retain its own publication order.
+    for (let revision = 2; revision <= 5; revision++) {
+      const event = yield* Queue.take(responses);
+      assert.equal(event.revision, revision);
+      if (event.type === "clientUpserted") {
+        assert.equal(event.payload.connected, expectedConnected.shift());
+      } else {
+        assert.equal(event.type, "pairingLinkUpserted");
+        if (event.type !== "pairingLinkUpserted") {
+          return yield* Effect.die("Unexpected access event");
+        }
+        assert.equal(event.payload.id, expectedLinkIds.shift());
+      }
+      yield* acknowledge;
+    }
+    assert.isEmpty(expectedConnected);
+    assert.isEmpty(expectedLinkIds);
+
+    yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
+    yield* Deferred.await(exited);
+    yield* Queue.take(released);
+    yield* Queue.take(released);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerAuthAccessSources),
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({}),
       ),
