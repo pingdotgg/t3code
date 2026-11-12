@@ -784,12 +784,14 @@ export function useThreadComposerState(input: {
           : "auto";
 
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
-    const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
+    const freshContext =
+      beforeDispatch === undefined && !isShellCommand && isFreshSessionPending(threadKey);
     const metadata = makeQueuedMessageMetadata();
     // A fresh session drops the context a compaction would summarize. Only a send the notice
     // announced compacts, since the notice's minute clock can trail the exact deadline.
     const compactBeforeSend =
       compactTokens !== null &&
+      !isShellCommand &&
       !freshContext &&
       followUpDispatchMode === null &&
       appAtomRegistry.get(fullHistoryThreadKeysAtom)[threadKey] !== true &&

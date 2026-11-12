@@ -5432,7 +5432,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       OrchestrationV2Command,
       { readonly type: "message.dispatch" | "queued-message.promote-to-steer" }
     >,
-    message: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context" | "createdBy" | "creationSource">,
+    message: Pick<
+      OrchestrationV2ConversationMessage,
+      "text" | "attachments" | "context" | "createdBy" | "creationSource"
+    >,
   ) {
     if (userShellCommand(message) !== null) {
       return yield* new OrchestratorDispatchError({

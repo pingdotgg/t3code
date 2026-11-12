@@ -496,7 +496,11 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options: { readonly scopes?: ReadonlyArray<AuthEnvironmentScope>; readonly acceptCommands?: boolean; readonly providers?: ReadonlyArray<unknown> } = {},
+  options: {
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+    readonly acceptCommands?: boolean;
+    readonly providers?: ReadonlyArray<unknown>;
+  } = {},
 ): Disposable {
   threads = fixtures;
   baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);

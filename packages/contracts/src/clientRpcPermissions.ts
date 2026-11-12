@@ -89,6 +89,7 @@ const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
 const shellDispatch = Schema.Struct({
   type: Schema.String,
+  task: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String),
   createdBy: Schema.optional(Schema.String),
   creationSource: Schema.optional(Schema.String),
@@ -109,12 +110,13 @@ export function clientRpcRequiredScopes(
     if (
       payload.type === "shell-command.stop" ||
       (payload.type === "queued-run.edit" && parseShellCommand(payload.text ?? "") !== null) ||
-      (payload.type === "message.dispatch" &&
+      ((payload.type === "message.dispatch" || payload.type === "delegated_task.request") &&
         userShellCommand({
           ...payload,
           createdBy: "user",
           creationSource: payload.creationSource ?? "web",
-          text: payload.text ?? "",
+          text:
+            payload.type === "delegated_task.request" ? (payload.task ?? "") : (payload.text ?? ""),
         }) !== null)
     ) {
       return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
