@@ -17,6 +17,7 @@ import {
   type SubagentRequestAwareness,
   projectThreadAwarenessV2,
   subagentAwaitsUser,
+  turnItemCanChangeUserWait,
 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -131,9 +132,7 @@ function shouldPublishAgentAwarenessEvent(
       return (
         isTurnItemPayload(event.payload) &&
         (turnItemUpdateCanEndBackgroundWork(event.payload) ||
-          // A subagent's secret or link card waits on the user through its parent.
-          event.payload.type === "secret_request" ||
-          event.payload.type === "link_request")
+          turnItemCanChangeUserWait(event.payload))
       );
     case "message.updated":
     case "plan.updated":

@@ -49,7 +49,7 @@ describe("subagent shell events", () => {
     expect(
       shouldPublishShellApplicationEvent(stored("child", "turn-item.updated"), subagents),
     ).toBe(false);
-    for (const itemType of ["secret_request", "link_request"]) {
+    for (const itemType of ["secret_request", "link_request", "user_message"]) {
       expect(
         shouldPublishShellApplicationEvent(
           stored("child", "turn-item.updated", itemType),
