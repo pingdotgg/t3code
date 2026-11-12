@@ -235,22 +235,26 @@ describe("createThreadFamilyAtoms", () => {
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);
 
-        // A child that woke after the shell left out its idle parent reads its family unmounted.
+        // Children that woke after the shell left out their idle parent arrive as deltas, and
+        // read their family unmounted, once for the root.
         release();
         const woken = row("woken", "woken", child.id, parent.id);
-        registry.set(shellState, AsyncResult.success(shellAt(3, [parent, woken])));
+        const sibling = row("woken-sibling", "woken-sibling", child.id, parent.id);
+        registry.set(shellState, AsyncResult.success(shellAt(2, [parent, woken, sibling])));
         yield* Queue.offer(
           replies,
-          Effect.succeed({ snapshotSequence: 6, threads: [parent, child, woken] }),
+          Effect.succeed({ snapshotSequence: 6, threads: [parent, child, woken, sibling] }),
         );
-        yield* settle;
-        expect(mergedIds()).toEqual(["parent", "woken", "idle-child"]);
+        const wokenFamily = families.familyAtom(TARGET.environmentId, woken.id);
+        yield* AtomRegistry.getResult(registry, wokenFamily, { suspendOnWaiting: true }).pipe(
+          Effect.tap(() => Effect.yieldNow),
+        );
+        expect(mergedIds()).toEqual(["parent", "woken", "woken-sibling", "idle-child"]);
 
-        // That read is settled, but a caller waiting on its own mount sees it only once mounted.
-        const mountedRead = families.mountedReadAtom(TARGET.environmentId, parent.id);
-        expect(threadFamilyRead(registry.get(family))).toBe("settled");
+        // Opening the woken child mounts that same read. It answers only once it is mounted.
+        const mountedRead = families.mountedReadAtom(TARGET.environmentId, woken.id);
         expect(registry.get(mountedRead)).toBe("pending");
-        families.mount(registry, TARGET.environmentId, parent.id);
+        families.mount(registry, TARGET.environmentId, woken.id);
         expect(registry.get(mountedRead)).toBe("settled");
       }),
     ),

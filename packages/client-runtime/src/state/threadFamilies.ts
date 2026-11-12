@@ -66,21 +66,25 @@ export function threadFamilyRowsMissingFromShell(input: {
 }
 
 /**
- * Roots of subagents and side chats whose parent row the shell left out. A shell sent with
- * `omitIdleSubagentParents` drops idle chains, so a child that wakes later arrives without them.
+ * Subagents and side chats whose parent row the shell left out, one per root. A shell sent with
+ * `omitIdleSubagentParents` drops idle chains, so a child that wakes or is opened later arrives
+ * without them. The family is read by the child, the read an open thread's mount already made.
  */
-function rootsWithMissingParents(
+function threadsWithMissingParents(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<ThreadId> {
   const present = new Set<ThreadId>(threads.map((thread) => thread.id));
-  const roots = new Set<ThreadId>();
-  for (const { lineage } of threads) {
+  const byRoot = new Map<ThreadId, ThreadId>();
+  for (const { id, lineage } of threads) {
     if (lineage.parentThreadId === null || present.has(lineage.parentThreadId)) continue;
-    if (lineage.relationshipToParent === "subagent" || lineage.sideChat === true) {
-      roots.add(lineage.rootThreadId);
+    if (
+      (lineage.relationshipToParent === "subagent" || lineage.sideChat === true) &&
+      !byRoot.has(lineage.rootThreadId)
+    ) {
+      byRoot.set(lineage.rootThreadId, id);
     }
   }
-  return [...roots];
+  return [...byRoot.values()];
 }
 
 /**
@@ -241,8 +245,8 @@ export function createThreadFamilyAtoms<R, ER, E>(
       if (orphans?.threads !== snapshot.threads) {
         orphans = {
           threads: snapshot.threads,
-          rows: rootsWithMissingParents(snapshot.threads).map((root) =>
-            familyRowsAtom(familyKey(environmentId, root)),
+          rows: threadsWithMissingParents(snapshot.threads).map((threadId) =>
+            familyRowsAtom(familyKey(environmentId, threadId)),
           ),
         };
       }
