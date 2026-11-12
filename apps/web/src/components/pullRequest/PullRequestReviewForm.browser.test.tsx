@@ -1,7 +1,13 @@
 import { createRef } from "react";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  SourceControlProviderKind,
+  type PullRequestDetailView,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
+import { PullRequestCommentForm, type PullRequestQuoteRequest } from "./PullRequestCommentForm";
 import { PullRequestReviewForm } from "./PullRequestReviewForm";
 import { pullRequestReviewKey, usePullRequestReviewStore } from "./pullRequestReviewStore";
 
@@ -11,12 +17,16 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("~/speech/useTextFieldSpeech", () => ({
   TextFieldSpeechControls: () => null,
-  useTextFieldSpeech: () => ({ blocksSubmission: true, submitAfterDictation: mocks.queue }),
+  useTextFieldSpeech: () => ({
+    blocksSubmission: true,
+    submitAfterDictation: mocks.queue,
+    cancel: () => {},
+  }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.submit }));
 vi.mock(import("~/state/pullRequests"), async (original) => ({
   ...(await original()),
-  pullRequestEnvironment: { submitReview: {} } as never,
+  pullRequestEnvironment: { submitReview: {}, comment: {} } as never,
 }));
 
 it("submits only the line comments still in the draft when dictation finishes", async () => {
@@ -55,4 +65,34 @@ it("submits only the line comments still in the draft when dictation finishes", 
       input: expect.objectContaining({ body: "Dictated summary", comments: [] }),
     }),
   );
+});
+
+const detail = {
+  provider: SourceControlProviderKind.make("github"),
+  state: "open",
+  capabilities: { actions: [] },
+  viewerPermissions: { actions: [] },
+} as unknown as PullRequestDetailView;
+const reference = { projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 };
+
+it("adds a quote that arrives as posting settles along with the ones queued before it", async () => {
+  const form = (actionPending: boolean, quoteRequest: PullRequestQuoteRequest) => (
+    <PullRequestCommentForm
+      environmentId={EnvironmentId.make("test")}
+      active
+      reference={reference}
+      detail={detail}
+      actionPending={actionPending}
+      textareaRef={createRef()}
+      quoteRequest={quoteRequest}
+      onCommentAction={vi.fn()}
+      onCommented={vi.fn()}
+      onClose={vi.fn()}
+      onQuoted={vi.fn()}
+    />
+  );
+  await using screen = await render(form(true, { text: "> first" }));
+  await screen.rerender(form(true, { text: "> second" }));
+  await screen.rerender(form(false, { text: "> third" }));
+  await expect.element(screen.getByRole("textbox")).toHaveValue("> second\n\n> third");
 });
