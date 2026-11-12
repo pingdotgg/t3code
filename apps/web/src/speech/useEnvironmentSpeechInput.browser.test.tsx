@@ -370,15 +370,17 @@ it.each([
 
 it("delivers a confirmed send once to its owner after the owner changes during transcription", async () => {
   setup({ destination: "env-a" });
-  const transcription = Promise.withResolvers<void>();
-  mocks.transcribeGate = transcription.promise;
+  let finishTranscription = () => {};
+  mocks.transcribeGate = new Promise<void>((resolve) => {
+    finishTranscription = resolve;
+  });
   const submit = vi.fn();
   await using screen = await render(<Probe ownerKey="thread-a" />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.submitAfterDictation(submit));
   await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("transcribing"));
   await screen.rerender(<Probe ownerKey="thread-b" />);
-  transcription.resolve();
+  finishTranscription();
   await screen.rerender(<Probe ownerKey="thread-a" />);
   await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
 });

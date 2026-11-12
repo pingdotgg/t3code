@@ -193,20 +193,39 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setQueuedStart(null);
     setSetup(INITIAL_SETUP);
   }
-  const state: VoiceInputState =
-    queuedStart === prepared && prepared
-      ? WAITING_STATE
-      : controllerState.prepared === prepared
-        ? controllerState.value
-        : INITIAL_STATE;
-
   const controllerRef = useRef<VoiceInputController | null>(null);
   const startRequestRef = useRef(0);
   const pendingSubmissionRef = useRef<{
     ownerKey: string;
+    draft: VoiceDraftSnapshot;
     submit: (text: string) => void;
     text?: string;
   } | null>(null);
+  const [pendingOwner, setPendingOwner] = useState<string | null>(null);
+  const setPendingSubmission = useStableCallback((pending: typeof pendingSubmissionRef.current) => {
+    pendingSubmissionRef.current = pending;
+    setPendingOwner(pending?.ownerKey ?? null);
+  });
+  // Another draft's confirmed send keeps transcribing in the background; this draft stays free.
+  const transcribingElsewhere = pendingOwner !== null && pendingOwner !== input.ownerKey;
+  const state: VoiceInputState =
+    queuedStart === prepared && prepared
+      ? WAITING_STATE
+      : controllerState.prepared === prepared && !transcribingElsewhere
+        ? controllerState.value
+        : INITIAL_STATE;
+  // Confirmed sends whose transcript finished while another draft was open, keyed by their owner.
+  const awaySubmissionsRef = useRef(
+    new Map<
+      string,
+      {
+        draftText: string;
+        text: string;
+        selection: { readonly start: number; readonly end: number };
+        submit: (text: string) => void;
+      }
+    >(),
+  );
   const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props and settings to the asynchronous recording controller
   useEffect(() => {
@@ -225,6 +244,29 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   }, [input.ownerKey, input.draftText]);
 
+  const readDraftSnapshot = useStableCallback((): VoiceDraftSnapshot => {
+    const current = latestRef.current.input;
+    const draft = current.readDraft();
+    const pending = pendingSubmissionRef.current;
+    // A confirmed send keeps transcribing into its own draft while another one is open.
+    if (pending && (pending.ownerKey !== current.ownerKey || pending.draft.text === draft.text))
+      return pending.draft;
+    const revision = draftRevisionRef.current;
+    if (revision.ownerKey !== current.ownerKey || revision.text !== draft.text) {
+      draftRevisionRef.current = {
+        ownerKey: current.ownerKey,
+        text: draft.text,
+        revision: revision.revision + 1,
+      };
+    }
+    return {
+      ownerKey: current.ownerKey,
+      text: draft.text,
+      selection: draft.selection,
+      revision: draftRevisionRef.current.revision,
+    };
+  });
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
     if (!prepared || !grantId || typeof navigator === "undefined") return;
@@ -239,24 +281,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }
       | undefined;
 
-    const readDraft = (): VoiceDraftSnapshot => {
-      const current = latestRef.current.input;
-      const draft = current.readDraft();
-      const revision = draftRevisionRef.current;
-      if (revision.ownerKey !== current.ownerKey || revision.text !== draft.text) {
-        draftRevisionRef.current = {
-          ownerKey: current.ownerKey,
-          text: draft.text,
-          revision: revision.revision + 1,
-        };
-      }
-      return {
-        ownerKey: current.ownerKey,
-        text: draft.text,
-        selection: draft.selection,
-        revision: draftRevisionRef.current.revision,
-      };
-    };
     const platform = createBrowserVoiceInputPlatform({
       prepared,
       cloudProvider,
@@ -352,15 +376,27 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           title: "Transcript cleanup failed",
           description: "The original transcript was added.",
         }),
-      readDraft,
+      readDraft: readDraftSnapshot,
       commitDraft: (text, selection) => {
-        if (latestRef.current.input.disabled) return;
-        latestRef.current.input.commitDraft(text, selection);
-        if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
+        const current = latestRef.current.input;
+        const pending = pendingSubmissionRef.current;
+        if (pending && pending.ownerKey !== current.ownerKey) {
+          setPendingSubmission(null);
+          awaySubmissionsRef.current.set(pending.ownerKey, {
+            draftText: pending.draft.text,
+            text,
+            selection,
+            submit: pending.submit,
+          });
+          return;
+        }
+        if (current.disabled) return;
+        current.commitDraft(text, selection);
+        if (pending) pending.text = text;
       },
       onStateChange: (value) => {
         if (disposed) return;
-        if (value.phase === "error") pendingSubmissionRef.current = null;
+        if (value.phase === "error") setPendingSubmission(null);
         setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
@@ -368,13 +404,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     controllerRef.current = controller;
     return () => {
       disposed = true;
-      pendingSubmissionRef.current = null;
+      setPendingSubmission(null);
+      awaySubmissionsRef.current.clear();
       startRequestRef.current += 1;
       setQueuedStart(null);
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [prepared, grantId, cloudProvider, cloudModel]);
+  }, [prepared, grantId, cloudProvider, cloudModel, readDraftSnapshot, setPendingSubmission]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the chosen environment's speech status once its connection is available
   useEffect(() => {
@@ -420,23 +457,33 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [prepared, setup.downloading, setup.open, setupModelId]);
 
   const previousOwnerRef = useRef(input.ownerKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons the recording and any queued submission when the draft's owner changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons the recording when the draft's owner changes; a confirmed send keeps transcribing for its owner
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
-    pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
+    const pending = pendingSubmissionRef.current;
+    if (pending && (pending.ownerKey !== input.ownerKey || !input.disabled)) return;
+    setPendingSubmission(null);
     controllerRef.current?.ownerChanged();
-  }, [input.ownerKey, input.disabled]);
+  }, [input.ownerKey, input.disabled, setPendingSubmission]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
   useEffect(() => {
+    const current = latestRef.current.input;
+    const away = awaySubmissionsRef.current.get(input.ownerKey);
+    if (away && state.phase === "idle" && !input.disabled) {
+      awaySubmissionsRef.current.delete(input.ownerKey);
+      if (current.readDraft().text === away.draftText) {
+        current.commitDraft(away.text, away.selection);
+        away.submit(away.text);
+      }
+    }
     const pending = pendingSubmissionRef.current;
-    if (state.phase !== "idle" || !pending) return;
-    pendingSubmissionRef.current = null;
-    if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
-      pending.submit(pending.text);
-  }, [state, input.ownerKey, input.disabled]);
+    if (state.phase !== "idle" || !pending || pending.ownerKey !== input.ownerKey) return;
+    setPendingSubmission(null);
+    if (!input.disabled && pending.text !== undefined) pending.submit(pending.text);
+  }, [state, input.ownerKey, input.disabled, setPendingSubmission]);
 
   const submitAfterDictation = useStableCallback((submit: (text: string) => void) => {
     if (latestRef.current.input.disabled || state.phase === "preparing") return;
@@ -446,7 +493,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     }
     if (pendingSubmissionRef.current) return;
-    pendingSubmissionRef.current = { ownerKey: latestRef.current.input.ownerKey, submit };
+    setPendingSubmission({
+      ownerKey: latestRef.current.input.ownerKey,
+      draft: readDraftSnapshot(),
+      submit,
+    });
     if (controller.currentState.phase === "recording") void controller.stop();
   });
 
@@ -630,7 +681,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     submitAfterDictation,
     stop: useStableCallback(() => controllerRef.current?.stop() ?? Promise.resolve()),
     cancel: useStableCallback(() => {
-      pendingSubmissionRef.current = null;
+      setPendingSubmission(null);
       startRequestRef.current += 1;
       setQueuedStart(null);
       setSetup(INITIAL_SETUP);
