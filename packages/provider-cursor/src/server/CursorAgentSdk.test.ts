@@ -273,6 +273,55 @@ describe("CursorAgentSdkRunner", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("forwards the agent's own shell stream output as shell-output-delta", () =>
+    Effect.gen(function* () {
+      const publish = (conversationId: string, data: string) =>
+        (Reflect.get(globalThis, Symbol.for("@cursor/sdk.shellStreamOutput")) as Function)({
+          conversationId,
+          toolCallId: "tool-shell",
+          event: { case: "stdout", value: { data } },
+        });
+      cursorSdkMock.runWait.mockImplementationOnce(async () => {
+        publish("agent-cursor-agent-sdk-test", "tick 1\n");
+        publish("agent-someone-else", "not ours\n");
+        return {
+          id: "run-cursor-agent-sdk-test",
+          requestId: "request-cursor-agent-sdk-test",
+          status: "finished",
+          result: "ok",
+          model: { id: "default" },
+          durationMs: 1,
+        };
+      });
+      const updates: Array<unknown> = [];
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-cursor-agent-sdk-shell"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-shell"),
+      });
+      const run = yield* session.send({
+        message: "run it",
+        onDelta: (update) => Effect.sync(() => updates.push(update)),
+      });
+      yield* run.wait;
+      publish("agent-cursor-agent-sdk-test", "after the run\n");
+
+      assert.deepStrictEqual(
+        updates.filter(
+          (update) => (update as { readonly type: string }).type === "shell-output-delta",
+        ),
+        [
+          {
+            type: "shell-output-delta",
+            event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "tool-shell" },
+          },
+        ],
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("forwards Run.steer and reports a missing method as a follow-up", () =>
     Effect.gen(function* () {
       cursorSdkMock.runSteer.mockClear();

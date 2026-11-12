@@ -18,6 +18,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   ProviderDriverKind,
@@ -509,7 +510,7 @@ describe("orchestration v2 provider switching", () => {
             capabilities: ClaudeProviderCapabilitiesV2,
             modelSelection: CLAUDE_MODEL_SELECTION,
             responseByRunOrdinal: scenario.includes("target-estimate")
-              ? { 2: "x".repeat(10_000) }
+              ? { 2: "x".repeat(64_000) }
               : {},
             capturedTurns,
             ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
@@ -1227,6 +1228,106 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("keeps a native session whose stored prose is far below an unreported window", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("handoff-estimate-headroom");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const generation = yield* Ref.make(0);
+        // About 112 KB of ordinary English is about 25k tokens: a quarter of a 128k window.
+        const prose = "The quick brown fox jumps over the lazy dog. ".repeat(2_500);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: "Source work" },
+            capturedTurns,
+          }),
+          // No window and no usage, like an ACP registry agent that sends no usage_update.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: prose },
+            capturedTurns,
+            nativeThreadGeneration: generation,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const dispatch = (ordinal: number, text: string, selection: ModelSelection) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`headroom:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`headroom:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text,
+              attachments: [],
+              modelSelection: selection,
+              dispatchMode: { type: "start_immediately" },
+            });
+          const wait = (ordinal: number) =>
+            orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+              Effect.andThen(worker.drain()),
+            );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("headroom:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Handoff estimate headroom",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* dispatch(1, "Write the long report", CLAUDE_MODEL_SELECTION);
+          yield* wait(1);
+          yield* dispatch(2, "Continue elsewhere", CODEX_MODEL_SELECTION);
+          yield* wait(2);
+          yield* dispatch(3, "Back to the first provider", CLAUDE_MODEL_SELECTION);
+          yield* wait(3);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+            "completed",
+          );
+          // A second generation means T3 discarded the native session as full.
+          assert.equal(yield* Ref.get(generation), 1);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "handoff-estimate-headroom",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(["native", "legacy"] as const)(
@@ -2955,6 +3056,100 @@ describe("orchestration v2 provider switching", () => {
               ProviderReplayHarness.layerWithRegistry(
                 {
                   name: `fresh-context-${key}`,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live(
+    "starts a scheduled fresh run while the previous run's session still has background work",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("scheduled-fresh-background");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+          const backgroundWork = yield* Ref.make(false);
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              closedSessions,
+              backgroundWork,
+              nativeThreadGeneration: yield* Ref.make(0),
+            }),
+          ]);
+          const threadId = ThreadId.make("thread:scheduled-fresh-background");
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            // The command ScheduledTaskService sends for a fresh-session schedule.
+            const fire = (name: string) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`scheduled-task:scheduled-fresh-background:${name}`),
+                threadId,
+                messageId: MessageId.make(`message:scheduled-fresh-background:${name}`),
+                scheduledTaskId: ScheduledTaskId.make("scheduled-fresh-background"),
+                text: `Scheduled ${name}`,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                freshContext: true,
+                dispatchMode: { type: "queue_after_active" },
+              });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:scheduled-fresh-background:create"),
+              threadId,
+              projectId: ProjectId.make("project:scheduled-fresh-background"),
+              title: "Scheduled fresh session",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* fire("first");
+            yield* worker.drain();
+            yield* waitForIdle(threadId);
+            // The first run left a background command running after its turn ended.
+            yield* Ref.set(backgroundWork, true);
+            yield* fire("second");
+            yield* worker.drain();
+            yield* waitForIdle(threadId);
+            const turns = yield* Ref.get(capturedTurns);
+            const turnFor = (name: string) =>
+              turns.find((turn) => turn.text.endsWith(`Scheduled ${name}`));
+            assert.isDefined(turnFor("second"));
+            assert.notEqual(turnFor("second")!.nativeThreadId, turnFor("first")!.nativeThreadId);
+            // Closing the busy session would end its background work.
+            assert.deepEqual(yield* Ref.get(closedSessions), []);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "scheduled-fresh-background",
                   runtimePolicyOverride: {
                     cwd,
                     approvalPolicy: "never",

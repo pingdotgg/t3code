@@ -85,7 +85,8 @@ import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
 import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 import Migration0081 from "./Migrations/081_ProjectionMessageSearchText.ts";
 import Migration0082 from "./Migrations/082_TurnItemConversationIndex.ts";
-import Migration0083 from "./Migrations/083_ScheduledTaskBackground.ts";
+import Migration0083 from "./Migrations/083_CommandReadIndexes.ts";
+import Migration0084 from "./Migrations/084_ScheduledTaskBackground.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -171,7 +172,8 @@ const migrationEntries = [
   [80, "ScheduledTaskThreadMode", Migration0080],
   [81, "ProjectionMessageSearchText", Migration0081],
   [82, "TurnItemConversationIndex", Migration0082],
-  [83, "ScheduledTaskBackground", Migration0083],
+  [83, "CommandReadIndexes", Migration0083],
+  [84, "ScheduledTaskBackground", Migration0084],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

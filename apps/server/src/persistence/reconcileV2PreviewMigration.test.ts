@@ -62,7 +62,8 @@ describe("V2 preview upgrade", () => {
         [80, "ScheduledTaskThreadMode"],
         [81, "ProjectionMessageSearchText"],
         [82, "TurnItemConversationIndex"],
-        [83, "ScheduledTaskBackground"],
+        [83, "CommandReadIndexes"],
+        [84, "ScheduledTaskBackground"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -168,7 +169,8 @@ describe("V2 preview upgrade", () => {
         [80, "ScheduledTaskThreadMode"],
         [81, "ProjectionMessageSearchText"],
         [82, "TurnItemConversationIndex"],
-        [83, "ScheduledTaskBackground"],
+        [83, "CommandReadIndexes"],
+        [84, "ScheduledTaskBackground"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
