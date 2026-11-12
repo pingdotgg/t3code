@@ -65,6 +65,17 @@ describe("AutoSettleDaysInput", () => {
     await expect.element(input).toHaveValue(14);
   });
 
+  it("saves a return to the original value while an earlier save is pending", async () => {
+    const onCommit = vi.fn();
+    await using screen = await render(<AutoSettleDaysInput value={14} onCommit={onCommit} />);
+    const input = screen.getByRole("spinbutton");
+    await input.fill("30");
+    await userEvent.keyboard("{Enter}");
+    await input.fill("14");
+    await userEvent.keyboard("{Enter}");
+    expect(onCommit.mock.calls.map(([days]) => days)).toEqual([30, 14]);
+  });
+
   it("replaces a draft when another client changes the saved value", async () => {
     const onCommit = vi.fn();
     await using screen = await render(<AutoSettleDaysInput value={14} onCommit={onCommit} />);
