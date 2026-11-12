@@ -8,6 +8,7 @@ import {
   resetBoardColumnWeights,
   resolveBoardDropEdge,
   resolveBoardLayout,
+  setBoardColumnWidth,
   setBoardPanelWeights,
   splitBoardPanelPair,
   toggleBoardPanelCollapsed,
@@ -79,7 +80,8 @@ describe("board layout", () => {
     columns: string[][],
     collapsed: string[] = [],
     weights: Record<string, number> = {},
-  ) => ({ columns, collapsed, weights }) as BoardLayout;
+    widths: Record<string, number> = {},
+  ) => ({ columns, collapsed, weights, widths }) as BoardLayout;
 
   it("keeps a saved layout, ignoring unknown and repeated ids and appending new panels", () => {
     const resolved = resolveBoardLayout({
@@ -208,6 +210,26 @@ describe("board layout", () => {
     } as never);
     expect(resized.weights).toEqual({ a: 1.5, b: 0.5, c: 0.25, d: 1.75 });
     expect(resetBoardColumnWeights(resized, "b" as never).weights).toEqual({ c: 0.25, d: 1.75 });
+  });
+
+  it("keeps saved column widths under the top panel, clamped to the allowed range", () => {
+    const resolved = resolveBoardLayout({
+      columns: [["done", "working"], ["failed"], ["waiting"]],
+      collapsed: [],
+      widths: { done: 400.4, working: 500, failed: 10, waiting: 9000, gone: 300 },
+    });
+    expect(resolved.widths).toEqual({ done: 400, failed: 224, waiting: 640 });
+  });
+
+  it("a column keeps its width when its top panel changes, and a new column starts at the default", () => {
+    const start = setBoardColumnWidth(layout([["a", "b"], ["c"]]), "b" as never, 400);
+    expect(start.widths).toEqual({ a: 400 });
+    expect(setBoardColumnWidth(start, "a" as never, null).widths).toEqual({});
+    const onTop = moveBoardPanel(start, "c" as never, { panelId: "a" as never, edge: "top" });
+    expect(onTop.widths).toEqual({ c: 400 });
+    const split = moveBoardPanel(start, "a" as never, { panelId: "c" as never, edge: "right" });
+    expect(split.columns).toEqual([["b"], ["c"], ["a"]]);
+    expect(split.widths).toEqual({ b: 400 });
   });
 
   it.each([

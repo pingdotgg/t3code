@@ -99,18 +99,26 @@ export function groupThreadsByPanel<T extends BoardThread>(
 
 /**
  * Columns left to right, each a stack of panels top to bottom. Expanded panels in a column share
- * its height in proportion to their weights; a panel without one weighs 1.
+ * its height in proportion to their weights; a panel without one weighs 1. A column's width in
+ * pixels is saved under its top panel.
  */
 export interface BoardLayout {
   readonly columns: ReadonlyArray<ReadonlyArray<BoardPanelId>>;
   readonly collapsed: ReadonlyArray<BoardPanelId>;
   readonly weights: Readonly<Partial<Record<BoardPanelId, number>>>;
+  readonly widths: Readonly<Partial<Record<BoardPanelId, number>>>;
 }
+
+export const BOARD_COLUMN_WIDTH = { default: 288, min: 224, max: 640 } as const;
+
+const clampBoardColumnWidth = (width: number) =>
+  Math.round(Math.min(BOARD_COLUMN_WIDTH.max, Math.max(BOARD_COLUMN_WIDTH.min, width)));
 
 export const BoardLayoutSchema = Schema.Struct({
   columns: Schema.Array(Schema.Array(Schema.String)),
   collapsed: Schema.Array(Schema.String),
   weights: Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
+  widths: Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
 });
 export type SavedBoardLayout = typeof BoardLayoutSchema.Type;
 
@@ -140,7 +148,31 @@ export function resolveBoardLayout(saved: SavedBoardLayout | null): BoardLayout 
   for (const [id, weight] of Object.entries(saved?.weights ?? {})) {
     if (isBoardPanelId(id) && Number.isFinite(weight) && weight > 0) weights[id] = weight;
   }
-  return { columns, collapsed: [...new Set(collapsed)], weights };
+  const widths: Partial<Record<BoardPanelId, number>> = {};
+  for (const column of columns) {
+    const width = saved?.widths?.[column[0]!];
+    if (width !== undefined && Number.isFinite(width)) {
+      widths[column[0]!] = clampBoardColumnWidth(width);
+    }
+  }
+  return { columns, collapsed: [...new Set(collapsed)], weights, widths };
+}
+
+export const boardColumnWidth = (layout: BoardLayout, column: ReadonlyArray<BoardPanelId>) =>
+  layout.widths[column[0]!] ?? BOARD_COLUMN_WIDTH.default;
+
+/** Sets the width of the column that holds `id`; `null` returns it to the default. */
+export function setBoardColumnWidth(
+  layout: BoardLayout,
+  id: BoardPanelId,
+  width: number | null,
+): BoardLayout {
+  const top = layout.columns.find((column) => column.includes(id))?.[0];
+  if (top === undefined) return layout;
+  const widths = { ...layout.widths };
+  if (width === null) delete widths[top];
+  else widths[top] = clampBoardColumnWidth(width);
+  return { ...layout, widths };
 }
 
 export const boardPanelWeight = (layout: BoardLayout, id: BoardPanelId) => layout.weights[id] ?? 1;
@@ -186,7 +218,15 @@ export function moveBoardPanel(
     column.splice(column.indexOf(target.panelId) + (target.edge === "bottom" ? 1 : 0), 0, id);
     columns[columnIndex] = column;
   }
-  return { columns, collapsed: layout.collapsed, weights };
+  // A column keeps its width when its top panel changes; the moved panel brings none along.
+  const widths: Partial<Record<BoardPanelId, number>> = {};
+  for (const column of columns) {
+    const stayed = column.find((panelId) => panelId !== id);
+    const previous = layout.columns.find((candidate) => stayed && candidate.includes(stayed));
+    const width = previous ? layout.widths[previous[0]!] : undefined;
+    if (width !== undefined) widths[column[0]!] = width;
+  }
+  return { columns, collapsed: layout.collapsed, weights, widths };
 }
 
 export interface BoardPanelPair {

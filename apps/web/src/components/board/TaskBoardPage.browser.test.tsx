@@ -71,7 +71,7 @@ function pointer(type: string, x: number, y: number) {
 }
 
 const panel = (label: string) => page.getByRole("region", { name: label }).element();
-const column = (label: string) => panel(label).closest("[data-board-column]");
+const column = (label: string) => panel(label).closest<HTMLElement>("[data-board-column]");
 const grow = (label: string) => Number(panel(label).parentElement!.style.flexGrow);
 
 describe("TaskBoardPage", () => {
@@ -165,5 +165,31 @@ describe("TaskBoardPage", () => {
     const handle = screen.getByRole("separator", separator).element();
     handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     await vi.waitFor(() => expect([grow("Needs you"), grow("Done")]).toEqual([1, 1]));
+  });
+
+  it("resizes a column by its edge, keeps the width across remounts, and resets on double-click", async () => {
+    localStorage.clear();
+    const separator = { name: "Resize Needs you column" };
+    const width = () => column("Needs you")!.style.width;
+    {
+      await using screen = await render(<TaskBoardPage />);
+      const handle = screen.getByRole("separator", separator).element() as HTMLElement;
+      expect(width()).toBe("288px");
+      // Synthetic drag events have no active browser pointer to capture.
+      using _capture = vi.spyOn(handle, "setPointerCapture").mockImplementation(() => {});
+      const pointer = { bubbles: true, pointerId: 1, button: 0, clientY: 0 };
+      handle.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: 300 }));
+      handle.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: 400 }));
+      await vi.waitFor(() =>
+        expect(localStorage.getItem("t3code:task-board:layout")).toContain("widths"),
+      );
+      expect(width()).toBe("388px");
+    }
+
+    await using screen = await render(<TaskBoardPage />);
+    expect(width()).toBe("388px");
+    const handle = screen.getByRole("separator", separator).element();
+    handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await vi.waitFor(() => expect(width()).toBe("288px"));
   });
 });

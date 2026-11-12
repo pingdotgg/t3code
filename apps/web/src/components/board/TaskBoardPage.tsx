@@ -48,7 +48,10 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   BOARD_PANELS,
+  BOARD_COLUMN_WIDTH,
   BoardLayoutSchema,
+  boardColumnWidth,
+  setBoardColumnWidth,
   boardPanelWeight,
   groupThreadsByPanel,
   moveBoardPanel,
@@ -431,6 +434,74 @@ function BoardPanelResizeHandle(props: {
   );
 }
 
+function BoardColumnResizeHandle(props: {
+  panelId: BoardPanelId;
+  width: number;
+  onResize: (panelId: BoardPanelId, width: number | null) => void;
+}) {
+  const { panelId, width } = props;
+  // The width goes straight to the column while dragging and reaches state once, on release.
+  const drag = useResizeDrag<HTMLDivElement>((event) => {
+    const column = event.currentTarget.parentElement;
+    if (!column) return null;
+    const apply = (next: number) => {
+      column.style.width = `${next}px`;
+    };
+    return {
+      width,
+      edge: "right",
+      bounds: { min: BOARD_COLUMN_WIDTH.min, max: BOARD_COLUMN_WIDTH.max },
+      resize: (next) => {
+        apply(next);
+        return next;
+      },
+      cleanup: (committed) => {
+        if (!committed) apply(width);
+      },
+      finish: (next, moved) => {
+        if (moved) props.onResize(panelId, next);
+        else apply(width);
+      },
+    };
+  });
+  const handlers = {
+    ref: drag.ref,
+    onPointerDown: drag.onPointerDown,
+    onPointerMove: drag.onPointerMove,
+    onPointerUp: drag.onPointerUp,
+    onPointerCancel: drag.onPointerCancel,
+    onLostPointerCapture: drag.onLostPointerCapture,
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    props.onResize(
+      panelId,
+      width + (event.key === "ArrowLeft" ? -RESIZE_KEY_STEP : RESIZE_KEY_STEP),
+    );
+  };
+  return (
+    <div
+      {...handlers}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${PANEL_LABELS.get(panelId)} column`}
+      aria-valuenow={width}
+      aria-valuemin={BOARD_COLUMN_WIDTH.min}
+      aria-valuemax={BOARD_COLUMN_WIDTH.max}
+      tabIndex={0}
+      onDoubleClick={() => props.onResize(panelId, null)}
+      onKeyDown={handleKeyDown}
+      className="group absolute inset-y-0 -right-3 z-10 w-3 cursor-col-resize touch-none select-none outline-none"
+    >
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60"
+      />
+    </div>
+  );
+}
+
 function findDropTarget(
   board: HTMLElement,
   activeId: BoardPanelId,
@@ -524,6 +595,8 @@ export function TaskBoardPage() {
     updateLayout((current) => toggleBoardPanelCollapsed(current, panelId));
   const resizePanels = (weights: PanelWeights) =>
     updateLayout((current) => setBoardPanelWeights(current, weights));
+  const resizeColumn = (panelId: BoardPanelId, width: number | null) =>
+    updateLayout((current) => setBoardColumnWidth(current, panelId, width));
   const resetColumn = (panelId: BoardPanelId) =>
     updateLayout((current) => resetBoardColumnWeights(current, panelId));
   const endDrag = () => {
@@ -588,10 +661,18 @@ export function TaskBoardPage() {
                     key={column.join(":")}
                     data-board-column
                     className={cn(
-                      "flex min-h-0 shrink-0 flex-col gap-3",
-                      allCollapsed ? "w-11" : "w-72",
+                      "relative flex min-h-0 shrink-0 flex-col gap-3",
+                      allCollapsed && "w-11",
                     )}
+                    style={allCollapsed ? undefined : { width: boardColumnWidth(layout, column) }}
                   >
+                    {allCollapsed ? null : (
+                      <BoardColumnResizeHandle
+                        panelId={column[0]!}
+                        width={boardColumnWidth(layout, column)}
+                        onResize={resizeColumn}
+                      />
+                    )}
                     {column.map((panelId, index) => {
                       const expanded = !layout.collapsed.includes(panelId);
                       const mode: PanelMode = expanded
