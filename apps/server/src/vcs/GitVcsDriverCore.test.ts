@@ -4940,7 +4940,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each(["untracked", "other-remote"] as const)(
-      "refuses a remote switch that collides with a %s local branch",
+      "refuses a remote switch that collides with a local branch (%s)",
       (tracking) =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
