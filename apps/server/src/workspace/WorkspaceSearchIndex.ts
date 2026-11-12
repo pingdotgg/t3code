@@ -22,6 +22,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -120,8 +121,9 @@ export class WorkspaceSearchIndex extends Context.Service<
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
 
-function toPosixPath(input: string): string {
-  return input.replaceAll("\\", "/");
+// Only the host separator becomes `/`: on POSIX `\` is a file name character.
+function toPosixPath(input: string, hostIsWindows: boolean): string {
+  return hostIsWindows ? input.replaceAll("\\", "/") : input;
 }
 
 function trimDirectorySeparator(input: string): string {
@@ -133,8 +135,8 @@ function parentPathOf(input: string): string | undefined {
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
-function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+function toProjectEntry(item: MixedItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath, hostIsWindows));
   if (!normalizedPath) {
     return null;
   }
@@ -145,13 +147,13 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
   };
 }
 
-function toFileEntry(item: FileItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toFileEntry(item: FileItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
 }
 
-function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toDirectoryEntry(item: DirItem, hostIsWindows: boolean): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
 }
 
@@ -160,10 +162,11 @@ type SearchPage<I> = { readonly items: ReadonlyArray<I>; readonly totalMatched: 
 function mapFileSearchResult(
   result: SearchPage<FileItem>,
   limit: number,
+  hostIsWindows: boolean,
   imageOnly = false,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toFileEntry(item);
+    const entry = toFileEntry(item, hostIsWindows);
     return entry && (!imageOnly || isProjectFaviconPath(entry.path)) ? [entry] : [];
   });
   return {
@@ -175,9 +178,10 @@ function mapFileSearchResult(
 function mapDirectorySearchResult(
   result: SearchPage<DirItem>,
   limit: number,
+  hostIsWindows: boolean,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toDirectoryEntry(item);
+    const entry = toDirectoryEntry(item, hostIsWindows);
     return entry ? [entry] : [];
   });
   const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
@@ -190,10 +194,11 @@ function mapDirectorySearchResult(
 function mapMixedSearchResult(
   result: SearchPage<MixedItem>,
   limit: number,
+  hostIsWindows: boolean,
 ): { readonly entries: ProjectEntry[]; readonly truncated: boolean } {
   const entries: ProjectEntry[] = [];
   for (const item of result.items) {
-    const entry = toProjectEntry(item);
+    const entry = toProjectEntry(item, hostIsWindows);
     if (entry) {
       entries.push(entry);
     }
@@ -388,6 +393,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  const hostIsWindows = yield* HostProcess.isWindows;
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -519,7 +525,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         (pageSize) => finder.mixedSearch("", { pageSize }),
         mixedItemPath,
       );
-      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES, hostIsWindows);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
@@ -547,7 +553,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         (size) => finder.fileSearch(query, { pageSize: size }),
         (item) => item.relativePath,
       );
-      return mapFileSearchResult(result, limit, imageOnly);
+      return mapFileSearchResult(result, limit, hostIsWindows, imageOnly);
     }
     if (kind === "directory") {
       const result = yield* searchVisible(
@@ -557,7 +563,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         (size) => finder.directorySearch(query, { pageSize: size }),
         (item) => item.relativePath,
       );
-      return mapDirectorySearchResult(result, limit);
+      return mapDirectorySearchResult(result, limit, hostIsWindows);
     }
     const result = yield* searchVisible(
       query,
@@ -566,7 +572,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       (size) => finder.mixedSearch(query, { pageSize: size }),
       mixedItemPath,
     );
-    return mapMixedSearchResult(result, limit);
+    return mapMixedSearchResult(result, limit, hostIsWindows);
   });
 
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
@@ -626,7 +632,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
-          path: toPosixPath(match.relativePath),
+          path: toPosixPath(match.relativePath, hostIsWindows),
           lineNumber: match.lineNumber,
           lineContent: match.lineContent,
           matchRanges,
