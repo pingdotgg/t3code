@@ -48,7 +48,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
-import { Button } from "~/components/ui/button";
+import { Button, ContentButton } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -1246,11 +1246,7 @@ function TerminalSessionViewport({
               // Keep the terminal's selection and focus while pressing the action.
               onPointerDown={(event) => event.preventDefault()}
             >
-              <button
-                type="button"
-                className="flex h-5.5 cursor-pointer items-center gap-1.5 rounded-row surface-selected px-2 text-caption text-foreground outline-none hover:text-strong-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring"
-                onClick={selectionToolbar.run}
-              >
+              <ContentButton variant="selection-action" onClick={selectionToolbar.run}>
                 {selectionToolbar.action === "add-to-chat" ? (
                   <>
                     <MessageSquarePlus aria-hidden className="size-3.25" />
@@ -1262,7 +1258,7 @@ function TerminalSessionViewport({
                     Copy
                   </>
                 )}
-              </button>
+              </ContentButton>
             </div>,
             document.body,
           )
