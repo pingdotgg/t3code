@@ -287,7 +287,7 @@ export interface BootServiceManager {
   readonly finalize: ReadonlyArray<BootServiceStep>;
 }
 
-export const defaultSystemdUnitDir = (path: Path.Path, homeDir: string, xdgConfigHome: string) =>
+const defaultSystemdUnitDir = (path: Path.Path, homeDir: string, xdgConfigHome: string) =>
   path.join(
     path.isAbsolute(xdgConfigHome) ? xdgConfigHome : path.join(homeDir, ".config"),
     "systemd",
@@ -549,7 +549,7 @@ const decodeSystemdUnitPaths = Schema.decodeUnknownEffect(
 );
 
 // The manager may not share the installer's environment; JSON preserves spaces in its paths.
-export const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
+const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit_directory")(
   function* (runner: ProcessRunner.ProcessRunner["Service"], path: Path.Path) {
     const result = yield* runner.run({
       command: "busctl",

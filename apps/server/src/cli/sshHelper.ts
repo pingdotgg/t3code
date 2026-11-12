@@ -7,17 +7,10 @@ import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { Argument, Command } from "effect/cli";
 
-import {
-  bootServiceBaseDirOf,
-  BOOT_SERVICE_PLIST_FILE,
-  BOOT_SERVICE_UNIT_FILE,
-  defaultSystemdUnitDir,
-  readSystemdUnitDirectory,
-} from "../cloud/bootService.ts";
+import { bootServiceBaseDirOf, bootServiceUnitPath } from "../cloud/bootService.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -26,35 +19,31 @@ export const resolveSshServerHome = Effect.gen(function* () {
   const environment = yield* HostProcess.Environment;
   if (environment.T3CODE_HOME?.trim()) return yield* resolveBaseDir(environment.T3CODE_HOME);
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const home = yield* HostProcess.HomeDirectory;
-  const platform = yield* HostProcess.Platform;
   const uid = yield* HostProcess.UserId;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  // A non-login SSH session may lack this, so `busctl --user` cannot find the user bus.
   const userManagerEnv =
-    platform === "linux" &&
+    (yield* HostProcess.Platform) === "linux" &&
     !environment.XDG_RUNTIME_DIR &&
     uid !== undefined &&
     !(uid === 0 && environment.SUDO_USER)
       ? { XDG_RUNTIME_DIR: `/run/user/${uid}` }
       : undefined;
-  const runner: ProcessRunner.ProcessRunner["Service"] = {
-    run: (request) => processRunner.run({ ...request, env: { ...userManagerEnv, ...request.env } }),
-  };
-  const serviceFile =
-    platform === "darwin"
-      ? path.join(home, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
-      : path.join(
-          (yield* readSystemdUnitDirectory(runner, path)) ??
-            defaultSystemdUnitDir(path, home, environment.XDG_CONFIG_HOME ?? ""),
-          BOOT_SERVICE_UNIT_FILE,
-        );
-  const service = yield* fs.readFileString(serviceFile).pipe(
-    Effect.catchIf(
-      (error) => error.reason._tag === "NotFound",
-      () => Effect.succeed(""),
-    ),
+  const serviceFile = yield* bootServiceUnitPath().pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: (request) =>
+        processRunner.run({ ...request, env: { ...userManagerEnv, ...request.env } }),
+    }),
   );
+  const service =
+    serviceFile === undefined
+      ? ""
+      : yield* fs.readFileString(serviceFile).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.succeed(""),
+          ),
+        );
   return yield* resolveBaseDir(bootServiceBaseDirOf(service));
 });
 

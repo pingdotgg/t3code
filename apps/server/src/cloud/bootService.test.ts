@@ -1641,15 +1641,10 @@ it.effect.each(["linux", "darwin"] as const)(
       );
       assert.strictEqual(yield* resolve({ T3CODE_HOME: " " }), serviceHome);
       if (platform === "linux") {
-        const xdgConfigHome = path.join(directory, "relocated config");
-        assert.strictEqual(
-          yield* resolve({ XDG_CONFIG_HOME: xdgConfigHome }),
-          path.join(directory, ".t3"),
-        );
-        yield* fs.makeDirectory(path.join(xdgConfigHome, "systemd/user"), { recursive: true });
-        yield* fs.rename(servicePath, path.join(xdgConfigHome, "systemd/user/t3code.service"));
-        assert.strictEqual(yield* resolve({ XDG_CONFIG_HOME: xdgConfigHome }), serviceHome);
-        const managerDirectory = path.join(xdgConfigHome, "systemd/user");
+        // A non-login SSH shell has no XDG_RUNTIME_DIR; the user manager is still found.
+        const managerDirectory = path.join(directory, "relocated config/systemd/user");
+        yield* fs.makeDirectory(managerDirectory, { recursive: true });
+        yield* fs.rename(servicePath, path.join(managerDirectory, "t3code.service"));
         const managerRunner = ProcessRunner.ProcessRunner.of({
           run: (request) =>
             Effect.succeed({
