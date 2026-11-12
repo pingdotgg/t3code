@@ -481,6 +481,36 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
+const cwdCommandsAgentSource = `
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  } else if (method === "session/new") {
+    const projectCommands = join(params.cwd, "commands.json");
+    const names = existsSync(projectCommands) ? JSON.parse(readFileSync(projectCommands, "utf8")) : [];
+    send({ id, result: { sessionId: "probe-session" } });
+    send({
+      method: "session/update",
+      params: {
+        sessionId: "probe-session",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "review" }, ...names.map((name) => ({ name }))],
+        },
+      },
+    });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`;
+
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -552,6 +582,51 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.invalidateCaches ?? Effect.void;
       yield* instance.snapshot.refresh;
       expect(Option.isSome(yield* Fiber.join(refreshed))).toBe(true);
+    }),
+  );
+
+  it.effect("advertises a workspace's project commands and skills for that workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const projectPath = path.join(directory, "project");
+      yield* fileSystem.writeFileString(agentPath, cwdCommandsAgentSource);
+      yield* fileSystem.makeDirectory(projectPath);
+      yield* fileSystem.writeFileString(
+        path.join(projectPath, "commands.json"),
+        JSON.stringify(["demo", "$demo-skill"]),
+      );
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "test-agent",
+            version: "1.0.0",
+            distribution: "npx",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "npx" as const,
+              spawn: { command: process.execPath, args: [agentPath] },
+            }),
+        }),
+      );
+
+      const snapshotForCwd = instance.snapshotForCwd;
+      expect(snapshotForCwd).toBeDefined();
+      if (snapshotForCwd === undefined) return;
+      const workspace = yield* snapshotForCwd(projectPath);
+      expect(workspace.slashCommands.map((command) => command.name)).toContain("demo");
+      expect(workspace.skills.map((skill) => skill.name)).toContain("demo-skill");
     }),
   );
 });
