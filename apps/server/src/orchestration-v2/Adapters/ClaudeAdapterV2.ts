@@ -745,6 +745,10 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly subagentLaunchToolUseId: (
     input: ClaudeAgentSdkSubagentLookupInput,
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
+  /** The model a subagent's transcript says it ran on. */
+  readonly subagentModel: (
+    input: ClaudeAgentSdkSubagentLookupInput,
+  ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -1811,6 +1815,27 @@ export const layerQueryRunner: Layer.Layer<
           return toolUseId;
         },
       ),
+      subagentModel: Effect.fn("ClaudeAgentSdkQueryRunner.subagentModel")(function* (
+        input: ClaudeAgentSdkSubagentLookupInput,
+      ) {
+        const messages = yield* Effect.tryPromise({
+          try: () =>
+            getSubagentMessages(
+              input.sessionId,
+              input.agentId,
+              input.dir === null ? {} : { dir: input.dir },
+            ),
+          catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
+        });
+        return (
+          messages
+            .toReversed()
+            .flatMap((message) =>
+              message.type === "assistant" ? [text(field(message.message, "model"))] : [],
+            )
+            .find((model) => model !== undefined) ?? null
+        );
+      }),
       assertComplete: Effect.void,
     });
   }),
@@ -3388,18 +3413,6 @@ function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
   }
   const taskType = Reflect.get(message, "task_type");
   return typeof taskType === "string" ? taskType : null;
-}
-
-// A `context: fork` skill has no Agent call: its task_started omits tool_use_id and is described
-// as `/<skill>`, while its frames name `forked-command-<skill>` as their parent.
-function claudeSubagentToolUseId(message: {
-  readonly tool_use_id?: string | undefined;
-  readonly description: string;
-}): string | undefined {
-  if (message.tool_use_id !== undefined) return message.tool_use_id;
-  return /^\/[^\s/]+$/.test(message.description)
-    ? `forked-command-${message.description.slice(1)}`
-    : undefined;
 }
 
 function isClaudeNonSubagentTask(message: SDKMessage): boolean {
@@ -6631,6 +6644,42 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             driver: CLAUDE_PROVIDER,
             turnItem: artifacts.turnItem,
           });
+        });
+
+        // A `context: fork` skill has no Agent call and streams none of its own frames;
+        // only its transcript records the model, written after the fork reports its outcome.
+        const forkedSkillModel = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          nativeThreadId: string,
+          taskId: string,
+        ) {
+          const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+          if (
+            registered === undefined ||
+            registered.runToolUseId !== null ||
+            registered.task.model !== null ||
+            registered.task.status === "running"
+          ) {
+            return undefined;
+          }
+          const model = yield* queryRunner
+            .subagentModel({
+              sessionId: nativeThreadId,
+              agentId: taskId,
+              dir: context.input.runtimePolicy.cwd,
+              threadId: context.input.threadId,
+              providerSessionId: input.providerSessionId,
+            })
+            .pipe(
+              Effect.catch(() =>
+                Effect.logWarning("orchestration-v2.claude-subagent-model-lookup-failed", {
+                  taskId,
+                }).pipe(Effect.as(null)),
+              ),
+            );
+          return model === null || model === "<synthetic>"
+            ? undefined
+            : canonicalClaudeSubagentModel(modelCatalog, model);
         });
 
         // Resume frames reference the launch call, but task_started names SendMessage; recover the mapping from CLI storage.
@@ -10295,22 +10344,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 activeContext: context,
               });
             } else {
-              const toolUseId = claudeSubagentToolUseId(message);
               const launch =
-                toolUseId === undefined
+                message.tool_use_id === undefined
                   ? undefined
-                  : pendingSubagentLaunchesByToolUseId.get(toolUseId);
-              if (toolUseId !== undefined) {
-                pendingSubagentLaunchesByToolUseId.delete(toolUseId);
-              }
-              // Every run of a forked skill shares its derived id; it belongs to the newest run.
-              if (
-                message.tool_use_id === undefined &&
-                toolUseId !== undefined &&
-                context.subagentsByToolUseId.get(toolUseId) !==
-                  context.subagentsByTaskId.get(message.task_id)
-              ) {
-                context.subagentsByToolUseId.delete(toolUseId);
+                  : pendingSubagentLaunchesByToolUseId.get(message.tool_use_id);
+              if (message.tool_use_id !== undefined) {
+                pendingSubagentLaunchesByToolUseId.delete(message.tool_use_id);
               }
               const owner =
                 launch?.ownerToolUseId === undefined
@@ -10341,7 +10380,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 context,
                 taskId: message.task_id,
                 ...(message.task_type === undefined ? {} : { nativeTaskType: message.task_type }),
-                ...(toolUseId === undefined ? {} : { toolUseId }),
+                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
@@ -10826,6 +10865,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.delete(context.providerTurnId);
               return next;
             });
+            for (const taskId of context.subagentsByTaskId.keys()) {
+              const model = yield* forkedSkillModel(context, liveQuery.nativeThreadId, taskId);
+              const status = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status;
+              if (
+                model !== undefined &&
+                (status === "completed" || status === "failed" || status === "cancelled")
+              ) {
+                yield* updateClaudeSubagentNode({ context, taskId, model, status });
+              }
+            }
             if (!isClaudeProviderContinuationTurn(context.input)) {
               yield* markAbsorbedWake(liveQuery.nativeThreadId);
             }
