@@ -1,11 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, describe, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -236,6 +238,36 @@ describe("DesktopLocalEnvironmentAuth", () => {
 
       assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthSessionBootstrapError");
       assert.strictEqual(yield* Ref.get(requestCount), 1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits through a backend that stalls for 30 seconds after it is ready", () =>
+    Effect.gen(function* () {
+      const requestCount = yield* Ref.make(0);
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.gen(function* () {
+            yield* Ref.update(requestCount, (count) => count + 1);
+            const now = yield* Clock.currentTimeMillis;
+            return now < 30_000 ? yield* Effect.never : tokenResponse(request);
+          }),
+        ),
+      );
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, NodeCrypto.layerMac)),
+          ),
+        ),
+      );
+
+      const fiber = yield* auth.getBearerToken.pipe(Effect.result, Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(45));
+      const result = yield* Fiber.join(fiber);
+
+      assert.isTrue(Result.isSuccess(result));
+      assert.strictEqual(yield* Ref.get(requestCount), 4);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
