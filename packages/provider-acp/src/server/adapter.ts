@@ -826,6 +826,11 @@ function isCompactionMessage(message: ProviderAdapter.ProviderAdapterV2TurnMessa
   return message.text.trim() === "/compact" && message.attachments.length === 0;
 }
 
+// Agents also accept `/compact <focus>`; it compacts history even though it is sent as a prompt.
+function isCompactionCommand(message: ProviderAdapter.ProviderAdapterV2TurnMessage): boolean {
+  return /^\/compact(?:\s|$)/.test(message.text.trim()) && message.attachments.length === 0;
+}
+
 function negotiatedCapabilities(
   base: OrchestrationV2ProviderCapabilities,
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
@@ -7822,7 +7827,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (
             (flavor.supportsCompaction === true || flavor.compactSession !== undefined) &&
-            isCompactionMessage(context.input.message) &&
+            isCompactionCommand(context.input.message) &&
             settledStatus === "completed"
           ) {
             const nativeItemId = `${context.nativeTurnId}:compaction`;

@@ -2248,7 +2248,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live.each(["native", "protocol"] as const)(
+  it.live.each(["native", "focused", "protocol"] as const)(
     "retains ACP instructions across reopen but reinjects after %s compaction",
     (compaction) =>
       Effect.gen(function* () {
@@ -2264,7 +2264,13 @@ describe("AcpAdapterV2", () => {
           (yield* runTurn("Continue work.", "completed", true))[0]?.text,
           "Continue work.",
         );
-        yield* runTurn(compaction === "native" ? "/compact" : "Compact while working.");
+        yield* runTurn(
+          compaction === "native"
+            ? "/compact"
+            : compaction === "focused"
+              ? "/compact keep the plan"
+              : "Compact while working.",
+        );
         assertReinjectedInstructions(
           yield* runTurn("Continue after compact.", "completed", true),
           "Continue after compact.",
