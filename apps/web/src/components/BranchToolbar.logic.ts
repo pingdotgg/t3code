@@ -8,7 +8,7 @@ import type {
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
-import { workspaceRelativeFilePath } from "@t3tools/shared/path";
+import { normalizeProjectPathForComparison, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import { deriveCanInterruptRunningThread } from "../session-logic";
 export { deriveLocalBranchNameFromRemoteRef, sanitizeNewRefName } from "@t3tools/shared/git";
@@ -152,10 +152,6 @@ export interface WorkspaceModeNoticeThread {
   readonly archivedAt: string | null;
 }
 
-function normalizeComparablePath(path: string): string {
-  return path.replace(/[\\/]+$/, "");
-}
-
 /** The folder whose running threads the selected mode would disturb; `undefined` when none. */
 export function resolveWorkspaceModeFolder(input: {
   mode: WorkspaceMode;
@@ -173,16 +169,17 @@ export function findRunningThreadTitle(input: {
   projectRoot: string;
   currentThreadId: string;
 }): string | null {
-  const folder = normalizeComparablePath(input.folder);
-  const root = normalizeComparablePath(input.projectRoot);
+  const folder = normalizeProjectPathForComparison(input.folder);
+  const root = normalizeProjectPathForComparison(input.projectRoot);
   return (
     input.threads.find(
       (thread) =>
         thread.id !== input.currentThreadId &&
         thread.archivedAt === null &&
         (thread.runtime?.activeRunId ?? null) !== null &&
-        (thread.worktreePath === null ? root : normalizeComparablePath(thread.worktreePath)) ===
-          folder,
+        (thread.worktreePath === null
+          ? root
+          : normalizeProjectPathForComparison(thread.worktreePath)) === folder,
     )?.title ?? null
   );
 }

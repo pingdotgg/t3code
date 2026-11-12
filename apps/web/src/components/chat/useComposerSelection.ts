@@ -219,8 +219,11 @@ export function useComposerSelection(input: ComposerSelectionInput) {
           envMode: mode,
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
         }),
-        // A reused worktree's branch belongs to that folder, not to the project root.
-        ...(leavingReusedWorktree ? { worktreePath: null, branch: null } : {}),
+        // A reused worktree's branch belongs to that folder, not to the project root,
+        // but it stays the base or target for a new worktree.
+        ...(leavingReusedWorktree
+          ? { worktreePath: null, ...(workspaceMode === "switch" ? { branch: null } : {}) }
+          : {}),
       });
     }
     scheduleComposerFocus();

@@ -392,6 +392,7 @@ describe("findRunningThreadTitle", () => {
   it.each([
     ["finds a thread running in the project root", [thread("root", null, "run")], "/repo", "root"],
     ["finds a thread running in the worktree", [thread("wt", "/wt/", "run")], "/wt", "wt"],
+    ["matches Windows paths", [thread("win", "C:\\Repo\\wt", "run")], "c:/repo/wt", "win"],
     ["skips idle threads", [thread("idle", null, null)], "/repo", null],
     ["skips archived threads", [thread("old", null, "run", "2026-01-01")], "/repo", null],
     ["skips the current thread", [thread("self", null, "run")], "/repo", null],
