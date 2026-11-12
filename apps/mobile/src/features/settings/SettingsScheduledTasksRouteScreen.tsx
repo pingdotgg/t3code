@@ -877,7 +877,13 @@ function TaskForm({
     const runtimeChoices = runtimeModeChoicesForSupportedModes(
       providerForDraft?.supportedRuntimeModes,
     );
-    if (!boundToThread && !runtimeChoices.some((choice) => choice.mode === draft.runtimeMode)) {
+    const runtimeMode =
+      clampManagedRuntimeMode(
+        config?.managedPolicy,
+        draft.runtimeMode,
+        runtimeChoices.map((choice) => choice.mode),
+      ) ?? draft.runtimeMode;
+    if (!boundToThread && !runtimeChoices.some((choice) => choice.mode === runtimeMode)) {
       Dialog.alert("Permissions unavailable", "Choose permissions supported by this provider.");
       return;
     }
@@ -902,12 +908,7 @@ function TaskForm({
                 baseRef: draft.baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
-      runtimeMode:
-        clampManagedRuntimeMode(
-          config?.managedPolicy,
-          draft.runtimeMode,
-          runtimeChoices.map((choice) => choice.mode),
-        ) ?? draft.runtimeMode,
+      runtimeMode,
       interactionMode: boundToThread ? draft.interactionMode : interactionMode,
       creationSource: draft.task?.creationSource ?? "mobile",
     };
