@@ -150,12 +150,10 @@ it("tells the user when an option click moves their typed answer into the hidden
   const draftTarget = { environmentId, threadId: threadRef.threadId };
   const draftPrompt = () => useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt;
   using toast = vi.spyOn(toastManager, "add");
-  await using _screen = await render(
-    <PendingRequestsProbe
-      environmentId={environmentId}
-      projection={questionProjection(threadRef.threadId)}
-    />,
+  const probe = (threadId: ThreadId) => (
+    <PendingRequestsProbe environmentId={environmentId} projection={questionProjection(threadId)} />
   );
+  await using screen = await render(probe(threadRef.threadId));
 
   await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
   expect(toast).not.toHaveBeenCalled();
@@ -179,6 +177,12 @@ it("tells the user when an option click moves their typed answer into the hidden
     customAnswer: "second try",
   });
   expect(toast).toHaveBeenCalledTimes(1);
+
+  // The hook outlives a thread switch; text set aside in another thread is in another draft.
+  await screen.rerender(probe(ThreadId.make("other-thread")));
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "elsewhere"));
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  await screen.rerender(probe(threadRef.threadId));
 
   // regression: #35205 undo puts the set-aside text back, so the draft must not keep a copy to resend
   await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "first try"));

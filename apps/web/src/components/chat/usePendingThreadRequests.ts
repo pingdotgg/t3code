@@ -128,7 +128,14 @@ export function usePendingThreadRequests(input: {
   });
   const userInputResponsesInFlight = useRef(new Set<string>());
   // In the order the text went into the thread draft, which is how a copy is found again.
-  const displacedAnswers = useRef<Array<{ readonly key: string; readonly text: string }>>([]);
+  const displacedAnswers = useRef<
+    Array<{ readonly draft: string; readonly key: string; readonly text: string }>
+  >([]);
+  // This hook outlives a thread switch, and each thread has its own draft.
+  const displacedDraftKey =
+    typeof composerDraftTarget === "string"
+      ? composerDraftTarget
+      : `${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`;
   const [respondingRequestIds, setRespondingRequestIds] = useState<RuntimeRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     RuntimeRequestId[]
@@ -395,6 +402,7 @@ export function usePendingThreadRequests(input: {
     if (nextPrompt !== currentPrompt) {
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       displacedAnswers.current.push({
+        draft: displacedDraftKey,
         key: `${activePendingRequestKey}:${questionId}`,
         text: displacedAnswer ?? "",
       });
@@ -462,7 +470,10 @@ export function usePendingThreadRequests(input: {
     );
     const displaced = entries[index];
     if (displaced === undefined) return;
-    const later = entries.slice(index + 1).map((entry) => entry.text);
+    const later = entries
+      .slice(index + 1)
+      .filter((entry) => entry.draft === displaced.draft)
+      .map((entry) => entry.text);
     displacedAnswers.current = entries.filter((entry) => entry !== displaced);
     const currentPrompt =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
