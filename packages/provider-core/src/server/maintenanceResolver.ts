@@ -1070,6 +1070,11 @@ const resolveVitePlusSystemFirstTarget = Effect.fn("resolveVitePlusSystemFirstTa
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vpHome = path.dirname(path.dirname(shimPath));
+  // Vite+ 1.x reads `shimMode` as the Node.js mode only; package shims always run the managed copy.
+  const current = yield* fileSystem
+    .realPath(path.join(vpHome, "current"))
+    .pipe(Effect.orElseSucceed(() => null));
+  if (!current || !satisfiesSemverRange(path.basename(current), "<1.0.0")) return null;
   const configHome = env.XDG_CONFIG_HOME || (env.HOME ? path.join(env.HOME, ".config") : null);
   const configPaths = [
     path.join(vpHome, "config.json"),

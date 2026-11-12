@@ -2209,39 +2209,47 @@ it.layer(
   );
 
   it.effect.skipIf(windowsHost || !symlinksSupported)(
-    "does not update through a system-first Vite+ shim that runs a later install",
+    "updates the install a system-first Vite+ 0.x shim runs, and the managed copy on 1.x",
     () =>
       Effect.gen(function* () {
-        const home = yield* makeTempDir("t3-vite-plus-system-first");
-        const vpHome = NodePath.join(home, ".local", "share", "vite-plus");
-        const vp = NodePath.join(vpHome, "current", "bin", "vp");
-        writeExecutable(vp);
-        NodeFS.mkdirSync(NodePath.join(vpHome, "bin"), { recursive: true });
-        NodeFS.symlinkSync(vp, NodePath.join(vpHome, "bin", "package-tool"));
-        const configDir = NodePath.join(home, ".config", "vite-plus");
-        NodeFS.mkdirSync(configDir, { recursive: true });
-        NodeFS.writeFileSync(
-          NodePath.join(configDir, "config.json"),
-          JSON.stringify({ shimMode: "system_first" }),
-        );
-        const otherBin = NodePath.join(home, "other", "bin");
-        writeExecutable(NodePath.join(otherBin, "package-tool"));
+        for (const [version, lockKey] of [
+          ["0.3.0", "manual"],
+          ["1.5.1", "vite-plus-global"],
+        ] as const) {
+          const home = yield* makeTempDir("t3-vite-plus-system-first");
+          const vpHome = NodePath.join(home, ".local", "share", "vite-plus");
+          writeExecutable(NodePath.join(vpHome, version, "bin", "vp"));
+          NodeFS.symlinkSync(version, NodePath.join(vpHome, "current"));
+          NodeFS.mkdirSync(NodePath.join(vpHome, "bin"), { recursive: true });
+          NodeFS.symlinkSync(
+            NodePath.join(vpHome, "current", "bin", "vp"),
+            NodePath.join(vpHome, "bin", "package-tool"),
+          );
+          const configDir = NodePath.join(home, ".config", "vite-plus");
+          NodeFS.mkdirSync(configDir, { recursive: true });
+          NodeFS.writeFileSync(
+            NodePath.join(configDir, "config.json"),
+            JSON.stringify({ shimMode: "system_first" }),
+          );
+          const otherBin = NodePath.join(home, "other", "bin");
+          writeExecutable(NodePath.join(otherBin, "package-tool"));
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: "package-tool",
-            env: { HOME: home, PATH: [NodePath.join(vpHome, "bin"), otherBin].join(":") },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            stdoutSpawner(() => ""),
-          ),
-        );
+          const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+            packageToolUpdate,
+            {
+              binaryPath: "package-tool",
+              env: { HOME: home, PATH: [NodePath.join(vpHome, "bin"), otherBin].join(":") },
+            },
+          ).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              stdoutSpawner(() => ""),
+            ),
+          );
 
-        expect(capabilities.update?.lockKey).not.toBe("vite-plus-global");
+          expect(capabilities.update?.lockKey ?? "manual").toBe(lockKey);
+        }
       }),
   );
 
