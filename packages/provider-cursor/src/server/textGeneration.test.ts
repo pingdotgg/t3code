@@ -263,6 +263,11 @@ describe("CursorTextGeneration", () => {
     Effect.gen(function* () {
       hasCustomPolicy = true;
       customPolicy = '{ "networkPolicy": { "default": "deny", "allow": ["*.github.com"] } }';
+      cursorSdkMock.prompt.mockResolvedValueOnce({
+        id: "run-cursor-network-policy-test",
+        status: "finished",
+        result: '{"title":"Allowlist GitHub hosts"}',
+      });
       const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
       yield* generation.generateThreadTitle({
         cwd: "/real-workspace",
