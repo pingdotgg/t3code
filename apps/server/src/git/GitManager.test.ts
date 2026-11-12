@@ -1017,13 +1017,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const inFlight = yield* Effect.forkChild(lookup);
       yield* Deferred.await(gate.reached);
-      yield* runGit(repoDir, ["push", "origin", "--delete", "feature/racing-upstream"]);
       yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/raced-head"]);
       yield* manager.invalidateStatus(repoDir);
       yield* Deferred.succeed(gate.release, undefined);
       yield* Fiber.join(inFlight);
 
-      expect(yield* lookup).toBeNull();
+      expect((yield* lookup)?.number).toBe(238);
     }),
   );
 
@@ -2707,6 +2706,59 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(status.refName).toBe("feature/from-dev");
         expect(status.pr).toBeNull();
       }),
+  );
+
+  it.effect.each([
+    {
+      name: "a published branch renamed locally",
+      localBranch: "feature/local-review",
+      rename: true,
+    },
+    {
+      name: "a same-repo PR checked out under another name",
+      localBranch: "pulls/42",
+      rename: false,
+    },
+  ] as const)("status finds the upstream's PR for $name", ({ localBranch, rename }) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/published"]);
+      yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Feature"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/published"]);
+      if (rename) {
+        yield* runGit(repoDir, ["branch", "-m", localBranch]);
+      } else {
+        yield* runGit(repoDir, ["checkout", "-b", localBranch]);
+        yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/published"]);
+        yield* runGit(repoDir, ["branch", "-D", "feature/published"]);
+      }
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListByHeadSelector: {
+            "feature/published": [
+              {
+                number: 42,
+                title: "Feature",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+                baseRefName: "main",
+                headRefName: "feature/published",
+                state: "open",
+                updatedAt: "2026-08-20T10:00:00Z",
+              },
+            ],
+          },
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.refName).toBe(localBranch);
+      expect(status.pr?.number).toBe(42);
+    }),
   );
 
   it.effect("status finds a PR pushed under the branch's own name despite a default upstream", () =>

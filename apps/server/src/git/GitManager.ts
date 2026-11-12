@@ -81,7 +81,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import { extractBranchNameFromRemoteRef, isUpstreamAliasOfBranch } from "./remoteRefs.ts";
+import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
@@ -1794,7 +1794,34 @@ export const make = Effect.gen(function* () {
     return remoteUrl === null ? null : remoteName;
   });
 
-  // A branch's PR head is where it publishes, so a base it tracks is not one (see resolvePushDestination).
+  // `checkout -b x origin/dev` tracks the ref it was cut from; Git's oldest reflog entry records that.
+  // `checkout --track` names the branch after a suffix of its upstream, so callers exclude that alias.
+  const wasBranchCreatedFrom = Effect.fn("GitManager.wasBranchCreatedFrom")(function* (
+    cwd: string,
+    branch: string,
+    upstreamRef: string,
+  ) {
+    const result = yield* gitCore.execute({
+      operation: "GitManager.wasBranchCreatedFrom",
+      cwd,
+      args: ["reflog", "show", "--format=%gs", `refs/heads/${branch}`, "--"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    });
+    if (result.exitCode !== 0) return false;
+    const startPoint = result.stdout
+      .trimEnd()
+      .split("\n")
+      .at(-1)
+      ?.match(/^branch: Created from (.+)$/)?.[1];
+    return (
+      startPoint === upstreamRef ||
+      startPoint === `remotes/${upstreamRef}` ||
+      startPoint === `refs/remotes/${upstreamRef}`
+    );
+  });
+
+  // worktree add can set the branch's base as upstream; that is not its published PR head.
   const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
     cwd: string,
     details: {
@@ -1816,14 +1843,23 @@ export const make = Effect.gen(function* () {
         };
       }
     }
-    if (
-      headContext.isCrossRepository ||
-      details.upstreamRef === null ||
-      isUpstreamAliasOfBranch(details.branch, {
-        branchName: headContext.headBranch,
-        upstreamRef: details.upstreamRef,
-      })
-    ) {
+    if (headContext.headBranch === details.branch || headContext.isCrossRepository) {
+      return { headContext, lookup: true };
+    }
+    const upstreamHeadIsBase =
+      headContext.headBranch === details.defaultBranch ||
+      (details.defaultBranch === null &&
+        (headContext.headBranch === "main" || headContext.headBranch === "master")) ||
+      headContext.headBranch ===
+        (yield* gitCore
+          .readBranchBase(cwd, details.branch)
+          .pipe(Effect.orElseSucceed(() => null))) ||
+      (details.upstreamRef !== null &&
+        !details.upstreamRef.endsWith(`/${details.branch}`) &&
+        (yield* wasBranchCreatedFrom(cwd, details.branch, details.upstreamRef).pipe(
+          Effect.orElseSucceed(() => false),
+        )));
+    if (!upstreamHeadIsBase) {
       return { headContext, lookup: true };
     }
     const remoteName = yield* findRemoteTrackingRemote(
