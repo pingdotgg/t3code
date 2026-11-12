@@ -341,6 +341,42 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     }),
   );
 
+  it.effect("stamps the Codex config under the subprocess HOME", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-user-home-" });
+      const configPath = path.join(home, ".codex", "config.toml");
+      const mcpListLog = path.join(home, "mcp-list.log");
+      yield* fs.makeDirectory(path.dirname(configPath));
+      yield* fs.writeFileString(configPath, "");
+      yield* fs.writeFileString(mcpListLog, "");
+      const listCount = fs
+        .readFileString(mcpListLog)
+        .pipe(Effect.map((log) => log.split("\n").filter(Boolean).length));
+      yield* withFakeCodexEnv(
+        {
+          output: JSON.stringify({ title: "Live title" }),
+          environment: { HOME: home, CODEX_HOME: undefined },
+          mcpServers: [{ name: "augmenter", enabled: true }],
+          mcpListLog,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generate = textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Describe this change",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            });
+            yield* generate;
+            yield* fs.utimes(configPath, 0, 0);
+            yield* generate;
+            expect(yield* listCount).toBe(2);
+          }),
+      );
+    }),
+  );
+
   it.effect("drops the requested model's options when falling back to another model", () =>
     withFakeCodexEnv(
       {

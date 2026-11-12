@@ -345,11 +345,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath, homeDirectory) }
           : {}),
       };
+      // Codex reads HOME on Unix but the profile folder, not HOME, on Windows.
+      const codexUserHome =
+        ((yield* HostProcess.Platform) !== "win32" && effectiveEnvironment.HOME) || homeDirectory;
       const mcpServersOff = yield* listEnabledMcpServers({
         binary,
         cwd,
         env,
-        codexHome: env.CODEX_HOME ?? path.join(homeDirectory, ".codex"),
+        codexHome: env.CODEX_HOME ?? path.join(codexUserHome, ".codex"),
         launchArgs: codexMcpListLaunchArgs(launchArgs),
       }).pipe(Effect.map(codexMcpServersOff));
       const spawnCommand = yield* resolveSpawnCommand(
