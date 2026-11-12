@@ -4808,13 +4808,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { allowNonZeroExit: true },
     );
     if (config.exitCode !== 0 && config.exitCode !== 1) return undefined;
-    let command = environment.GIT_SSH_COMMAND;
+    // Config is listed system to local; Git uses the last core.sshCommand.
+    let configuredCommand: string | undefined;
     for (const line of config.stdout.split("\n")) {
       if (line.length === 0) continue;
       if (!line.startsWith("core.sshcommand ")) return undefined;
-      command ??= line.slice("core.sshcommand ".length);
+      configuredCommand = line.slice("core.sshcommand ".length);
     }
-    command ??= "ssh";
+    const command = environment.GIT_SSH_COMMAND ?? configuredCommand ?? "ssh";
     const program = SSH_COMMAND_PROGRAM.exec(command.trim());
     const executable = program?.[1] ?? program?.[2] ?? program?.[3] ?? "";
     return /(?:^|[\\/])ssh(?:\.exe)?$/i.test(executable)

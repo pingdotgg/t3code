@@ -1642,6 +1642,59 @@ it.effect("names a pending SSH key approval when a fetch times out on it", () =>
   ),
 );
 
+it.effect("fetches with the core.sshCommand Git would use, not an earlier one", () =>
+  Effect.gen(function* () {
+    const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const sshCommands: Array<CommandLine.Word | undefined> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (!ChildProcess.isStandardCommand(command))
+          return yield* Effect.die("expected Git command");
+        if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
+        sshCommands.push(command.options.env?.GIT_SSH_COMMAND);
+        return makeSuccessfulHandle("");
+      }),
+    );
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const cwd = yield* makeTmpDir();
+    const gitIn = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "GitVcsDriver.test.git", cwd, args, timeoutMs: 10_000 });
+    yield* gitIn(["init"]);
+    // An include listed before the repository's own value stands in for global config.
+    yield* writeTextFile(cwd, "earlier-config", "[core]\n\tsshCommand = ssh -i earlier-key\n");
+    const path = yield* Path.Path;
+    yield* gitIn(["config", "include.path", path.join(cwd, "earlier-config")]);
+    yield* (yield* FileSystem.FileSystem).writeFileString(
+      path.join(cwd, ".git", "config"),
+      "[core]\n\tsshCommand = ssh -i repository-key\n",
+      { flag: "a" },
+    );
+    assert.equal(
+      (yield* gitIn(["config", "--get", "core.sshCommand"])).stdout.trim(),
+      "ssh -i repository-key",
+    );
+    const {
+      GIT_SSH_COMMAND: _command,
+      GIT_SSH: _ssh,
+      GIT_SSH_VARIANT: _variant,
+      GIT_CONFIG: _config,
+      ...environment
+    } = yield* HostProcess.Environment;
+    yield* driver
+      .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+      .pipe(Effect.provideService(HostProcess.Environment, environment));
+    assert.deepEqual(sshCommands, ["ssh -i repository-key -o LogLevel=DEBUG1"]);
+  }).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("does not fetch for status when the branch tracks a local branch", () =>
   Effect.scoped(
     Effect.gen(function* () {
