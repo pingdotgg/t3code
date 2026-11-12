@@ -1,5 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import { PanelTabActions, PanelTabBreadcrumb, useInPanelTabBar } from "./PanelTabBreadcrumb";
+import {
+  PanelTabActions,
+  PanelTabBreadcrumb,
+  useInPanelTabBar,
+  usePanelTabBreadcrumbOnBar,
+} from "./PanelTabBreadcrumb";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
   isAtomCommandInterrupted,
@@ -263,6 +268,8 @@ export default function DiffPanel({
     wordWrap: settings.wordWrap,
   }));
   const inPanelTabBar = useInPanelTabBar();
+  // On the pane's bar the breadcrumb also shares the row with the pane's tabs.
+  const crumbOnBar = usePanelTabBreadcrumbOnBar();
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const diffIgnoreWhitespace =
@@ -891,9 +898,8 @@ export default function DiffPanel({
   // Keep the comparison picker reachable even when the labels truncate.
   const crowdedTab =
     inPanelTabBar &&
-    selectedRunId === null &&
-    selectedGitScope === "branch" &&
-    !!selectedGitSource?.baseRef;
+    (crumbOnBar ||
+      (selectedRunId === null && selectedGitScope === "branch" && !!selectedGitSource?.baseRef));
   const scopeCrumb = (
     <PanelTabBreadcrumb>
       <span className="flex min-w-0 items-center gap-3">
