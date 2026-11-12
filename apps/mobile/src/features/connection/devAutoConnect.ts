@@ -6,7 +6,7 @@ import { findLinkedRoute, updateLinkedRoute } from "../../lib/appLinking";
 import { rootNavigationRef, whenRootNavigationReady } from "../../lib/rootNavigation";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { leaveSettingsPage } from "../settings/settings-navigation";
-import { workspaceHasColumns } from "../workspace/workspace-selection-store";
+import { workspaceHasColumns } from "../layout/workspace/workspace-selection-store";
 import { pairEnvironment } from "../../state/use-remote-environment-registry";
 
 export type DevAutoConnectAttempt =
