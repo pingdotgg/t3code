@@ -1057,6 +1057,7 @@ describe("snapshotComposerSend", () => {
       reviewComments: [],
       threadContexts: [],
       environmentContexts: [],
+      replyTo: null,
     });
 
     expect(snapshot.composerText).toBe("hello  ");
