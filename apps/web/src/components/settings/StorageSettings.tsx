@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import { CalendarIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -23,15 +24,10 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupInput, InputGroupUnit } from "../ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "../ui/number-field";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { DatabaseStorageNotice } from "./DatabaseStorageNotice";
 import { AdvancedSettings } from "./AdvancedSettings";
@@ -111,150 +107,165 @@ export function WorktreesDirectoryRow() {
 
 type SaveOptions = Parameters<ReturnType<typeof useUpdateScopedSettings>>[1];
 
+const RETENTION_PRESET_DAYS = [1, 3, 7, 14, 30, 60, 90, 180, 365] as const;
+const MIN_RETENTION_DAYS = 1;
+const MAX_RETENTION_DAYS = 3650;
+// Opening a custom draft must not enable cleanup before its first save.
+const DEFAULT_RETENTION_DAYS = 8;
+
+function formatRetentionDays(days: number): string {
+  return `After ${days} ${days === 1 ? "day" : "days"}`;
+}
+
+/**
+ * A retention duration: Off, a preset, or Custom with a days field for any
+ * value in range. A stored value that is not a preset opens as Custom.
+ */
 function RetentionControl({
   label,
   value,
   onChange,
-  minimum = 1,
+  minimum = MIN_RETENTION_DAYS,
 }: {
   label: string;
   value: number | null;
   onChange: (value: number | null, onFailed: () => void) => void;
   minimum?: number;
 }) {
-  const [draft, setDraft] = useState(value);
+  const [customRequested, setCustomRequested] = useState(false);
+  const [draft, setDraft] = useState(String(value ?? DEFAULT_RETENTION_DAYS));
   const [savedValue, setSavedValue] = useState(value);
-  // Saving an age can start a cleanup sweep, so turning a rule on only opens a draft.
-  // While its first save is in flight this holds that submission.
-  const [enabling, setEnabling] = useState<"draft" | "edited" | { days: number } | null>(null);
-  // Holds an age until Enter or focus leaves the row: one edited before focus moved to the
-  // switch, so switching off never saves it first, or one stepped toward a rule's first age,
-  // so raising it from 8 never saves a shorter age on the way.
-  const [held, setHeld] = useState(false);
-  // Hides a saved rule's age once it is switched off, so no blur can save it after null.
-  const [switchedOff, setSwitchedOff] = useState(false);
+  const edited = useRef(false);
+  const menuOpen = useRef(false);
+  const pending = useRef<{ days: number | null } | null>(null);
+  const [submitted, setSubmitted] = useState<{ days: number | null } | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const row = useRef<HTMLDivElement>(null);
   if (savedValue !== value) {
     setSavedValue(value);
-    setDraft(value);
-    setEnabling(null);
-    setHeld(false);
-    setSwitchedOff(false);
+    setSubmitted(null);
+    setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
   }
-  const pending = typeof enabling === "object" ? enabling : null;
-  const on = (value !== null && !switchedOff) || enabling !== null;
-  const row = useRef<HTMLDivElement>(null);
-
-  const commit = (next: number) => {
-    const days = Math.min(3650, Math.max(minimum, Math.round(next)));
-    setDraft(days);
-    setHeld(false);
-    if (days === pending?.days) return;
-    if (value !== null) {
-      onChange(days, () => {});
-      return;
-    }
+  const currentValue = submitted ? submitted.days : value;
+  const isPreset =
+    currentValue !== null && (RETENTION_PRESET_DAYS as readonly number[]).includes(currentValue);
+  const custom = customRequested || (currentValue !== null && !isPreset);
+  const selected = custom ? "custom" : currentValue === null ? "off" : String(currentValue);
+  const save = (days: number | null) => {
+    edited.current = false;
     const submission = { days };
-    setEnabling(submission);
-    onChange(days, () => setEnabling((current) => (current === submission ? null : current)));
+    pending.current = submission;
+    setSubmitted(submission);
+    onChange(days, () => {
+      if (pending.current !== submission) return;
+      pending.current = null;
+      setSubmitted(null);
+      setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
+      if (value === null) setCustomRequested(false);
+    });
   };
-
-  const switchOff = () => {
-    setDraft(value);
-    setHeld(false);
-    setEnabling(null);
-    if (value === null && pending === null) return;
-    setSwitchedOff(true);
-    onChange(null, () => setSwitchedOff(false));
+  const commit = () => {
+    const parsed = Number(draft);
+    edited.current = false;
+    if (
+      draft.trim() !== "" &&
+      Number.isInteger(parsed) &&
+      parsed >= minimum &&
+      parsed <= MAX_RETENTION_DAYS
+    ) {
+      setDraft(String(parsed));
+      if (parsed !== currentValue) save(parsed);
+    } else setDraft(String(currentValue ?? DEFAULT_RETENTION_DAYS));
   };
-
   return (
     <div
       ref={row}
-      className="flex items-center gap-3"
+      className="flex items-center gap-2"
       onBlur={(event) => {
-        if (event.currentTarget.contains(event.relatedTarget)) return;
-        if (held && draft !== null) commit(draft);
-        else setEnabling((current) => (typeof current === "string" ? null : current));
+        if (menuOpen.current || event.currentTarget.contains(event.relatedTarget)) return;
+        if (edited.current) commit();
+        else if (value === null && pending.current === null) setCustomRequested(false);
       }}
     >
-      {on ? (
-        <NumberField
-          value={draft}
-          min={minimum}
-          max={3650}
-          step={1}
-          size="sm"
-          className="w-auto"
-          onValueChange={(next) => {
-            setDraft(next);
-            setEnabling((current) => (current === "draft" ? "edited" : current));
-          }}
-          onValueCommitted={(next, { reason, event }) => {
-            if (next === null) setDraft(value);
-            else if (
-              reason === "input-blur"
-                ? event instanceof FocusEvent &&
-                  event.relatedTarget instanceof Node &&
-                  row.current?.contains(event.relatedTarget)
-                : value === null
-            ) {
-              setDraft(next);
-              setHeld(true);
-            } else commit(next);
-          }}
-        >
-          <NumberFieldGroup>
-            <NumberFieldDecrement aria-label={`Decrease ${label}`} />
-            <NumberFieldInput
-              aria-label={`${label} in days`}
-              autoFocus={value === null}
-              size={5}
-              className="w-auto grow-0 text-right"
-              // Any typed or pasted edit replaces a held age: NumberField commits it on blur itself,
-              // and text it cannot parse yet must not leave the held age to be saved.
-              onChange={() => setHeld(false)}
-              onPaste={() => setHeld(false)}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                if (event.key === "Enter") {
-                  // Blurring lets NumberField parse the visible text and commit it once. It
-                  // skips an unedited value, so an untouched draft is committed here.
-                  const input = event.currentTarget;
-                  const shown =
-                    draft !== null && input.value === new Intl.NumberFormat().format(draft);
-                  if (enabling === "draft" && shown) commit(draft);
-                  input.blur();
-                } else if (event.key === "Escape" && (held || typeof enabling === "string")) {
-                  // An unhandled Escape closes the settings page.
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setDraft(pending?.days ?? value);
-                  setHeld(false);
-                  setEnabling((current) => (typeof current === "string" ? null : current));
-                }
-              }}
-            />
-            <span aria-hidden="true" className="self-center pr-2 text-xs">
-              days
-            </span>
-            <NumberFieldIncrement aria-label={`Increase ${label}`} />
-          </NumberFieldGroup>
-        </NumberField>
-      ) : (
-        <span className="text-xs text-muted-foreground">Off</span>
-      )}
-      <Switch
-        aria-label={label}
-        checked={on}
-        // Keeps focus in the age field, so switching off never commits an edited age first.
-        onMouseDown={(event) => event.preventDefault()}
-        onCheckedChange={(enabled) => {
-          if (enabled) {
-            setDraft(8);
-            setEnabling("draft");
-          } else switchOff();
+      <Select
+        value={selected}
+        onOpenChange={(open) => {
+          menuOpen.current = open;
         }}
-      />
+        onValueChange={(next) => {
+          edited.current = false;
+          if (next === "off") {
+            setCustomRequested(false);
+            if (currentValue !== null) save(null);
+          } else if (next === "custom") {
+            setCustomRequested(true);
+            setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
+          } else if (next !== null) {
+            setCustomRequested(false);
+            save(Number(next));
+          }
+        }}
+      >
+        <SelectTrigger
+          size="sm"
+          aria-label={label}
+          leadingIcon={<CalendarIcon />}
+          className="w-auto min-w-36"
+        >
+          <SelectValue>
+            {selected === "off"
+              ? "Off"
+              : selected === "custom"
+                ? "Custom"
+                : formatRetentionDays(Number(selected))}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectPopup
+          align="end"
+          alignItemWithTrigger={false}
+          finalFocus={custom ? input : undefined}
+        >
+          <SelectItem value="off">Off</SelectItem>
+          {RETENTION_PRESET_DAYS.map((days) => (
+            <SelectItem key={days} value={String(days)}>
+              {formatRetentionDays(days)}
+            </SelectItem>
+          ))}
+          <SelectItem value="custom">Custom</SelectItem>
+        </SelectPopup>
+      </Select>
+      {custom ? (
+        <InputGroup className="w-24">
+          <InputGroupInput
+            ref={input}
+            autoFocus
+            size="sm"
+            type="number"
+            min={minimum}
+            max={MAX_RETENTION_DAYS}
+            value={draft}
+            aria-label={`${label} in days`}
+            onChange={(event) => {
+              edited.current = true;
+              setDraft(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (event.key === "Enter") {
+                commit();
+                event.currentTarget.blur();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                edited.current = false;
+                setDraft(String(value ?? DEFAULT_RETENTION_DAYS));
+                if (value === null) setCustomRequested(false);
+              }
+            }}
+          />
+          <InputGroupUnit>days</InputGroupUnit>
+        </InputGroup>
+      ) : null}
     </div>
   );
 }
@@ -557,7 +568,7 @@ function StorageCleanupScopeNotice() {
   );
 }
 
-export function WorktreeCleanupSection() {
+export function WorktreeCleanupSection({ title = "Cleanup" }: { title?: string }) {
   const { scope, environments, connectedEnvironments, targets, target } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -600,7 +611,7 @@ export function WorktreeCleanupSection() {
     )
   ) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection id="storage-worktrees" title={title} variant="plain">
         <SettingsScopeNotice inline target="all">
           Update the selected machines to configure project worktree cleanup.
         </SettingsScopeNotice>
@@ -609,14 +620,14 @@ export function WorktreeCleanupSection() {
   }
   if (!supportsStorageCleanup(connectedEnvironments)) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection id="storage-worktrees" title={title} variant="plain">
         <StorageCleanupScopeNotice />
       </SettingsSection>
     );
   }
 
   return (
-    <SettingsSection id="storage-worktrees" title="Cleanup">
+    <SettingsSection id="storage-worktrees" title={title}>
       <>
         {isProjectScope && (
           <SettingsRow
@@ -632,32 +643,21 @@ export function WorktreeCleanupSection() {
             settingKeys={["worktreeCleanup"]}
             mixed={mixedModes}
             control={
-              <Select
-                value={mixedModes ? null : mode}
-                onValueChange={(next) => {
+              <ToggleGroup
+                aria-label="Automatic worktree cleanup"
+                value={mixedModes ? [] : [mode]}
+                onValueChange={(values) => {
+                  const next = values[0];
                   if (next === "inherit") clearSettings(["worktreeCleanup"]);
                   else if (next === "off") updateSettings({ worktreeCleanup: { mode: "off" } });
                   else if (next === "custom")
                     updateSettings({ worktreeCleanup: { mode: "custom", rules: {} } });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Automatic worktree cleanup">
-                  <SelectValue>
-                    {mixedModes
-                      ? "Mixed"
-                      : mode === "inherit"
-                        ? "Inherit"
-                        : mode === "off"
-                          ? "Off"
-                          : "Custom"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit</SelectItem>
-                  <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
-                </SelectPopup>
-              </Select>
+                <Toggle value="inherit">Inherit</Toggle>
+                <Toggle value="off">Off</Toggle>
+                <Toggle value="custom">Custom</Toggle>
+              </ToggleGroup>
             }
           />
         )}
@@ -667,7 +667,7 @@ export function WorktreeCleanupSection() {
               title="Delete worktrees with deleted threads"
               status={ruleStatus("worktreeOnDelete")}
               managedPaths={lockablePath("worktreeOnDelete")}
-              description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
+              description="When every thread using the worktree is deleted."
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -681,7 +681,7 @@ export function WorktreeCleanupSection() {
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
               managedPaths={lockablePath("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
+              description="Once the pull request for the branch is merged."
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -695,7 +695,7 @@ export function WorktreeCleanupSection() {
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
               managedPaths={lockablePath("worktreeAfterDays")}
-              description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
+              description="No thread activity for this long."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
@@ -746,7 +746,7 @@ export function WorktreeCleanupSection() {
                 title="Delete unchanged worktrees"
                 status={ruleStatus("worktreeUnchanged")}
                 managedPaths={lockablePath("worktreeUnchanged")}
-                description="Remove worktrees with no commits beyond the default branch."
+                description="No commits beyond the default branch."
                 serverScoped={!isProjectScope}
                 control={
                   <Switch
@@ -868,7 +868,7 @@ export function StorageCleanupSections() {
             title="Delete old browser artifacts"
             status={artifactsStatus}
             managedPaths={["storageCleanup.browserArtifactsAfterDays"]}
-            description="Delete saved browser captures after this many days. Older capture links will no longer open."
+            description="Screenshots, recordings and traces from agent browsing."
             serverScoped
             control={
               <RetentionControl
@@ -886,7 +886,7 @@ export function StorageCleanupSections() {
             title="Delete old rotated logs"
             status={logsStatus}
             managedPaths={["storageCleanup.logsAfterDays"]}
-            description="Delete inactive rotated log files after this many days. Current logs are kept."
+            description="Current logs are always kept."
             serverScoped
             control={
               <RetentionControl

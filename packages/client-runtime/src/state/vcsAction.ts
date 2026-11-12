@@ -43,6 +43,19 @@ export const VcsActionOperation = Schema.Literals([
 ]);
 export type VcsActionOperation = typeof VcsActionOperation.Type;
 
+/**
+ * One row of a stacked action's progress checklist. Rows start pending from
+ * `action_started.phases` (label null until the phase starts) and a phase
+ * with several labeled steps (generating a message, then committing) grows
+ * one row per step.
+ */
+export interface VcsActionStep {
+  readonly phase: GitActionProgressPhase;
+  readonly label: string | null;
+  readonly status: "pending" | "active" | "done";
+  readonly detail: string | null;
+}
+
 export interface VcsActionState {
   readonly isRunning: boolean;
   readonly operation: VcsActionOperation | null;
@@ -54,6 +67,7 @@ export interface VcsActionState {
   readonly lastOutputLine: string | null;
   readonly phaseStartedAtMs: number | null;
   readonly hookStartedAtMs: number | null;
+  readonly steps: ReadonlyArray<VcsActionStep>;
   readonly error: string | null;
 }
 
@@ -159,6 +173,7 @@ export const EMPTY_VCS_ACTION_STATE = Object.freeze<VcsActionState>({
   lastOutputLine: null,
   phaseStartedAtMs: null,
   hookStartedAtMs: null,
+  steps: [],
   error: null,
 });
 
@@ -317,6 +332,35 @@ export function consumeVcsActionProgress<E, R>(
   });
 }
 
+function finishActiveSteps(steps: ReadonlyArray<VcsActionStep>): VcsActionStep[] {
+  return steps.map((step) =>
+    step.status === "active" ? { ...step, status: "done" as const } : step,
+  );
+}
+
+function applyVcsActionStepStarted(
+  steps: ReadonlyArray<VcsActionStep>,
+  event: Extract<GitActionProgressEvent, { kind: "phase_started" }>,
+): VcsActionStep[] {
+  const next = finishActiveSteps(steps);
+  const started: VcsActionStep = {
+    phase: event.phase,
+    label: event.label,
+    status: "active",
+    detail: null,
+  };
+  const pendingIndex = next.findIndex(
+    (step) => step.status === "pending" && step.phase === event.phase,
+  );
+  if (pendingIndex !== -1) {
+    next[pendingIndex] = started;
+    return next;
+  }
+  const firstPending = next.findIndex((step) => step.status === "pending");
+  next.splice(firstPending === -1 ? next.length : firstPending, 0, started);
+  return next;
+}
+
 export function applyVcsActionProgressEvent(
   current: VcsActionState,
   event: GitActionProgressEvent,
@@ -338,6 +382,12 @@ export function applyVcsActionProgressEvent(
         hookStartedAtMs: null,
         hookName: null,
         lastOutputLine: null,
+        steps: event.phases.map((phase) => ({
+          phase,
+          label: null,
+          status: "pending" as const,
+          detail: null,
+        })),
         error: null,
       };
     case "phase_started":
@@ -353,6 +403,7 @@ export function applyVcsActionProgressEvent(
         hookStartedAtMs: null,
         hookName: null,
         lastOutputLine: null,
+        steps: applyVcsActionStepStarted(current.steps, event),
         error: null,
       };
     case "hook_started":
@@ -398,6 +449,7 @@ export function applyVcsActionProgressEvent(
         actionId: event.actionId,
         action: event.action,
         operation: "run_change_request",
+        steps: finishActiveSteps(current.steps),
         error: null,
       };
     case "action_failed":

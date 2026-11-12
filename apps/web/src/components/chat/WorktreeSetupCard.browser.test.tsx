@@ -46,33 +46,32 @@ const card = (value: WorktreeSetupSnapshot) => (
   <WorktreeSetupCard snapshot={value} onCancel={null} onWorkLocally={null} onOpenTerminal={null} />
 );
 
-it("ticks the running stage while finished stages keep their duration", async () => {
+it("ticks the running setup duration", async () => {
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
   await using screen = await render(card(snapshot({})));
   // Assert synchronously: expect.element polls on timers these tests fake.
   const section = screen.getByRole("region", { name: "Worktree setup" });
 
-  expect(section.element().textContent).toContain("Fetch base branch3s");
-  expect(section.element().textContent).toContain("Check out files7s");
+  expect(section.element().textContent).toContain("Check out files");
+  expect(section.element().textContent).toContain("Working for 10s");
 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5_000);
   });
-  expect(section.element().textContent).toContain("Fetch base branch3s");
-  expect(section.element().textContent).toContain("Check out files12s");
+  expect(section.element().textContent).toContain("Working for 15s");
 });
 
-it("stops a stage interrupted by the setup ending at the setup's end", async () => {
+it("keeps the failed setup duration at its end", async () => {
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
   const failed = snapshot({ phase: "failed", endedAt: "2026-10-26T12:00:05.000Z" });
   await using screen = await render(card(failed));
   const section = screen.getByRole("region", { name: "Worktree setup" });
 
-  expect(section.element().textContent).toContain("Check out files2s");
+  expect(section.element().textContent).toContain("took 5s");
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5_000);
   });
-  expect(section.element().textContent).toContain("Check out files2s");
+  expect(section.element().textContent).toContain("took 5s");
 });

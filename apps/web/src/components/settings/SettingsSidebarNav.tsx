@@ -1,3 +1,4 @@
+import "./settingsShell.css";
 import {
   lazy,
   Suspense,
@@ -39,6 +40,7 @@ import { T, useGT, useMessages } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Kbd } from "../ui/kbd";
 import {
   SidebarContent,
@@ -47,7 +49,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarInput,
 } from "../ui/sidebar";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
@@ -246,73 +247,86 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       {...navArea}
       role="navigation"
       aria-label="Settings sections"
-      data-chrome-scope=""
+      data-settings-nav=""
       className={cn(
-        "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
+        "flex w-[231px] shrink-0 flex-col border-e text-foreground max-md:w-14",
         compactSearchOpen &&
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
     >
-      <SidebarContent className="overflow-x-hidden">
-        <SidebarGroup>
-          <div className="flex flex-col gap-2">
-            <div
-              className={cn(
-                "relative isolate flex h-8 items-center gap-2 rounded-control px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:surface-well",
-                !compactSearchOpen && "max-md:hidden",
-              )}
-            >
-              <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground" />
-              {/* Native search inputs clear on Escape even during IME composition. */}
-              <SidebarInput
-                ref={searchInputRef}
-                nativeInput
-                type="text"
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.currentTarget.value);
-                  setActiveResultIndex(0);
-                }}
-                onKeyDown={handleSearchKeyDown}
-                onFocus={() => setCompactSearchOpen(true)}
-                onBlur={() => {
-                  if (!isSearching) setCompactSearchOpen(false);
-                }}
-                placeholder={gt("Search")}
-                aria-label={gt("Search settings")}
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={isSearching && hasResults}
-                aria-controls={isSearching && hasResults ? "settings-search-results" : undefined}
-                aria-activedescendant={
-                  isSearching && results[activeResultIndex]
-                    ? `settings-search-result-${results[activeResultIndex].id}`
-                    : undefined
-                }
-                className="min-w-0 flex-1"
-              />
-              {isSearching ? (
-                <Button
-                  type="button"
-                  size="icon-micro"
-                  variant="ghost-muted"
-                  className="shrink-0"
-                  aria-label={gt("Clear settings search")}
-                  onClick={() => {
-                    clearSearch();
-                    searchInputRef.current?.focus();
+      <SidebarContent
+        className="overflow-x-hidden"
+        fixedHeader={
+          <div className={cn("px-3 pt-3 pb-3.5", !compactSearchOpen && "max-md:hidden")}>
+            {/* Pen EV7oi: a search field with a trailing slash hint. */}
+            <div className={compactSearchOpen ? undefined : "max-md:hidden"}>
+              {/* A search landmark, so the nav holds no group without a heading. */}
+              <InputGroup role="search">
+                <InputGroupAddon>
+                  <SearchIcon className="size-3.5" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  ref={searchInputRef}
+                  nativeInput
+                  size="compact"
+                  placeholder={gt("Search settings")}
+                  // Native search inputs clear on Escape even during IME composition.
+                  type="text"
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.currentTarget.value);
+                    setActiveResultIndex(0);
                   }}
-                >
-                  <XIcon className="size-3" />
-                </Button>
-              ) : (
-                <Kbd>/</Kbd>
-              )}
+                  onKeyDown={handleSearchKeyDown}
+                  onFocus={() => setCompactSearchOpen(true)}
+                  onBlur={() => {
+                    if (!isSearching) setCompactSearchOpen(false);
+                  }}
+                  aria-label={gt("Search settings")}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={isSearching && hasResults}
+                  aria-controls={isSearching && hasResults ? "settings-search-results" : undefined}
+                  aria-activedescendant={
+                    isSearching && results[activeResultIndex]
+                      ? `settings-search-result-${results[activeResultIndex].id}`
+                      : undefined
+                  }
+                />
+                {isSearching ? (
+                  <InputGroupAddon align="inline-end">
+                    {/* Same as the thread search: 2px in from the addon, so the 12px glyph
+                        centers 16px inside the field like a row trailing glyph. */}
+                    <Button
+                      type="button"
+                      size="icon-micro"
+                      variant="ghost-muted"
+                      className="me-0.5"
+                      aria-label={gt("Clear settings search")}
+                      onClick={() => {
+                        clearSearch();
+                        searchInputRef.current?.focus();
+                      }}
+                    >
+                      <XIcon className="size-3" />
+                    </Button>
+                  </InputGroupAddon>
+                ) : (
+                  <InputGroupAddon align="inline-end">
+                    <Kbd>/</Kbd>
+                  </InputGroupAddon>
+                )}
+              </InputGroup>
             </div>
+          </div>
+        }
+      >
+        <SidebarGroup>
+          <div className="flex flex-col gap-3.5">
             {isSearching && results.length === 0 ? (
               <p
                 role="status"
-                className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
+                className="px-2 py-6 text-center text-caption text-sidebar-muted-foreground"
               >
                 <T>No settings found</T>
               </p>
@@ -330,11 +344,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     ref={index === activeResultIndex ? scrollResultIntoView : undefined}
                   >
                     <SidebarMenuButton
+                      size="compact"
                       id={`settings-search-result-${item.id}`}
                       role="option"
                       aria-selected={index === activeResultIndex}
                       tabIndex={-1}
-                      size="sm"
                       isActive={index === activeResultIndex}
                       className="h-auto min-h-10 items-start"
                       onMouseMove={() => setActiveResultIndex(index)}
@@ -354,11 +368,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))}
               </SidebarMenu>
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col">
                 {compactSearchOpen ? null : (
                   <SidebarMenu className="md:hidden">
                     <SidebarMenuItem>
                       <SidebarMenuButton
+                        size="compact"
                         aria-label={gt("Search settings")}
                         onClick={() => setCompactSearchOpen(true)}
                       >
@@ -367,16 +382,16 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     </SidebarMenuItem>
                   </SidebarMenu>
                 )}
-                <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col gap-4">
+                <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col">
                   {SETTINGS_NAV_GROUPS.map((group, index) => (
                     <div
                       key={group.heading}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                      className="flex flex-col max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
                     >
                       <h3
                         id={`settings-nav-group-${index}`}
                         className={cn(
-                          "px-2 text-meta text-sidebar-muted-foreground",
+                          "px-2 pt-3 pb-1.5 text-caption text-sidebar-muted-foreground",
                           group.headingHidden ? "sr-only" : !compactSearchOpen && "max-md:sr-only",
                         )}
                       >
@@ -384,19 +399,20 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       </h3>
                       {/* The heading stays outside the group it names so NVDA does not read the name twice. */}
                       <div role="group" aria-labelledby={`settings-nav-group-${index}`}>
-                        <SidebarMenu>
+                        <SidebarMenu size="compact">
                           {group.paths.map((to) => {
                             const Icon = SETTINGS_SECTION_ICONS[to];
                             const isActive = activePath === to || activePath.startsWith(`${to}/`);
                             return (
                               <SidebarMenuItem key={to}>
                                 <SidebarMenuButton
+                                  size="compact"
                                   data-settings-section={to}
                                   aria-current={isActive ? "page" : undefined}
                                   isActive={isActive}
                                   onClick={() => handleSectionClick(to)}
                                 >
-                                  <Icon />
+                                  <Icon className="size-3.5" />
                                   <span
                                     className={cn(
                                       "truncate",

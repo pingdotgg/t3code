@@ -347,6 +347,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     backgroundWorktreeSetup,
     pendingRequest,
     providerStartingLabel,
+    worktreeSetupCardOwnsHeader,
   } = use(TimelineRowActivityCtx);
   const window = row.window;
   const [fit, onOverflowChange] = useReducer(
@@ -354,6 +355,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       current.overflows === overflows ? current : { overflows, fade: current.fade || !overflows },
     { overflows: false, fade: false },
   );
+  if (worktreeSetupCardOwnsHeader) return null;
   if (
     window?.compactCommand &&
     window.items.length === 0 &&

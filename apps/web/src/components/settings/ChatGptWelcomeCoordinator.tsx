@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { environmentPresentations } from "../../state/presentation";
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
@@ -30,6 +30,7 @@ export function ChatGptWelcomeCoordinator() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);
+  const continueRef = useRef<HTMLButtonElement>(null);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
     presentation.connection.phase !== "connected"
       ? []
@@ -61,21 +62,25 @@ export function ChatGptWelcomeCoordinator() {
         if (!open) dismiss();
       }}
     >
-      <DialogPopup>
+      <DialogPopup className="sm:max-w-md" showCloseButton={false} initialFocus={continueRef}>
         <DialogHeader>
-          <OpenAI className="mb-2 size-8" aria-hidden="true" />
-          <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
-          <DialogDescription>
-            Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any
-            credit settings in ChatGPT.
-          </DialogDescription>
-          <p className="text-xs text-muted-foreground">
-            {next?.providerName} on {next?.environmentLabel}
-          </p>
+          <OpenAI aria-hidden className="mb-3 size-8 text-strong-foreground" />
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
+            <DialogDescription>
+              Your ChatGPT plan covers eligible Codex usage. Manage shared usage and credit settings
+              in ChatGPT.
+            </DialogDescription>
+            <p className="min-w-0 wrap-anywhere text-meta text-dim-foreground">
+              {next?.providerName} on {next?.environmentLabel}
+            </p>
+          </div>
         </DialogHeader>
-        <DialogFooter>
-          <ChatGptUsageButton />
-          <Button onClick={dismiss}>Continue</Button>
+        <DialogFooter className="sm:items-center">
+          <ChatGptUsageButton size="default" variant="secondary" className="sm:mr-auto" />
+          <Button ref={continueRef} onClick={dismiss}>
+            Continue
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

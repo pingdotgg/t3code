@@ -29,6 +29,23 @@ const provider: ServerProvider = {
 describe("compatibility banners", () => {
   it("shows and dismisses a warning on a healthy provider, then clears it after policy relaxation", () => {
     expect(shouldShowProviderStatusBanner(provider, null)).toBe(true);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...provider,
+          versionAdvisory: {
+            status: "behind_latest",
+            currentVersion: "1.0.0",
+            latestVersion: "2.0.0",
+            updateCommand: "npm i -g @openai/codex@latest",
+            canUpdate: true,
+            checkedAt: null,
+            message: null,
+          },
+        },
+        null,
+      ),
+    ).toBe(true);
     expect(shouldShowProviderStatusBanner(provider, getProviderStatusBannerKey(provider))).toBe(
       false,
     );

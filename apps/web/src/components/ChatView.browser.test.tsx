@@ -1,8 +1,14 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ThreadId } from "@t3tools/contracts";
+import {
+  AgentSessionImportProjectChangedError,
+  ThreadId,
+  WS_METHODS,
+  type AgentSessionImportInput,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -19,6 +25,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   dispatchedCommands,
+  fakeDriver,
   installFakeEnvironment,
   rejectPendingCommand,
   threadWithHistory,
@@ -40,6 +47,94 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   ...(await original()),
   trackRpcRequestSent: () => {},
 }));
+
+it("imports Pi conversations through the environment RPC and can retry a changed project", async () => {
+  using _environment = installFakeEnvironment([], { acceptCommands: true });
+  const scan = vi.fn(() =>
+    Effect.succeed({
+      candidates: [
+        {
+          path: "/workspace/render",
+          title: "Terminal sessions",
+          projectId: PROJECT_ID,
+          sources: ["claudeAgent", "codex", "pi"] as const,
+          threadCount: 3,
+          lastActiveAt: "2026-03-17T19:12:28.000Z",
+          alreadyImported: true,
+        },
+      ],
+      scannedAt: "2026-03-18T09:00:30.000Z",
+    }),
+  );
+  let changed = true;
+  const importSessions = vi.fn((_input: AgentSessionImportInput) =>
+    changed
+      ? Effect.fail(new AgentSessionImportProjectChangedError({ projectId: PROJECT_ID }))
+      : Effect.succeed({ importedCount: 2, skippedCount: 1 }),
+  );
+  const connect = fakeDriver.connect;
+  using _connection = vi.spyOn(fakeDriver, "connect").mockImplementation((entry) =>
+    connect(entry).pipe(
+      Effect.map((lease) => ({
+        ...lease,
+        session: {
+          ...lease.session,
+          client: new Proxy(lease.session.client, {
+            get(target, method, receiver) {
+              if (method === WS_METHODS.agentSessionsScan) return scan;
+              if (method === WS_METHODS.agentSessionsImport) return importSessions;
+              if (method === WS_METHODS.projectsReadFile)
+                return ({ relativePath }: { relativePath: string }) =>
+                  Effect.succeed({
+                    relativePath,
+                    contents: "",
+                    byteLength: 0,
+                    truncated: false,
+                    exists: false,
+                  });
+              return Reflect.get(target, method, receiver);
+            },
+          }),
+        },
+      })),
+    ),
+  );
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  const router = getRouter(createMemoryHistory({ initialEntries: ["/welcome"] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await page.getByRole("button", { name: "Review all 1", exact: true }).click();
+  await expect.element(page.getByRole("img", { name: "Pi", exact: true })).toBeVisible();
+  await expect.element(page.getByRole("img", { name: "Claude Code", exact: true })).toBeVisible();
+  await expect.element(page.getByRole("img", { name: "Codex", exact: true })).toBeVisible();
+  await page.getByText("Import projects and their threads", { exact: true }).click();
+  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
+  await expect
+    .element(page.getByText("Could not import thread history.", { exact: true }))
+    .toBeVisible();
+  await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(2));
+
+  expect(importSessions).toHaveBeenCalledTimes(1);
+  await expect
+    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
+    .not.toBeInTheDocument();
+  changed = false;
+  await router.navigate({ to: "/welcome" });
+  await expect.element(page.getByRole("heading", { name: "Welcome to T3 Code" })).toBeVisible();
+  await page.getByText("Import projects and their threads", { exact: true }).click();
+  await page.getByRole("button", { name: "Import threads and start", exact: true }).click();
+  await expect
+    .element(page.getByText("Imported 2 threads. 1 thread could not be imported.", { exact: true }))
+    .toBeVisible();
+  expect(importSessions).toHaveBeenCalledTimes(2);
+  expect(importSessions).toHaveBeenLastCalledWith({
+    projectId: PROJECT_ID,
+    expectedWorkspaceRoot: "/workspace/render",
+  });
+  await expect
+    .element(page.getByRole("heading", { name: "Welcome to T3 Code" }))
+    .not.toBeInTheDocument();
+});
 
 it("a new draft does not load its reserved thread before the server lists it", async () => {
   using _environment = installFakeEnvironment([]);
