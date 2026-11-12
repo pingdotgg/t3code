@@ -10,6 +10,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -258,24 +259,37 @@ export const layer: Layer.Layer<
             if (leftover) {
               if (!(yield* isolated)) return yield* sharedWorkspace();
               // Set aside, not removed: a checkout that fails puts the folder and its files back.
-              const aside = yield* fileSystem.makeTempDirectory({
-                directory: path.dirname(worktreePath),
-                prefix: ".t3-replaced-",
-              });
-              const held = path.join(aside, "folder");
-              yield* fileSystem.rename(worktreePath, held);
-              yield* recreate.pipe(
-                Effect.onError(() =>
-                  fileSystem
-                    .remove(worktreePath, { recursive: true, force: true })
-                    .pipe(
-                      Effect.andThen(fileSystem.rename(held, worktreePath)),
-                      Effect.andThen(fileSystem.remove(aside, { recursive: true, force: true })),
-                      Effect.ignore,
+              yield* Effect.acquireUseRelease(
+                Effect.gen(function* () {
+                  const aside = yield* fileSystem.makeTempDirectory({
+                    directory: path.dirname(worktreePath),
+                    prefix: ".t3-replaced-",
+                  });
+                  yield* fileSystem.rename(worktreePath, path.join(aside, "folder"));
+                  return aside;
+                }),
+                () => recreate,
+                (aside, exit) =>
+                  (Exit.isSuccess(exit)
+                    ? Effect.void
+                    : fileSystem
+                        .remove(worktreePath, { recursive: true, force: true })
+                        .pipe(
+                          Effect.andThen(
+                            fileSystem.rename(path.join(aside, "folder"), worktreePath),
+                          ),
+                        )
+                  ).pipe(
+                    Effect.andThen(fileSystem.remove(aside, { recursive: true, force: true })),
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("Edit from here left a worktree folder set aside", {
+                        worktreePath,
+                        setAside: path.join(aside, "folder"),
+                        cause,
+                      }),
                     ),
-                ),
+                  ),
               );
-              yield* fileSystem.remove(aside, { recursive: true, force: true });
             } else {
               yield* recreate;
             }
