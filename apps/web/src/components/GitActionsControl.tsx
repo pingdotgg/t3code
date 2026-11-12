@@ -1689,23 +1689,31 @@ export default function GitActionsControl({
                   }
                 }}
               >
-                <MenuTrigger
-                  render={
-                    <ThreadDetailsControl
-                      aria-label="Git action options"
-                      size="sm"
-                      variant="ghost"
-                      part="secondary"
-                      panel
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <MenuTrigger
+                        render={
+                          <ThreadDetailsControl
+                            aria-label="Git action options"
+                            data-toolbar-control=""
+                            size="sm"
+                            variant="ghost"
+                            part="secondary"
+                            panel
+                          />
+                        }
+                        disabled={isGitActionRunning || !hasGitMenuContent}
+                      />
+                    }
+                  >
+                    <ChevronDownIcon
+                      aria-hidden="true"
+                      className={THREAD_DETAILS_PANEL_CHEVRON_CLASS}
                     />
-                  }
-                  disabled={isGitActionRunning || !hasGitMenuContent}
-                >
-                  <ChevronDownIcon
-                    aria-hidden="true"
-                    className={THREAD_DETAILS_PANEL_CHEVRON_CLASS}
-                  />
-                </MenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Git action options</TooltipPopup>
+                </Tooltip>
                 <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
                   {gitItems}
                 </MenuPopup>
