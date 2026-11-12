@@ -12,6 +12,7 @@ import {
 import { GITHUB_CREDENTIALED_MEDIA_HOSTS } from "../shared/gitHubMedia.ts";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
+import { gitHubApiUrls } from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
 /**
@@ -55,6 +56,44 @@ const REPOSITORY_PATTERN = /^[\w.-]+\/[\w.-]+$/u;
 // GitHub's signed upload links last about five minutes.
 const SIGNED_URL_CACHE_TTL_MS = 4 * 60_000;
 const SIGNED_URL_CACHE_MAX_ENTRIES = 64;
+const CONTENTS_RAW_ACCEPT = "application/vnd.github.raw";
+const MAX_REF_SEGMENTS = 3;
+
+const decodeSegments = (segments: ReadonlyArray<string>) => {
+  const joined = segments.join("/");
+  try {
+    return decodeURIComponent(joined);
+  } catch {
+    return joined;
+  }
+};
+
+/** `owner/name` of a repository file URL, `https://<raw host>/<owner>/<name>/<ref>/<path>`. */
+const fileRepository = (url: string) => {
+  const [owner, name] = URL.parse(url)?.pathname.split("/").slice(1) ?? [];
+  const repository = `${owner}/${name}`;
+  return REPOSITORY_PATTERN.test(repository) ? repository : undefined;
+};
+
+/**
+ * Enterprise Server's web routes ignore a token and its `raw.` subdomain exists only with
+ * subdomain isolation, so a file is read through the Contents API. A branch can contain slashes,
+ * so each split of `<ref>/<path>` is a candidate, shortest ref first.
+ */
+const enterpriseContentsReads = (url: string, host: string) => {
+  const repository = fileRepository(url);
+  const refAndPath = URL.parse(url)?.pathname.split("/").slice(3) ?? [];
+  if (repository === undefined) return [];
+  const contents = `${gitHubApiUrls(host).rest}/repos/${repository}/contents`;
+  return refAndPath
+    .slice(0, -1)
+    .slice(0, MAX_REF_SEGMENTS)
+    .map((_, index) => {
+      const read = new URL(`${contents}/${refAndPath.slice(index + 1).join("/")}`);
+      read.searchParams.set("ref", decodeSegments(refAndPath.slice(0, index + 1)));
+      return read.toString();
+    });
+};
 
 const contentTypeOf = (response: HttpClientResponse.HttpClientResponse) =>
   response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
@@ -96,11 +135,16 @@ export const make = Effect.gen(function* () {
     headers: Readonly<Record<string, string>>,
     token: Redacted.Redacted<string> | null,
     credentialedHosts: ReadonlySet<string> = GITHUB_CREDENTIALED_MEDIA_HOSTS,
+    // An upload redirects to a signed URL. Enterprise Server serves that from its own host and
+    // answers 404 when the token comes along too.
+    tokenOnRedirects = true,
   ) {
     let target = url;
     for (let hop = 0; ; hop += 1) {
       const authorization =
-        token !== null && isCredentialedHost(target, credentialedHosts)
+        token !== null &&
+        (hop === 0 || tokenOnRedirects) &&
+        isCredentialedHost(target, credentialedHosts)
           ? `Bearer ${Redacted.value(token)}`
           : null;
       const response: HttpClientResponse.HttpClientResponse = yield* httpClient
@@ -163,8 +207,31 @@ export const make = Effect.gen(function* () {
   return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
     const scope = credentialScope(request);
     const signedIn = yield* credential(scope.account);
-    // The client names an Enterprise host, so only one the user has signed in to is fetched.
-    if (scope.enterprise && signedIn === null) return null;
+    const upload = ATTACHMENT_PATH_PATTERN.test(URL.parse(request.url)?.pathname ?? "");
+    if (scope.enterprise) {
+      // The client names an Enterprise host, so only one the user has signed in to is fetched.
+      if (signedIn === null) return null;
+      if (upload) {
+        return yield* fetchFollowingRedirects(
+          request.url,
+          request.headers,
+          signedIn.token,
+          scope.hosts,
+          false,
+        );
+      }
+      let response: HttpClientResponse.HttpClientResponse | null = null;
+      for (const read of enterpriseContentsReads(request.url, scope.account)) {
+        response = yield* fetchFollowingRedirects(
+          read,
+          { ...request.headers, accept: CONTENTS_RAW_ACCEPT },
+          signedIn.token,
+          scope.hosts,
+        );
+        if (response?.status !== 404) return response;
+      }
+      return response;
+    }
     const repository = signedIn === null ? undefined : uploadRepository(request);
     const cacheKey =
       signedIn === null || repository === undefined
@@ -185,6 +252,7 @@ export const make = Effect.gen(function* () {
         request.headers,
         signedIn?.token ?? null,
         scope.hosts,
+        !upload,
       );
       if (response === null || contentTypeOf(response) !== "text/html") return response;
     }

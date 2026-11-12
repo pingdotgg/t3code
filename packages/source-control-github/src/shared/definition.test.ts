@@ -192,6 +192,27 @@ describe("GitHub media URLs", () => {
         "ghe.example.com",
       )?.fetchUrl,
     ).toBe("https://raw.ghe.example.com/o/r/main/a.png?token=t");
+    // An upload is named by the host it was uploaded to.
+    expect(
+      definition.mediaUrl(
+        new URL("https://ghe.example.com/user-attachments/assets/abc-123"),
+        "ghe.example.com",
+      ),
+    ).toEqual({
+      fetchUrl: "https://ghe.example.com/user-attachments/assets/abc-123",
+      fileName: "abc-123",
+      kind: "video",
+      immutable: true,
+    });
+    expect(
+      definition.mediaUrl(
+        new URL("https://ghe.example.com/o/r/assets/12/abc-123"),
+        "ghe.example.com",
+      )?.fetchUrl,
+    ).toBe("https://ghe.example.com/o/r/assets/12/abc-123");
+    expect(
+      definition.mediaUrl(new URL("https://ghe.example.com/user-attachments/assets/abc-123")),
+    ).toBeNull();
     // Enterprise Cloud's raw host is unverified, so its media keeps loading directly.
     expect(
       definition.mediaUrl(new URL("https://acme.ghe.com/o/r/blob/main/a.png"), "acme.ghe.com"),

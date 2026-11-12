@@ -106,8 +106,8 @@ describe("GitHubMediaFetch", () => {
     );
   });
 
-  it.effect("sends an Enterprise Server token only to that host's raw subdomain", () => {
-    const requests: Array<{ url: string; authorization?: string }> = [];
+  it.effect("reads an Enterprise Server file through that host's API with its token", () => {
+    const requests: Array<{ url: string; authorization?: string; accept?: string }> = [];
     const hosts: Array<string> = [];
     return Effect.gen(function* () {
       const fetchMedia = yield* GitHubMediaFetch.make;
@@ -117,6 +117,20 @@ describe("GitHubMediaFetch", () => {
         host: "ghe.example.com",
       });
       expect(enterprise?.status).toBe(200);
+      // `feature/x` is a branch, so the first split's ref does not exist.
+      const branch = yield* fetchMedia({
+        url: "https://raw.ghe.example.com/owner/repo/feature/x/d.gif",
+        headers: {},
+        host: "ghe.example.com",
+      });
+      expect(branch?.status).toBe(200);
+      // An upload's signed storage URL is on the same host and refuses the token.
+      const upload = yield* fetchMedia({
+        url: "https://ghe.example.com/user-attachments/assets/abc-123",
+        headers: {},
+        host: "ghe.example.com",
+      });
+      expect(upload?.status).toBe(200);
       // A github.com image in an Enterprise pull request keeps github.com's account.
       yield* fetchMedia({
         url: "https://raw.githubusercontent.com/owner/repo/main/b.png",
@@ -129,12 +143,35 @@ describe("GitHubMediaFetch", () => {
         headers: {},
         host: "ghe.example.com",
       });
-      expect(hosts).toEqual(["ghe.example.com", "github.com", "github.com"]);
+      expect(hosts).toEqual([
+        "ghe.example.com",
+        "ghe.example.com",
+        "ghe.example.com",
+        "github.com",
+        "github.com",
+      ]);
+      const enterpriseRead = {
+        authorization: "Bearer token-ghe.example.com",
+        accept: "application/vnd.github.raw",
+      };
       expect(requests).toEqual([
         {
-          url: "https://raw.ghe.example.com/owner/repo/0123456789abcdef0123456789abcdef01234567/a.png",
+          url: "https://ghe.example.com/api/v3/repos/owner/repo/contents/a.png?ref=0123456789abcdef0123456789abcdef01234567",
+          ...enterpriseRead,
+        },
+        {
+          url: "https://ghe.example.com/api/v3/repos/owner/repo/contents/x/d.gif?ref=feature",
+          ...enterpriseRead,
+        },
+        {
+          url: "https://ghe.example.com/api/v3/repos/owner/repo/contents/d.gif?ref=feature%2Fx",
+          ...enterpriseRead,
+        },
+        {
+          url: "https://ghe.example.com/user-attachments/assets/abc-123",
           authorization: "Bearer token-ghe.example.com",
         },
+        { url: "https://ghe.example.com/storage/abc-123?token=signed" },
         {
           url: "https://raw.githubusercontent.com/owner/repo/main/b.png",
           authorization: "Bearer token-github.com",
@@ -166,11 +203,27 @@ describe("GitHubMediaFetch", () => {
             ...(request.headers.authorization
               ? { authorization: request.headers.authorization }
               : {}),
+            ...(request.headers.accept ? { accept: request.headers.accept } : {}),
           });
+          const url = new URL(request.url);
+          const location =
+            url.pathname === "/user-attachments/assets/abc-123"
+              ? "/storage/abc-123?token=signed"
+              : undefined;
+          const status =
+            location !== undefined
+              ? 302
+              : url.search === "?ref=feature" ||
+                  (url.pathname.startsWith("/storage/") && request.headers.authorization)
+                ? 404
+                : 200;
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              new Response(null, { status: 200, headers: { "content-type": "image/png" } }),
+              new Response(null, {
+                status,
+                headers: { "content-type": "image/png", ...(location ? { location } : {}) },
+              }),
             ),
           );
         }),
