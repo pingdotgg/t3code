@@ -108,8 +108,9 @@ const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
 // Each background fetch re-runs the credential helper, which can raise an OS dialog (macOS
-// Keychain). After this many credential failures in a row, polling stops until a pull succeeds.
-const STATUS_UPSTREAM_REFRESH_MAX_AUTH_FAILURES = 3;
+// Keychain) that fails the fetch when dismissed or times it out when left open. After this many
+// such failures in a row, polling stops until a pull succeeds or the remote's config or refs change.
+const STATUS_UPSTREAM_REFRESH_MAX_CREDENTIAL_FAILURES = 3;
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_CAPACITY = 2_048;
 const REPOSITORY_PATHS_CACHE_TTL = Duration.minutes(10);
@@ -128,6 +129,7 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   SSH_ASKPASS: "",
   SSH_ASKPASS_REQUIRE: "never",
 } satisfies NodeJS.ProcessEnv);
+const GIT_COMMAND_TIMED_OUT_DETAIL = "Git command timed out.";
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
@@ -1110,7 +1112,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             () =>
               new GitCommandError({
                 ...gitCommandContext(commandInput),
-                detail: "Git command timed out.",
+                detail: GIT_COMMAND_TIMED_OUT_DETAIL,
               }),
           ),
         ),
@@ -1387,8 +1389,37 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       remoteName,
     ];
     const key = `${gitCommonDir}\0${remoteName}`;
+    // Local reads only: config and remote-tracking refs change when credentials are fixed or
+    // the remote is reached another way (a push, a terminal fetch).
+    const readSuspensionState = Effect.all([
+      runGitStdout(
+        "GitVcsDriver.fetchRemoteForStatus.config",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "config", "--get-regexp", "^(credential|remote)\\."],
+        true,
+      ),
+      runGitStdout(
+        "GitVcsDriver.fetchRemoteForStatus.refs",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "for-each-ref", `refs/remotes/${remoteName}/`],
+        true,
+      ),
+    ]).pipe(
+      Effect.map((parts) => parts.join("\0")),
+      Effect.orElseSucceed(() => ""),
+    );
     const failure = statusRemoteRefreshFailures.get(key);
-    if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
+    if (failure?.suspendedState !== undefined) {
+      if ((yield* readSuspensionState) === failure.suspendedState) return;
+      statusRemoteRefreshFailures.delete(key);
+    } else if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
+    // A failed fetch leaves config and refs as they were, so read them before the fetch that
+    // may suspend polling; a change made while it runs then resumes polling.
+    const stateBeforeFetch =
+      (statusRemoteRefreshFailures.get(key)?.credentialFailures ?? 0) + 1 >=
+      STATUS_UPSTREAM_REFRESH_MAX_CREDENTIAL_FAILURES
+        ? yield* readSuspensionState
+        : "";
     const fiber = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const pending = statusFetches.get(key);
@@ -1407,7 +1438,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               statusRemoteRefreshFailures.delete(key);
             }),
           ),
-          Effect.tapError((error) => recordStatusRemoteRefreshFailure(key, error)),
+          Effect.tapError((error) =>
+            recordStatusRemoteRefreshFailure(key, error, stateBeforeFetch),
+          ),
           Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
           statusFetchProcesses.withPermits(1),
           Effect.onExit(() =>
@@ -1646,7 +1679,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const statusRemoteRefreshFailures = new Map<
     string,
-    { count: number; authFailures: number; retryAt: number }
+    { count: number; credentialFailures: number; retryAt: number; suspendedState?: string }
   >();
   const untrackedTotalsFailures = new Map<
     string,
@@ -1661,24 +1694,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
     "GitVcsDriver.recordStatusRemoteRefreshFailure",
-  )(function* (key: string, error: GitCommandError) {
+  )(function* (key: string, error: GitCommandError, stateBeforeFetch: string) {
     const previous = statusRemoteRefreshFailures.get(key);
     const nextCount = (previous?.count ?? 0) + 1;
-    const authFailures =
-      error.reason === "authentication_failed" ? (previous?.authFailures ?? 0) + 1 : 0;
+    const credentialFailures =
+      error.reason === "authentication_failed" || error.detail === GIT_COMMAND_TIMED_OUT_DETAIL
+        ? (previous?.credentialFailures ?? 0) + 1
+        : 0;
     const now = yield* Clock.currentTimeMillis;
-    const stopped = authFailures >= STATUS_UPSTREAM_REFRESH_MAX_AUTH_FAILURES;
+    const suspended = credentialFailures >= STATUS_UPSTREAM_REFRESH_MAX_CREDENTIAL_FAILURES;
     statusRemoteRefreshFailures.delete(key);
     statusRemoteRefreshFailures.set(key, {
       count: nextCount,
-      authFailures,
-      retryAt: stopped
-        ? Number.POSITIVE_INFINITY
-        : now + Duration.toMillis(statusUpstreamRefreshFailureCooldown(nextCount)),
+      credentialFailures,
+      retryAt: now + Duration.toMillis(statusUpstreamRefreshFailureCooldown(nextCount)),
+      ...(suspended ? { suspendedState: stateBeforeFetch } : {}),
     });
-    if (stopped) {
+    if (suspended) {
       yield* Effect.logWarning(
-        "Background Git fetch keeps failing on credentials; upstream status needs attention. Pull to resume background fetches.",
+        "Background Git fetch keeps failing or timing out on credentials; upstream status needs attention. Pull, or fix the remote's credentials, to resume background fetches.",
       );
     }
     if (statusRemoteRefreshFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {

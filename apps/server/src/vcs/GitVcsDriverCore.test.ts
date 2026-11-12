@@ -1600,6 +1600,51 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
   ),
 );
 
+it.effect("stops background fetches that keep timing out on a credential dialog", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetchStarts = yield* Queue.unbounded<void>();
+      let fetchAttempts = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (ChildProcess.isStandardCommand(command) && command.args.includes("--no-auto-gc")) {
+            fetchAttempts++;
+            yield* Queue.offer(fetchStarts, undefined);
+            // A credential helper waiting on a dialog nobody answers.
+            return ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              exitCode: Effect.never,
+            });
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["remote", "add", "origin", "https://example.invalid/private.git"]);
+      yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+      yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
+
+      for (let poll = 0; poll < 5; poll++) {
+        const read = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkChild);
+        yield* Effect.raceFirst(
+          Fiber.join(read),
+          Queue.take(fetchStarts).pipe(Effect.andThen(TestClock.adjust("5 seconds"))),
+        );
+        yield* Fiber.join(read);
+        // Past the fetch's own timeout and the longest cooldown.
+        yield* TestClock.adjust("16 minutes");
+      }
+
+      assert.equal(fetchAttempts, 3);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("does not fetch for status when the branch tracks a local branch", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -4412,7 +4457,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(yield* helperRuns, 3);
 
-        // A successful pull resumes background fetches.
+        // Changing the credential setup outside T3 resumes background fetches.
+        yield* git(cwd, ["config", "credential.useHttpPath", "true"]);
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(yield* helperRuns, 4);
+
+        // So does a successful pull.
         const remote = yield* makeTmpDir("git-vcs-driver-remote-");
         yield* git(remote, ["init", "--bare"]);
         yield* git(cwd, ["push", remote, `HEAD:refs/heads/${initialBranch}`]);
@@ -4420,7 +4470,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* driver.pullCurrentBranch(cwd);
         yield* git(cwd, ["remote", "set-url", "origin", `http://127.0.0.1:${port}/private.git`]);
         yield* driver.statusDetailsRemote(cwd);
-        assert.equal(yield* helperRuns, 4);
+        assert.equal(yield* helperRuns, 5);
       }),
     );
 
