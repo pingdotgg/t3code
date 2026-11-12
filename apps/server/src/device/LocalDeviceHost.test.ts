@@ -433,6 +433,36 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  // regression: #30617 Homebrew's adb cask folder must not shadow the Homebrew SDK
+  it.effect("finds the Homebrew SDK when adb comes from the separate platform-tools cask", () =>
+    Effect.gen(function* () {
+      const caskAdb = "/opt/homebrew/Caskroom/android-platform-tools/37.0.1/platform-tools/adb";
+      const sdkRoot = "/opt/homebrew/share/android-commandlinetools";
+      const avdmanager = `${sdkRoot}/cmdline-tools/latest/bin/avdmanager`;
+      const links: Record<string, string> = {
+        "/opt/homebrew/bin/adb": caskAdb,
+        "/opt/homebrew/bin/avdmanager": avdmanager,
+      };
+      const files = [...Object.keys(links), caskAdb, avdmanager, `${sdkRoot}/emulator/emulator`];
+      const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          HOME: "/Users/test",
+          PATH: "/opt/homebrew/bin:/usr/bin:/bin",
+        }),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: (file) => Effect.succeed(files.includes(file)),
+            realPath: (file) => Effect.succeed(links[file] ?? file),
+          }),
+        ),
+        Effect.provide(NodePath.layerPosix),
+      );
+      expect(sdk).toMatchObject({ root: sdkRoot, emulator: true, avdmanager: true });
+    }),
+  );
+
   // regression: #12017 detect unsupported legacy Android command-line tools
   it.effect("explains how to upgrade legacy command-line tools in the standard macOS SDK", () =>
     Effect.gen(function* () {
