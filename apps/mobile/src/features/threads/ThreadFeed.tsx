@@ -1152,12 +1152,16 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
-  const [quoteChoices, setQuoteChoices] = useState<
-    ReturnType<typeof collectMobileAssistantTextSelectors>
-  >([]);
+  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const [quoteSelection, setQuoteSelection] = useState<{
+    markdown: string;
+    selectors: ReturnType<typeof collectMobileAssistantTextSelectors>;
+  } | null>(null);
+  if (quoteSelection !== null && quoteSelection.markdown !== liveMarkdown) setQuoteSelection(null);
+  const quoteChoices = quoteSelection?.selectors ?? [];
   const cite = (selector: (typeof quoteChoices)[number]) => {
     if (!props.citationSource || !props.onCiteAssistantText) return;
-    setQuoteChoices([]);
+    setQuoteSelection(null);
     props.onCiteAssistantText({
       version: 1,
       environmentId: props.environmentId,
@@ -1166,7 +1170,6 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     });
   };
   const models = useModelMentions(props.environmentId, props.markdown);
-  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
@@ -1198,7 +1201,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
                   return;
                 }
                 if (selectors.length === 1) cite(selectors[0]!);
-                else setQuoteChoices(selectors);
+                else setQuoteSelection({ markdown: liveMarkdown, selectors });
               }
             : undefined
         }
@@ -1210,7 +1213,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         models={models}
       />
       {quoteChoices.length > 0 && props.onCiteAssistantText ? (
-        <Sheet title="Choose quote source" onClose={() => setQuoteChoices([])}>
+        <Sheet title="Choose quote source" onClose={() => setQuoteSelection(null)}>
           <ScrollView
             contentInsetAdjustmentBehavior="automatic"
             contentContainerStyle={{ padding: 20 }}

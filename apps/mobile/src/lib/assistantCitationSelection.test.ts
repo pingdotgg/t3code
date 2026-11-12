@@ -39,6 +39,13 @@ it("offers distinct source choices within a block and maps recursive folds witho
   );
   expect(sameBlock[1]?.start).toBe(17);
   expect(sameBlock[1]?.prefix).toBe("first quote then ");
+  const [leadingSpace] = collectMobileAssistantTextSelectors(
+    "x\n\n<details><summary>More</summary>\n\n` quote`\n\n</details>",
+    "1/0:0",
+    "quote",
+  );
+  expect(leadingSpace?.start).toBe(2);
+  expect(leadingSpace?.occurrence).toEqual({ index: 0, count: 1 });
 });
 
 it("rejects unmappable or blank selections instead of inventing a source", () => {

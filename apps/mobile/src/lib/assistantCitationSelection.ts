@@ -83,12 +83,12 @@ export function collectMobileAssistantTextSelectors(markdown: string, path: stri
   const segmentIndex = segments.findIndex((segment) => segment.path === path);
   const segment = segments[segmentIndex];
   if (!segment) return [];
-  const leading = segments
-    .slice(0, segmentIndex)
+  const fullText = normalize(segments.map((entry) => entry.text).join("\n"));
+  const throughSegment = segments
+    .slice(0, segmentIndex + 1)
     .map((entry) => entry.text)
     .join("\n");
-  const fullText = normalize(segments.map((entry) => entry.text).join("\n"));
-  const offset = normalize(leading + (segmentIndex > 0 ? "\n" : "")).length;
+  const offset = normalize(throughSegment).length - normalize(segment.text).length;
   const matches = occurrences(fullText, quote);
   const localMatches = occurrences(normalize(segment.text), quote);
   if (localMatches.length > 20) return [];
