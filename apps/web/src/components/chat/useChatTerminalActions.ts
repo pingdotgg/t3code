@@ -14,11 +14,13 @@ import {
   type EnvironmentId,
   type ProjectScript,
   type ScopedThreadRef,
+  TERMINAL_WRITE_MAX_LENGTH,
   type ThreadId,
 } from "@t3tools/contracts";
 import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
 import { type SetStateAction } from "react";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -56,6 +58,7 @@ import {
   createChatShellRunId,
   type ChatShellCommandRunner,
 } from "./chatShellRun";
+import { failChatShellRunLaunch } from "./chatShellRunStore";
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -231,6 +234,14 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
+    const chatShellRun = options?.chatShellRun;
+    const chatShellRunData = chatShellRun
+      ? chatShellRunInput(script.command, chatShellRun.id, targetCwd)
+      : null;
+    if (chatShellRunData !== null && chatShellRunData.length > TERMINAL_WRITE_MAX_LENGTH) {
+      setThreadError(activeThreadId, "This code block is too long to run in the terminal.");
+      return;
+    }
     // A busy terminal is running something else, so the run needs its own terminal.
     const reusableTerminalId = options?.chatShellRun
       ? options.chatShellRun.terminalId &&
@@ -286,40 +297,38 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     if (!launched) return;
     const targetTerminalId = launched.terminalId;
     if (!background) focusTerminal(activeThreadRef, targetTerminalId);
-    options?.chatShellRun?.onLaunched({
+    chatShellRun?.onLaunched({
       terminalId: targetTerminalId,
       cwd: targetCwd,
       worktreePath: targetWorktreePath,
     });
+    const reportFailure = (result: AtomCommandResult<unknown, unknown>) => {
+      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      const message =
+        error instanceof Error ? error.message : `Failed to run script "${script.name}".`;
+      setThreadError(activeThreadId, message);
+      if (chatShellRun) failChatShellRunLaunch(chatShellRun.id, message);
+    };
     const openResult = await launched.result;
     if (openResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(openResult)) {
-        const error = squashAtomCommandFailure(openResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
-      }
+      reportFailure(openResult);
       return;
     }
 
     const writeResult = await terminalActions.writeToTerminal(
       targetTerminalId,
-      options?.chatShellRun
-        ? chatShellRunInput(script.command, options.chatShellRun.id, targetCwd)
-        : options?.shellHistory === "preserve"
+      chatShellRunData ??
+        (options?.shellHistory === "preserve"
           ? `${script.command}\r`
-          : projectScriptTerminalInput(script.command),
+          : projectScriptTerminalInput(script.command)),
     );
-    if (!writeResult) return;
+    if (!writeResult) {
+      if (chatShellRun) failChatShellRunLaunch(chatShellRun.id, "Terminal access was lost.");
+      return;
+    }
     if (writeResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
-      }
+      reportFailure(writeResult);
       return;
     }
     if (

@@ -2,7 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { MessageId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { resolveStorage } from "./lib/storage";
+import { resolveStorage, type StateStorage } from "./lib/storage";
 
 const CHAPTER_STORAGE_KEY = "t3code:chapters:v1";
 const CHAPTER_TITLE_MAX_LENGTH = 120;
@@ -53,8 +53,18 @@ export function chapterTitleFromText(text: string): string {
   return `${title.slice(0, CHAPTER_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
 }
 
-function createChapterStorage() {
-  return resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined);
+function createChapterStorage(): StateStorage {
+  const storage = resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined);
+  return {
+    getItem: (name) => storage.getItem(name),
+    // Full or blocked storage keeps the pin for this session instead of failing the action.
+    setItem: (name, value) => {
+      try {
+        storage.setItem(name, value);
+      } catch {}
+    },
+    removeItem: (name) => storage.removeItem(name),
+  };
 }
 
 /**

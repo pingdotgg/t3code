@@ -213,6 +213,8 @@ const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
 
 export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
+  /** Where the next older page starts; every loaded page moves it, even one with no visible rows. */
+  readonly historyCursor: string | null;
   readonly loading: boolean;
   readonly error: string | null;
   readonly onLoadEarlier: (throughEntryId?: string) => void;
@@ -1408,7 +1410,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       if (isAlreadyInHistory) {
         return;
       }
-      const cursor = timelineEntries[0]?.id ?? null;
+      const cursor = historyControls?.historyCursor ?? null;
       const requested = historyRequestedForChapterRef.current;
       const alreadyRequested =
         requested?.nonce === chapterReveal.nonce && requested.cursor === cursor;

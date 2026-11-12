@@ -1276,15 +1276,20 @@ describe("MessagesTimeline chapters", () => {
     const threadRef = parseScopedThreadKey(props.routeThreadKey);
     if (!threadRef) throw new Error("routeThreadKey must be a scoped thread key");
     const onLoadEarlier = vi.fn();
-    const historyControls = {
+    const historyControls = (historyCursor: string) => ({
       hasMoreHistory: true,
+      historyCursor,
       loading: false,
       error: null,
       onLoadEarlier,
-    };
+    });
     const entries = [message("Recent entry", {}, "recent")];
     await using screen = await renderElement(
-      <MessagesTimeline {...props} timelineEntries={entries} historyControls={historyControls} />,
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        historyControls={historyControls("page-1")}
+      />,
     );
 
     await act(() =>
@@ -1292,12 +1297,12 @@ describe("MessagesTimeline chapters", () => {
     );
     await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledWith("chapter-earlier"));
 
-    const earlierHiddenEntry = message("Earlier note", {}, "earlier");
+    // A loaded page with no visible rows still moves the cursor, so the next page is requested.
     await screen.rerender(
       <MessagesTimeline
         {...props}
-        timelineEntries={[earlierHiddenEntry, ...entries]}
-        historyControls={historyControls}
+        timelineEntries={entries}
+        historyControls={historyControls("page-2")}
       />,
     );
     await vi.waitFor(() => expect(onLoadEarlier).toHaveBeenCalledTimes(2));

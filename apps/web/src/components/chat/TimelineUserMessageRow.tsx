@@ -838,7 +838,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           />
         )}
         {ctx.threadRef && row.message.text.trim().length > 0 ? (
-          <ChatChapterPinButton threadRef={ctx.threadRef} message={row.message} />
+          <ChatChapterPinButton
+            threadRef={ctx.threadRef}
+            message={{ id: row.message.id, text: plainText, createdAt: row.message.createdAt }}
+          />
         ) : null}
       </div>
     </div>

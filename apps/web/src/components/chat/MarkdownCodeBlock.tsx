@@ -176,7 +176,8 @@ export function MarkdownCodeBlock({
   const canRun =
     onRunShellCommand !== undefined &&
     !isStreaming &&
-    /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
+    // The run line is bash/zsh syntax (see chatShellRunInput).
+    /^(?:sh|bash|zsh|shell)$/.test(language) &&
     code.endsWith("\n") &&
     command.length > 0 &&
     !command.endsWith("\\") &&

@@ -547,6 +547,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     return {
       hasMoreHistory: serverThreadHistory.hasMoreHistory,
+      historyCursor: serverThreadHistory.historyCursor,
       loading: serverThreadHistory.loading,
       error: serverThreadHistory.error,
       onLoadEarlier: (throughEntryId) => {
@@ -2848,6 +2849,10 @@ export default function ChatView(props: ChatViewProps) {
     );
   };
   const runCodeBlockCommandStable = useStableCallback(runCodeBlockCommand);
+  // The run line is bash/zsh syntax, which a Windows host's PowerShell or cmd terminal rejects.
+  const serverOs = serverConfig?.environment.platform.os;
+  const canRunCodeBlocks =
+    Boolean(activeProject) && (serverOs === "darwin" || serverOs === "linux");
   // Main-thread surfaces show this reason; `/side` sent anyway gets it as a toast.
   const sideChatDisabledReason =
     activeThread?.lineage.sideChat === true
@@ -3463,7 +3468,7 @@ export default function ChatView(props: ChatViewProps) {
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
                   onReplyToResponse={replyToResponseStable}
-                  {...(activeProject ? { onRunShellCommand: runCodeBlockCommandStable } : {})}
+                  {...(canRunCodeBlocks ? { onRunShellCommand: runCodeBlockCommandStable } : {})}
                   isWorking={isWorking}
                   runlessWorkActive={runlessWorkStartedAt !== null}
                   isCompacting={isCompacting}

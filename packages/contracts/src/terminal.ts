@@ -63,9 +63,13 @@ export type TerminalAttachInput = typeof TerminalAttachInput.Type;
 export const TerminalObserveInput = TerminalSessionInput;
 export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveInput>;
 
+export const TERMINAL_WRITE_MAX_LENGTH = 65_536;
+
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
-  data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+  data: Schema.String.check(Schema.isNonEmpty()).check(
+    Schema.isMaxLength(TERMINAL_WRITE_MAX_LENGTH),
+  ),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 

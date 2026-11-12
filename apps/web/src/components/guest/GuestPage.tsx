@@ -289,6 +289,7 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
       ? undefined
       : {
           hasMoreHistory: true,
+          historyCursor,
           loading: loadingHistory,
           error: historyError,
           onLoadEarlier: () => void loadEarlier(),

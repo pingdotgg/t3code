@@ -1,6 +1,9 @@
 import { create } from "zustand";
 
-import type { TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
+import {
+  EMPTY_TERMINAL_SESSION_STATE,
+  type TerminalSessionState,
+} from "@t3tools/client-runtime/state/terminal";
 
 import { subscribeAtomChanges } from "../../rpc/atomRegistry";
 import { attachedTerminalSessionAtom } from "../../state/terminalSessions";
@@ -53,20 +56,45 @@ export function chatShellRunSessionAtom(run: ChatShellRun) {
 
 export function chatShellRunStatus(
   output: ChatShellRunOutput,
-  session: Pick<TerminalSessionState, "status" | "version">,
+  session: Pick<TerminalSessionState, "status" | "version" | "summary">,
 ): string {
   if (output.error !== undefined) return `Couldn't read output: ${output.error}`;
   if (output.exitCode !== null) return `Exited with code ${output.exitCode}`;
-  if (session.status === "exited") return "Ended without an exit status";
+  if (session.status === "exited") {
+    const shellExitCode = session.summary?.exitCode ?? null;
+    return shellExitCode === null
+      ? "Ended without an exit status"
+      : `Shell exited with code ${shellExitCode}`;
+  }
   // A session that has not attached yet also reports "closed", at version 0.
   if (session.status === "closed" && session.version > 0) return "Terminal closed";
   return "Running…";
+}
+
+const launchFailureHandlers = new Map<string, (error: string) => void>();
+
+/** Finishes a watched run whose terminal could not be opened or written to. */
+export function failChatShellRunLaunch(runId: string, error: string): void {
+  launchFailureHandlers.get(runId)?.(error);
 }
 
 export function watchChatShellRun(
   run: ChatShellRun,
   onFinished: (output: ChatShellRunOutput) => void,
 ): void {
+  const finish = (output: ChatShellRunOutput, session: TerminalSessionState) => {
+    unsubscribe();
+    launchFailureHandlers.delete(run.id);
+    useChatShellRunStore.setState((state) => ({
+      results: {
+        ...state.results,
+        [run.id]: { text: output.text, status: chatShellRunStatus(output, session) },
+      },
+    }));
+    // A failed terminal is not idle at a prompt, so it stays out of the reuse set.
+    if (output.error === undefined) finishedRunIds.add(run.id);
+    onFinished(output);
+  };
   const unsubscribe = subscribeAtomChanges(chatShellRunSessionAtom(run), (session) => {
     const parsed = parseChatShellRunOutput(
       session.output.chunks.map((chunk) => chunk.data).join(""),
@@ -76,17 +104,10 @@ export function watchChatShellRun(
     const ended =
       session.status === "exited" || (session.status === "closed" && session.version > 0);
     if (parsed.exitCode === null && !ended && session.error === null) return;
-    unsubscribe();
-    // The terminal failed mid-run, so it is not idle at a prompt and stays out of the reuse set.
     const failed = parsed.exitCode === null && session.error !== null;
-    const output = failed ? { ...parsed, error: String(session.error) } : parsed;
-    useChatShellRunStore.setState((state) => ({
-      results: {
-        ...state.results,
-        [run.id]: { text: output.text, status: chatShellRunStatus(output, session) },
-      },
-    }));
-    if (!failed) finishedRunIds.add(run.id);
-    onFinished(output);
+    finish(failed ? { ...parsed, error: String(session.error) } : parsed, session);
   });
+  launchFailureHandlers.set(run.id, (error) =>
+    finish({ text: "", exitCode: null, error }, EMPTY_TERMINAL_SESSION_STATE),
+  );
 }
