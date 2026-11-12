@@ -232,6 +232,8 @@ vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
 vi.mock("expo-image", () => ({}));
 vi.mock("uniwind", () => ({}));
 vi.mock("../components/ui/Dialog", () => ({}));
+vi.mock("../components/ui/Sheet", () => ({ Sheet: () => null }));
+vi.mock("../components/ui/ListActionRow", () => ({ ListActionRow: () => null }));
 vi.mock("../components/ui/NativePresentation", () => ({
   PresentationSource: ({ children }: { children?: ReactNode }) => children,
 }));
