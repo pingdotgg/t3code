@@ -17,29 +17,13 @@ import { toastManager } from "../ui/toast";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
+import { summarizePullRequestRouting } from "./PullRequestRoutingSettings.logic";
 
 const options: ReadonlyArray<{ value: PullRequestRoutingPermission; label: string }> = [
   { value: "off", label: "Off" },
   { value: "read", label: "Read PRs" },
   { value: "read-write", label: "Read and act" },
 ];
-
-const summaryLabels = { "read-write": "read and act", read: "read PRs" } as const;
-
-function summarizePullRequestRouting(
-  entries: ReadonlyArray<{
-    readonly label: string;
-    readonly permission: PullRequestRoutingPermission;
-  }>,
-): string | null {
-  const groups = (["read-write", "read"] as const).flatMap((permission) => {
-    const labels = entries.filter((entry) => entry.permission === permission);
-    return labels.length === 0
-      ? []
-      : [`${labels.map((entry) => entry.label).join(", ")} ${summaryLabels[permission]}`];
-  });
-  return groups.length === 0 ? null : groups.join(" · ");
-}
 
 export function PullRequestRoutingSettings({
   environments,
@@ -63,15 +47,15 @@ export function PullRequestRoutingSettings({
     <FoldedSettingsSection
       id={id}
       title={title}
-      summary={formatChangeRequestText(
+      summary={
         summarizePullRequestRouting(
           environments.map((environment) => ({
             label: environment.label,
             permission: pullRequestRoutingPermissionFor(environment.entry, permissions),
           })),
-        ) ?? "Off",
-        requestTerms,
-      )}
+          requestTerms,
+        ) ?? "Off"
+      }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
         Machines you trust here can read {requestTerms.shortLabel} data through each other's source

@@ -916,49 +916,65 @@ describe("one finding handed over on its own", () => {
 
   it("keeps the pull request chip free of ask instructions when a fix and an ask share a draft", () => {
     const metadata = { ...base, state: "open" as const, isDraft: false };
-    const ask = buildAskAboutPullRequestHandoff(metadata);
-    for (const fix of [
-      buildFixFindingHandoff({ ...metadata, finding: { kind: "thread", thread: reviewThread } }),
-      buildFixFindingHandoff({
-        ...metadata,
-        finding: {
-          kind: "check",
-          check: { name: "lint", status: "failure", description: null, url: null },
-        },
-      }),
-      buildFixFindingHandoff({
-        ...metadata,
-        finding: {
-          kind: "comment",
-          comment: {
-            id: "review",
-            kind: "review",
-            reviewState: null,
-            author: null,
-            body: "fix it",
-            createdAt: "2026-07-03T00:00:00Z",
-            url: null,
-            path: null,
-          },
-        },
-      }),
-      buildFixFindingsHandoff({
-        ...metadata,
-        reviewThreads: [reviewThread],
-        comments: [],
-        checks: [],
-        commentsTruncated: false,
-      }),
-    ]) {
-      for (const next of [
-        appendHandoff(ask, fix),
-        appendHandoff({ prompt: fix.prompt, reviewComments: [...fix.reviewComments] }, ask),
-      ]) {
-        const contexts = next.reviewComments.filter((comment) => comment.pullRequest !== undefined);
-        expect(contexts).toHaveLength(1);
-        expect(contexts[0]?.text).not.toContain("Do not change any code");
-        expect(contexts[0]?.pullRequest).toEqual(metadata);
+    try {
+      for (const initial of [false, true]) {
+        setMergeRequestTerms(initial);
+        const fixes = [
+          buildFixFindingHandoff({
+            ...metadata,
+            finding: { kind: "thread", thread: reviewThread },
+          }),
+          buildFixFindingHandoff({
+            ...metadata,
+            finding: {
+              kind: "check",
+              check: { name: "lint", status: "failure", description: null, url: null },
+            },
+          }),
+          buildFixFindingHandoff({
+            ...metadata,
+            finding: {
+              kind: "comment",
+              comment: {
+                id: "review",
+                kind: "review",
+                reviewState: null,
+                author: null,
+                body: "fix it",
+                createdAt: "2026-07-03T00:00:00Z",
+                url: null,
+                path: null,
+              },
+            },
+          }),
+          buildFixFindingsHandoff({
+            ...metadata,
+            reviewThreads: [reviewThread],
+            comments: [],
+            checks: [],
+            commentsTruncated: false,
+          }),
+        ];
+        for (const selected of [false, true]) {
+          setMergeRequestTerms(selected);
+          const ask = buildAskAboutPullRequestHandoff(metadata);
+          for (const fix of fixes) {
+            for (const next of [
+              appendHandoff(ask, fix),
+              appendHandoff({ prompt: fix.prompt, reviewComments: [...fix.reviewComments] }, ask),
+            ]) {
+              const contexts = next.reviewComments.filter(
+                (comment) => comment.pullRequest !== undefined,
+              );
+              expect(contexts).toHaveLength(1);
+              expect(contexts[0]?.text).not.toContain("Do not change any code");
+              expect(contexts[0]?.pullRequest).toEqual(metadata);
+            }
+          }
+        }
       }
+    } finally {
+      setMergeRequestTerms(false);
     }
   });
 

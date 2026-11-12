@@ -10,6 +10,8 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import {
   capitalizeTerm,
   currentChangeRequestTerms,
+  MERGE_REQUEST_TERMINOLOGY,
+  PULL_REQUEST_TERMINOLOGY,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
@@ -1192,13 +1194,14 @@ function pullRequestContextComment(
     readonly isDraft: boolean;
   },
   instructions: ReadonlyArray<string>,
+  terms = currentChangeRequestTerms(),
 ): ReviewCommentContext {
-  const term = currentChangeRequestTerms().singular;
+  const term = terms.singular;
   return {
     // Use URLs because repositories can share pull request numbers.
     id: `pull-request-context:${input.url}`,
     sectionId: `pull-request:${input.number}`,
-    sectionTitle: `${currentChangeRequestTerms().shortLabel} #${input.number}`,
+    sectionTitle: `${terms.shortLabel} #${input.number}`,
     filePath: `PR #${input.number}`,
     startIndex: 0,
     endIndex: 0,
@@ -1223,9 +1226,12 @@ function pullRequestContextComment(
 }
 
 function isPlainPullRequestContext(comment: ReviewCommentContext): boolean {
+  const metadata = comment.pullRequest;
   return (
-    comment.pullRequest !== undefined &&
-    comment.text === pullRequestContextComment(comment.pullRequest, []).text
+    metadata !== undefined &&
+    [PULL_REQUEST_TERMINOLOGY, MERGE_REQUEST_TERMINOLOGY].some(
+      (terms) => comment.text === pullRequestContextComment(metadata, [], terms).text,
+    )
   );
 }
 
