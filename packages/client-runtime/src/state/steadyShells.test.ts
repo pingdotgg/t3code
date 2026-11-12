@@ -10,7 +10,7 @@ import {
 } from "../connection/model.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
-import type { EnvironmentShellStatus } from "./shell.ts";
+import { EMPTY_SHELL_STATE, type EnvironmentShellState } from "./shell.ts";
 import {
   createSteadyShellAtoms,
   EMPTY_STEADY_SHELLS_STATE,
@@ -31,12 +31,14 @@ const shell = (
   environmentId: EnvironmentId,
   value: OrchestrationV2ShellSnapshot | null,
   phase: "connecting" | "retrying" | "live",
+  generation = 0,
 ): SteadyShellInput => ({
   environmentId,
   snapshot: value,
   serverSequence: value?.snapshotSequence ?? null,
-  live: phase === "live",
-  inFlight: phase === "connecting",
+  status: phase === "live" ? "live" : phase === "connecting" ? "synchronizing" : "cached",
+  generation,
+  connecting: phase !== "retrying",
 });
 const shown = (state: SteadyShellsState, environmentId: EnvironmentId) =>
   state.shells.get(environmentId)?.shown;
@@ -59,6 +61,26 @@ describe("stepSteadyShells", () => {
     state = stepSteadyShells(state, [shell(A, fromServer, "live")], 30);
     expect(shown(state, A)).toBe(fromServer);
     expect(state.releaseAt).toBeNull();
+  });
+
+  it("shows a connection's server snapshot when it arrives, before the socket confirms it", () => {
+    const [cached, fromServer, withEvents] = [snapshot(7), snapshot(9), snapshot(10)];
+    let state = stepSteadyShells(EMPTY_STEADY_SHELLS_STATE, [shell(A, cached, "connecting")], 0);
+    state = stepSteadyShells(state, [shell(A, fromServer, "connecting", 1)], 10);
+    expect(shown(state, A)).toBe(fromServer);
+    state = stepSteadyShells(state, [shell(A, withEvents, "connecting", 1)], 20);
+    expect(shown(state, A)).toBe(withEvents);
+    state = stepSteadyShells(state, [shell(A, withEvents, "live", 1)], 30);
+    expect(shown(state, A)).toBe(withEvents);
+  });
+
+  it("holds replayed events after a reconnect until the environment is live again", () => {
+    const [first, replayed] = [snapshot(1), snapshot(4)];
+    let state = stepSteadyShells(EMPTY_STEADY_SHELLS_STATE, [shell(A, first, "live", 1)], 0);
+    state = stepSteadyShells(state, [shell(A, replayed, "connecting", 1)], 10);
+    expect(shown(state, A)).toBe(first);
+    state = stepSteadyShells(state, [shell(A, replayed, "live", 1)], 20);
+    expect(shown(state, A)).toBe(replayed);
   });
 
   it("shows the cache of an environment that was first seen before its cache was read", () => {
@@ -177,8 +199,8 @@ describe("createSteadyShellAtoms", () => {
     const snapshots = Atom.family((environmentId: EnvironmentId) =>
       Atom.make<OrchestrationV2ShellSnapshot | null>(environmentId === A ? cachedA : snapshot(2)),
     );
-    const statuses = Atom.family((_: EnvironmentId) =>
-      Atom.make<EnvironmentShellStatus>("synchronizing"),
+    const shellStates = Atom.family((_: EnvironmentId) =>
+      Atom.make<EnvironmentShellState>({ ...EMPTY_SHELL_STATE, status: "synchronizing" }),
     );
     const connections = Atom.family((_: EnvironmentId) =>
       Atom.make(
@@ -193,14 +215,14 @@ describe("createSteadyShellAtoms", () => {
     const steady = createSteadyShellAtoms({
       catalogValueAtom: catalog,
       snapshotAtom: snapshots,
-      statusAtom: statuses,
+      shellStateAtom: shellStates,
       connectionStateAtom: connections,
     });
     const registry = AtomRegistry.make();
     const release = registry.mount(steady.snapshotAtom(A));
 
     registry.set(snapshots(A), liveA);
-    registry.set(statuses(A), "live");
+    registry.set(shellStates(A), { ...EMPTY_SHELL_STATE, status: "live", generation: 1 });
     registry.set(
       connections(A),
       AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, desired: true, phase: "connected" }),

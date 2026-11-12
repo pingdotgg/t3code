@@ -50,7 +50,7 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
 const steadyShells = createSteadyShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
-  statusAtom: environmentShell.statusAtom,
+  shellStateAtom: environmentShell.stateValueAtom,
   connectionStateAtom: environmentCatalog.stateAtom,
 });
 /**

@@ -5,12 +5,12 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "../connection/model.ts";
 import { presentConnectionState } from "../connection/presentation.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
-import type { EnvironmentShellStatus } from "./shell.ts";
+import type { EnvironmentShellState, EnvironmentShellStatus } from "./shell.ts";
 
 /**
- * How long synchronized rows wait for environments that are still connecting. Each
- * environment synchronizes at its own time, and a list that follows each one moves once
- * per environment; within this time they move together.
+ * How long fresh rows wait for environments that are still connecting. Each environment
+ * gets its server data at its own time, and a list that follows each one moves once per
+ * environment; within this time they move together.
  */
 const STEADY_SHELL_RELEASE_WINDOW_MS = 2_000;
 
@@ -22,10 +22,11 @@ export interface SteadyShellInput {
    * it comes from the snapshot itself: a second atom could be one update behind the rows.
    */
   readonly serverSequence: number | null;
-  /** The shell is synchronized with its server. */
-  readonly live: boolean;
-  /** A first connection attempt or its synchronization is running, so it can be live soon. */
-  readonly inFlight: boolean;
+  readonly status: EnvironmentShellStatus;
+  /** The shell state's generation: it grows with each server snapshot. */
+  readonly generation: number;
+  /** A first connection attempt, or the connection it made, is up: fresh rows can come soon. */
+  readonly connecting: boolean;
 }
 
 interface SteadyShell {
@@ -33,6 +34,9 @@ interface SteadyShell {
   readonly shownSequence: number | null;
   /** False while `shown` holds back newer server data. */
   readonly following: boolean;
+  readonly wasLive: boolean;
+  /** The generation when the environment last lost its connection or its live state. */
+  readonly baseGeneration: number;
 }
 
 export interface SteadyShellsState {
@@ -45,8 +49,8 @@ export const EMPTY_STEADY_SHELLS_STATE: SteadyShellsState = { shells: new Map(),
 
 /**
  * Decides which snapshot of each environment a thread list shows. Rows stay as shown until
- * their environment synchronizes, then show with every environment that synchronized: at once
- * when no other can be live soon, else when the window the first one opened ends.
+ * the environment has fresh server data, then show with every environment that has it: at
+ * once when no other can have it soon, else when the window the first one opened ends.
  * Returns `previous` itself when nothing changes.
  */
 export function stepSteadyShells(
@@ -56,42 +60,61 @@ export function stepSteadyShells(
   windowMs = STEADY_SHELL_RELEASE_WINDOW_MS,
 ): SteadyShellsState {
   const shells = new Map<EnvironmentId, SteadyShell>();
-  const waiting: Array<SteadyShellInput> = [];
+  const waiting: Array<readonly [SteadyShellInput, number]> = [];
   let othersInFlight = false;
-  const follow = (input: SteadyShellInput, following: boolean): SteadyShell => ({
+  const show = (
+    input: SteadyShellInput,
+    following: boolean,
+    baseGeneration: number,
+  ): SteadyShell => ({
     shown: input.snapshot,
     shownSequence: input.serverSequence,
     following,
+    wasLive: input.status === "live",
+    baseGeneration,
   });
   const keep = (environmentId: EnvironmentId, next: SteadyShell, current: SteadyShell) =>
     shells.set(
       environmentId,
       current.shown === next.shown &&
         current.shownSequence === next.shownSequence &&
-        current.following === next.following
+        current.following === next.following &&
+        current.wasLive === next.wasLive &&
+        current.baseGeneration === next.baseGeneration
         ? current
         : next,
     );
   for (const input of inputs) {
+    const live = input.status === "live";
     const current = previous.shells.get(input.environmentId);
     if (current === undefined) {
-      othersInFlight ||= !input.live && input.inFlight;
-      shells.set(input.environmentId, follow(input, input.live));
-    } else if (!input.live) {
-      othersInFlight ||= input.inFlight;
+      othersInFlight ||= !live && input.connecting;
+      shells.set(input.environmentId, show(input, live, input.generation));
+      continue;
+    }
+    // A connection's first server snapshot is fresh before the socket confirms it. A replay
+    // of events (no new generation) is fresh only when the environment is live.
+    const base =
+      live || (input.status === "synchronizing" && !current.wasLive)
+        ? current.baseGeneration
+        : input.generation;
+    if (!live && input.generation <= base) {
+      othersInFlight ||= input.connecting;
       // Without new server data the change is local (cached links, rows loaded on demand), and
       // an environment that shows nothing (its cache is not read yet) has nothing to hold back.
       const local = current.shown === null || input.serverSequence === current.shownSequence;
       keep(
         input.environmentId,
-        local ? follow(input, false) : { ...current, following: false },
+        local
+          ? show(input, false, base)
+          : { ...current, following: false, wasLive: false, baseGeneration: base },
         current,
       );
     } else if (current.following) {
-      keep(input.environmentId, follow(input, true), current);
+      keep(input.environmentId, show(input, true, base), current);
     } else {
-      waiting.push(input);
-      shells.set(input.environmentId, current);
+      waiting.push([input, base]);
+      keep(input.environmentId, { ...current, wasLive: live, baseGeneration: base }, current);
     }
   }
 
@@ -100,7 +123,7 @@ export function stepSteadyShells(
     releaseAt = previous.releaseAt ?? now + windowMs;
     if (!othersInFlight || now >= releaseAt) {
       releaseAt = null;
-      for (const input of waiting) shells.set(input.environmentId, follow(input, true));
+      for (const [input, base] of waiting) shells.set(input.environmentId, show(input, true, base));
     }
   }
 
@@ -121,7 +144,7 @@ export function createSteadyShellAtoms<E>(input: {
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
-  readonly statusAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellStatus>;
+  readonly shellStateAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>;
   readonly connectionStateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<SupervisorConnectionState, E>>;
@@ -136,7 +159,7 @@ export function createSteadyShellAtoms<E>(input: {
     const inputs: Array<SteadyShellInput> = [];
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const snapshot = get(input.snapshotAtom(environmentId));
-      const live = get(input.statusAtom(environmentId)) === "live";
+      const shell = get(input.shellStateAtom(environmentId));
       const connection = AsyncResult.getOrElse(
         get(input.connectionStateAtom(environmentId)),
         () => AVAILABLE_CONNECTION_STATE,
@@ -150,9 +173,10 @@ export function createSteadyShellAtoms<E>(input: {
         environmentId,
         snapshot,
         serverSequence: snapshot?.snapshotSequence ?? null,
-        live,
+        status: shell.status,
+        generation: shell.generation,
         // A retry after a failure can take minutes, so only a first attempt is waited for.
-        inFlight: !live && (phase === "connecting" || phase === "connected"),
+        connecting: phase === "connecting" || phase === "connected",
       });
     }
     state = stepSteadyShells(state, inputs, now());

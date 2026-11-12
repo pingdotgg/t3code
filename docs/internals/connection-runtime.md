@@ -78,8 +78,9 @@ on which data is current.
 Each environment synchronizes at its own time, so a thread list that follows every
 snapshot moves once per environment on each cold start and resume. Mobile lists read
 [steady shells](../../packages/client-runtime/src/state/steadyShells.ts): an
-environment's rows stay as shown until it is synchronized, and environments that
-synchronize within two seconds of each other show together. Only an environment on
+environment's rows stay as shown until its connection's server snapshot arrives (or,
+for a replay of events, until it is synchronized), and environments that get there
+within two seconds of each other show together. Only an environment on
 its first connection attempt is waited for; a retry can take minutes. Point reads (a
 thread's own shell, route checks) keep the live snapshot, where a row the server just
 sent must not look missing. The decision reads the snapshot's own sequence: a second
