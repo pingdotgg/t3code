@@ -3436,6 +3436,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const subagentPayload = sql`CASE
           WHEN subagent.origin = 'app_owned'
             AND child.provider_instance_id = subagent.provider_instance_id
+            AND (json_extract(subagent.payload_json, '$.model') IS NULL
+              OR json_extract(child.payload_json, '$.modelSelection.model')
+                = json_extract(subagent.payload_json, '$.model'))
           THEN json_set(subagent.payload_json, '$.modelSelection',
             json_extract(child.payload_json, '$.modelSelection'))
           ELSE subagent.payload_json

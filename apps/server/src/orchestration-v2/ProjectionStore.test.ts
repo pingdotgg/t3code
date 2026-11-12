@@ -1747,7 +1747,7 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         nativeTaskRef: null,
         prompt: "Do the work",
         title: name,
-        model: null,
+        model: name === "delivered" ? modelSelection.model : null,
         ...(delivery === null
           ? {}
           : { completionDelivery: { state: delivery, observedByRunId: null } }),
@@ -1826,9 +1826,10 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   );
   const delivered = forTask.subagents.find((agent) => agent.id === deliveredId)!;
   const reportedSelection = { ...modelSelection, options: [{ id: "thinking", value: "low" }] };
-  for (const [origin, instanceId] of [
-    ["provider_native", providerInstanceId],
-    ["app_owned", ProviderInstanceId.make("other-instance")],
+  for (const [origin, instanceId, model] of [
+    ["provider_native", providerInstanceId, modelSelection.model],
+    ["app_owned", ProviderInstanceId.make("other-instance"), modelSelection.model],
+    ["app_owned", providerInstanceId, "older-model"],
   ] as const) {
     yield* store.apply({
       id: EventId.make(`event:settled-subagents:guard:${origin}`),
@@ -1842,7 +1843,8 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         ...delivered,
         origin,
         providerInstanceId: instanceId,
-        modelSelection: { ...reportedSelection, instanceId },
+        model,
+        modelSelection: { ...reportedSelection, instanceId, model },
       },
     });
     for (const records of [
@@ -1855,6 +1857,7 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         {
           ...reportedSelection,
           instanceId,
+          model,
         },
       );
     }

@@ -120,6 +120,7 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     const reported = { instanceId, model, options: [{ id: "thinking", value: "max" }] };
     const delegated = {
       origin: "app_owned",
+      model,
       providerInstanceId: instanceId,
       modelSelection: reported,
     } as const;
@@ -128,8 +129,14 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     };
 
     expect(subagentModelSelection(delegated, { modelSelection: saved })).toBe(saved);
+    expect(subagentModelSelection({ ...delegated, model: null }, { modelSelection: saved })).toBe(
+      saved,
+    );
     expect(subagentModelSelection(delegated, undefined)).toBe(reported);
     expect(subagentModelSelection(delegated, movedChild)).toBe(reported);
+    expect(
+      subagentModelSelection(delegated, { modelSelection: { ...saved, model: "new-model" } }),
+    ).toBe(reported);
     expect(
       subagentModelSelection({ ...delegated, modelSelection: undefined }, undefined),
     ).toBeUndefined();
