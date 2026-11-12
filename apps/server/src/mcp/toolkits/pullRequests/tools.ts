@@ -378,12 +378,7 @@ const WatchPullRequestTool = Tool.make("watch_pull_request", {
     "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
   parameters: Schema.Struct({
     ...PullRequestTargetInput.fields,
-    includeOwnRemarks: Schema.optional(
-      Schema.Boolean.annotate({
-        description:
-          "Also wake on comments and reviews from this account, for accounts several people or agents share. Omit to keep the current setting. A change starts a new comment window.",
-      }),
-    ),
+    includeOwnRemarks: Schema.optional(Schema.Boolean),
   }),
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
