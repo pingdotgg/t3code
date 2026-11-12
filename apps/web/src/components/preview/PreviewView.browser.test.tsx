@@ -18,6 +18,7 @@ import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
+  refresh: vi.fn(async (_tabId: string): Promise<void> => undefined),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   readEnvironmentScope: vi.fn((_environmentId?: unknown, _scope?: unknown) => true),
@@ -58,7 +59,7 @@ vi.mock(import("./previewBridge"), async (original) => ({
     annotationVoice: { onEvent: () => () => {}, update: async () => {} },
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
     cancelPickElement: mocks.cancelPickElement,
-    refresh: vi.fn(async () => undefined),
+    refresh: mocks.refresh,
     goBack: vi.fn(async () => undefined),
     goForward: vi.fn(async () => undefined),
     hardReload: vi.fn(async () => undefined),
@@ -256,6 +257,16 @@ describe("PreviewView", () => {
       await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
     },
   );
+
+  it("does not reload the page when Stop is clicked while it is loading", async () => {
+    setup();
+    mocks.loading = true;
+    await using _screen = await render(view());
+
+    await userEvent.click(page.getByRole("button", { name: "Stop" }));
+
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
 
   it("keeps the address in the bar when Enter commits an IME composition", async () => {
     setup();
