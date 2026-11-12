@@ -25,7 +25,7 @@ export class SecretDeliveryError extends Schema.TaggedError<SecretDeliveryError>
   override get message(): string {
     return {
       invalid_file:
-        'Use an absolute canonical path to a non-empty, owner-private regular UTF-8 file of at most 64 KiB, without symlinks. On macOS use cd -P "$TMPDIR" then mktemp "$(pwd -P)/t3-secret.XXXXXX". On Windows use [IO.File]::WriteAllText under "$env:LOCALAPPDATA\\Temp".',
+        'Use an absolute canonical path to a non-empty, owner-private regular UTF-8 file of at most 64 KiB, without symlinks. On macOS use cd -P "$TMPDIR" then mktemp "$(pwd -P)/t3-secret.XXXXXX". On Windows use [IO.File]::WriteAllText under "$env:LOCALAPPDATA\\Temp". Windows PowerShell must be allowed to inspect file permissions; close other programs using the file.',
       unavailable: "This secret delivery is unavailable.",
       storage_failed: "Could not access secret delivery storage.",
       record_failed: "Could not record the secret delivery. Retry the operation.",

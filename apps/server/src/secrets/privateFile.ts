@@ -76,7 +76,9 @@ export const makeReader = Effect.gen(function* () {
   });
 
   return Effect.fn("PrivateFile.read")(function* (filePath: string) {
-    const path = NodePath.resolve(filePath);
+    const resolved = NodePath.resolve(filePath);
+    const path =
+      platform === "win32" ? resolved.replace(/^[a-z]:/, (drive) => drive.toUpperCase()) : resolved;
     if (!NodePath.isAbsolute(filePath) || (yield* attempt(() => NodeFSP.realpath(path))) !== path)
       return yield* invalidFile();
     return yield* Effect.acquireUseRelease(
