@@ -75,7 +75,7 @@ import {
   deriveProviderInstanceEntries,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
-import { orchestrationEnvironment, threadProjectionRead } from "../../state/orchestration";
+import { orchestrationEnvironment, threadTitlesRead } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
@@ -345,7 +345,7 @@ function DelegatedFromRow(props: {
   const parentRef = scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const parent = useQuietThreadShell(parentRef);
-  const readParent = useAtomCommand(threadProjectionRead);
+  const readParent = useAtomCommand(threadTitlesRead);
   const [opening, setOpening] = useState(false);
   const label = environment?.label ?? props.fallbackLabel;
   const title = parent?.title ?? delegatedFrom.title;
@@ -357,7 +357,7 @@ function DelegatedFromRow(props: {
     const location = router.latestLocation;
     const result = await readParent({
       environmentId: delegatedFrom.environmentId,
-      input: { threadId: delegatedFrom.threadId },
+      input: { threadIds: [delegatedFrom.threadId] },
     });
     setOpening(false);
     // The read can outlast the user's stay on this thread; a late answer must not pull them back.
@@ -366,7 +366,8 @@ function DelegatedFromRow(props: {
       toastManager.add({ type: "error", title: "Could not open the parent thread" });
       return;
     }
-    if (result.value.thread.deletedAt !== null) {
+    // Deleted and unknown threads are absent from the titles.
+    if (result.value[delegatedFrom.threadId] === undefined) {
       toastManager.add({ type: "info", title: "The parent thread was deleted" });
       return;
     }

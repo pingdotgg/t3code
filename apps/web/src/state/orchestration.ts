@@ -9,8 +9,7 @@ export const orchestrationEnvironment = createOrchestrationEnvironmentAtoms(conn
   shellState: environmentShell.stateValueAtom,
 });
 
-/** One fresh read of a thread, for checking it still exists before opening it. */
-export const threadProjectionRead = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "environment-data:orchestration-v2:thread-projection-read",
-  tag: ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+export const threadTitlesRead = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:orchestration:thread-titles-read",
+  tag: ORCHESTRATION_V2_WS_METHODS.getThreadTitles,
 });

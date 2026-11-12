@@ -27,8 +27,8 @@ const child = {
 
 vi.mock(import("../../state/orchestration"), async (original) => ({
   ...(await original()),
-  threadProjectionRead: {
-    label: "thread-projection-read",
+  threadTitlesRead: {
+    label: "thread-titles-read",
     run: (_registry: unknown, input: unknown) => read(input),
   } as never,
 }));
@@ -53,8 +53,8 @@ import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 const childPath = `/${childEnvironmentId}/${childThreadId}`;
 const parentPath = `/${parentEnvironmentId}/parent-thread`;
 
-const live = { _tag: "Success", value: { thread: { deletedAt: null } } };
-const deleted = { _tag: "Success", value: { thread: { deletedAt: "2026-10-30T06:20:20.897Z" } } };
+const live = { _tag: "Success", value: { "parent-thread": "Parent" } };
+const deleted = { _tag: "Success", value: {} };
 
 // Renders the child's panel; each read of its parent answers with the next of `replies`.
 function renderChild(...replies: ReadonlyArray<unknown>) {
@@ -94,7 +94,7 @@ it.each([
   await vi.waitFor(() => expect(toast).toHaveBeenCalledWith(row.feedback));
   expect(read).toHaveBeenCalledWith({
     environmentId: parentEnvironmentId,
-    input: { threadId: "parent-thread" },
+    input: { threadIds: ["parent-thread"] },
   });
   expect(screen.router?.state.location.pathname).toBe(childPath);
 });
