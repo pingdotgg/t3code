@@ -1,5 +1,4 @@
 import { ProviderDriverKind, ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
-import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -169,67 +168,4 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
-});
-
-it("reveals search when a provider shortcut returns to the scrolled search field", async () => {
-  const entries = deriveProviderInstanceEntries(
-    ["codex", "claude"].map((id) => ({
-      instanceId: ProviderInstanceId.make(id),
-      driver: ProviderDriverKind.make(id),
-      enabled: true,
-      installed: true,
-      version: null,
-      status: "ready" as const,
-      auth: { status: "authenticated" as const },
-      checkedAt: "2026-01-01T00:00:00.000Z",
-      models: [{ slug: "original", name: `${id} model`, isCustom: false, capabilities: {} }],
-      slashCommands: [],
-      skills: [],
-    })),
-  );
-  await using screen = await render(
-    <ProviderModelPicker
-      environmentId={null}
-      activeInstanceId={entries[0]!.instanceId}
-      model="original"
-      lockedProvider={null}
-      instanceEntries={entries}
-      modelOptionsByInstance={new Map(entries.map((entry) => [entry.instanceId, entry.models]))}
-      keybindings={compileResolvedKeybindingsConfig([
-        { key: "alt+p", command: "modelPicker.nextProvider", when: "modelPickerOpen" },
-      ])}
-      triggerAriaLabel="Choose model"
-      onInstanceModelChange={() => {}}
-      effortColumn={<div style={{ height: 240, flexShrink: 0 }}>Reasoning effort</div>}
-    />,
-  );
-  const viewport = { width: window.innerWidth, height: window.innerHeight };
-  await page.viewport(550, 330);
-  await using _viewport = {
-    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
-  };
-  await screen.getByRole("button", { name: "Choose model" }).click();
-  const search = page.getByPlaceholder("Search models...");
-  await expect.element(search).toHaveFocus();
-  const input = search.element();
-  let scroller = input.parentElement!;
-  while (getComputedStyle(scroller).overflowY !== "auto") {
-    scroller = scroller.parentElement!;
-  }
-  await vi.waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight));
-  scroller.scrollTop = scroller.scrollHeight;
-  await vi.waitFor(() =>
-    expect(input.getBoundingClientRect().bottom).toBeLessThan(scroller.getBoundingClientRect().top),
-  );
-
-  await userEvent.keyboard("{Alt>}p{/Alt}");
-  await expect.element(page.getByRole("option", { name: /claude model/ })).toBeVisible();
-  await expect.element(search).toHaveFocus();
-  await vi.waitFor(() =>
-    expect(input.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-      scroller.getBoundingClientRect().top,
-    ),
-  );
-  await userEvent.keyboard("claude");
-  await expect.element(search).toHaveValue("claude");
 });

@@ -457,13 +457,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         {props.effortColumn ? (
           <DockedPickerContext value={{ modelLabel: triggerTitle }}>
             <div className="flex max-h-(--available-height) flex-col">
-              <div className="min-h-0 overflow-y-auto overscroll-y-contain">
+              <div className="min-h-0 overflow-y-auto overscroll-y-contain bg-muted/40 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <AnimatedHeight>
                   <div className="flex max-h-86.5 max-sm:max-h-none max-sm:flex-col">
                     {picker}
                     <div
                       data-model-picker-effort
-                      className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                      className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 max-sm:max-h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
                       onKeyDown={(event) => {
                         if (
                           event.key !== "ArrowLeft" ||
