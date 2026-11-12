@@ -3390,6 +3390,18 @@ function claudeTaskTypeFromSdkMessage(message: SDKMessage): string | null {
   return typeof taskType === "string" ? taskType : null;
 }
 
+// A `context: fork` skill has no Agent call: its task_started omits tool_use_id and is described
+// as `/<skill>`, while its frames name `forked-command-<skill>` as their parent.
+function claudeSubagentToolUseId(message: {
+  readonly tool_use_id?: string | undefined;
+  readonly description: string;
+}): string | undefined {
+  if (message.tool_use_id !== undefined) return message.tool_use_id;
+  return /^\/[^\s/]+$/.test(message.description)
+    ? `forked-command-${message.description.slice(1)}`
+    : undefined;
+}
+
 function isClaudeNonSubagentTask(message: SDKMessage): boolean {
   return isClaudeOpaqueBackgroundTaskType(claudeTaskTypeFromSdkMessage(message));
 }
@@ -10283,12 +10295,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 activeContext: context,
               });
             } else {
+              const toolUseId = claudeSubagentToolUseId(message);
               const launch =
-                message.tool_use_id === undefined
+                toolUseId === undefined
                   ? undefined
-                  : pendingSubagentLaunchesByToolUseId.get(message.tool_use_id);
-              if (message.tool_use_id !== undefined) {
-                pendingSubagentLaunchesByToolUseId.delete(message.tool_use_id);
+                  : pendingSubagentLaunchesByToolUseId.get(toolUseId);
+              if (toolUseId !== undefined) {
+                pendingSubagentLaunchesByToolUseId.delete(toolUseId);
               }
               const owner =
                 launch?.ownerToolUseId === undefined
@@ -10319,7 +10332,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 context,
                 taskId: message.task_id,
                 ...(message.task_type === undefined ? {} : { nativeTaskType: message.task_type }),
-                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                ...(toolUseId === undefined ? {} : { toolUseId }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
