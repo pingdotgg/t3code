@@ -447,6 +447,9 @@ const PAGE_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["comma
   "rightPanel.nextTab",
   "rightPanel.previousTab",
 ]);
+// Page-first only while the main frame has focus; a focused iframe cannot report them unhandled.
+const MAIN_FRAME_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["command"]> =
+  new Set(["rightPanel.nextTab", "rightPanel.previousTab"]);
 
 const decodePageShortcutKeys = Schema.decodeUnknownOption(
   Schema.Struct({
@@ -1556,7 +1559,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (forwarded && host) {
         // The page keeps these keys. Only the main-frame preload can report one it
         // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find.
-        if (PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command)) return;
+        if (
+          PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command) &&
+          (!MAIN_FRAME_FIRST_FORWARDED_COMMANDS.has(forwarded.command) ||
+            wc.focusedFrame === wc.mainFrame)
+        ) {
+          return;
+        }
         event.preventDefault();
         if (!input.isAutoRepeat) {
           if (
