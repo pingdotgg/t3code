@@ -10,6 +10,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
@@ -244,6 +245,8 @@ export function PreviewView({
   // IPC interprets undefined profile ids as all profiles.
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
+  // Incognito visits stay out of the project's persisted history.
+  const isIncognito = activeProfileId === INCOGNITO_BROWSER_PROFILE_ID;
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -278,7 +281,7 @@ export function PreviewView({
   const handleSubmitUrl = async (next: string) => {
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
-      if (await navigateToResolvedUrl(resolved)) {
+      if ((await navigateToResolvedUrl(resolved)) && !isIncognito) {
         recordVisitForThread(threadRef, resolved);
       }
     } catch (error) {
@@ -300,7 +303,7 @@ export function PreviewView({
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
-      if (await navigateToResolvedUrl(resolved)) {
+      if ((await navigateToResolvedUrl(resolved)) && !isIncognito) {
         recordVisitForThread(threadRef, next);
       }
     } catch (error) {
