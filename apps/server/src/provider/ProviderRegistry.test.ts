@@ -41,6 +41,7 @@ import {
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { refreshPathFromLoginShell } from "../os-jank.ts";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -2614,6 +2615,14 @@ it.layer(
           const environment: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
           let shellPath = "/usr/bin";
           let shellReads = 0;
+          const loginShell = layerMockSpawner(() => {
+            shellReads += 1;
+            return {
+              stdout: `__T3CODE_ENV_PATH_START__\n${shellPath}\n__T3CODE_ENV_PATH_END__\n`,
+              stderr: "",
+              code: 0,
+            };
+          });
 
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
@@ -2641,19 +2650,7 @@ it.layer(
                   prefix: "t3-provider-registry-missing-cli-",
                 }),
               ),
-              Layer.provide(
-                Layer.merge(
-                  NodeServices.layer,
-                  layerMockSpawner(() => {
-                    shellReads += 1;
-                    return {
-                      stdout: `__T3CODE_ENV_PATH_START__\n${shellPath}\n__T3CODE_ENV_PATH_END__\n`,
-                      stderr: "",
-                      code: 0,
-                    };
-                  }),
-                ),
-              ),
+              Layer.provide(Layer.merge(NodeServices.layer, loginShell)),
             ),
           ).pipe(
             Effect.provideService(HostProcess.Platform, "darwin"),
@@ -2664,6 +2661,12 @@ it.layer(
             PubSub.publish(probes, { ...missing, checkedAt });
 
           shellPath = "/home/me/.local/bin:/usr/bin";
+          // Source-control discovery refreshes the same PATH first; recovery must still rebuild.
+          yield* refreshPathFromLoginShell().pipe(
+            Effect.provide(loginShell),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(HostProcess.Environment, environment),
+          );
           yield* probeMissing("2026-06-10T00:05:00.000Z");
           expect(yield* Queue.take(rebuilds)).toEqual([missing.instanceId]);
           expect(environment.PATH).toBe("/home/me/.local/bin:/usr/bin");
@@ -2674,7 +2677,7 @@ it.layer(
           shellPath = "/opt/tools/bin:/home/me/.local/bin:/usr/bin";
           yield* probeMissing("2026-06-10T00:10:00.000Z");
           expect(yield* Queue.take(rebuilds)).toEqual([missing.instanceId]);
-          expect(shellReads).toBe(2);
+          expect(shellReads).toBe(3);
         }),
     );
 

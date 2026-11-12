@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
@@ -850,11 +851,21 @@ export const layer = Layer.effect(
 
     // Drivers copy the host environment when created, so a missing CLI's instance must be
     // rebuilt to see a PATH directory added since. One shell read serves every provider.
+    // Compared against the PATH this registry last checked, not the refresh's own state:
+    // source-control discovery refreshes the same PATH and must not consume the change.
+    const hostEnvironment = yield* HostProcess.Environment;
+    const checkedPathRef = yield* Ref.make(hostEnvironment.PATH);
     const recoverMissingClis = yield* Effect.cachedWithTTL(
       Effect.gen(function* () {
-        const gained = yield* refreshPathFromLoginShell().pipe(
+        yield* refreshPathFromLoginShell().pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
+        const checked = new Set(
+          (yield* Ref.getAndSet(checkedPathRef, hostEnvironment.PATH))?.split(":"),
+        );
+        const gained = (hostEnvironment.PATH ?? "")
+          .split(":")
+          .some((entry) => entry !== "" && !checked.has(entry));
         if (!gained) return;
         const live = yield* Ref.get(liveSubsRef);
         const missing = (yield* Ref.get(providersRef))

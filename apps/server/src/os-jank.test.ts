@@ -192,7 +192,7 @@ effectIt.effect("hydrates a missing JAVA_HOME from the login shell and keeps an 
   ),
 );
 
-effectIt.effect("refreshes PATH with directories the login shell gained after startup", () =>
+effectIt.effect("refreshes PATH from the login shell without piling up per-login directories", () =>
   Effect.gen(function* () {
     const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/opt/kept/bin" };
     let shellPath = "";
@@ -224,13 +224,8 @@ effectIt.effect("refreshes PATH with directories the login shell gained after st
     );
 
     shellPath = "/home/me/.local/bin:/usr/bin";
-    assert.isTrue(yield* refresh);
+    yield* refresh;
     assert.equal(env.PATH, "/home/me/.local/bin:/usr/bin:/opt/kept/bin");
-
-    // Reordered entries are not a new directory.
-    shellPath = "/usr/bin:/home/me/.local/bin";
-    assert.isFalse(yield* refresh);
-    assert.equal(env.PATH, "/usr/bin:/home/me/.local/bin:/opt/kept/bin");
 
     // A directory made fresh for each login (fnm) replaces the last one instead of piling up.
     shellPath = "/tmp/fnm_multishells/1/bin:/usr/bin";
