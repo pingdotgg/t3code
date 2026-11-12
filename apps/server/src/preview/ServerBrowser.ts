@@ -788,7 +788,7 @@ const make = Effect.gen(function* () {
     clearTimeout(timeout);
   };
 
-  const dropTab = (tab: ServerTab, closeSession: boolean) => {
+  const dropTab = (tab: ServerTab, closeSession: boolean, reconnect = false) => {
     const key = tabKey(tab.threadId, tab.tabId);
     if (tabs.get(key) !== tab) return;
     tabs.delete(key);
@@ -796,7 +796,8 @@ const make = Effect.gen(function* () {
     tab.viewerAttached?.resolve();
     clearAbortedNavigation(tab);
     // A desktop page outlives the connection unless its session closed with it.
-    const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
+    const end =
+      (tab.desktop || reconnect) && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     if (tab.desktop) void tab.desktop.close().catch(constVoid);
@@ -959,7 +960,14 @@ const make = Effect.gen(function* () {
       desktopViewportRead: Promise.resolve(null),
       desktopViewportNext: null,
       loading: false,
-      loadError: undefined,
+      loadError:
+        snapshot.navStatus._tag === "LoadFailed" && !snapshot.navStatus.download
+          ? {
+              url: snapshot.navStatus.url,
+              code: snapshot.navStatus.code,
+              description: snapshot.navStatus.description,
+            }
+          : undefined,
       closing: false,
       recording: null,
       recordingStart: null,
@@ -1085,14 +1093,45 @@ const make = Effect.gen(function* () {
     updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
-    // Playwright cannot reload a crashed page, so it must leave the tab list.
     const key = tabKey(tab.threadId, tab.tabId);
     if (closedPendingTabs.delete(key)) {
       await control.close().catch(constVoid);
       throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
     }
-    page.on("close", () => dropTab(tab, true));
-    page.on("crash", () => dropTab(tab, true));
+    let crashed = false;
+    page.on("close", () => {
+      if (!crashed) dropTab(tab, true);
+    });
+    // Playwright cannot reuse a crashed page, so the tab reopens on a fresh page that shows the
+    // crash. The failure is recorded first so that page does not navigate back into the crash.
+    page.on("crash", () => {
+      if (desktop) {
+        dropTab(tab, true);
+        return;
+      }
+      crashed = true;
+      const url = ServerBrowserPage.withoutDataPayload(page.url()).slice(0, 2048);
+      void runPromise(
+        manager
+          .reportStatus({
+            threadId: tab.threadId,
+            tabId: tab.tabId,
+            serverControlled: true,
+            navStatus: { _tag: "LoadFailed", url, title: "", code: 0, description: "Page crashed" },
+            canGoBack: false,
+            canGoForward: false,
+          })
+          .pipe(
+            Effect.andThen(manager.list({ threadId: tab.threadId })),
+            Effect.map(({ sessions }) => sessions.find((session) => session.tabId === tab.tabId)),
+            Effect.orElseSucceed(() => undefined),
+          ),
+      ).then((reopened) => {
+        if (tabs.get(key) !== tab) return;
+        dropTab(tab, false, true);
+        if (reopened) void ensureTab(reopened).catch(constVoid);
+      });
+    });
     tabs.set(key, tab);
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
@@ -1676,6 +1715,8 @@ const make = Effect.gen(function* () {
   };
 
   const loadErrorOf = (tab: ServerTab): PreviewAutomationLoadError | undefined => {
+    // A tab reopened for a session whose page failed has not loaded anything since.
+    if (tab.page.url() === "about:blank" && tab.navigationGeneration === 0) return tab.loadError;
     if (!tab.page.url().startsWith("chrome-error://")) return undefined;
     // A desktop failure from before CDP attached is superseded by any navigation we observe.
     if (tab.loadError || !tab.desktop || tab.navigationGeneration > 0) return tab.loadError;
@@ -2103,7 +2144,10 @@ const make = Effect.gen(function* () {
         return statusWithTitle(
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
-            : tabs.get(tabKey(request.threadId, request.tabId)),
+            : (tabs.get(tabKey(request.threadId, request.tabId)) ??
+                (await pendingTabs
+                  .get(tabKey(request.threadId, request.tabId))
+                  ?.promise?.catch(() => undefined))),
           request.agentSessionId,
         );
       case "open": {
@@ -2651,13 +2695,19 @@ const make = Effect.gen(function* () {
             : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
         );
         return;
-      case "reload":
+      case "reload": {
+        const failed = loadErrorOf(tab);
+        if (failed && tab.page.url() === "about:blank") {
+          tab.control.trackUntilHandoff(tab.page.goto(failed.url, VIEWER_NAVIGATION_OPTIONS));
+          return;
+        }
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;
         }
         tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
+      }
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);
