@@ -782,6 +782,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/node-pty/prebuilds/win32-arm64/conpty/OpenConsole.exe",
           "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64/OpenConsole.exe",
           "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64/OpenConsole.exe",
+          "node_modules/node-pty/build/Release/conpty/OpenConsole.exe",
+          "node_modules/node-pty/build/Release/conpty/conpty.dll",
           "node_modules/node-pty/prebuilds/win32-x64/pty.node",
           "node_modules/node-pty/prebuilds/linux-x64/pty.node",
           "node_modules/@yuuang/ffi-rs-win32-ia32-msvc/ffi-rs.win32-ia32-msvc.node",
@@ -833,6 +835,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           yield* fs.exists(
             path.join(unpackedRoot, "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64"),
           ),
+        );
+        assert.isFalse(
+          yield* fs.exists(path.join(unpackedRoot, "node_modules/node-pty/build/Release/conpty")),
         );
         assert.isFalse(
           yield* fs.exists(path.join(unpackedRoot, "node_modules/@yuuang/ffi-rs-win32-ia32-msvc")),

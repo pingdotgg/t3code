@@ -1051,9 +1051,11 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/.bin",
   "**/node_modules/.bin/**",
   "**/*.map",
-  // node-pty loads conpty from its prebuilds; third_party only feeds its post-install script.
+  // node-pty loads conpty from its prebuilds; its post-install copies third_party into build/Release.
   "**/node_modules/node-pty/third_party/conpty",
   "**/node_modules/node-pty/third_party/conpty/**",
+  "**/node_modules/node-pty/build/Release/conpty",
+  "**/node_modules/node-pty/build/Release/conpty/**",
   "**/node_modules/@yuuang/ffi-rs-win32-ia32-msvc",
   "**/node_modules/@yuuang/ffi-rs-win32-ia32-msvc/**",
 ] as const;
