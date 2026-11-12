@@ -1819,10 +1819,12 @@ export const layer: Layer.Layer<
         const compact =
           input.message.attachments.length === 0 &&
           input.message.text.trim().toLowerCase() === "/compact";
-        const goalCommand =
-          input.session.driver === "codex" || input.session.driver === "claudeAgent"
-            ? parseGoalCommand(input.message)
-            : null;
+        const goalDriver =
+          input.session.driver === "codex" ||
+          input.session.driver === "claudeAgent" ||
+          (input.session.driver === "opencode" &&
+            input.session.providerSession.capabilities.turns.supportsNativeGoals === true);
+        const goalCommand = goalDriver ? parseGoalCommand(input.message) : null;
         const startTurn = compact
           ? (input.session.compactThread?.(turnInput) ??
             Effect.fail(
