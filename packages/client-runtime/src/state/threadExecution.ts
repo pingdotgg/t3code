@@ -319,6 +319,19 @@ export function deriveResumableRunId(
     : null;
 }
 
+/**
+ * Whether Resume can start: the run's continuation, else the held queue. The server refuses that
+ * continuation while any request is pending, so the queue must not be released in its place.
+ */
+export function canResumeThread(
+  projection: Pick<ThreadStructure, "runtimeRequests">,
+  resumableRunId: RunId | null,
+  queueHeld: boolean,
+): boolean {
+  if (resumableRunId === null) return queueHeld;
+  return !projection.runtimeRequests.some((request) => request.status === "pending");
+}
+
 export function deriveThreadRuntime(
   projection: ThreadStructure & Pick<OrchestrationV2ThreadProjection, "updatedAt">,
 ): ThreadRuntimeSummary | null {
