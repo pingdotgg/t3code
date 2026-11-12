@@ -645,7 +645,9 @@ function PoolWindowCard({
       {spent ? (
         <div className="flex min-w-0 flex-col gap-1.5">
           <PoolBar pool={pool} color={color} now={now} />
-          <span className="text-xs text-muted-foreground tabular-nums">{gt("{spent} spent", { spent })}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {gt("{spent} spent", { spent })}
+          </span>
         </div>
       ) : (
         <PoolBar pool={pool} color={color} now={now} />

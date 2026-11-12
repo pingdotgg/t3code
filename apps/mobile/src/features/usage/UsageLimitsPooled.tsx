@@ -201,7 +201,9 @@ function PoolWindowCard({
   // With several accounts, each account screen carries its own amounts.
   const spent = pool.columns.length === 1 ? formatSpend(pool.members[0]!.window) : null;
   const spentLine = spent ? (
-    <Text className="text-xs tabular-nums text-foreground-muted">{gt("{spent} spent", { spent })}</Text>
+    <Text className="text-xs tabular-nums text-foreground-muted">
+      {gt("{spent} spent", { spent })}
+    </Text>
   ) : null;
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
@@ -695,7 +697,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
                   <Var>{remainingPercent(window)}</Var>% left
                 </T>
               </Text>
-              {formatSpend(window) ? (
+              {window.spend ? (
                 <Text selectable className="text-sm tabular-nums text-foreground-muted">
                   {gt("{spent} spent", { spent: formatSpend(window) ?? "" })}
                 </Text>
