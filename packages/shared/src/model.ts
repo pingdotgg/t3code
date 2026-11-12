@@ -570,6 +570,16 @@ function getReasoningEffortOptionValue(
  * the option id the selected model actually reads. Without an explicit effort,
  * an existing effort-like option is re-keyed so it still reaches the adapter.
  */
+/** The select a saved reasoning effort applies to; agent editors list its levels. */
+export function findReasoningEffortDescriptor(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+): Extract<ProviderOptionDescriptor, { type: "select" }> | undefined {
+  return descriptors?.find(
+    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      descriptor.type === "select" && REASONING_EFFORT_OPTION_IDS.has(descriptor.id),
+  );
+}
+
 export function withReasoningEffortOption(
   options: ReadonlyArray<ProviderOptionSelection> | undefined,
   effort: string | undefined,
@@ -577,11 +587,7 @@ export function withReasoningEffortOption(
 ): ReadonlyArray<ProviderOptionSelection> | undefined {
   const value = effort ?? getReasoningEffortOptionValue(options);
   if (value === undefined) return options;
-  const id =
-    descriptors?.find(
-      (descriptor) =>
-        descriptor.type === "select" && REASONING_EFFORT_OPTION_IDS.has(descriptor.id),
-    )?.id ?? "reasoningEffort";
+  const id = findReasoningEffortDescriptor(descriptors)?.id ?? "reasoningEffort";
   return [
     ...(options ?? []).filter((option) => !REASONING_EFFORT_OPTION_IDS.has(option.id)),
     { id, value },

@@ -1,4 +1,4 @@
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, PipetteIcon } from "lucide-react";
 import {
   Combobox,
   ComboboxTrigger,
@@ -23,7 +23,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Alert, AlertDescription } from "../ui/alert";
-import { agentModelOptions, presetProviderLabel } from "./agentModelCatalog";
+import { agentModelOptions, agentThinkingChoices, presetProviderLabel } from "./agentModelCatalog";
 import type { AgentSkill, McpGatewayProfile, ServerProvider } from "@t3tools/contracts";
 import { MCP_GATEWAY_RUNTIME_MODE_LABELS } from "@t3tools/contracts";
 import { agentColors, defaultAgentColor, soleOption } from "./agents.logic";
@@ -54,7 +54,7 @@ import {
 } from "@t3tools/shared/agentPresets";
 
 const emptySkills: ReadonlyArray<AgentSkill> = [];
-const THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const PROVIDER_DEFAULT = "";
 
 function FormSection({ title, children }: { title: string; children: ReactNode }) {
   const id = useId();
@@ -208,7 +208,7 @@ export function AgentEditor({
   const providerOptions = [...new Set([...providerLabels, ...(provider ? [provider] : [])])];
   const modelItems = [
     ...(model && !selectedModel
-      ? [{ value: model, label: `${model}: unavailable; select a model`, disabled: true }]
+      ? [{ value: model, label: `${model} (unavailable)`, disabled: true }]
       : []),
     ...models.map((option) => ({
       value: option.slug,
@@ -216,6 +216,13 @@ export function AgentEditor({
       disabled: false,
     })),
   ];
+  const thinkingItems = [
+    { value: PROVIDER_DEFAULT, label: "Provider default" },
+    ...agentThinkingChoices(selectedModel, thinking.trim()),
+  ];
+  const customColor = !agentColors.includes(color);
+  const swatchClass =
+    "relative size-6 shrink-0 cursor-pointer rounded-full aria-pressed:ring-2 aria-pressed:ring-foreground aria-pressed:ring-inset data-selected:ring-2 data-selected:ring-foreground data-selected:ring-inset";
   return (
     <Dialog
       open
@@ -352,93 +359,116 @@ export function AgentEditor({
                     Color
                   </Label>
                   <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="color"
-                      aria-label="Custom color"
-                      className="h-7 w-10 cursor-pointer rounded-md border bg-background p-0.5"
-                      value={color}
-                      onChange={(event) => setColor(event.target.value)}
-                    />
                     {agentColors.map((value) => (
                       <button
                         key={value}
                         type="button"
                         aria-label={`Use color ${value}`}
                         aria-pressed={color === value}
-                        className="size-6 cursor-pointer rounded-full aria-pressed:ring-2 aria-pressed:ring-foreground aria-pressed:ring-inset"
+                        className={swatchClass}
                         style={{ background: value }}
                         onClick={() => setColor(value)}
                       />
                     ))}
+                    {/* The circle is the picker's label, so a click opens the native colour picker. */}
+                    <label
+                      data-selected={customColor || undefined}
+                      className={`${swatchClass} flex items-center justify-center border`}
+                      style={customColor ? { background: color } : undefined}
+                    >
+                      {!customColor && <PipetteIcon className="size-3.5 text-muted-foreground" />}
+                      <input
+                        type="color"
+                        aria-label="Custom color"
+                        className="sr-only"
+                        value={color}
+                        onChange={(event) => setColor(event.target.value)}
+                      />
+                    </label>
                   </div>
                 </fieldset>
               </FormSection>
               <FormSection title="Model and modes">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <FormField label="Provider" htmlFor={`${ids}-provider`}>
-                    <Select
-                      value={provider || null}
-                      onValueChange={(value) => {
-                        if (value === null) return;
-                        setProviderLabel(value);
-                        setModelLabel("");
-                      }}
-                    >
-                      <SelectTrigger id={`${ids}-provider`}>
-                        <SelectValue placeholder="Select provider" />
-                      </SelectTrigger>
-                      <SelectPopup>
-                        {providerOptions.map((label) => (
-                          <SelectItem key={label} value={label}>
-                            {label}
-                          </SelectItem>
-                        ))}
-                      </SelectPopup>
-                    </Select>
-                  </FormField>
-                  <FormField label="Model" htmlFor={`${ids}-model`}>
-                    <Select
-                      items={modelItems}
-                      value={(selectedModel?.slug ?? model) || null}
-                      onValueChange={(value) => {
-                        if (value !== null) setModelLabel(value);
-                      }}
-                    >
-                      <SelectTrigger id={`${ids}-model`}>
-                        <SelectValue placeholder="Select model" />
-                      </SelectTrigger>
-                      <SelectPopup>
-                        {modelItems.map((item) => (
-                          <SelectItem key={item.value} value={item.value} disabled={item.disabled}>
-                            {item.label}
-                          </SelectItem>
-                        ))}
-                      </SelectPopup>
-                    </Select>
-                  </FormField>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
+                  <div className="sm:col-span-2">
+                    <FormField label="Provider" htmlFor={`${ids}-provider`}>
+                      <Select
+                        value={provider || null}
+                        onValueChange={(value) => {
+                          if (value === null) return;
+                          setProviderLabel(value);
+                          setModelLabel("");
+                        }}
+                      >
+                        <SelectTrigger id={`${ids}-provider`}>
+                          <SelectValue placeholder="Select provider" />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          {providerOptions.map((label) => (
+                            <SelectItem key={label} value={label}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </FormField>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <FormField label="Model" htmlFor={`${ids}-model`}>
+                      <Select
+                        items={modelItems}
+                        value={(selectedModel?.slug ?? model) || null}
+                        onValueChange={(value) => {
+                          if (value !== null) setModelLabel(value);
+                        }}
+                      >
+                        <SelectTrigger id={`${ids}-model`}>
+                          <SelectValue placeholder="Select model" />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          {modelItems.map((item) => (
+                            <SelectItem
+                              key={item.value}
+                              value={item.value}
+                              disabled={item.disabled}
+                            >
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </FormField>
+                  </div>
                 </div>
-                {preset && model === preset.model.model && !selectedModel && (
+                {model && !selectedModel && (
                   <p role="alert" className="text-sm text-warning">
-                    {providerLabels.includes(provider)
-                      ? `${model} isn’t available from ${provider}.`
-                      : `${provider} isn’t installed on a connected machine.`}{" "}
+                    {!providerLabels.includes(provider)
+                      ? `${provider} isn’t installed on a connected machine.`
+                      : `${model} isn’t available from ${provider}.`}{" "}
                     Choose an available provider and model to save this agent.
                   </p>
                 )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <FormField label="Thinking" htmlFor={`${ids}-thinking`}>
-                    <Input
-                      id={`${ids}-thinking`}
-                      placeholder="Provider default"
-                      list={`${ids}-thinking-levels`}
-                      value={thinking}
-                      onChange={(e) => setThinking(e.target.value)}
-                    />
-                    <datalist id={`${ids}-thinking-levels`}>
-                      {THINKING_LEVELS.map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </datalist>
+                    <Select
+                      items={thinkingItems}
+                      value={thinking.trim()}
+                      disabled={thinkingItems.length === 1}
+                      onValueChange={(value) => {
+                        if (value !== null) setThinking(value);
+                      }}
+                    >
+                      <SelectTrigger id={`${ids}-thinking`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectPopup>
+                        {thinkingItems.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectPopup>
+                    </Select>
                   </FormField>
                   <FormField label="Permission mode" htmlFor={`${ids}-runtime`}>
                     <Select

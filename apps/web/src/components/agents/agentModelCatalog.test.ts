@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { ClientSettings } from "@t3tools/contracts/settings";
-import type { ServerProvider } from "@t3tools/contracts";
-import { agentModelOptions, presetProviderLabel, visibleAgentProviders } from "./agentModelCatalog";
+import type { ServerProvider, ServerProviderModel } from "@t3tools/contracts";
+import {
+  agentModelOptions,
+  agentThinkingChoices,
+  presetProviderLabel,
+  visibleAgentProviders,
+} from "./agentModelCatalog";
 
 const provider = {
   instanceId: "opencode",
@@ -45,5 +50,34 @@ describe("agent model catalog", () => {
     expect(presetProviderLabel([provider], "OpenCode")).toBe("OpenCode");
     expect(presetProviderLabel([{ ...provider, enabled: false }], "opencode")).toBe("opencode");
     expect(presetProviderLabel([provider], "claudeAgent")).toBe("claudeAgent");
+  });
+  it("offers the model's reasoning levels and keeps a saved level the model no longer lists", () => {
+    const model = {
+      capabilities: {
+        optionDescriptors: [
+          { id: "fastMode", label: "Fast", type: "boolean" },
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High", isDefault: true },
+              { id: "ultrathink", label: "Ultrathink" },
+            ],
+            promptInjectedValues: ["ultrathink"],
+          },
+        ],
+      },
+    } as unknown as ServerProviderModel;
+    expect(agentThinkingChoices(model, "high").map((choice) => choice.value)).toEqual([
+      "low",
+      "high",
+    ]);
+    expect(agentThinkingChoices(model, "max").at(-1)).toEqual({
+      value: "max",
+      label: "max (not offered by this model)",
+    });
+    expect(agentThinkingChoices(undefined, "")).toEqual([]);
   });
 });
