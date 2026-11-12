@@ -1203,7 +1203,11 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         );
         yield* Fiber.join(ready);
 
-        const snapshot = yield* instance.snapshotForCwd!(openCode1StalledAgents);
+        const snapshotFiber = yield* instance.snapshotForCwd!(openCode1StalledAgents).pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("10 seconds");
+        const snapshot = yield* Fiber.join(snapshotFiber);
         assert.deepStrictEqual(snapshot.skills, []);
         assert.deepStrictEqual(snapshot.slashCommands, []);
         assert.isUndefined(snapshot.optionDescriptors);
