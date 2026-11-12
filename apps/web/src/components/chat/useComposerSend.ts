@@ -432,7 +432,7 @@ export function useComposerSend(input: ComposerSendInput) {
       }
     }
     const composerDraftTarget =
-      dictation && activeThread
+      dictation && activeThread && !queuedRunEdit.isEditing
         ? scopeThreadRef(environmentId, activeThread.id)
         : input.composerDraftTarget;
     const promoted =

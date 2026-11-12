@@ -1,5 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { MessageId, TurnItemId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -9,6 +10,7 @@ import { AppRoot } from "~/AppRoot";
 import "~/components/ChatView";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { responseContextRecord } from "~/lib/composerContextRecords";
 import { getRouter } from "~/router";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "~/speech/voiceConsent";
 import {
@@ -67,6 +69,25 @@ it.each([
   const bRef = scopeThreadRef(ENVIRONMENT_ID, b.id);
   const mainPrompt = scenario === "queued-equal" ? "Queued message" : "Fix";
   useComposerDraftStore.getState().setPrompt(aRef, mainPrompt);
+  if (editing)
+    useComposerDraftStore.getState().setReplyTo(
+      aRef,
+      responseContextRecord({
+        citation: {
+          version: 1,
+          environmentId: ENVIRONMENT_ID,
+          threadId: a.id,
+          messageId: MessageId.make("dictation-reply"),
+          text: "Normal draft reply",
+          start: 0,
+          end: 18,
+          prefix: "",
+          suffix: "",
+        },
+        itemId: TurnItemId.make("dictation-reply"),
+        subagents: [],
+      }),
+    );
   const file = {
     type: "file" as const,
     id: `dictation-file-${scenario}`,
