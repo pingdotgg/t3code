@@ -30,6 +30,7 @@ import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
+  meta: { url: "https://api.meta.ai/v1/asr/transcribe" },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
 };
 const OPENROUTER_CATALOG_URL =
@@ -92,6 +93,57 @@ function audioBody(
   return HttpClientRequest.bodyFormData(form);
 }
 
+const metaLanguages: Readonly<Record<string, string>> = {
+  ar: "Arabic",
+  bn: "Bengali",
+  nl: "Dutch",
+  en: "English",
+  fr: "French",
+  de: "German",
+  he: "Hebrew",
+  hi: "Hindi",
+  id: "Indonesian",
+  it: "Italian",
+  ja: "Japanese",
+  kn: "Kannada",
+  ko: "Korean",
+  ms: "Malay",
+  zh: "Mandarin Chinese",
+  mr: "Marathi",
+  pl: "Polish",
+  pt: "Portuguese",
+  es: "Spanish",
+  tl: "Tagalog",
+  ta: "Tamil",
+  te: "Telugu",
+  th: "Thai",
+  tr: "Turkish",
+  vi: "Vietnamese",
+};
+const MetaTranscriptionResult = Schema.Struct({ transcript: Schema.String });
+
+function metaBody(audio: ArrayBuffer, options: SpeechTranscriptionOptions) {
+  const language = metaLanguages[options.speechLanguage];
+  const form = new FormData();
+  form.set(
+    "request",
+    new Blob(
+      [
+        JSON.stringify({
+          model: "muse-voice-transcribe-1.0",
+          audioEncoding: "WAV",
+          mode: "PUSH_TO_TALK",
+          ...(language ? { languageBias: [language] } : {}),
+          keywords: options.speechCustomWords.map(({ term }) => term),
+        }),
+      ],
+      { type: "application/json" },
+    ),
+  );
+  form.set("audio", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
+  return HttpClientRequest.bodyFormData(form);
+}
+
 function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   return HttpClientRequest.bodyJsonUnsafe({
     model,
@@ -130,10 +182,11 @@ export const layer = Layer.effect(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+      Effect.map(({ openai, xai, openrouter, meta }) => ({
         openai: Boolean(openai),
         xai: Boolean(xai),
         openrouter: Boolean(openrouter),
+        meta: Boolean(meta),
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -212,7 +265,10 @@ export const layer = Layer.effect(
           HttpClientRequest.bearerToken(Redacted.make(key)),
           provider === "openrouter"
             ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            : provider === "meta"
+              ? metaBody(audio, options)
+              : audioBody(provider, audio, language, options),
+          HttpClientRequest.acceptJson,
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.
@@ -235,9 +291,15 @@ export const layer = Layer.effect(
                     ? "model-unavailable"
                     : "unavailable",
           });
-        const { text } = yield* HttpClientResponse.schemaBodyJson(
-          EnvironmentSpeechTranscriptionResult,
-        )(response).pipe(Effect.mapError(unavailable));
+        const text = yield* (
+          provider === "meta"
+            ? HttpClientResponse.schemaBodyJson(MetaTranscriptionResult)(response).pipe(
+                Effect.map(({ transcript }) => transcript),
+              )
+            : HttpClientResponse.schemaBodyJson(EnvironmentSpeechTranscriptionResult)(
+                response,
+              ).pipe(Effect.map(({ text }) => text))
+        ).pipe(Effect.mapError(unavailable));
         const corrected = applySpeechAliases(text, options.speechCustomWords);
         return (
           options.speechRemoveFillerWords

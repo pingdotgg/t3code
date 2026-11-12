@@ -253,6 +253,8 @@ effectIt.effect(
         422,
       );
       expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
+      expect((yield* call("meta/transcribe", audio)).status).toBe(422);
+      expect(transcribe).toHaveBeenLastCalledWith("meta", undefined);
       // Naming a path on the environment needs filesystem access, not only settings access.
       const link = yield* Effect.promise(() =>
         handler(

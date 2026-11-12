@@ -144,7 +144,9 @@ function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
   return (
     <ProviderInstanceIcon
-      driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
+      driverKind={ProviderDriverKind.make(
+        provider === "openai" ? "codex" : provider === "meta" ? "muse" : "grok",
+      )}
       displayName={CLOUD_SPEECH_LABELS[provider]}
       iconClassName="size-4"
     />
