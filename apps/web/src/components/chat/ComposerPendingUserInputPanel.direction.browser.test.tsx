@@ -115,7 +115,7 @@ it("shows an option's preview so the user can see what they are approving", asyn
     },
   ]);
 
-  await screen.getByRole("button", { name: /Approve/ }).hover();
+  await screen.getByRole("radio", { name: /Approve/ }).hover();
   await expect
     .element(screen.getByText("A quote in the password breaks login.", { exact: false }))
     .toBeVisible();
