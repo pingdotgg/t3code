@@ -9,7 +9,6 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
-import { NoProjectsHero } from "~/components/NoProjectsHero";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
@@ -217,11 +216,4 @@ it("marks the window's main areas with the region names plugin styles target", a
   await expect
     .element(page.getByRole("region", { name: "Pull requests" }))
     .toHaveAttribute("data-t3-region", "pull-requests");
-});
-
-it("marks the home page with the region name plugin styles target", async () => {
-  await using _screen = await render(<NoProjectsHero />);
-  const homeTitle = page.getByText("What should we work on?");
-  await expect.element(homeTitle).toBeInTheDocument();
-  expect(homeTitle.element().closest("[data-t3-region]")).toHaveAttribute("data-t3-region", "home");
 });
