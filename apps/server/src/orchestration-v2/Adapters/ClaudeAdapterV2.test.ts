@@ -3884,8 +3884,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : [],
       );
       assert.deepEqual(
-        items.map((item) => [item.type, item.text]),
-        shown,
+        items.map((item): ReadonlyArray<string> => [item.type, item.text]),
+        shown.map((row): ReadonlyArray<string> => row),
       );
     }).pipe(
       Effect.scoped,
