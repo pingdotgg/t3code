@@ -32,6 +32,7 @@ describe("buildThreadActionMenuItems", () => {
       const items = buildThreadActionMenuItems({
         ...baseState,
         canOperate: false,
+        projectFilter: { label: "Project", isActive: reversed },
         isPinned: reversed,
         isSettled: reversed,
         isSnoozed: reversed,
