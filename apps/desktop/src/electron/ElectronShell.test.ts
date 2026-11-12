@@ -68,11 +68,12 @@ describe("ElectronShell", () => {
           "grokbot://app/v1/prompt?text=a&text=b",
           "grokbot://app/v1/other?text=hi",
           "grokbot://app/v1/prompt?text=hi#x",
+          "grokbot://:secret@app/v1/prompt?text=hi",
         ],
         (url) => electronShell.openExternal(url),
       );
 
-      assert.deepEqual(results, [true, false, false, false, false, false]);
+      assert.deepEqual(results, [true, false, false, false, false, false, false]);
       assert.deepEqual(openExternalMock.mock.calls, [[prompt]]);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );

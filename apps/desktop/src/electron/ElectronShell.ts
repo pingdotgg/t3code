@@ -28,6 +28,7 @@ const isAppLaunchUrl = (url: URL) =>
   url.host === "app" &&
   url.pathname === "/v1/prompt" &&
   url.username.length === 0 &&
+  url.password.length === 0 &&
   url.hash.length === 0 &&
   [...url.searchParams.keys()].join() === "text";
 
