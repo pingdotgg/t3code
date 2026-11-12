@@ -1527,6 +1527,50 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("a HEAD watch ends when its git directory is removed", () =>
+    Effect.gen(function* () {
+      const gitDir = "/repo/.git/worktrees/feature";
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const closed = yield* Deferred.make<void>();
+      let gitDirExists = true;
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, refName: "main" },
+        currentRemoteStatus: null,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        headPath: `${gitDir}/HEAD`,
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: (target) => Effect.succeed(target !== gitDir || gitDirExists),
+          watch: (_target, options) =>
+            Stream.fromQueue(events).pipe(
+              Stream.onStart(Effect.sync(() => options?.onReady?.())),
+              Stream.ensuring(Deferred.succeed(closed, undefined)),
+            ),
+        }),
+      };
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
+        assert.deepEqual(yield* branches, [{ refName: "main" }]);
+
+        // Every checkout removes HEAD.lock, which leaves the watch running.
+        state.currentLocalStatus = { ...baseLocalStatus, refName: "other" };
+        yield* Queue.offer(events, { _tag: "Remove", path: "HEAD.lock" });
+        yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
+        assert.deepEqual(yield* branches, [{ refName: "other" }]);
+
+        // `git worktree remove` deletes the watched directory; Windows keeps reporting it.
+        gitDirExists = false;
+        yield* Queue.offer(events, { _tag: "Remove", path: gitDir });
+        yield* Deferred.await(closed);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    }),
+  );
+
   it.effect("releases remote demand while passive observers remain", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

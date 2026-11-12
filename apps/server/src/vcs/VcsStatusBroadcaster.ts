@@ -822,12 +822,19 @@ export const make = Effect.gen(function* () {
   const watchHead = Effect.fnUntraced(function* (cwd: string, ready: Deferred.Deferred<void>) {
     const headPath = yield* workflow.headPath(cwd);
     if (headPath === null) return;
+    const headDirectory = path.dirname(headPath);
     // Git replaces HEAD by renaming HEAD.lock, which a watch on the file itself would lose.
     yield* fs
-      .watch(path.dirname(headPath), {
+      .watch(headDirectory, {
         onReady: () => Deferred.doneUnsafe(ready, Exit.void),
       })
       .pipe(
+        // On Windows a watch outlives its deleted directory and reports it ~150k times a second.
+        Stream.takeUntilEffect((event) =>
+          event._tag === "Remove"
+            ? fs.exists(headDirectory).pipe(Effect.map((exists) => !exists))
+            : Effect.succeed(false),
+        ),
         Stream.filter((event) => path.basename(event.path) === "HEAD"),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
