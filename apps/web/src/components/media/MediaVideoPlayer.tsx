@@ -73,20 +73,25 @@ export function MediaVideoPlayer({
 
   // Retry and failure remount the element, so its listeners live and die with it.
   const attachVideo = (video: HTMLVideoElement) => {
+    const inNativeFullscreen = () =>
+      document.fullscreenElement?.contains(video) ||
+      ("webkitDisplayingFullscreen" in video && video.webkitDisplayingFullscreen === true);
     const pauseWhenHidden = () => {
       // Native fullscreen can hide the inline page while this video is still visible.
-      const fullscreen =
-        document.fullscreenElement?.contains(video) ||
-        ("webkitDisplayingFullscreen" in video && video.webkitDisplayingFullscreen === true);
-      if (document.hidden && !fullscreen) video.pause();
+      if (document.hidden && !inNativeFullscreen()) video.pause();
     };
     document.addEventListener("visibilitychange", pauseWhenHidden);
     document.addEventListener("fullscreenchange", pauseWhenHidden);
     video.addEventListener("webkitendfullscreen", pauseWhenHidden);
+    // Scrolling away must not keep decoding; returning to the video is the reader's choice.
+    const stopOffscreenPause = observeIntersection(video, (entry) => {
+      if (!entry.isIntersecting && !inNativeFullscreen()) video.pause();
+    });
     return () => {
       document.removeEventListener("visibilitychange", pauseWhenHidden);
       document.removeEventListener("fullscreenchange", pauseWhenHidden);
       video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
+      stopOffscreenPause();
       video.pause();
       // A detached element's pause event never reaches onPause.
       setPlaying(false);

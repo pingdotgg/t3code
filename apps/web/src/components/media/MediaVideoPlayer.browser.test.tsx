@@ -90,4 +90,37 @@ describe("MediaVideoPlayer", () => {
 
     expect(pause).not.toHaveBeenCalled();
   });
+
+  it("pauses a playing video when it scrolls out of the viewport", async () => {
+    const subscriptions: Array<{
+      readonly callback: IntersectionObserverCallback;
+      target: Element;
+    }> = [];
+    class OffscreenObserver {
+      constructor(private readonly callback: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        subscriptions.push({ callback: this.callback, target });
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    using _observer = stubGlobal("IntersectionObserver", OffscreenObserver);
+    await using screen = await render(<MediaVideoPlayer src="/asset/clip.mp4" label="clip" />);
+    const video = screen.getByLabelText("clip").element() as HTMLVideoElement;
+    using pause = vi.spyOn(video, "pause");
+    await act(() => {
+      video.dispatchEvent(new Event("play"));
+    });
+
+    await act(() => {
+      for (const { callback, target } of subscriptions) {
+        callback(
+          [{ target, isIntersecting: false } as IntersectionObserverEntry],
+          undefined as unknown as IntersectionObserver,
+        );
+      }
+    });
+
+    expect(pause).toHaveBeenCalled();
+  });
 });
