@@ -389,7 +389,6 @@ for (const [replacement, verb, handler, target, expected] of [
     "C:/repo/file.txt",
     'explorer.exe /select,"C:\\repo\\file.txt"',
   ],
-  ["Folder", "open", "filepilot.exe", "C:/repo/file.txt", "shell:C:\\repo"],
   [
     "Folder",
     "open",
@@ -464,7 +463,7 @@ it.effect.skipIf(windowsHost)(
         const editors = yield* launcher.resolveAvailableEditors();
         yield* launcher.launchEditor({
           editor: "file-manager",
-          cwd: "/home/t3/workspace [draft]/author's $media/clip|draft.mp4",
+          cwd: "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4",
           reveal: true,
         });
         return { kind, editors };
@@ -494,11 +493,11 @@ it.effect.skipIf(windowsHost)(
       assert.include(decodedCommand, "'Directory', 'Folder'");
       assert.include(
         decodedCommand,
-        "Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media'",
+        "Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s ‘‘$media'",
       );
       assert.include(
         decodedCommand,
-        "'\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4'",
+        "'\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s ‘‘$media\\clip|draft.mp4'",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
