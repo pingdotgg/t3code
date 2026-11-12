@@ -187,23 +187,46 @@ export function parseElicitationForm(
       ? schema.required.filter((key): key is string => typeof key === "string")
       : [],
   );
-  const fields = new Map<string, Field>();
-  const questions: OrchestrationV2UserInputQuestion[] = [];
+  const parsedFields = new Map<
+    string,
+    NonNullable<ReturnType<typeof parseField>> & { readonly property: Record<string, unknown> }
+  >();
   for (const [id, value] of Object.entries(unknownRecord(schema?.properties) ?? {})) {
     const property = unknownRecord(value);
     const parsed = property === undefined ? undefined : parseField(property);
     // Question ids must survive the contract's trim to round-trip answers.
     if (property === undefined || parsed === undefined || text(id) !== id) return undefined;
-    fields.set(id, parsed.field);
+    parsedFields.set(id, { ...parsed, property });
+  }
+  // OpenCode pairs an optional choice with an optional `<id>_custom` text field
+  // for a typed answer. Ask it as one question that accepts a custom answer.
+  const customFields = new Map<string, string>();
+  for (const [id, parsed] of parsedFields) {
+    const customId = `${id}_custom`;
+    if (
+      parsed.field.kind === "choice" &&
+      parsedFields.get(customId)?.field.kind === "text" &&
+      !required.has(id) &&
+      !required.has(customId)
+    ) {
+      customFields.set(id, customId);
+    }
+  }
+  const foldedIds = new Set(customFields.values());
+  const fields = new Map<string, Field>();
+  const questions: OrchestrationV2UserInputQuestion[] = [];
+  for (const [id, { field, options, property }] of parsedFields) {
+    if (foldedIds.has(id)) continue;
+    fields.set(id, field);
     questions.push({
       id,
       header: text(property.title) ?? `Question ${questions.length + 1}`,
       question: text(property.description) ?? message,
-      options: parsed.options,
-      ...(parsed.field.kind === "text" || parsed.field.kind === "number"
+      options,
+      ...(field.kind === "text" || field.kind === "number" || customFields.has(id)
         ? {}
         : { allowCustomAnswer: false }),
-      ...(parsed.field.kind === "multiChoice" ? { multiSelect: true } : {}),
+      ...(field.kind === "multiChoice" ? { multiSelect: true } : {}),
     });
   }
   return {
@@ -211,9 +234,13 @@ export function parseElicitationForm(
     content: (answers) => {
       const entries: Array<[string, EffectAcpSchema.ElicitationContentValue]> = [];
       for (const [id, field] of fields) {
-        const typed = Object.hasOwn(answers, id) ? typedAnswer(field, answers[id]) : undefined;
+        const answer = Object.hasOwn(answers, id) ? answers[id] : undefined;
+        const typed = answer === undefined ? undefined : typedAnswer(field, answer);
+        const customId = customFields.get(id);
         if (typed !== undefined) entries.push([id, typed]);
-        else if (required.has(id)) return undefined;
+        else if (customId !== undefined && typeof answer === "string") {
+          entries.push([customId, answer]);
+        } else if (required.has(id)) return undefined;
       }
       // Own properties for every field, `__proto__` included; assigning to
       // `{}` would hit its inherited setter instead.
