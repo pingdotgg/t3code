@@ -1961,16 +1961,21 @@ export const layerWsRpc = (
             Effect.andThen(
               startup
                 .enqueueCommand(
-                  (command.type === "prepared-run.retry"
-                    ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
-                      )
-                  ).pipe(Effect.provide(intakeContext)),
+                  Effect.gen(function* () {
+                    if (command.type === "prepared-run.retry") {
+                      return yield* threadLaunch.retryPreparation(command);
+                    }
+                    if (command.type === "thread.fork") {
+                      return yield* threadLaunch.forkThread({ ...command, createdBy: "user" });
+                    }
+                    return yield* ThreadMessageIntake.dispatchCommand(
+                      ThreadManagementService.withCreationProvenance(command, {
+                        createdBy: "user",
+                        creationSource:
+                          "creationSource" in command ? command.creationSource : "web",
+                      }),
+                    );
+                  }).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
                   Effect.tap((result) =>

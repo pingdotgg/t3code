@@ -26,6 +26,7 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -164,6 +165,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
+  dependencies: [...commandTool.dependencies, ThreadLaunchService.ThreadLaunchService],
   description:
     "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
   parameters: Schema.Struct({
@@ -173,6 +175,11 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
     sourcePoint: Schema.optional(OrchestrationV2ThreadForkSourcePoint),
     targetThreadId: Schema.optional(ThreadId),
     title: Schema.optional(TrimmedNonEmptyString),
+    newWorktree: Schema.optional(
+      Schema.Boolean.annotate({
+        description: "fork: give it a new worktree from this thread's branch. Default: shares it.",
+      }),
+    ),
   }),
   success: Schema.Union([
     Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId }),

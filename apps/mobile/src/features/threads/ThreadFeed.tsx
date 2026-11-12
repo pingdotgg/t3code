@@ -320,6 +320,8 @@ export interface ThreadFeedProps {
   /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
+  /** The thread's branch when it has its own worktree; forks then offer a new worktree. */
+  readonly forkWorktreeBranch?: string | null;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
@@ -383,6 +385,11 @@ function UserMessageCopyButton(props: {
   );
 }
 
+const ASSISTANT_FORK_MENU_ACTIONS = [
+  { id: "fork-here", title: "Fork in this worktree" },
+  { id: "fork-new-worktree", title: "Fork into a new worktree" },
+];
+
 function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
   readonly iconColor: ColorValue;
@@ -390,6 +397,7 @@ function AssistantForkButton(props: {
   readonly iconSize: number;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly sourceTitle: string;
+  readonly worktreeBranch: string | null;
 }) {
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
@@ -407,44 +415,85 @@ function AssistantForkButton(props: {
 
   if (!canFork || runId === null) return null;
 
+  const fork = (newWorktree: boolean) => {
+    const targetThreadId = ThreadId.make(uuidv4());
+    setBusy(true);
+    void Haptics.selectionAsync();
+    void forkFromRun({
+      environmentId: props.environmentId,
+      input: {
+        sourceThreadId: props.projectedItem.sourceThreadId,
+        targetThreadId,
+        runId,
+        title: `${props.sourceTitle} fork`,
+        ...(newWorktree && props.worktreeBranch !== null
+          ? { workspaceStrategy: { type: "worktree", baseRef: props.worktreeBranch } }
+          : {}),
+        creationSource: "mobile",
+      },
+    })
+      .then(async (result) => {
+        if (result._tag !== "Success") return;
+        const targetThreadReady = await waitForThreadShell(
+          scopeThreadRef(props.environmentId, targetThreadId),
+        );
+        if (!targetThreadReady) {
+          Dialog.alert(
+            "Fork created",
+            "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+          );
+          return;
+        }
+        selectDetail({
+          name: "Thread",
+          params: { environmentId: props.environmentId, threadId: targetThreadId },
+        });
+      })
+      .finally(() => setBusy(false));
+  };
+
+  const icon = busy ? (
+    <AppActivityIndicator size="small" />
+  ) : (
+    <SymbolView
+      name="arrow.triangle.branch"
+      size={props.iconSize}
+      tintColor={props.iconColor}
+      type="monochrome"
+    />
+  );
+
+  if (props.worktreeBranch !== null) {
+    return (
+      <Menu
+        actions={ASSISTANT_FORK_MENU_ACTIONS}
+        onPressAction={({ nativeEvent }) => {
+          if (busy) return;
+          fork(nativeEvent.event === "fork-new-worktree");
+        }}
+      >
+        <View
+          accessibilityRole="button"
+          accessibilityLabel="Fork from this response"
+          className="h-7 w-7 items-center justify-center"
+          style={
+            Platform.OS === "android"
+              ? { width: props.buttonSize, height: props.buttonSize }
+              : undefined
+          }
+        >
+          {icon}
+        </View>
+      </Menu>
+    );
+  }
+
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Fork from this response"
       disabled={busy}
-      onPress={() => {
-        const targetThreadId = ThreadId.make(uuidv4());
-        setBusy(true);
-        void Haptics.selectionAsync();
-        void forkFromRun({
-          environmentId: props.environmentId,
-          input: {
-            sourceThreadId: props.projectedItem.sourceThreadId,
-            targetThreadId,
-            runId,
-            title: `${props.sourceTitle} fork`,
-            creationSource: "mobile",
-          },
-        })
-          .then(async (result) => {
-            if (result._tag !== "Success") return;
-            const targetThreadReady = await waitForThreadShell(
-              scopeThreadRef(props.environmentId, targetThreadId),
-            );
-            if (!targetThreadReady) {
-              Dialog.alert(
-                "Fork created",
-                "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
-              );
-              return;
-            }
-            selectDetail({
-              name: "Thread",
-              params: { environmentId: props.environmentId, threadId: targetThreadId },
-            });
-          })
-          .finally(() => setBusy(false));
-      }}
+      onPress={() => fork(false)}
       className="h-7 w-7 items-center justify-center disabled:opacity-40"
       style={
         Platform.OS === "android"
@@ -452,16 +501,7 @@ function AssistantForkButton(props: {
           : undefined
       }
     >
-      {busy ? (
-        <AppActivityIndicator size="small" />
-      ) : (
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={props.iconSize}
-          tintColor={props.iconColor}
-          type="monochrome"
-        />
-      )}
+      {icon}
     </Pressable>
   );
 }
@@ -1662,6 +1702,7 @@ function renderFeedEntry(
     readonly markdownContentWidth: number;
     readonly contentWidth: number;
     readonly threadTitle: string;
+    readonly forkWorktreeBranch: string | null;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
   },
@@ -2291,6 +2332,7 @@ function renderFeedEntry(
                 iconSize={props.replyActionSize.icon}
                 projectedItem={message.projectedItem}
                 sourceTitle={props.threadTitle}
+                worktreeBranch={props.forkWorktreeBranch}
               />
             ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
@@ -3702,6 +3744,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             markdownContentWidth,
             contentWidth,
             threadTitle: props.threadTitle,
+            forkWorktreeBranch: props.forkWorktreeBranch ?? null,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
             workflowOpening,

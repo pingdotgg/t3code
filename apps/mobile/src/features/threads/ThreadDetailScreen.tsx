@@ -1492,6 +1492,9 @@ function ThreadDetailBody(
                   }
                   contentPresentation={props.contentPresentation}
                   threadTitle={props.selectedThread.title}
+                  forkWorktreeBranch={
+                    props.selectedThread.worktreePath === null ? null : props.selectedThread.branch
+                  }
                   latestRun={props.activityRun}
                   activeWorkStartedAt={props.activeWorkStartedAt}
                   runlessWorkActive={props.runlessWorkActive ?? false}

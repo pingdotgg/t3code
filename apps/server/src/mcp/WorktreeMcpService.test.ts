@@ -5,7 +5,6 @@ import {
   CommandId,
   EnvironmentId,
   type OrchestrationV2ThreadProjection,
-  type OrchestrationV2ThreadShellSnapshot,
   type Project,
   ProjectId,
   ProviderInstanceId,
@@ -118,7 +117,6 @@ interface HarnessOptions {
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly existsFails?: boolean;
-  readonly worktreeSharedWith?: ThreadId;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -257,26 +255,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
       totalCount: options.existingBranchWorktreePath === undefined ? 0 : 1,
     }),
   );
-  const getShellSnapshot = vi.fn((input?: { readonly worktreePath?: string }) =>
-    Effect.succeed({
-      threads:
-        options.worktreeSharedWith === undefined
-          ? []
-          : [{ id: options.worktreeSharedWith, worktreePath: input?.worktreePath ?? null }],
-      archivedThreads: [],
-    } as unknown as OrchestrationV2ThreadShellSnapshot),
-  );
-  const localStatus = vi.fn((input: { readonly cwd: string }) =>
+  const localStatus = vi.fn((_: unknown) =>
     Effect.succeed({
       isRepo: options.notARepo !== true,
       hasPrimaryRemote: true,
       isDefaultRef: false,
-      refName:
-        thread?.worktreePath != null && input.cwd === thread.worktreePath
-          ? (thread.branch ?? null)
-          : options.currentBranch === undefined
-            ? "dev"
-            : options.currentBranch,
+      refName: options.currentBranch === undefined ? "dev" : options.currentBranch,
       hasWorkingTreeChanges: false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
     }),
@@ -314,7 +298,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch,
           getThreadRecords,
-          getShellSnapshot,
           sendToThread,
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         Layer.mock(ProjectService.ProjectService)({
@@ -507,27 +490,6 @@ describe("t3_worktree_handoff", () => {
         code: "already_in_worktree",
       });
       expect(harness.createWorktree).not.toHaveBeenCalled();
-    });
-  });
-
-  it.effect("moves a fork off the worktree it shares with its source thread", () => {
-    const sharedPath = "/worktrees/project/fork-src";
-    const harness = makeHarness({
-      thread: { branch: "fork-src", worktreePath: sharedPath },
-      worktreeSharedWith: ThreadId.make("thread-fork-source"),
-    });
-    return Effect.gen(function* () {
-      const result = yield* runHandoff(harness, { branch: "feature/fork-own" });
-      expect(harness.createWorktree).toHaveBeenCalledWith(
-        expect.objectContaining({ refName: "fork-src", newRefName: "feature/fork-own" }),
-      );
-      expect(harness.dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          worktreePath: "/worktrees/project/feature/fork-own",
-          expectedWorktreePath: sharedPath,
-        }),
-      );
-      expect(result.baseRef).toBe("fork-src");
     });
   });
 

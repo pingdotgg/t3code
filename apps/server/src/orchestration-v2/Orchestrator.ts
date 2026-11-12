@@ -5296,6 +5296,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.targetThreadId,
       });
     }
+    const workspaceStrategy = command.workspaceStrategy;
+    // ThreadLaunchService.forkThread creates a requested worktree and forks into it as existing_worktree.
+    if (workspaceStrategy?.type === "worktree") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A fork into a new worktree must create the worktree before it is dispatched.",
+      });
+    }
 
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
 
@@ -5345,6 +5354,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
         ...(command.sideChat ? { sideChat: true } : {}),
+        ...(workspaceStrategy === undefined
+          ? {}
+          : {
+              workspace: {
+                branch: workspaceStrategy.branch ?? null,
+                worktreePath:
+                  workspaceStrategy.type === "existing_worktree"
+                    ? workspaceStrategy.worktreePath
+                    : null,
+              },
+            }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,

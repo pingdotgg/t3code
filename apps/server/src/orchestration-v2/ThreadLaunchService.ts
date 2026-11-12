@@ -8,6 +8,7 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
+  type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2LinkOrigin,
@@ -222,6 +223,17 @@ export class ThreadLaunchService extends Context.Service<
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;
+    /** Dispatches a fork; a `worktree` strategy gets its worktree created first and removed if the fork fails. */
+    readonly forkThread: (
+      command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
+    ) => Effect.Effect<
+      Orchestrator.OrchestratorV2DispatchResult,
+      | ThreadLaunchError
+      | Orchestrator.OrchestratorV2Error
+      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+      | ThreadManagement.ThreadManagementProjectionLoadError
+      | ThreadManagement.ThreadManagementThreadNotFoundError
+    >;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
@@ -261,7 +273,11 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
-    (input: PreparationInput, operation: ThreadLaunchError["operation"], threadId?: ThreadId) =>
+    (
+      input: Pick<PreparationInput, "commandId" | "projectId">,
+      operation: ThreadLaunchError["operation"],
+      threadId?: ThreadId,
+    ) =>
     (cause: unknown) =>
       new ThreadLaunchError({
         operation,
@@ -1289,7 +1305,127 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  const forkThread: ThreadLaunchService["Service"]["forkThread"] = Effect.fn(
+    "ThreadLaunchService.forkThread",
+  )(function* (command) {
+    const strategy = command.workspaceStrategy;
+    if (strategy?.type !== "worktree") return yield* threads.dispatch(command);
+    const { thread: source } = yield* threads.getThreadRecords(command.sourceThreadId, []);
+    const input = { commandId: command.commandId, projectId: source.projectId };
+    // A retried fork that already landed replays without creating a second worktree.
+    const forkExists = yield* threads.getThreadRecords(command.targetThreadId, []).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (forkExists) return yield* threads.dispatch(command);
+    const project = yield* projects.getById(source.projectId).pipe(
+      Effect.mapError(mapError(input, "resolve-project", command.targetThreadId)),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              mapError(
+                input,
+                "resolve-project",
+                command.targetThreadId,
+              )(new Error(`Project ${source.projectId} was not found.`)),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+    const provisionError = mapError(input, "provision-worktree", command.targetThreadId);
+    let branch = strategy.branch;
+    if (branch === undefined) {
+      const uuid = yield* randomUuidV4;
+      branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
+      if (
+        yield* git
+          .hasCommit({
+            cwd: project.workspaceRoot,
+            refName: `refs/heads/${WORKTREE_BRANCH_PREFIX}`,
+          })
+          .pipe(Effect.mapError(provisionError))
+      ) {
+        branch = flattenTemporaryWorktreeBranchName(branch);
+      }
+    }
+    let startRef = strategy.baseRef;
+    let baseRefName = strategy.baseRef;
+    if (strategy.startFromOrigin === true) {
+      const remoteBase = yield* git
+        .fetchWorktreeBaseCommit({ cwd: project.workspaceRoot, refName: strategy.baseRef })
+        .pipe(Effect.mapError(provisionError));
+      if (remoteBase !== null) {
+        startRef = remoteBase.commitSha;
+        baseRefName = `refs/remotes/${remoteBase.remoteRefName}`;
+      }
+    }
+    const newBranch = branch;
+    const worktree = yield* Effect.acquireUseRelease(
+      git
+        .createWorktree({
+          cwd: project.workspaceRoot,
+          refName: startRef,
+          newRefName: newBranch,
+          baseRefName,
+          path: null,
+        })
+        .pipe(Effect.mapError(provisionError)),
+      (created) =>
+        threads
+          .dispatch({
+            ...command,
+            workspaceStrategy: {
+              type: "existing_worktree",
+              worktreePath: created.worktree.path,
+              branch: created.worktree.refName,
+            },
+          })
+          .pipe(Effect.map((dispatched) => ({ created, dispatched }))),
+      (created, exit) =>
+        Exit.isSuccess(exit)
+          ? Effect.void
+          : git
+              .removeWorktree({
+                cwd: project.workspaceRoot,
+                path: created.worktree.path,
+                force: true,
+              })
+              .pipe(
+                Effect.andThen(
+                  git.deleteLocalBranch({
+                    cwd: project.workspaceRoot,
+                    refName: created.worktree.refName,
+                    force: true,
+                  }),
+                ),
+                Effect.ignoreCause({ log: true }),
+              ),
+    );
+    yield* setupScripts
+      .runForThread({
+        threadId: command.targetThreadId,
+        projectId: project.id,
+        projectCwd: project.workspaceRoot,
+        worktreePath: worktree.created.worktree.path,
+        project: {
+          id: project.id,
+          workspaceRoot: project.workspaceRoot,
+          scripts: project.scripts,
+        },
+      })
+      .pipe(Effect.ignoreCause({ log: true }));
+    return worktree.dispatched;
+  });
+
+  return ThreadLaunchService.of({
+    launch,
+    checkWorktreeBase,
+    retryPreparation,
+    prepareRun,
+    forkThread,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

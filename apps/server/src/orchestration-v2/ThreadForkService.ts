@@ -60,6 +60,8 @@ export interface ThreadForkServiceV2Shape {
     readonly targetThreadId: ThreadId;
     readonly title?: string;
     readonly sideChat?: boolean;
+    /** Omitted: the fork keeps the source's branch and worktree. */
+    readonly workspace?: { readonly branch: string | null; readonly worktreePath: string | null };
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -109,6 +111,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         ),
         createdBy: input.createdBy,
         creationSource: input.creationSource,
+        ...input.workspace,
         id: input.targetThreadId,
         title: input.title ?? `${input.sourceProjection.thread.title} fork`,
         // The source's title job completes only on the source thread.

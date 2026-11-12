@@ -19,6 +19,7 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -180,18 +181,41 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             return { sequence: result.sequence, targetThreadId };
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
-          const result = yield* threads
-            .dispatch({
+          const baseRef = input.newWorktree === true ? projection.thread.branch : null;
+          if (input.newWorktree === true && baseRef === null) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "This thread has no branch to start a new worktree from.",
+            });
+          }
+          const threadLaunch = yield* ThreadLaunch.ThreadLaunchService;
+          const result = yield* threadLaunch
+            .forkThread({
               type: "thread.fork",
               commandId,
               sourceThreadId: projection.thread.id,
               targetThreadId,
               sourcePoint,
               ...(input.title === undefined ? {} : { title: input.title }),
+              ...(baseRef === null ? {} : { workspaceStrategy: { type: "worktree", baseRef } }),
               createdBy: "agent",
               creationSource: "mcp",
             })
-            .pipe(Effect.mapError(dispatchFailure));
+            .pipe(
+              Effect.mapError((error) =>
+                error._tag === "ThreadLaunchError"
+                  ? new OrchestratorMcpFailure({
+                      code: "orchestration_error",
+                      message: `Could not create the fork's worktree: ${
+                        error.cause instanceof Error ? error.cause.message : String(error.cause)
+                      }`,
+                    })
+                  : error._tag === "ThreadManagementProjectionLoadError" ||
+                      error._tag === "ThreadManagementThreadNotFoundError"
+                    ? unavailable()
+                    : dispatchFailure(error),
+              ),
+            );
           return { sequence: result.sequence, targetThreadId };
         }),
     ),

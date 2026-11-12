@@ -3404,6 +3404,8 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
     title: Schema.optional(TrimmedNonEmptyString),
     sideChat: Schema.optional(Schema.Boolean),
+    /** Omitted: the fork shares the source's checkout. The server creates a `worktree` before forking. */
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

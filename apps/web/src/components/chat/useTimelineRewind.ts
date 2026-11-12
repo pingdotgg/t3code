@@ -174,6 +174,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const onForkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly newWorktree?: boolean;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
     const targetThreadId = newThreadId();
@@ -185,6 +186,9 @@ export function useTimelineRewind(input: TimelineRewindInput) {
         targetThreadId,
         runId: input.runId,
         title: `${activeThread.title} fork`,
+        ...(input.newWorktree === true && activeThread.branch !== null
+          ? { workspaceStrategy: { type: "worktree", baseRef: activeThread.branch } }
+          : {}),
       },
     });
     if (result._tag === "Failure") {

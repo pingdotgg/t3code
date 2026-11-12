@@ -22,6 +22,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   OrchestrationV2ThreadProjectionJson,
+  EventId,
+  ProviderThreadId,
+  RunId,
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
@@ -61,6 +64,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
+import * as EventSink from "./EventSink.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
@@ -283,6 +287,7 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(
       layerLaunch,
+      layerOrchestrator,
       layerRegistry,
       layerThreadManagement,
       layerTitleRegeneration,
@@ -996,6 +1001,85 @@ it.effect("records the checkout's branch on a root launch that names none", () =
     const threads = yield* ThreadManagement.ThreadManagementService;
     const { thread } = yield* threads.getThreadProjection(launched.threadId);
     assert.equal(thread.branch, "fix/checkout-total");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("forks a worktree thread into a new worktree of its own", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const sourceThreadId = ThreadId.make("thread:fork:source");
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("command:fork:source"),
+      threadId: sourceThreadId,
+      projectId,
+      title: "Source",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "fork-src",
+      worktreePath: "/repo-worktrees/fork-src",
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const runId = RunId.make("run:fork:source");
+    const providerThreadId = ProviderThreadId.make("provider-thread:fork:source");
+    const now = yield* DateTime.now;
+    yield* (yield* EventSink.EventSinkV2).write({
+      events: [
+        {
+          id: EventId.make("event:fork:run"),
+          type: "run.created",
+          threadId: sourceThreadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId: sourceThreadId,
+            ordinal: 1,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            providerThreadId,
+            userMessageId: MessageId.make("message:fork:source"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+      ],
+    });
+    const fork = (target: string, workspace?: { readonly baseRef: string }) =>
+      launches.forkThread({
+        type: "thread.fork",
+        commandId: CommandId.make(`command:${target}`),
+        sourceThreadId,
+        targetThreadId: ThreadId.make(target),
+        sourcePoint: { type: "run", runId },
+        ...(workspace === undefined
+          ? {}
+          : { workspaceStrategy: { type: "worktree", baseRef: workspace.baseRef } }),
+        createdBy: "user",
+        creationSource: "web",
+      });
+
+    yield* fork("thread:fork:shared");
+    yield* fork("thread:fork:isolated", { baseRef: "fork-src" });
+
+    const shared = yield* threads.getThreadProjection(ThreadId.make("thread:fork:shared"));
+    assert.equal(shared.thread.worktreePath, "/repo-worktrees/fork-src");
+    const isolated = yield* threads.getThreadProjection(ThreadId.make("thread:fork:isolated"));
+    assert.equal(isolated.thread.worktreePath, "/repo-worktrees/feature");
+    assert.notEqual(isolated.thread.branch, "fork-src");
+    assert.equal(isolated.thread.lineage.parentThreadId, sourceThreadId);
+    assert.equal(harness.createWorktree.mock.calls.length, 1);
+    assert.equal(harness.createWorktree.mock.calls[0]?.[0].refName, "fork-src");
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -2075,6 +2159,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
         checkWorktreeBase: launches.checkWorktreeBase,
         retryPreparation: launches.retryPreparation,
         prepareRun: launches.prepareRun,
+        forkThread: launches.forkThread,
       }),
       Effect.flip,
     );

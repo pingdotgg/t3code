@@ -24,6 +24,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
@@ -116,6 +117,38 @@ function AssistantForkButton({
   const onForkFromRun = ctx.onForkFromRun;
   if (!canFork || onForkFromRun === undefined || projectedItem.item.runId === null) return null;
   const runId = projectedItem.item.runId;
+  const fork = (newWorktree: boolean) => {
+    setBusy(true);
+    void onForkFromRun({
+      sourceThreadId: projectedItem.sourceThreadId,
+      runId,
+      newWorktree,
+    }).finally(() => setBusy(false));
+  };
+
+  if (ctx.forkOffersNewWorktree) {
+    return (
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              aria-label="Fork from this response"
+            />
+          }
+        >
+          <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
+        </MenuTrigger>
+        <MenuPopup side="top">
+          <MenuItem onClick={() => fork(false)}>Fork in this worktree</MenuItem>
+          <MenuItem onClick={() => fork(true)}>Fork into a new worktree</MenuItem>
+        </MenuPopup>
+      </Menu>
+    );
+  }
 
   return (
     <Tooltip>
@@ -126,12 +159,7 @@ function AssistantForkButton({
             size="xs"
             variant="ghost"
             disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId }).finally(
-                () => setBusy(false),
-              );
-            }}
+            onClick={() => fork(false)}
             aria-label="Fork from this response"
           />
         }

@@ -165,19 +165,8 @@ const make = Effect.gen(function* () {
       );
 
     const projection = yield* loadThread(scope);
-    const sharedWorktreePath = projection.thread.worktreePath;
-    if (sharedWorktreePath !== null) {
-      // Leaving a worktree another thread still uses (a fork's inherited checkout) orphans nothing.
-      const sharing = yield* threadManagement
-        .getShellSnapshot({ worktreePath: sharedWorktreePath })
-        .pipe(asOperationFailed("Unable to list threads sharing the worktree"));
-      const isShared = [...sharing.threads, ...sharing.archivedThreads].some(
-        (thread) =>
-          thread.id !== scope.thread.threadId && thread.worktreePath === sharedWorktreePath,
-      );
-      if (!isShared) {
-        return yield* alreadyInWorktree(sharedWorktreePath);
-      }
+    if (projection.thread.worktreePath !== null) {
+      return yield* alreadyInWorktree(projection.thread.worktreePath);
     }
     if (projection.thread.archivedAt !== null) {
       return yield* failure(
@@ -224,19 +213,13 @@ const make = Effect.gen(function* () {
 
     let baseRef = input.baseRef;
     if (baseRef === undefined) {
-      const checkoutStatus =
-        sharedWorktreePath === null
-          ? localStatus
-          : yield* gitWorkflow
-              .localStatus({ cwd: sharedWorktreePath })
-              .pipe(asOperationFailed("Unable to read the worktree's git status"));
-      if (checkoutStatus.refName === null) {
+      if (localStatus.refName === null) {
         return yield* failure(
           "invalid_request",
           "Could not determine the current branch of the project workspace (detached HEAD?). Pass baseRef explicitly.",
         );
       }
-      baseRef = checkoutStatus.refName;
+      baseRef = localStatus.refName;
     }
 
     const startFromOrigin =
@@ -301,10 +284,7 @@ const make = Effect.gen(function* () {
         const recheckAndBind = Effect.gen(function* () {
           // A concurrent UI binding may have landed during git work; do not orphan a second worktree.
           const recheck = yield* loadThread(scope);
-          if (
-            recheck.thread.worktreePath !== null &&
-            recheck.thread.worktreePath !== sharedWorktreePath
-          ) {
+          if (recheck.thread.worktreePath !== null) {
             return yield* alreadyInWorktree(recheck.thread.worktreePath);
           }
           if (recheck.thread.archivedAt !== null) {
@@ -320,7 +300,7 @@ const make = Effect.gen(function* () {
               threadId: scope.thread.threadId,
               branch: worktree.worktree.refName,
               worktreePath,
-              expectedWorktreePath: sharedWorktreePath,
+              expectedWorktreePath: null,
             })
             .pipe(
               Effect.catchCause((cause) =>

@@ -284,7 +284,9 @@ interface MessagesTimelineProps {
   onForkFromRun?: (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly newWorktree?: boolean;
   }) => Promise<void>;
+  forkOffersNewWorktree?: boolean;
   supportsConversationRollback: boolean;
   threadStartCheckpointAvailable?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
@@ -386,6 +388,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   parentThreadLink = null,
   workflowOpening = null,
   onForkFromRun,
+  forkOffersNewWorktree = false,
   supportsConversationRollback,
   threadStartCheckpointAvailable = false,
   availableRevertTurnCounts,
@@ -1119,6 +1122,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     turnItemSource,
     workflowOpening,
     onForkFromRun,
+    forkOffersNewWorktree,
     onToggleTurnFold,
     onToggleAttemptFold,
     onToggleWorkGroup,
