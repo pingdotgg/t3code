@@ -257,7 +257,7 @@ import {
   useComposerDraftStore,
   usePromotingDraftThreadKeys,
 } from "../composerDraftStore";
-import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import {
   SidebarSearchResultRow,
   SortableThreadRow,
@@ -1006,9 +1006,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
   const acknowledgeWoke = useAcknowledgeThreadWoke();
-  const routeTarget = useThreadRouteTarget();
+  // A Settings or Usage modal keeps the thread behind it current.
+  const routeTarget = useShownThreadRouteTarget().shownTarget;
   const routeDraftThread = useComposerDraftStore((store) =>
     routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+  );
+  const routeDraftRedirect = useComposerDraftStore((store) =>
+    routeTarget?.kind === "draft" ? store.getPromotedDraftRedirect(routeTarget.draftId) : null,
   );
   const environmentMachineById = useEnvironmentMachines();
   const projectGroupsRef = useRef(projectGroups);
@@ -1070,7 +1074,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const snoozingThreadKeysRef = useRef(new Set<string>());
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
-  const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
+  const routeThreadRef = resolveActiveThreadRouteRef(
+    routeTarget,
+    routeDraftThread,
+    routeDraftRedirect,
+  );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
 
   // A selection made under one scope can hold threads the next scope hides.

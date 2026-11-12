@@ -256,6 +256,37 @@ describe("scan cache round trip", () => {
     },
   );
 
+  it("re-parses a v14 Codex entry that skipped records and restarts a clean one when it grows", () => {
+    const codex = (malformedRecords: number): CachedFile => ({
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords,
+      position: position({
+        state: { ...initialCodexScanState(), model: "gpt-6-astra", sessionId: "session-a" },
+      }),
+    });
+    const original: ScanCache = new Map([
+      ["/skipped-codex.jsonl", codex(1)],
+      ["/clean-codex.jsonl", codex(0)],
+    ]);
+    const v14 = { ...parse(makeScanCacheWriter()(original, {})), version: 14 };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v14)), TEST_FORMAT_MAP);
+    expect(restored.get("/skipped-codex.jsonl")).toEqual({
+      ...codex(1),
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    // Served while unchanged, but its state predates the latest snapshot time, so it cannot resume.
+    expect(restored.get("/clean-codex.jsonl")).toEqual({
+      ...codex(0),
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+  });
+
   it("re-parses a Claude transcript cached before 1-hour cache writes were counted", () => {
     const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
     const v12 = { ...parse(makeScanCacheWriter()(original, {})), version: 12 };

@@ -61,13 +61,13 @@ jobs:
       has_changes: ${{ steps.resolve.outputs.has_changes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: .github/scripts
 
       - id: resolve
         name: Resolve release commit
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           DISPATCH_CHANNEL: ${{ inputs.channel }}
         with:
@@ -124,7 +124,7 @@ jobs:
       ref: ${{ needs.resolve_commit.outputs.ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve_commit.outputs.ref }}
           fetch-depth: 0
@@ -228,7 +228,7 @@ jobs:
       # Share only the verification results, not the large registry metadata cache.
       - name: Upload dependency verification
         continue-on-error: true
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
@@ -241,7 +241,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -273,7 +273,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -313,7 +313,7 @@ jobs:
         shard: [1, 2]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -332,7 +332,7 @@ jobs:
 
       - name: Cache Chromium
         id: chromium_cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-shell-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright_version.outputs.version }}
@@ -372,7 +372,7 @@ jobs:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -425,7 +425,7 @@ jobs:
       CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.CLERK_CLI_OAUTH_CLIENT_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.resolve_commit.outputs.ref }}
           sparse-checkout: |
@@ -465,7 +465,7 @@ jobs:
           } > "$RUNNER_TEMP/relay-client-tracing.env"
 
       - name: Upload relay client tracing config
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing.env
@@ -535,7 +535,7 @@ jobs:
       T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -547,7 +547,7 @@ jobs:
       # artifact leaves the cache empty, so installation runs the checks again.
       - name: Download dependency verification
         continue-on-error: true
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata
@@ -560,7 +560,7 @@ jobs:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
 
       - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
@@ -606,7 +606,7 @@ jobs:
       # Two paths under apps/ so the artifact root is apps/; consumers download
       # into `apps` to restore both at their original locations.
       - name: Upload JS bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: js-bundle
           path: |
@@ -624,7 +624,7 @@ jobs:
       # this upload by its ID, which a publish_cli-only rerun keeps.
       - name: Upload the npm launcher
         id: npm_launcher
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-launcher
           path: npm-packages/t3.tgz
@@ -819,7 +819,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           # Release notes need history back to the previous tag, not file contents.
@@ -854,14 +854,14 @@ jobs:
           fi
 
       - name: Download all desktop artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: desktop-*
           merge-multiple: true
           path: release-assets
 
       - name: Download all CLI archives
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: cli-*
           merge-multiple: true
@@ -1004,7 +1004,7 @@ jobs:
 
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
@@ -1021,7 +1021,7 @@ jobs:
 
       - name: Publish first release
         if: needs.preflight.outputs.previous_tag == ''
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
@@ -1062,7 +1062,7 @@ jobs:
     steps:
       # Only what setup-ci-deps reads to install the project's Node and npm.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -1089,7 +1089,7 @@ jobs:
           fi
 
       - name: Download the npm launcher
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build_bundle.outputs.npm_launcher_artifact_id }}
           path: npm-packages
@@ -1151,7 +1151,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -1165,7 +1165,7 @@ jobs:
           install-args: --filter=@t3tools/scripts... --filter=@t3tools/web...
 
       - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
@@ -1251,7 +1251,7 @@ jobs:
       # Only what setup-ci-deps reads to install vp and Node. The alias call
       # names its deployment and scope, so it reads nothing else from the repo.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -1322,7 +1322,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -1388,7 +1388,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
@@ -1426,14 +1426,14 @@ jobs:
     steps:
       - id: app_token
         name: Mint release app token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: main
           fetch-depth: 0
@@ -1517,7 +1517,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |

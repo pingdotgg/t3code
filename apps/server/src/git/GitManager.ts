@@ -575,9 +575,10 @@ function headBranchProbe(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
   state: "open" | "all",
+  defaultBranchHeadSelector?: string,
 ) {
   return (
-    provider.headBranchProbe?.({ headSelectors, state }) ?? {
+    provider.headBranchProbe?.({ headSelectors, state, defaultBranchHeadSelector }) ?? {
       headSelectors,
       limit: state === "open" ? 1 : 20,
     }
@@ -1266,7 +1267,7 @@ export const make = Effect.gen(function* () {
         ) {
           return { latest: null, headContext };
         }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
         if (latest !== null) yield* noteLookupState(latest);
         return { latest, headContext };
       });
@@ -1926,11 +1927,19 @@ export const make = Effect.gen(function* () {
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
     cwd: string,
     headContext: BranchHeadContext,
+    defaultBranch: string | null,
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
     const provider = yield* sourceControlProvider(cwd);
-    const probe = headBranchProbe(provider, headContext.headSelectors, "all");
+    const probe = headBranchProbe(
+      provider,
+      headContext.headSelectors,
+      "all",
+      headContext.headBranch === defaultBranch && headContext.headRepositoryOwnerLogin
+        ? `${headContext.headRepositoryOwnerLogin}:${defaultBranch}`
+        : undefined,
+    );
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
@@ -3085,6 +3094,97 @@ export const make = Effect.gen(function* () {
         return null;
       });
 
+      // Claim the branch before refreshing, but initialize submodules only after selecting its head.
+      const refreshNewWorktree = Effect.fn("refreshNewWorktree")(function* (cwd: string) {
+        const upstreamCommitBeforeFetch = yield* gitCore
+          .resolveCommit({ cwd, revision: "@{upstream}" })
+          .pipe(
+            Effect.map((resolved) => resolved.commitSha),
+            Effect.orElseSucceed(() => null),
+          );
+        yield* configurePullRequestHeadUpstream(
+          cwd,
+          pullRequestWithRemoteInfo,
+          localPullRequestBranch,
+        );
+        const target = yield* changeRequestHeadRef(cwd, pullRequest.number).pipe(
+          Effect.flatMap((ref) => gitCore.fetchRefCommit({ cwd, ref })),
+          Effect.filterOrFail(
+            (resolved) =>
+              pullRequestSummary.headSha === undefined ||
+              resolved.commitSha === pullRequestSummary.headSha,
+            () =>
+              new GitManagerError({
+                operation: "preparePullRequestThread",
+                cwd,
+                detail: "The fetched ref does not match the pull request head.",
+              }),
+          ),
+          Effect.catch(() =>
+            gitCore.resolveCommit({ cwd, revision: "@{upstream}" }).pipe(
+              Effect.filterOrFail(
+                (resolved) => resolved.commitSha === pullRequestSummary.headSha,
+                () =>
+                  new GitManagerError({
+                    operation: "preparePullRequestThread",
+                    cwd,
+                    detail: "The configured upstream does not match the pull request head.",
+                  }),
+              ),
+            ),
+          ),
+        );
+        const { commitSha: headCommit } = yield* gitCore.resolveCommit({ cwd, revision: "HEAD" });
+        // A head that was ever published loses nothing when reset, even if a fetch already moved its upstream.
+        const gitLines = (args: ReadonlyArray<string>) =>
+          gitCore
+            .execute({
+              operation: "GitManager.preparePullRequestThread.publishedHead",
+              cwd,
+              args,
+              allowNonZeroExit: true,
+              timeoutMs: 5_000,
+            })
+            .pipe(
+              Effect.map((result) =>
+                result.exitCode === 0 ? result.stdout.split("\n").filter(Boolean) : [],
+              ),
+            );
+        const publishedHead =
+          (yield* gitLines(["for-each-ref", "--contains", headCommit, "refs/remotes"])).length >
+            0 ||
+          (yield* gitLines(["log", "--walk-reflogs", "--format=%H", "@{upstream}"])).includes(
+            headCommit,
+          );
+        return yield* gitCore
+          .refreshCheckedOutBranch({
+            cwd,
+            targetCommit: target.commitSha,
+            resetWhenHeadCommit: publishedHead ? headCommit : upstreamCommitBeforeFetch,
+          })
+          .pipe(Effect.map((result) => result.onTarget));
+      });
+
+      const createPullRequestWorktree = Effect.fn("createPullRequestWorktree")(function* (
+        onWorktreeClaimed?: (path: string) => Effect.Effect<void>,
+      ) {
+        return yield* gitCore.createWorktree(
+          {
+            cwd: input.cwd,
+            refName: localPullRequestBranch,
+            path: null,
+          },
+          {
+            ...(onWorktreeClaimed ? { progress: { onWorktreeClaimed } } : {}),
+            ...(yield* readWorktreeCreationSettings),
+            submodules: yield* projectSettingsFor(input).pipe(
+              Effect.map(({ settings }) => settings.worktreeSubmodules),
+              Effect.orElseSucceed(() => null),
+            ),
+          },
+        );
+      });
+
       const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchBeforeFetchPath = existingBranchBeforeFetch?.worktreePath
         ? yield* canonicalizeExistingPath(existingBranchBeforeFetch.worktreePath)
@@ -3105,6 +3205,36 @@ export const make = Effect.gen(function* () {
           detail:
             "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
         });
+      }
+      // Materializing would force this branch onto the head.
+      if (existingBranchBeforeFetch !== null) {
+        let isOnPullRequestHead = false;
+        const worktree = yield* createPullRequestWorktree((cwd) =>
+          refreshNewWorktree(cwd).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(
+                "GitManager.preparePullRequestThread existing branch refresh failed",
+                {
+                  localBranch: localPullRequestBranch,
+                  cause: error,
+                },
+              ).pipe(Effect.as(false)),
+            ),
+            Effect.tap((onTarget) =>
+              Effect.sync(() => {
+                isOnPullRequestHead = onTarget;
+              }),
+            ),
+            Effect.asVoid,
+          ),
+        );
+        yield* maybeRunSetupScript(worktree.worktree.path);
+        return {
+          pullRequest,
+          branch: worktree.worktree.refName,
+          worktreePath: worktree.worktree.path,
+          isOnPullRequestHead,
+        };
       }
 
       yield* materializePullRequestHeadBranch(
@@ -3135,20 +3265,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const worktree = yield* gitCore.createWorktree(
-        {
-          cwd: input.cwd,
-          refName: localPullRequestBranch,
-          path: null,
-        },
-        {
-          ...(yield* readWorktreeCreationSettings),
-          submodules: yield* projectSettingsFor(input).pipe(
-            Effect.map(({ settings }) => settings.worktreeSubmodules),
-            Effect.orElseSucceed(() => null),
-          ),
-        },
-      );
+      const worktree = yield* createPullRequestWorktree();
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
