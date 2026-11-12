@@ -96,7 +96,10 @@ export interface DeleteThreadInput extends ThreadCommandInput {
 }
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
-export type SettleThreadInput = ThreadCommandInput;
+export interface SettleThreadInput extends ThreadCommandInput {
+  /** The server rejects the command when the thread's latest run is no longer this one. */
+  readonly expectedLatestRunId?: RunId;
+}
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
@@ -117,6 +120,7 @@ export interface ReorderActiveThreadInput extends ThreadCommandInput {
 
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
+  readonly expectedLatestRunId?: RunId;
 }
 
 export interface UnsnoozeThreadInput extends ThreadCommandInput {
@@ -466,7 +470,6 @@ function simpleThreadCommand(
   type:
     | "thread.archive"
     | "thread.unarchive"
-    | "thread.settle"
     | "thread.pin"
     | "thread.unpin"
     | "thread.guest-share.close",
@@ -542,7 +545,14 @@ export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(
 export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
   input: SettleThreadInput,
 ) {
-  return yield* simpleThreadCommand("thread.settle", input);
+  return yield* dispatch({
+    type: "thread.settle",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    ...(input.expectedLatestRunId === undefined
+      ? {}
+      : { expectedLatestRunId: input.expectedLatestRunId }),
+  });
 });
 
 export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
@@ -619,6 +629,9 @@ export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(functi
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     snoozedUntil: input.snoozedUntil,
+    ...(input.expectedLatestRunId === undefined
+      ? {}
+      : { expectedLatestRunId: input.expectedLatestRunId }),
   });
 });
 

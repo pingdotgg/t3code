@@ -5860,6 +5860,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         .pipe(Effect.flip);
       assert.equal(staleSettle._tag, "OrchestratorDispatchError");
       assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.settledAt);
+      const staleSnooze = yield* orchestrator
+        .dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("snooze-automatic-stale"),
+          threadId,
+          snoozedUntil: "2099-01-01T00:00:00.000Z",
+          expectedLatestRunId: oldestRun.id,
+        })
+        .pipe(Effect.flip);
+      assert.include(String(staleSnooze.cause), "another run");
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil);
 
       yield* orchestrator.dispatch({
         type: "thread.settle",

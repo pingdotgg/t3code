@@ -1,10 +1,10 @@
-import type { ModelSelection, ThreadId } from "@t3tools/contracts";
+import type { ModelSelection, RunId, ThreadId } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import {
   WS_METHODS,
   type EnvironmentId,
@@ -121,10 +121,13 @@ export function createThreadEnvironmentAtoms<R, E>(
     );
   });
 
-  // Offline, the command is queued so its optimistic change shows now; it sends on reconnect.
+  // Offline, the command is queued so its optimistic change shows now; it sends on reconnect,
+  // guarded by the cached latest run so a run the machine took meanwhile wins.
   const sendOnReconnect =
-    <I, E, R>(execute: (input: I) => Effect.Effect<{ readonly sequence: number }, E, R>) =>
-    (input: I) =>
+    <I extends { readonly threadId: ThreadId; readonly expectedLatestRunId?: RunId }, E, R>(
+      execute: (input: I) => Effect.Effect<{ readonly sequence: number }, E, R>,
+    ) =>
+    (input: I, registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
       Effect.gen(function* (): Effect.fn.Return<
         { readonly sequence: number } | QueuedThreadCommand<E>,
         E,
@@ -134,10 +137,15 @@ export function createThreadEnvironmentAtoms<R, E>(
         if (Option.isSome(yield* SubscriptionRef.get(supervisor.session))) {
           return yield* execute(input);
         }
+        const latestRunId = registry
+          .get(snapshotAtom(environmentId))
+          ?.threads.find((thread) => thread.id === input.threadId)?.latestRunId;
         const fiber = yield* SubscriptionRef.changes(supervisor.session).pipe(
           Stream.filter(Option.isSome),
           Stream.runHead,
-          Effect.andThen(execute(input)),
+          Effect.andThen(
+            execute(latestRunId == null ? input : { ...input, expectedLatestRunId: latestRunId }),
+          ),
           Effect.forkDetach,
         );
         return { sent: fiber };

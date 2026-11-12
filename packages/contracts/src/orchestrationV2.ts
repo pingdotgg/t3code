@@ -3046,6 +3046,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    expectedLatestRunId: Schema.optional(RunId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),

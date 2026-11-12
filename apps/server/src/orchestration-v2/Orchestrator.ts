@@ -533,6 +533,15 @@ function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs"
   return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
 }
 
+function latestRunId(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run["id"] | undefined {
+  return runs.reduce<OrchestrationV2Run | undefined>(
+    (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+    undefined,
+  )?.id;
+}
+
 /**
  * Stamp at wake start; queued prompts lack start times and delegated results jump the queue.
  * Auto-drained agent messages continue active work; explicit queue starts reset it.
@@ -3935,10 +3944,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"]);
       if (
         command.expectedLatestRunId !== undefined &&
-        projection.runs.reduce<OrchestrationV2Run | undefined>(
-          (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-          undefined,
-        )?.id !== command.expectedLatestRunId
+        latestRunId(projection.runs) !== command.expectedLatestRunId
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -4110,6 +4116,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
       });
+      if (
+        command.expectedLatestRunId !== undefined &&
+        latestRunId(projection.runs) !== command.expectedLatestRunId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The thread received another run before snoozing.",
+        });
+      }
       const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
       if (
         Option.isNone(parsedSnoozedUntil) ||

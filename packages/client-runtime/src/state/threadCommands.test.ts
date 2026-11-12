@@ -67,7 +67,7 @@ const SNAPSHOT: OrchestrationV2ShellSnapshot = {
       lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
       forkedFrom: null,
       activeProviderThreadId: null,
-      latestRunId: null,
+      latestRunId: RunId.make("run-latest"),
       activeRunId: null,
       status: "idle",
       pendingRuntimeRequest: null,
@@ -340,7 +340,11 @@ describe("remote thread lifecycle commands", () => {
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         yield* h.reconnect;
         const request = yield* Queue.take(h.requests);
-        expect(request.command).toMatchObject({ type: commandType, threadId: THREAD_ID });
+        expect(request.command).toMatchObject({
+          type: commandType,
+          threadId: THREAD_ID,
+          expectedLatestRunId: "run-latest",
+        });
       }),
   );
 
