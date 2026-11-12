@@ -81,8 +81,10 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
-  /** Archive rejects attached providers and an active run hides unread, so both are disabled. */
+  /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
+  /** The Working shelf's status outranks unread, so Mark unread would show nothing. */
+  readonly isWorking: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -178,7 +180,12 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "mark-unread", label: "Mark unread", icon: "mail-open", disabled: state.isRunning },
+    {
+      id: "mark-unread",
+      label: "Mark unread",
+      icon: "mail-open",
+      disabled: state.isRunning || state.isWorking,
+    },
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
