@@ -144,17 +144,24 @@ export const make = Effect.gen(function* () {
         isProviderAvailable(provider) &&
         isProviderTextGenerationCapable(provider) &&
         (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(provider.driver));
-      const attempted = new Set<ProviderInstanceId>();
+      const attempted: ModelSelection[] = [];
       while (true) {
         const candidate = fallbackTextGenerationModelSelection(
           settings.providerInstances,
-          (instanceId) => {
+          (instanceId, _driver, model) => {
             const provider = snapshots.find((provider) => provider.instanceId === instanceId);
-            return !attempted.has(instanceId) && provider !== undefined && canServe(provider);
+            return (
+              !attempted.some(
+                (candidate) => candidate.instanceId === instanceId && candidate.model === model,
+              ) &&
+              provider !== undefined &&
+              canServe(provider)
+            );
           },
+          { defaultModelSelection: settings.defaultModelSelection },
         );
         if (candidate === null) break;
-        attempted.add(candidate.instanceId);
+        attempted.push(candidate);
         const remaining = usageDeadline - (yield* Clock.currentTimeMillis);
         const candidateInstance = instances.find(
           (instance) => instance.instanceId === candidate.instanceId,

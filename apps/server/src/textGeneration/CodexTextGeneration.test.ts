@@ -607,6 +607,11 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       model: primaryState === "primary non-Go" ? "openai/gpt-5.4" : "chat-model",
       options: [{ id: "effort", value: "high" }],
     };
+    const threadDefault = {
+      instanceId: fallback,
+      model: "z-ai/glm-5.3-flash",
+      options: [{ id: "thinking", value: false }],
+    };
     const calls: ModelSelection[] = [];
     const reads: ProviderInstanceId[] = [];
     const instances: ProviderInstance[] = [primary, fallback, unrelated, disabled].map(
@@ -709,7 +714,10 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           }),
           ServerSettings.layerTest({
             providerInstances: {
-              [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
+              [fallback]: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                config: { customModels: [threadDefault.model] },
+              },
               [unrelated]: {
                 driver: ProviderDriverKind.make(
                   primaryState === "fallback non-Go" ? "opencode" : "antigravity",
@@ -721,6 +729,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
                 config: { enabled: false },
               },
             },
+            defaultModelSelection: threadDefault,
             ...(primaryState === "not installed, fallback disabled for project"
               ? {
                   projectSettingsOverrides: {
@@ -786,19 +795,17 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         needsFallback &&
         !fallbackFailed &&
         primaryState !== "not installed, fallback disabled for project"
-          ? {
-              instanceId: operation === "title" && !fallbackExhausted ? unrelated : fallback,
-              model:
-                DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[
-                  ProviderDriverKind.make(
-                    operation === "title" && !fallbackExhausted
-                      ? primaryState === "fallback non-Go"
-                        ? "opencode"
-                        : "antigravity"
-                      : "claudeAgent",
-                  )
-                ],
-            }
+          ? operation === "title" && !fallbackExhausted
+            ? {
+                instanceId: unrelated,
+                model:
+                  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[
+                    ProviderDriverKind.make(
+                      primaryState === "fallback non-Go" ? "opencode" : "antigravity",
+                    )
+                  ],
+              }
+            : threadDefault
           : selection,
       ]);
       actualReads.push([...reads].sort());
