@@ -2575,14 +2575,14 @@ export const make = Effect.gen(function* () {
         const review = project.api.capabilities.review;
         const refuse = (detail: string) =>
           Effect.fail(new PullRequestOperationError({ operation: "submitReview", detail }));
-        if ((input.outdatedCommentIds?.length ?? 0) > 0 && input.pendingReviewId === undefined)
+        if ((input.outdatedComments?.length ?? 0) > 0 && input.pendingReviewId === undefined)
           return refuse("Refresh the pending review before submitting outdated comments.");
         if (!review.verdicts.includes(input.verdict)) {
           return refuse(`This host cannot ${VERDICT_LABELS[input.verdict]} a change request.`);
         }
         if (
           (input.pendingReviewId !== undefined ||
-            (input.outdatedCommentIds?.length ?? 0) > 0 ||
+            (input.outdatedComments?.length ?? 0) > 0 ||
             input.comments.some((comment) => comment.hostedComment !== undefined)) &&
           review.draftComment !== true
         )
@@ -2619,7 +2619,7 @@ export const make = Effect.gen(function* () {
               );
             }
             if (
-              (input.comments.length > 0 || (input.outdatedCommentIds?.length ?? 0) > 0) &&
+              (input.comments.length > 0 || (input.outdatedComments?.length ?? 0) > 0) &&
               !viewer.comment
             ) {
               return refuse(
@@ -2638,9 +2638,7 @@ export const make = Effect.gen(function* () {
                   : { pendingReviewId: input.pendingReviewId }),
                 body: input.body,
                 comments: input.comments,
-                ...(input.outdatedCommentIds
-                  ? { outdatedCommentIds: input.outdatedCommentIds }
-                  : {}),
+                ...(input.outdatedComments ? { outdatedComments: input.outdatedComments } : {}),
               })
               .pipe(Effect.mapError(toPullRequestError("submitReview")));
           }),

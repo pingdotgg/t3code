@@ -62,7 +62,9 @@ export function pendingReviewIdentityFromThreads(
   );
   return {
     pendingReviewId: comments[0]?.comment.pendingReviewId,
-    outdatedCommentIds: comments.filter((entry) => entry.outdated).map((entry) => entry.comment.id),
+    outdatedComments: comments
+      .filter((entry) => entry.outdated)
+      .map(({ comment }) => ({ id: comment.id, body: comment.body })),
   };
 }
 

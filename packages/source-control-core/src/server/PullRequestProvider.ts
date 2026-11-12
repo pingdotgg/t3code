@@ -558,7 +558,7 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly verdict: PullRequestReviewVerdict;
       readonly pendingReviewId?: string;
-      readonly outdatedCommentIds?: ReadonlyArray<string>;
+      readonly outdatedComments?: ReadonlyArray<{ readonly id: string; readonly body: string }>;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
     },

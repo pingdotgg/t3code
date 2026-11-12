@@ -4215,29 +4215,40 @@ layer("GitHubPullRequestApi.layer", (it) => {
   );
 
   it.effect.each([
-    { description: "positioned", outdated: false, outdatedCommentIds: undefined, accepted: true },
-    { description: "outdated", outdated: true, outdatedCommentIds: ["PRRC_1"], accepted: true },
+    { description: "positioned", outdated: false, outdatedComments: undefined, accepted: true },
+    {
+      description: "outdated",
+      outdated: true,
+      outdatedComments: [{ id: "PRRC_1", body: "nit" }],
+      accepted: true,
+    },
+    {
+      description: "outdated body edited after display",
+      outdated: true,
+      outdatedComments: [{ id: "PRRC_1", body: "nit" }],
+      accepted: false,
+    },
     {
       description: "unapproved outdated",
       outdated: true,
-      outdatedCommentIds: undefined,
+      outdatedComments: undefined,
       accepted: false,
     },
     {
       description: "unknown outdated ID",
       outdated: true,
-      outdatedCommentIds: ["other"],
+      outdatedComments: [{ id: "other", body: "nit" }],
       accepted: false,
     },
     {
       description: "positioned ID claimed outdated",
       outdated: false,
-      outdatedCommentIds: ["PRRC_1"],
+      outdatedComments: [{ id: "PRRC_1", body: "nit" }],
       accepted: false,
     },
   ])(
     "validates the submitted saved review snapshot: $description",
-    ({ outdated, outdatedCommentIds, accepted, description }) =>
+    ({ outdated, outdatedComments, accepted, description }) =>
       Effect.gen(function* () {
         mockedExecute.mockImplementation((call) => {
           if (call.kind === "rest")
@@ -4248,7 +4259,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     id: 91,
                     node_id: "PRRC_1",
                     html_url: "https://github.com/acme/web/pull/7#discussion_r91",
-                    body: "nit",
+                    body:
+                      description === "outdated body edited after display"
+                        ? "New unseen feedback"
+                        : "nit",
                     path: "src/a.ts",
                     line: outdated ? null : 4,
                     side: "RIGHT",
@@ -4306,7 +4320,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
             verdict: "comment",
             body: "Review complete",
             pendingReviewId: "PRR_1",
-            ...(outdatedCommentIds === undefined ? {} : { outdatedCommentIds }),
+            ...(outdatedComments === undefined ? {} : { outdatedComments }),
             comments:
               description === "positioned"
                 ? [

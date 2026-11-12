@@ -21,7 +21,11 @@ vi.mock("../../state/pull-requests", () => ({
   },
 }));
 vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => ({ data: null, refresh: mocks.refresh }),
+  useEnvironmentQuery: () => ({
+    data: { viewer: "jake", capabilities: { review: { draftComment: true } } },
+    error: null,
+    refresh: mocks.refresh,
+  }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.remove }));
 vi.mock("./usePullRequestDiff", () => ({

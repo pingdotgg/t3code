@@ -95,7 +95,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           hostedComment = undefined;
         }
       }
-      if (!setReviewDraftBusy(params, true))
+      if (!setReviewDraftBusy(store.scope, true))
         throw new Error("Wait for the pending comment to finish saving.");
       locked = true;
       if (hostedComment && saved && body !== saved.body) {
@@ -152,7 +152,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         );
       })
       .finally(async () => {
-        if (locked) setReviewDraftBusy(params, false);
+        if (locked) setReviewDraftBusy(store.scope, false);
         pending.current = false;
         setBusy(false);
       });

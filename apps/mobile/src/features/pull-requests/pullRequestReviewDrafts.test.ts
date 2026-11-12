@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import {
   clearSubmittedReview,
+  pullRequestReviewKey,
   ReviewDraftDocument,
   type ReviewDraft,
 } from "./pullRequestReviewDrafts";
@@ -36,6 +37,15 @@ describe("mobile review draft recovery", () => {
       JSON.parse(JSON.stringify({ version: 1, drafts: { key: ranged } })),
     ).drafts.key!;
     expect(recovered).toEqual(ranged);
+    const params = {
+      environmentId: "same",
+      projectId: "project",
+      repository: "owner/repo",
+      number: 1,
+    };
+    const one = pullRequestReviewKey(params, "Jake");
+    expect(pullRequestReviewKey(params, "jake")).toBe(one);
+    expect(pullRequestReviewKey(params, "Maria")).not.toBe(one);
     const updated = {
       ...recovered,
       comments: recovered.comments.map((entry) => ({

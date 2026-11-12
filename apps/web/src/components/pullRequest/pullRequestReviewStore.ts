@@ -175,7 +175,7 @@ export function mergePendingReviewComments(
   const retired = new Set(removedIds);
   for (const thread of threads ?? []) {
     for (const comment of thread.comments) {
-      if (!comment.pendingReviewId) retired.add(comment.id);
+      if (!comment.pendingReviewId || thread.line === null) retired.add(comment.id);
     }
   }
   const remaining = local.filter(

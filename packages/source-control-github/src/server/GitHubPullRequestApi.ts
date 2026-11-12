@@ -782,7 +782,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly number: number;
       readonly verdict: PullRequestReviewVerdict;
       readonly pendingReviewId?: string;
-      readonly outdatedCommentIds?: ReadonlyArray<string>;
+      readonly outdatedComments?: ReadonlyArray<{ readonly id: string; readonly body: string }>;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -3318,7 +3318,7 @@ export const make = Effect.gen(function* () {
     submitReview: Effect.fn("GitHubPullRequestApi.submitReview")(function* (input) {
       if (
         input.pendingReviewId !== undefined ||
-        (input.outdatedCommentIds?.length ?? 0) > 0 ||
+        (input.outdatedComments?.length ?? 0) > 0 ||
         input.comments.some((comment) => comment.hostedComment !== undefined)
       ) {
         return yield* draftReviewGate.withPermit(
@@ -3373,9 +3373,15 @@ export const make = Effect.gen(function* () {
               if (saved) consumed.add(saved.node_id);
               else newComments.push(comment);
             }
-            for (const id of input.outdatedCommentIds ?? []) {
+            for (const comment of input.outdatedComments ?? []) {
+              const id = comment.id;
               const saved = pending.comments.find((comment) => comment.node_id === id);
-              if (!saved || saved.line !== null || consumed.has(id)) {
+              if (
+                !saved ||
+                saved.line !== null ||
+                saved.body !== comment.body ||
+                consumed.has(id)
+              ) {
                 return yield* readError(
                   input.cwd,
                   "submitReview",

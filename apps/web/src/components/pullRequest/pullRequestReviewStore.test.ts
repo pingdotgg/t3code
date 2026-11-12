@@ -143,6 +143,13 @@ describe("pull request review drafts", () => {
     ]);
     expect(mergePendingReviewComments([saved], [hostedThread()], ["remote"])).toEqual([]);
     expect(mergePendingReviewComments([saved], [hostedThread(false)], [])).toEqual([]);
+    expect(
+      mergePendingReviewComments(
+        [saved],
+        [{ ...hostedThread(), line: null, isOutdated: true }],
+        [],
+      ),
+    ).toEqual([]);
     expect(mergePendingReviewComments([saved, comment("new")], [], ["remote"])).toEqual([
       comment("new"),
     ]);

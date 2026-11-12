@@ -60,7 +60,7 @@ export function PullRequestComposer({
   const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
   const pendingCount =
     pendingComments.length +
-    pendingReviewIdentityFromThreads(detail.reviewThreads, removedIds).outdatedCommentIds.length;
+    pendingReviewIdentityFromThreads(detail.reviewThreads, removedIds).outdatedComments.length;
   const reviewStarted = pendingCount > 0 || summaryStarted;
   const [answeredOpenRequest, setAnsweredOpenRequest] = useState(openReviewRequest);
   if (openReviewRequest !== answeredOpenRequest) {
