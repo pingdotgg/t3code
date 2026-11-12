@@ -27,6 +27,7 @@ import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as UsageLimitRecoveryWorker from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
@@ -176,6 +177,7 @@ it.effect.each([
           OrchestratorMcpService.layer.pipe(
             Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
             Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+            Layer.provide(Layer.mock(CommandOutputHub.CommandOutputHub)({})),
           ),
           layerRecovery,
         ).pipe(

@@ -39,9 +39,12 @@ import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
-const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+const layerOrchestratorServiceWithoutHub = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
+const layerOrchestratorService = layerOrchestratorServiceWithoutHub.pipe(
+  Layer.provide(Layer.mock(CommandOutputHub.CommandOutputHub)({})),
 );
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
@@ -350,7 +353,7 @@ it("readThread shows output a running command has already printed", async () => 
       ),
     ),
   );
-  const layer = layerOrchestratorService.pipe(
+  const layer = layerOrchestratorServiceWithoutHub.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({

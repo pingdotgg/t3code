@@ -31,6 +31,7 @@ import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/Cod
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -58,6 +59,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(Layer.mock(CommandOutputHub.CommandOutputHub)({})),
 );
 
 /** A task delegated here always has a local child thread. */

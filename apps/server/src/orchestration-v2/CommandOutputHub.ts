@@ -54,6 +54,8 @@ export interface CommandOutputHubShape {
   readonly append: (input: CommandOutputTarget & { readonly chunk: string }) => Effect.Effect<void>;
   /** Retains the tail briefly for settlements without output; otherwise rows use persisted output. */
   readonly finish: (input: CommandOutputTarget) => Effect.Effect<void>;
+  /** Output a still-running command has printed so far, before its item stores any. */
+  readonly read: (input: CommandOutputTarget) => Effect.Effect<string | undefined>;
   readonly subscribe: (
     input: CommandOutputTarget,
   ) => Stream.Stream<OrchestrationV2CommandOutputFrame, OrchestrationV2CommandOutputError>;
@@ -165,6 +167,9 @@ export const make = Effect.gen(function* () {
       tails.delete(key);
       setBounded(finished, key, tail, MAX_FINISHED_COMMANDS);
     });
+
+  const read: CommandOutputHubShape["read"] = (target) =>
+    Effect.sync(() => tails.get(commandKey(target))?.text);
 
   const subscribe: CommandOutputHubShape["subscribe"] = (target) =>
     Stream.unwrap(
@@ -309,7 +314,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return CommandOutputHub.of({ append, finish, subscribe });
+  return CommandOutputHub.of({ append, finish, read, subscribe });
 });
 
 export const layer: Layer.Layer<

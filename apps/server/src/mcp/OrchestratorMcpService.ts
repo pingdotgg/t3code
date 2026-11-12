@@ -88,6 +88,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as CommandOutputHub from "../orchestration-v2/CommandOutputHub.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -1065,6 +1066,7 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const commandOutput = yield* CommandOutputHub.CommandOutputHub;
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -3028,7 +3030,20 @@ const make = Effect.gen(function* () {
           ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
-      const page = timeline.items;
+      // Providers that stream command output store it on the item only when the command ends.
+      const page = yield* Effect.forEach(timeline.items, (row) =>
+        row.item.type !== "command_execution" ||
+        row.item.output !== undefined ||
+        !isOrchestrationV2WorkActive(row.item.status)
+          ? Effect.succeed(row)
+          : commandOutput
+              .read({ threadId: row.item.threadId, itemId: row.item.id })
+              .pipe(
+                Effect.map((output) =>
+                  output === undefined ? row : { ...row, item: { ...row.item, output } },
+                ),
+              ),
+      );
       const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
       for (const row of page) {
         if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
@@ -3333,4 +3348,5 @@ export const layer: Layer.Layer<
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation
+  | CommandOutputHub.CommandOutputHub
 > = Layer.effect(OrchestratorMcpService, make);
