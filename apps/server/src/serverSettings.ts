@@ -3,7 +3,7 @@ import {
   agentNameKey,
   agentSkillDigest,
   agentSkillDigestOf,
-  AgentLibraryConflictError,
+  claimAgentName,
   isAgentSkillStub,
   mergeAgentLibraries,
   toAgentSkillStub,
@@ -334,10 +334,10 @@ export class ServerSettingsService extends Context.Service<
       patch?: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
-    /** Per-item agent and skill edits checked against the revision each writer saw. */
+    /** Per-item agent and skill edits; the latest write wins. */
     readonly mutateAgentLibrary: (
       operations: ReadonlyArray<AgentLibraryOperation>,
-    ) => Effect.Effect<AgentLibraryMutationResult, ServerSettingsError | AgentLibraryConflictError>;
+    ) => Effect.Effect<AgentLibraryMutationResult, ServerSettingsError>;
 
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
@@ -395,16 +395,15 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     updateSettings: (patch, replicateProfiles = false) =>
       updateTestSettings((currentSettings) =>
         Effect.gen(function* () {
-          yield* validateMcpGatewayProfileNames(
-            currentSettings,
-            patch,
-            "<memory>",
-            replicateProfiles,
-          );
           const now = DateTime.formatIso(yield* DateTime.now);
           return applyServerSettingsPatch(
             currentSettings,
-            withServerOwnedMcpGatewayProfiles(currentSettings, patch, now, replicateProfiles),
+            withServerOwnedMcpGatewayProfiles(
+              currentSettings,
+              withUniqueMcpGatewayProfileNames(currentSettings, patch),
+              now,
+              replicateProfiles,
+            ),
           );
         }),
       ),
@@ -417,7 +416,12 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
           Effect.flatMap((current) =>
             DateTime.now.pipe(
               Effect.flatMap((now) =>
-                applyAgentLibraryOperations(current, operations, DateTime.formatIso(now)),
+                applyAgentLibraryOperations(
+                  current,
+                  operations,
+                  DateTime.formatIso(now),
+                  "<memory>",
+                ),
               ),
               Effect.map((applied) => {
                 touched = applied.touched;
@@ -607,36 +611,24 @@ function selectionSupportsTextGeneration(
   return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
 }
 
-function validateMcpGatewayProfileNames(
+/** A new or renamed agent whose name clashes, ignoring case, gets a numbered suffix instead of failing. */
+function withUniqueMcpGatewayProfileNames(
   current: ServerSettings,
   patch: ServerSettingsPatch,
-  settingsPath: string,
-  replicateProfiles: boolean,
-): Effect.Effect<void, ServerSettingsError> {
-  if (patch.mcpGatewayProfiles === undefined) return Effect.void;
-  const fail = (message: string) =>
-    Effect.fail(
-      new ServerSettingsError({ settingsPath, operation: "normalize", cause: new Error(message) }),
+): ServerSettingsPatch {
+  if (patch.mcpGatewayProfiles === undefined) return patch;
+  const kept = (profile: McpGatewayProfile) =>
+    current.mcpGatewayProfiles.some(
+      (stored) => stored.profileId === profile.profileId && stored.name === profile.name,
     );
-  const names = new Set<string>();
-  const keys = new Map<string, number>();
-  for (const profile of patch.mcpGatewayProfiles) {
-    if (names.has(profile.name)) return fail(`Duplicate MCP gateway profile name: ${profile.name}`);
-    names.add(profile.name);
-    const key = agentNameKey(profile.name);
-    keys.set(key, (keys.get(key) ?? 0) + 1);
-  }
-  // Replication renames clashes deterministically; stored clashes stay editable until renamed.
-  if (replicateProfiles) return Effect.void;
-  for (const profile of patch.mcpGatewayProfiles) {
-    const existing = current.mcpGatewayProfiles.find(
-      (stored) => stored.profileId === profile.profileId,
-    );
-    if (existing?.name === profile.name) continue;
-    if ((keys.get(agentNameKey(profile.name)) ?? 0) > 1)
-      return fail(`An agent named "${profile.name}" already exists (names ignore case).`);
-  }
-  return Effect.void;
+  // Stored names keep theirs, so existing clashes stay editable until renamed.
+  const taken = new Set(patch.mcpGatewayProfiles.filter(kept).map((p) => agentNameKey(p.name)));
+  return {
+    ...patch,
+    mcpGatewayProfiles: patch.mcpGatewayProfiles.map((profile) =>
+      kept(profile) ? profile : { ...profile, name: claimAgentName(profile.name, taken) },
+    ),
+  };
 }
 
 /** Later than every stored library timestamp, so a write always wins its own merge. */
@@ -802,44 +794,18 @@ interface AgentLibraryTouched {
 }
 const emptyTouched: AgentLibraryTouched = { profileIds: new Set(), skillIds: new Set() };
 
-function checkBaseRevision(
-  itemKind: "agent" | "skill",
-  itemId: string,
-  itemName: string | undefined,
-  existing: { readonly revision: number } | undefined,
-  baseRevision: number | null,
-): AgentLibraryConflictError | undefined {
-  if (baseRevision === null) {
-    return existing === undefined
-      ? undefined
-      : new AgentLibraryConflictError({
-          itemKind,
-          itemId,
-          ...(itemName === undefined ? {} : { itemName }),
-          reason: "exists",
-          expectedRevision: null,
-          actualRevision: existing.revision,
-        });
-  }
-  if (existing?.revision === baseRevision) return undefined;
-  return new AgentLibraryConflictError({
-    itemKind,
-    itemId,
-    ...(itemName === undefined ? {} : { itemName }),
-    reason: existing === undefined ? "missing" : "revision",
-    expectedRevision: baseRevision,
-    actualRevision: existing?.revision ?? null,
-  });
-}
-
-/** Applies every operation or none; deleting a skill also unassigns it from agents. */
+/**
+ * Applies every operation or none, last write wins: an upsert overwrites or recreates its item
+ * and a delete always removes it. Deleting a skill also unassigns it from agents.
+ */
 function applyAgentLibraryOperations(
   current: ServerSettings,
   operations: ReadonlyArray<AgentLibraryOperation>,
   now: string,
+  settingsPath: string,
 ): Effect.Effect<
   { readonly patch: ServerSettingsPatch; readonly touched: AgentLibraryTouched },
-  AgentLibraryConflictError
+  ServerSettingsError
 > {
   const mutationTime = agentLibraryMutationTime(current, now);
   const profiles = new Map(
@@ -850,13 +816,15 @@ function applyAgentLibraryOperations(
   const skillDeletedAt = { ...current.agentSkillDeletedAt };
   const profileIds = new Set<string>();
   const skillIds = new Set<string>();
+  // Never below the writer's copy or the stored item; convergence itself follows updatedAt.
   const bump = <T extends { revision: number; createdAt: string; updatedAt: string }>(
     existing: T | undefined,
+    incomingRevision: number,
     content: Omit<T, "revision" | "createdAt" | "updatedAt">,
   ) =>
     ({
       ...content,
-      revision: (existing?.revision ?? 0) + 1,
+      revision: Math.max(existing?.revision ?? 0, incomingRevision) + 1,
       createdAt: existing?.createdAt ?? now,
       updatedAt: mutationTime,
     }) as T;
@@ -865,48 +833,31 @@ function applyAgentLibraryOperations(
       case "skill.upsert": {
         const id = operation.skill.skillId;
         const existing = skills.get(id);
-        const conflict = checkBaseRevision(
-          "skill",
-          id,
-          operation.skill.name,
-          existing,
-          operation.baseRevision,
-        );
-        if (conflict) return Effect.fail(conflict);
         const raw = withoutAgentSkillTransportFields(operation.skill);
-        if (isAgentSkillStub(operation.skill) && existing === undefined)
+        const stub = isAgentSkillStub(operation.skill);
+        if (stub && existing === undefined)
           return Effect.fail(
-            new AgentLibraryConflictError({
-              itemKind: "skill",
-              itemId: id,
-              itemName: raw.name,
-              reason: "missing",
+            new ServerSettingsError({
+              settingsPath,
+              operation: "normalize",
+              cause: new Error(
+                `Skill "${raw.name}" was deleted on this machine and its instructions aren't loaded. Open the skill, then save again.`,
+              ),
             }),
           );
         const { resources: rawResources, ...rawContent } = withoutServerOwnedFields(raw);
-        const resources = isAgentSkillStub(operation.skill)
-          ? existing?.resources
-          : (rawResources ?? existing?.resources);
+        const resources = stub ? existing?.resources : (rawResources ?? existing?.resources);
         const content = {
           ...rawContent,
-          content: isAgentSkillStub(operation.skill) ? existing!.content : raw.content,
+          content: stub ? existing!.content : raw.content,
           ...(resources === undefined ? {} : { resources }),
         };
         skillIds.add(id);
         if (existing && Equal.equals(content, withoutServerOwnedFields(existing))) break;
-        skills.set(id, bump<AgentSkill>(existing, content));
+        skills.set(id, bump<AgentSkill>(existing, operation.skill.revision, content));
         break;
       }
       case "skill.delete": {
-        const existing = skills.get(operation.skillId);
-        const conflict = checkBaseRevision(
-          "skill",
-          operation.skillId,
-          existing?.name,
-          existing,
-          operation.baseRevision,
-        );
-        if (conflict) return Effect.fail(conflict);
         skills.delete(operation.skillId);
         skillDeletedAt[operation.skillId] = mutationTime;
         skillIds.add(operation.skillId);
@@ -914,7 +865,7 @@ function applyAgentLibraryOperations(
           if (!profile.skillIds?.includes(operation.skillId)) continue;
           profiles.set(
             profile.profileId,
-            bump<McpGatewayProfile>(profile, {
+            bump<McpGatewayProfile>(profile, 0, {
               ...withoutServerOwnedFields(profile),
               skillIds: profile.skillIds.filter((skillId) => skillId !== operation.skillId),
             }),
@@ -926,45 +877,23 @@ function applyAgentLibraryOperations(
       case "profile.upsert": {
         const id = operation.profile.profileId;
         const existing = profiles.get(id);
-        const conflict = checkBaseRevision(
-          "agent",
-          id,
-          operation.profile.name,
-          existing,
-          operation.baseRevision,
+        const { name, ...rest } = withLegacyAgentIcon(withoutServerOwnedFields(operation.profile));
+        // A new or renamed agent whose name clashes ignoring case takes a suffix, as sync does.
+        const taken = new Set(
+          [...profiles.values()]
+            .filter((profile) => profile.profileId !== id)
+            .map((profile) => agentNameKey(profile.name)),
         );
-        if (conflict) return Effect.fail(conflict);
-        const key = agentNameKey(operation.profile.name);
-        if (
-          existing?.name !== operation.profile.name &&
-          [...profiles.values()].some(
-            (profile) => profile.profileId !== id && agentNameKey(profile.name) === key,
-          )
-        )
-          return Effect.fail(
-            new AgentLibraryConflictError({
-              itemKind: "agent",
-              itemId: id,
-              itemName: operation.profile.name,
-              reason: "name",
-            }),
-          );
-        const content = withLegacyAgentIcon(withoutServerOwnedFields(operation.profile));
+        const content = {
+          ...rest,
+          name: existing?.name === name ? name : claimAgentName(name, taken),
+        };
         profileIds.add(id);
         if (existing && Equal.equals(content, withoutServerOwnedFields(existing))) break;
-        profiles.set(id, bump<McpGatewayProfile>(existing, content));
+        profiles.set(id, bump<McpGatewayProfile>(existing, operation.profile.revision, content));
         break;
       }
       case "profile.delete": {
-        const existing = profiles.get(operation.profileId);
-        const conflict = checkBaseRevision(
-          "agent",
-          operation.profileId,
-          existing?.name,
-          existing,
-          operation.baseRevision,
-        );
-        if (conflict) return Effect.fail(conflict);
         profiles.delete(operation.profileId);
         profileDeletedAt[operation.profileId] = mutationTime;
         profileIds.add(operation.profileId);
@@ -1866,11 +1795,15 @@ const make = Effect.gen(function* () {
       updateAndPersistSettings(patch, (current) =>
         Effect.gen(function* () {
           yield* ensureSecretProviderWritesAllowed(patch, settingsPath);
-          yield* validateMcpGatewayProfileNames(current, patch, settingsPath, replicateProfiles);
           const now = DateTime.formatIso(yield* DateTime.now);
           return applyServerSettingsPatch(
             current,
-            withServerOwnedMcpGatewayProfiles(current, patch, now, replicateProfiles),
+            withServerOwnedMcpGatewayProfiles(
+              current,
+              withUniqueMcpGatewayProfileNames(current, patch),
+              now,
+              replicateProfiles,
+            ),
           );
         }),
       ),
@@ -1878,10 +1811,15 @@ const make = Effect.gen(function* () {
       operations: ReadonlyArray<AgentLibraryOperation>,
     ) {
       let touched: AgentLibraryTouched = emptyTouched;
-      const settings = yield* updateAndPersistSettings<AgentLibraryConflictError>({}, (current) =>
+      const settings = yield* updateAndPersistSettings({}, (current) =>
         Effect.gen(function* () {
           const now = DateTime.formatIso(yield* DateTime.now);
-          const applied = yield* applyAgentLibraryOperations(current, operations, now);
+          const applied = yield* applyAgentLibraryOperations(
+            current,
+            operations,
+            now,
+            settingsPath,
+          );
           touched = applied.touched;
           return applyServerSettingsPatch(current, applied.patch);
         }),

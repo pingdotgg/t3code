@@ -419,8 +419,7 @@ const withoutServerOwned = <T extends { revision: number; createdAt: string; upd
 
 /**
  * Turns a whole-library settings patch into per-item operations, so a concurrent edit to another
- * item survives. An edited item's base is its own `revision`, the one its editor opened with, so
- * a change saved elsewhere since then conflicts. Other settings stay in `rest`.
+ * item survives. Each operation applies whatever was saved elsewhere. Other settings stay in `rest`.
  */
 export function agentLibraryOperationsFromPatch(
   snapshot: {
@@ -446,38 +445,22 @@ export function agentLibraryOperationsFromPatch(
     for (const skill of agentSkills) {
       const seen = snapshot.agentSkills.find((item) => item.skillId === skill.skillId);
       if (seen && Equal.equals(withoutServerOwned(seen), withoutServerOwned(skill))) continue;
-      skillUpserts.push({
-        type: "skill.upsert",
-        skill,
-        baseRevision: seen ? skill.revision : null,
-      });
+      skillUpserts.push({ type: "skill.upsert", skill });
     }
     for (const seen of snapshot.agentSkills) {
       if (!agentSkills.some((skill) => skill.skillId === seen.skillId))
-        skillDeletes.push({
-          type: "skill.delete",
-          skillId: seen.skillId,
-          baseRevision: seen.revision,
-        });
+        skillDeletes.push({ type: "skill.delete", skillId: seen.skillId });
     }
   }
   if (mcpGatewayProfiles !== undefined) {
     for (const profile of mcpGatewayProfiles) {
       const seen = snapshot.mcpGatewayProfiles.find((item) => item.profileId === profile.profileId);
       if (seen && Equal.equals(withoutServerOwned(seen), withoutServerOwned(profile))) continue;
-      profileOperations.push({
-        type: "profile.upsert",
-        profile,
-        baseRevision: seen ? profile.revision : null,
-      });
+      profileOperations.push({ type: "profile.upsert", profile });
     }
     for (const seen of snapshot.mcpGatewayProfiles) {
       if (!mcpGatewayProfiles.some((profile) => profile.profileId === seen.profileId))
-        profileOperations.push({
-          type: "profile.delete",
-          profileId: seen.profileId,
-          baseRevision: seen.revision,
-        });
+        profileOperations.push({ type: "profile.delete", profileId: seen.profileId });
     }
   }
   // New skills exist before agents reference them; deletions unassign after agent edits land.

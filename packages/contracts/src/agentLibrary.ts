@@ -3,33 +3,33 @@ import { AgentSkill } from "./agentSkills.ts";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { McpGatewayProfile } from "./settings.ts";
 
-/** Null creates: the item must not exist yet. Otherwise the stored revision must match. */
-const BaseRevision = Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)));
+/** Ignored: writes always apply. Clients from before last-write-wins still send it. */
+const LegacyBaseRevision = Schema.optionalKey(Schema.NullOr(Schema.Int));
 
 /**
- * One item edit against the revision the writer saw. The server owns `revision`, `createdAt` and
- * `updatedAt`; an upserted skill without `resources`, or a stub, keeps the stored body.
+ * One item edit; the latest write wins. The server owns `revision`, `createdAt` and `updatedAt`;
+ * an upserted skill without `resources`, or a stub, keeps the stored body.
  */
 export const AgentLibraryOperation = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("profile.upsert"),
     profile: McpGatewayProfile,
-    baseRevision: BaseRevision,
+    baseRevision: LegacyBaseRevision,
   }),
   Schema.Struct({
     type: Schema.Literal("profile.delete"),
     profileId: TrimmedNonEmptyString,
-    baseRevision: Schema.Int,
+    baseRevision: LegacyBaseRevision,
   }),
   Schema.Struct({
     type: Schema.Literal("skill.upsert"),
     skill: AgentSkill,
-    baseRevision: BaseRevision,
+    baseRevision: LegacyBaseRevision,
   }),
   Schema.Struct({
     type: Schema.Literal("skill.delete"),
     skillId: TrimmedNonEmptyString,
-    baseRevision: Schema.Int,
+    baseRevision: LegacyBaseRevision,
   }),
 ]);
 export type AgentLibraryOperation = typeof AgentLibraryOperation.Type;
@@ -47,32 +47,6 @@ export const AgentLibraryMutationResult = Schema.Struct({
   agentSkillDeletedAt: Schema.Record(Schema.String, Schema.String),
 });
 export type AgentLibraryMutationResult = typeof AgentLibraryMutationResult.Type;
-
-export class AgentLibraryConflictError extends Schema.TaggedError<AgentLibraryConflictError>()(
-  "AgentLibraryConflictError",
-  {
-    itemKind: Schema.Literals(["agent", "skill"]),
-    itemId: Schema.String,
-    itemName: Schema.optional(Schema.String),
-    reason: Schema.Literals(["revision", "name", "missing", "exists"]),
-    expectedRevision: Schema.optional(Schema.NullOr(Schema.Int)),
-    actualRevision: Schema.optional(Schema.NullOr(Schema.Int)),
-  },
-) {
-  override get message(): string {
-    const label = `${this.itemKind === "agent" ? "Agent" : "Skill"} ${this.itemName === undefined ? this.itemId : `"${this.itemName}"`}`;
-    switch (this.reason) {
-      case "name":
-        return `An agent named "${this.itemName ?? this.itemId}" already exists (names ignore case).`;
-      case "missing":
-        return `${label} no longer exists.`;
-      case "exists":
-        return `${label} already exists.`;
-      case "revision":
-        return `${label} changed elsewhere (revision ${this.actualRevision ?? "deleted"}, expected ${this.expectedRevision ?? "new"}). Reload and try again.`;
-    }
-  }
-}
 
 export const GetAgentSkillsInput = Schema.Struct({
   skillIds: Schema.Array(TrimmedNonEmptyString).check(Schema.isMaxLength(200)),

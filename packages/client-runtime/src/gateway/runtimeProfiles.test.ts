@@ -30,6 +30,7 @@ describe("runtime profile persistence", () => {
                 capabilities: {
                   agentSkillResources: resourcesSupported,
                   agentLibraryMutations: mutationsSupported,
+                  agentLibraryLastWriteWins: mutationsSupported,
                 },
               },
             })),

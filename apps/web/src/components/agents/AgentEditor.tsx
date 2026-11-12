@@ -25,7 +25,7 @@ import { Textarea } from "../ui/textarea";
 import { Alert, AlertDescription } from "../ui/alert";
 import { agentModelOptions, agentThinkingChoices, presetProviderLabel } from "./agentModelCatalog";
 import type { AgentSkill, McpGatewayProfile, ServerProvider } from "@t3tools/contracts";
-import { MCP_GATEWAY_RUNTIME_MODE_LABELS } from "@t3tools/contracts";
+import { agentNameKey, MCP_GATEWAY_RUNTIME_MODE_LABELS } from "@t3tools/contracts";
 import { agentColors, defaultAgentColor, soleOption } from "./agents.logic";
 import {
   agentIconFieldsToSave,
@@ -187,6 +187,12 @@ export function AgentEditor({
   );
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  // Kept names stay editable, as the server keeps a stored clash until it is renamed.
+  const nameTaken =
+    name.trim() !== profile?.name &&
+    profiles.some(
+      (p) => p.profileId !== profile?.profileId && agentNameKey(p.name) === agentNameKey(name),
+    );
   const availableProviders = providers.filter(
     (provider) => environmentIds.length === 0 || environmentIds.includes(provider.environmentId),
   );
@@ -235,17 +241,7 @@ export function AgentEditor({
           className="flex min-h-0 flex-col"
           onSubmit={async (event) => {
             event.preventDefault();
-            const nameKey = name.trim().toLocaleLowerCase();
-            if (
-              profiles.some(
-                (p) =>
-                  p.profileId !== profile?.profileId &&
-                  p.name.trim().toLocaleLowerCase() === nameKey,
-              )
-            ) {
-              setError("An agent with this name already exists.");
-              return;
-            }
+            if (nameTaken) return;
             setSaving(true);
             setError("");
             const normalizedTags = normalizeAgentTags(tags);
@@ -321,24 +317,32 @@ export function AgentEditor({
                 </Alert>
               )}
               <FormSection title="Identity">
-                <div
-                  className="flex items-end gap-3"
-                  style={{ "--agent-color": color } as CSSProperties}
-                >
-                  <AgentIconPicker value={iconId} onChange={setPickedIcon} />
-                  <div className="min-w-0 flex-1">
-                    <FormField label="Name" htmlFor={`${ids}-name`}>
-                      <Input
-                        id={`${ids}-name`}
-                        autoFocus
-                        required
-                        maxLength={200}
-                        placeholder="Write, Review, Research…"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                      />
-                    </FormField>
+                <div className="flex flex-col gap-1.5">
+                  <div
+                    className="flex items-end gap-3"
+                    style={{ "--agent-color": color } as CSSProperties}
+                  >
+                    <AgentIconPicker value={iconId} onChange={setPickedIcon} />
+                    <div className="min-w-0 flex-1">
+                      <FormField label="Name" htmlFor={`${ids}-name`}>
+                        <Input
+                          id={`${ids}-name`}
+                          autoFocus
+                          required
+                          maxLength={200}
+                          placeholder="Write, Review, Research…"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          aria-invalid={nameTaken || undefined}
+                        />
+                      </FormField>
+                    </div>
                   </div>
+                  {nameTaken && (
+                    <p role="alert" className="text-sm text-destructive">
+                      Another agent is already called “{name.trim()}”. Names ignore case.
+                    </p>
+                  )}
                 </div>
                 <FormField
                   label="Specialization"
@@ -647,7 +651,10 @@ export function AgentEditor({
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
               Cancel
             </Button>
-            <Button type="submit" disabled={saving || !name.trim() || !provider || !selectedModel}>
+            <Button
+              type="submit"
+              disabled={saving || !name.trim() || nameTaken || !provider || !selectedModel}
+            >
               {saving ? "Saving…" : profile ? "Save agent" : "Create agent"}
             </Button>
           </DialogFooter>

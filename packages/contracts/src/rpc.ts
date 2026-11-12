@@ -202,7 +202,6 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
-  AgentLibraryConflictError,
   AgentLibraryMutationInput,
   AgentLibraryMutationResult,
   GetAgentSkillsInput,
@@ -1048,11 +1047,7 @@ const WsServerGetAgentSkillsRpc = Rpc.make(WS_METHODS.serverGetAgentSkills, {
 const WsServerMutateAgentLibraryRpc = Rpc.make(WS_METHODS.serverMutateAgentLibrary, {
   payload: AgentLibraryMutationInput,
   success: AgentLibraryMutationResult,
-  error: Schema.Union([
-    AgentLibraryConflictError,
-    ServerSettingsError,
-    EnvironmentAuthorizationError,
-  ]),
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {

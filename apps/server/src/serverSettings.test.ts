@@ -4,6 +4,7 @@ import {
   agentSkillDigest,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
+  mergeAgentLibraries,
   toAgentSkillStub,
   type ManagedPolicyDocument,
   ModelSelection,
@@ -526,7 +527,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("rejects duplicate gateway profile names at the server boundary", () =>
+  it.effect("suffixes duplicate gateway profile names instead of rejecting them", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const base = {
@@ -539,22 +540,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         updatedAt: "2000-01-01T00:00:00.000Z",
       };
 
-      const error = yield* serverSettings
-        .updateSettings({
-          mcpGatewayProfiles: [
-            { ...base, profileId: "profile-andy-1" },
-            { ...base, profileId: "profile-andy-2" },
-          ],
-        })
-        .pipe(Effect.flip);
+      const saved = yield* serverSettings.updateSettings({
+        mcpGatewayProfiles: [
+          { ...base, profileId: "profile-andy-1" },
+          { ...base, profileId: "profile-andy-2" },
+        ],
+      });
 
-      assert.equal(error.operation, "normalize");
-      assert.match(String(error.cause), /Duplicate MCP gateway profile name: Andy/);
-      assert.deepEqual((yield* serverSettings.getSettings).mcpGatewayProfiles, []);
+      assert.deepEqual(
+        saved.mcpGatewayProfiles.map((profile) => profile.name),
+        ["Andy", "Andy (2)"],
+      );
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("rejects a new or renamed agent whose name clashes ignoring case", () =>
+  it.effect("suffixes a new or renamed agent whose name clashes ignoring case", () =>
     Effect.gen(function* () {
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       const doug = {
@@ -567,30 +567,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         updatedAt: "2026-01-01",
       };
       const saved = yield* settings.updateSettings({ mcpGatewayProfiles: [doug] });
-      const error = yield* settings
-        .updateSettings({
-          mcpGatewayProfiles: [
-            ...saved.mcpGatewayProfiles,
-            { ...doug, profileId: "other", name: "doug" },
-          ],
-        })
-        .pipe(Effect.flip);
-      assert.match(String(error.cause), /An agent named "doug" already exists/);
-      const conflict = yield* settings
-        .mutateAgentLibrary([
-          {
-            type: "profile.upsert",
-            profile: { ...doug, profileId: "other", name: "DOUG" },
-            baseRevision: null,
-          },
-        ])
-        .pipe(Effect.flip);
-      assert.deepInclude(conflict, {
-        _tag: "AgentLibraryConflictError",
-        reason: "name",
-        itemId: "other",
+      const patched = yield* settings.updateSettings({
+        mcpGatewayProfiles: [
+          ...saved.mcpGatewayProfiles,
+          { ...doug, profileId: "other", name: "doug" },
+        ],
       });
-      assert.match(conflict.message, /names ignore case/);
+      assert.deepEqual(
+        patched.mcpGatewayProfiles.map((profile) => profile.name),
+        ["Doug", "doug (2)"],
+      );
+      const mutated = yield* settings.mutateAgentLibrary([
+        { type: "profile.upsert", profile: { ...doug, profileId: "third", name: "DOUG" } },
+      ]);
+      assert.equal(mutated.mcpGatewayProfiles[0]?.name, "DOUG (3)");
+      // A stored clash stays editable without being renamed again.
+      const kept = yield* settings.mutateAgentLibrary([
+        {
+          type: "profile.upsert",
+          profile: { ...doug, profileId: "third", name: "DOUG (3)", description: "Edited" },
+        },
+      ]);
+      assert.deepInclude(kept.mcpGatewayProfiles[0], { name: "DOUG (3)", description: "Edited" });
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -702,7 +700,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("applies per-item edits against base revisions and unassigns deleted skills", () =>
+  it.effect("applies every per-item edit, last write wins, and unassigns deleted skills", () =>
     Effect.gen(function* () {
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       const skill = {
@@ -732,67 +730,85 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         true,
       );
 
-      const stale = yield* settings
-        .mutateAgentLibrary([
-          { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" }, baseRevision: 1 },
-          {
-            type: "profile.upsert",
-            profile: { ...agent("randy"), name: "Randy" },
-            baseRevision: 0,
-          },
-        ])
-        .pipe(Effect.flip);
-      assert.deepInclude(stale, {
-        _tag: "AgentLibraryConflictError",
-        itemKind: "agent",
-        itemId: "randy",
-        reason: "revision",
-        expectedRevision: 0,
-        actualRevision: 1,
-      });
+      // Clients from before last-write-wins still send baseRevision; a stale one still applies,
+      // whole, so Randy's skill assignment goes with it.
+      const stale = yield* settings.mutateAgentLibrary([
+        { type: "profile.upsert", profile: { ...agent("randy"), name: "Randy" }, baseRevision: 0 },
+      ]);
+      assert.deepEqual(
+        stale.mcpGatewayProfiles.map((p) => [p.name, p.revision]),
+        [["Randy", 2]],
+      );
+
+      // Two clients edit from the same copy; every device converges on the later write.
+      const fromA = yield* settings.mutateAgentLibrary([
+        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea from A" } },
+      ]);
+      const fromB = yield* settings.mutateAgentLibrary([
+        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea from B" } },
+      ]);
+      assert.deepEqual(
+        fromB.mcpGatewayProfiles.map((p) => [p.name, p.revision]),
+        [["Bea from B", 3]],
+      );
       assert.equal(
-        (yield* settings.getSettings).mcpGatewayProfiles.find((p) => p.profileId === "bea")?.name,
-        "bea",
+        mergeAgentLibraries([fromA, yield* settings.getSettings]).mcpGatewayProfiles.find(
+          (p) => p.profileId === "bea",
+        )?.name,
+        "Bea from B",
       );
 
       const result = yield* settings.mutateAgentLibrary([
-        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" }, baseRevision: 1 },
-        { type: "skill.delete", skillId: "review", baseRevision: 1 },
+        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" } },
+        { type: "skill.delete", skillId: "review" },
       ]);
       assert.deepEqual(
         result.mcpGatewayProfiles.map((p) => [p.profileId, p.name, p.revision, p.skillIds]),
         [
-          ["bea", "Bea", 2, undefined],
+          ["bea", "Bea", 4, undefined],
           ["cal", "cal", 2, []],
-          ["randy", "randy", 2, []],
         ],
       );
       assert.deepEqual(result.agentSkills, []);
       assert.isString(result.agentSkillDeletedAt.review);
       const after = yield* settings.getSettings;
       assert.deepEqual(after.agentSkills, []);
-      assert.deepEqual(after.mcpGatewayProfiles, result.mcpGatewayProfiles);
+      assert.includeDeepMembers([...after.mcpGatewayProfiles], [...result.mcpGatewayProfiles]);
 
       // Per-item edits carry the whole agent, so leaving out icon and tags clears them.
       const iconed = yield* settings.mutateAgentLibrary([
         {
           type: "profile.upsert",
           profile: { ...agent("bea"), name: "Bea", iconId: "rocket", tags: ["Dev"] },
-          baseRevision: 2,
         },
       ]);
       // Older builds only read the legacy literal, so an iconId alone gains its nearest one.
       assert.equal(iconed.mcpGatewayProfiles[0]?.icon, "sparkles");
       const cleared = yield* settings.mutateAgentLibrary([
-        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" }, baseRevision: 3 },
+        { type: "profile.upsert", profile: { ...agent("bea"), name: "Bea" } },
       ]);
       assert.notProperty(cleared.mcpGatewayProfiles[0], "iconId");
       assert.notProperty(cleared.mcpGatewayProfiles[0], "tags");
 
-      const gone = yield* settings
-        .mutateAgentLibrary([{ type: "skill.delete", skillId: "review", baseRevision: 1 }])
-        .pipe(Effect.flip);
-      assert.deepInclude(gone, { reason: "missing", itemKind: "skill", itemId: "review" });
+      // Deleted elsewhere: a delete still succeeds and an upsert recreates the item.
+      const deleted = yield* settings.mutateAgentLibrary([
+        { type: "profile.delete", profileId: "cal" },
+        { type: "skill.delete", skillId: "review", baseRevision: 1 },
+      ]);
+      assert.isString(deleted.mcpGatewayProfileDeletedAt.cal);
+      const recreated = yield* settings.mutateAgentLibrary([
+        { type: "profile.upsert", profile: { ...agent("cal"), name: "Cal", revision: 2 } },
+        { type: "skill.upsert", skill: { ...skill, content: "Rules v2" } },
+      ]);
+      assert.deepEqual(
+        recreated.mcpGatewayProfiles.map((p) => [p.name, p.revision]),
+        [["Cal", 3]],
+      );
+      assert.equal(recreated.agentSkills[0]?.content, "Rules v2");
+      assert.sameMembers(
+        mergeAgentLibraries([yield* settings.getSettings]).mcpGatewayProfiles.map((p) => p.name),
+        ["Bea", "Cal", "Randy"],
+      );
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
