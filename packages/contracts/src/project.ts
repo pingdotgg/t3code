@@ -307,6 +307,8 @@ export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 // are left out, so the list stays small enough to pick from.
 export const ProjectListIgnoredFilesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  /** Case-insensitive path substring; servers without `ignoredFileSearch` ignore it. */
+  query: Schema.optional(TrimmedString.check(Schema.isMaxLength(256))),
 });
 export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.Type;
 

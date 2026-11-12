@@ -21,6 +21,9 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 
+/** Matches the server's ignored-file listing limit, so search cannot raise how many get copied. */
+export const COPIED_FILES_MAX_COUNT = 200;
+
 const DEFAULT_COPIED_FILE_NAME = /^(?:\.env(?:\..+)?|\.envrc|\.dev\.vars)$/;
 
 /** Env files are the ignored files people almost always want on a new machine. */
