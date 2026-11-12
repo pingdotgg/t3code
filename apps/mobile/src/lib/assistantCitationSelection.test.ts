@@ -46,8 +46,22 @@ it("offers distinct source choices within a block and maps recursive folds witho
   );
   expect(leadingSpace?.start).toBe(2);
   expect(leadingSpace?.occurrence).toEqual({ index: 0, count: 1 });
+  const codeChoices = collectMobileAssistantTextSelectors(
+    "quote\n\n```text\nquote\n```\n\nquote",
+    "0:0",
+    "quote",
+  );
+  expect(codeChoices.map((choice) => choice.occurrence)).toEqual([
+    { index: 0, count: 3 },
+    { index: 1, count: 3 },
+    { index: 2, count: 3 },
+  ]);
   for (const { source, path } of [
     { source: "![before](image.png)\n\nquote quote\n\n![after](image.png)", path: "0:0" },
+    {
+      source: 'quote\n\n```mermaid\nflowchart TD\nA["quote"]\n```\n\nquote',
+      path: "0:0",
+    },
     {
       source:
         "![before](image.png)\n\n<details><summary>More</summary>\n\nquote quote\n\n</details>\n\n![after](image.png)",
