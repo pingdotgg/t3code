@@ -243,7 +243,7 @@ it.each(["blocked", "refusedLater"] as const)(
   },
 );
 
-it("cancels a new citation while dictation makes the composer read-only", async () => {
+it("keeps a new citation on Cancel while dictation makes the composer read-only", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
   await using screen = await render(<Composer question={false} editorRef={editorRef} disabled />);
 
@@ -263,5 +263,5 @@ it("cancels a new citation while dictation makes the composer read-only", async 
   await page.getByRole("button", { name: "Cancel" }).click();
 
   await expect.element(page.getByLabelText("Comment on selected text")).not.toBeInTheDocument();
-  expect(screen.container.querySelector("output")?.dataset.prompt).toBe("See ");
+  expect(screen.container.querySelector("output")?.dataset.prompt).toBe(promptBefore);
 });
