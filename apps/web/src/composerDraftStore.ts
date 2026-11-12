@@ -2,6 +2,7 @@ import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { composerFileAttachmentMimeType } from "./components/chat/composerAttachmentFiles";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
+  ResponseContextRecord,
   ElementContextDetails,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -42,6 +43,7 @@ import { DeepMutable } from "effect/Types";
 import {
   createModelSelection,
   draftModelPickMatchesThread,
+  normalizeCustomModelSlug,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
@@ -53,7 +55,11 @@ import type {
 import { waitForDraftHeroTransition } from "./components/chat/draftHeroTransition";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
-import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
+import {
+  readInstanceCustomModels,
+  resolveAppModelSelection,
+  resolveAppModelSelectionForInstance,
+} from "./modelSelection";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -104,6 +110,7 @@ const isThreadContextRecord = Schema.is(ThreadContextRecord);
 const isEnvironmentContextRecord = Schema.is(EnvironmentContextRecord);
 const isSnapShotSource = Schema.is(SnapShotSource);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
+const isResponseContextRecord = Schema.is(ResponseContextRecord);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 9;
@@ -243,6 +250,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   reviewComments: Schema.optionalKey(Schema.Array(ReviewCommentContextSchema)),
   threadContexts: Schema.optionalKey(Schema.Array(ThreadContextRecord)),
   environmentContexts: Schema.optionalKey(Schema.Array(EnvironmentContextRecord)),
+  replyTo: Schema.optionalKey(ResponseContextRecord),
   modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
@@ -314,6 +322,9 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  checkoutPullRequest: Schema.optionalKey(
+    Schema.Struct({ url: Schema.String, branch: Schema.String }),
+  ),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -367,6 +378,8 @@ export interface ComposerThreadDraftState {
   reviewComments: ReviewCommentContext[];
   threadContexts: ThreadContextRecord[];
   environmentContexts: EnvironmentContextRecord[];
+  /** The response this message replies to. It becomes a context record when the message is sent. */
+  replyTo: ResponseContextRecord | null;
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   activeProvider: ProviderInstanceId | null;
   modelSelectionExplicit?: boolean;
@@ -389,7 +402,8 @@ export function composerDraftHasUserContent(
     draft.previewAnnotations.length > 0 ||
     draft.reviewComments.length > 0 ||
     draft.threadContexts.length > 0 ||
-    draft.environmentContexts.length > 0
+    draft.environmentContexts.length > 0 ||
+    draft.replyTo !== null
   );
 }
 
@@ -407,10 +421,30 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  /** Linked to the thread when the draft is sent on this branch. */
+  checkoutPullRequest?: DraftCheckoutPullRequest;
   promotedTo?: ScopedThreadRef | null;
 }
 
 export type DraftThreadState = DraftSessionState;
+
+export interface DraftCheckoutPullRequest {
+  readonly url: string;
+  readonly branch: string;
+}
+
+/**
+ * The pull request to link when this draft becomes a thread. Matching the branch at send time,
+ * rather than clearing on every branch write, matters: right after a local checkout the live
+ * branch sync briefly writes the stale pre-checkout branch back onto the draft before the fresh
+ * git status lands.
+ */
+export function checkoutPullRequestUrlToLink(
+  draft: Pick<DraftSessionState, "branch" | "checkoutPullRequest"> | null | undefined,
+): string | null {
+  const checkout = draft?.checkoutPullRequest;
+  return checkout && draft.branch === checkout.branch ? checkout.url : null;
+}
 
 interface ProjectDraftSession extends DraftSessionState {
   draftId: DraftId;
@@ -461,6 +495,7 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
       loadBalancedEnvironmentId?: EnvironmentId | null;
+      checkoutPullRequest?: DraftCheckoutPullRequest | null;
     },
   ) => void;
   setProjectDraftThreadId: (
@@ -477,6 +512,7 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
       loadBalancedEnvironmentId?: EnvironmentId | null;
+      checkoutPullRequest?: DraftCheckoutPullRequest | null;
     },
   ) => void;
   setDraftThreadContext: (
@@ -492,6 +528,7 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
       loadBalancedEnvironmentId?: EnvironmentId | null;
+      checkoutPullRequest?: DraftCheckoutPullRequest | null;
     },
   ) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
@@ -514,6 +551,8 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
+  /** Lets the thread's model show again once the server accepted this exact pick. */
+  releaseModelSelection: (threadRef: ScopedThreadRef, modelSelection: ModelSelection) => void;
   applyStickyState: (threadRef: ComposerThreadTarget) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
@@ -582,6 +621,7 @@ interface ComposerDraftStoreState {
     annotations: ReadonlyArray<PreviewAnnotationPayload>,
   ) => void;
   removePreviewAnnotation: (threadRef: ComposerThreadTarget, annotationId: string) => void;
+  setReplyTo: (threadRef: ComposerThreadTarget, response: ResponseContextRecord | null) => void;
   addReviewComment: (
     threadRef: ComposerThreadTarget,
     comment: ReviewCommentContext,
@@ -637,17 +677,10 @@ interface ComposerDraftModelState {
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
 }
 
-function providerSelectionsFromModelSelection(
+function selectionsByInstance(
   modelSelection: ModelSelection | null | undefined,
-): ProviderOptionSelectionsByProvider | null {
-  if (!modelSelection) {
-    return null;
-  }
-  const options = modelSelection.options;
-  if (!options || options.length === 0) {
-    return null;
-  }
-  return { [modelSelection.instanceId]: options };
+): Partial<Record<string, ModelSelection>> | null {
+  return modelSelection ? { [modelSelection.instanceId]: modelSelection } : null;
 }
 
 function modelSelectionByProviderToOptions(
@@ -757,6 +790,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   reviewComments: EMPTY_REVIEW_COMMENTS,
   threadContexts: EMPTY_THREAD_CONTEXTS,
   environmentContexts: EMPTY_ENVIRONMENT_CONTEXTS,
+  replyTo: null,
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
   activeProvider: null,
   runtimeMode: null,
@@ -775,6 +809,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     reviewComments: [],
     threadContexts: [],
     environmentContexts: [],
+    replyTo: null,
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -881,6 +916,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.reviewComments.length === 0 &&
     draft.threadContexts.length === 0 &&
     draft.environmentContexts.length === 0 &&
+    draft.replyTo === null &&
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
@@ -993,7 +1029,11 @@ function normalizeModelSelection(
   const driverKindHint =
     normalizeProviderDriverKind(candidate?.provider ?? legacy?.provider) ??
     ProviderDriverKind.make("codex");
-  const model = normalizeModelSlug(rawModel, driverKindHint);
+  // Instance-scoped picks are already resolved slugs; a custom slug can match a static alias.
+  const model =
+    candidate?.instanceId === undefined
+      ? normalizeModelSlug(rawModel, driverKindHint)
+      : normalizeCustomModelSlug(rawModel);
   if (!model) {
     return null;
   }
@@ -1100,6 +1140,8 @@ export function deriveEffectiveComposerModelState(input: {
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;
   selectedInstanceId?: ProviderInstanceId | null | undefined;
+  /** The instance the draft, thread or project asked for; differs from the selection on fallback. */
+  requestedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
@@ -1133,8 +1175,8 @@ export function deriveEffectiveComposerModelState(input: {
   const instanceSelection = input.selectedInstanceId
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
+  // Legacy driver-keyed drafts belong to the default instance.
   const legacySelection =
-    input.selectedProvider === "antigravity" &&
     input.selectedInstanceId &&
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
@@ -1159,16 +1201,75 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+  // Draft options win; otherwise an existing thread's options, even none, outrank the project's.
+  // Selections stay with them, so a fallback instance can check which model the options belong to.
+  const optionSelections =
+    [
+      input.draft?.modelSelectionByProvider,
+      selectionsByInstance(input.threadModelSelection ?? input.projectModelSelection),
+    ].find((selections) => modelSelectionByProviderToOptions(selections) !== null) ?? null;
+  const modelOptions = modelSelectionByProviderToOptions(optionSelections);
 
   return {
     selectedModel,
-    modelOptions,
+    modelOptions: withFallbackInstanceOptions({
+      ...input,
+      modelOptions,
+      optionSelections,
+      selectedModel,
+    }),
   };
+}
+
+/**
+ * When the requested instance is disabled or unavailable, the composer shows another instance of
+ * the same driver. When that instance has no options of its own and shows the model the requested
+ * instance's options were picked with, it takes those options instead of the model's defaults.
+ */
+function withFallbackInstanceOptions(input: {
+  readonly modelOptions: ProviderOptionSelectionsByProvider | null;
+  readonly optionSelections: Partial<Record<string, ModelSelection>> | null;
+  readonly selectedModel: string;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly selectedProvider: ProviderDriverKind;
+  readonly selectedInstanceId?: ProviderInstanceId | null | undefined;
+  readonly requestedInstanceId?: ProviderInstanceId | null | undefined;
+  readonly settings: UnifiedSettings;
+}): ProviderOptionSelectionsByProvider | null {
+  const { modelOptions, selectedInstanceId, requestedInstanceId } = input;
+  if (
+    !modelOptions ||
+    !selectedInstanceId ||
+    !requestedInstanceId ||
+    selectedInstanceId === requestedInstanceId ||
+    modelOptions[selectedInstanceId] !== undefined
+  ) {
+    return modelOptions;
+  }
+  const requestedOptions = modelOptions[requestedInstanceId];
+  const requestedProvider = input.providers.find(
+    (provider) => provider.instanceId === requestedInstanceId,
+  );
+  const requestedModel = input.optionSelections?.[requestedInstanceId]?.model;
+  // Static aliases are shared across instances; exact custom slugs and catalog aliases are not.
+  const modelIdentity = (instanceId: ProviderInstanceId, model: string | undefined) => {
+    const isCustom =
+      input.providers
+        .find((provider) => provider.instanceId === instanceId)
+        ?.models.some((entry) => entry.slug === model && entry.isCustom) ||
+      readInstanceCustomModels(input.settings, instanceId, input.selectedProvider).some(
+        (entry) => entry.slug === model,
+      );
+    return isCustom ? model : normalizeModelSlug(model, input.selectedProvider);
+  };
+  const sameModel =
+    requestedModel === input.selectedModel ||
+    modelIdentity(requestedInstanceId, requestedModel) ===
+      modelIdentity(selectedInstanceId, input.selectedModel);
+  if (!requestedOptions || requestedProvider?.driver !== input.selectedProvider || !sameModel) {
+    return modelOptions;
+  }
+  return { ...modelOptions, [selectedInstanceId]: requestedOptions };
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -1417,6 +1518,7 @@ function createDraftThreadState(
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
     loadBalancedEnvironmentId?: EnvironmentId | null;
+    checkoutPullRequest?: DraftCheckoutPullRequest | null;
   },
 ): DraftThreadState {
   const projectChanged =
@@ -1441,6 +1543,11 @@ function createDraftThreadState(
       : options.startFromOrigin;
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
+  const checkoutPullRequest = resolveCheckoutPullRequest(
+    existingThread,
+    options?.checkoutPullRequest,
+    projectChanged,
+  );
   return {
     threadId,
     environmentId: projectRef.environmentId,
@@ -1465,8 +1572,26 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
     promotedTo: null,
   };
+}
+
+/** An explicit value wins; otherwise a checkout's pull request stays with its project. */
+function resolveCheckoutPullRequest(
+  existing: DraftThreadState | undefined,
+  explicit: DraftCheckoutPullRequest | null | undefined,
+  projectChanged: boolean,
+): DraftCheckoutPullRequest | undefined {
+  if (explicit !== undefined) return explicit ?? undefined;
+  return projectChanged ? undefined : existing?.checkoutPullRequest;
+}
+
+function checkoutPullRequestsEqual(
+  left: DraftCheckoutPullRequest | undefined,
+  right: DraftCheckoutPullRequest | undefined,
+): boolean {
+  return left === right || (left?.url === right?.url && left?.branch === right?.branch);
 }
 
 function scopedThreadRefsEqual(
@@ -1499,6 +1624,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    checkoutPullRequestsEqual(left.checkoutPullRequest, right.checkoutPullRequest) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1536,6 +1662,17 @@ function removeDraftThreadReferences(
     draftThreadsByThreadKey: restDraftThreadsByThreadKey,
     logicalProjectDraftThreadKeyByLogicalProjectKey: nextLogicalMappings,
   };
+}
+
+function normalizePersistedCheckoutPullRequest(value: unknown): DraftCheckoutPullRequest | null {
+  if (!value || typeof value !== "object") return null;
+  const { url, branch } = value as Record<string, unknown>;
+  return typeof url === "string" &&
+    url.length > 0 &&
+    typeof branch === "string" &&
+    branch.length > 0
+    ? { url, branch }
+    : null;
 }
 
 function normalizePersistedDraftThreads(
@@ -1600,6 +1737,9 @@ function normalizePersistedDraftThreads(
       const worktreePath = candidateDraftThread.worktreePath;
       const startFromOrigin = candidateDraftThread.startFromOrigin === true;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
+      const checkoutPullRequest = normalizePersistedCheckoutPullRequest(
+        candidateDraftThread.checkoutPullRequest,
+      );
       const promotedToCandidate = candidateDraftThread.promotedTo;
       const promotedToRecord =
         promotedToCandidate && typeof promotedToCandidate === "object"
@@ -1657,6 +1797,7 @@ function normalizePersistedDraftThreads(
           : candidateDraftThread.loadBalancedEnvironmentId === null
             ? { loadBalancedEnvironmentId: null }
             : {}),
+        ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
         promotedTo,
       };
     }
@@ -1727,6 +1868,22 @@ function normalizePersistedDraftThreads(
   return { draftThreadsByThreadKey, logicalProjectDraftThreadKeyByLogicalProjectKey };
 }
 
+const decodePersistedModelSelection = Schema.decodeUnknownOption(ModelSelection);
+
+/** Storage v3-v5 wrote `provider` and object-shaped options; the schema upgrades both. */
+function normalizePersistedModelSelectionByProvider(
+  value: object,
+): Partial<Record<ProviderInstanceId, ModelSelection>> {
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([instanceId, selection]) =>
+      Option.match(decodePersistedModelSelection(selection), {
+        onNone: () => [],
+        onSome: (decoded) => [[instanceId, decoded] as const],
+      }),
+    ),
+  );
+}
+
 function normalizePersistedDraftsByThreadId(
   rawDraftMap: unknown,
   draftThreadsByThreadKey: PersistedComposerDraftStoreState["draftThreadsByThreadKey"],
@@ -1787,6 +1944,7 @@ function normalizePersistedDraftsByThreadId(
     const previewAnnotations = Array.isArray(draftCandidate.previewAnnotations)
       ? draftCandidate.previewAnnotations.filter(isPreviewAnnotationPayload)
       : [];
+    const replyTo = isResponseContextRecord(draftCandidate.replyTo) ? draftCandidate.replyTo : null;
     const legacyElements =
       "elementContexts" in draftValue && Array.isArray(draftValue.elementContexts)
         ? draftValue.elementContexts
@@ -1854,9 +2012,9 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.modelSelectionByProvider &&
       typeof draftCandidate.modelSelectionByProvider === "object"
     ) {
-      modelSelectionByProvider = draftCandidate.modelSelectionByProvider as Partial<
-        Record<ProviderInstanceId, ModelSelection>
-      >;
+      modelSelectionByProvider = normalizePersistedModelSelectionByProvider(
+        draftCandidate.modelSelectionByProvider,
+      );
       activeProvider = normalizeProviderInstanceId(draftCandidate.activeProvider);
       modelSelectionExplicit = draftCandidate.modelSelectionExplicit === true ? true : undefined;
     } else {
@@ -1901,6 +2059,7 @@ function normalizePersistedDraftsByThreadId(
       reviewComments.length === 0 &&
       threadContexts.length === 0 &&
       environmentContexts.length === 0 &&
+      replyTo === null &&
       !hasModelData &&
       !runtimeMode &&
       !interactionMode
@@ -1928,6 +2087,7 @@ function normalizePersistedDraftsByThreadId(
       ...(reviewComments.length > 0 ? { reviewComments } : {}),
       ...(threadContexts.length > 0 ? { threadContexts } : {}),
       ...(environmentContexts.length > 0 ? { environmentContexts } : {}),
+      ...(replyTo ? { replyTo: replyTo as DeepMutable<ResponseContextRecord> } : {}),
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
@@ -1952,7 +2112,8 @@ function persistedComposerDraftHasUserContent(draft: PersistedComposerThreadDraf
     (draft.previewAnnotations?.length ?? 0) > 0 ||
     (draft.reviewComments?.length ?? 0) > 0 ||
     (draft.threadContexts?.length ?? 0) > 0 ||
-    (draft.environmentContexts?.length ?? 0) > 0
+    (draft.environmentContexts?.length ?? 0) > 0 ||
+    draft.replyTo !== undefined
   );
 }
 
@@ -2032,6 +2193,7 @@ export function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       draft.threadContexts.length === 0 &&
       draft.environmentContexts.length === 0 &&
+      draft.replyTo === null &&
       !hasModelData &&
       draft.runtimeMode === null &&
       draft.interactionMode === null
@@ -2089,6 +2251,9 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.environmentContexts.length > 0
         ? { environmentContexts: draft.environmentContexts.map((record) => ({ ...record })) }
+        : {}),
+      ...(draft.replyTo
+        ? { replyTo: { ...draft.replyTo } as DeepMutable<ResponseContextRecord> }
         : {}),
       ...(hasModelData
         ? {
@@ -2151,10 +2316,9 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     normalizedPersistedState.stickyModelSelectionByProvider &&
     typeof normalizedPersistedState.stickyModelSelectionByProvider === "object"
   ) {
-    stickyModelSelectionByProvider =
-      normalizedPersistedState.stickyModelSelectionByProvider as Partial<
-        Record<ProviderInstanceId, ModelSelection>
-      >;
+    stickyModelSelectionByProvider = normalizePersistedModelSelectionByProvider(
+      normalizedPersistedState.stickyModelSelectionByProvider,
+    );
     stickyActiveProvider = normalizeProviderInstanceId(
       normalizedPersistedState.stickyActiveProvider,
     );
@@ -2366,6 +2530,7 @@ function toHydratedThreadDraft(
     reviewComments: persistedDraft.reviewComments?.map((comment) => ({ ...comment })) ?? [],
     threadContexts: persistedDraft.threadContexts?.map((record) => ({ ...record })) ?? [],
     environmentContexts: persistedDraft.environmentContexts?.map((record) => ({ ...record })) ?? [],
+    replyTo: persistedDraft.replyTo ?? null,
     modelSelectionByProvider,
     activeProvider,
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
@@ -2404,6 +2569,9 @@ function toHydratedDraftThreadState(
           loadBalancedEnvironmentId:
             persistedDraftThread.loadBalancedEnvironmentId as EnvironmentId | null,
         }
+      : {}),
+    ...(persistedDraftThread.checkoutPullRequest
+      ? { checkoutPullRequest: persistedDraftThread.checkoutPullRequest }
       : {}),
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
@@ -2664,6 +2832,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               (options.branch != null || options.worktreePath != null
                 ? "manual"
                 : existing.environmentSelection);
+            const checkoutPullRequest = resolveCheckoutPullRequest(
+              existing,
+              options.checkoutPullRequest,
+              projectChanged,
+            );
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
@@ -2687,6 +2860,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2702,6 +2876,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              checkoutPullRequestsEqual(
+                nextDraftThread.checkoutPullRequest,
+                existing.checkoutPullRequest,
+              ) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;
@@ -2959,9 +3137,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextActiveProvider = normalized?.instanceId ?? base.activeProvider;
             if (
+              opts?.explicit !== true &&
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               base.activeProvider === nextActiveProvider &&
-              (base.modelSelectionExplicit ?? false) === (opts?.explicit === true)
+              !base.modelSelectionExplicit
             ) {
               return state;
             }
@@ -2981,6 +3160,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        releaseModelSelection: (threadRef, modelSelection) => {
+          const threadKey = scopedThreadKey(threadRef);
+          set((state) => {
+            const draft = state.draftsByThreadKey[threadKey];
+            // A newer pick, even of the same model, is still waiting for its own reply.
+            if (
+              !draft?.activeProvider ||
+              draft.modelSelectionByProvider[draft.activeProvider] !== modelSelection
+            ) {
+              return state;
+            }
+            const { modelSelectionExplicit: _explicit, ...retained } = draft;
+            const next = { ...retained, activeProvider: null, modelSelectionByProvider: {} };
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(next)) delete draftsByThreadKey[threadKey];
+            else draftsByThreadKey[threadKey] = next;
+            return { draftsByThreadKey };
+          });
+        },
         setProviderModelOptions: (threadRef, provider, nextProviderOptions, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -2992,7 +3190,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           const instanceKey = options?.instanceId ?? defaultInstanceIdForDriver(normalizedProvider);
           const fallbackModel =
-            normalizeModelSlug(options?.model, normalizedProvider) ??
+            normalizeCustomModelSlug(options?.model) ??
             DEFAULT_MODEL_BY_PROVIDER[normalizedProvider] ??
             DEFAULT_MODEL;
           const providerOpts =
@@ -3004,16 +3202,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
             const nextMap = { ...base.modelSelectionByProvider };
             const currentForProvider = nextMap[instanceKey];
-            if (providerOpts) {
-              nextMap[instanceKey] = createModelSelection(
-                instanceKey,
-                currentForProvider?.model ?? fallbackModel,
-                providerOpts,
-              );
-            } else if (currentForProvider && (currentForProvider.options?.length ?? 0) > 0) {
-              const { options: _, ...rest } = currentForProvider;
-              nextMap[instanceKey] = rest as ModelSelection;
-            }
+            nextMap[instanceKey] = createModelSelection(
+              instanceKey,
+              currentForProvider?.model ?? fallbackModel,
+              providerOpts,
+            );
 
             let nextStickyMap = state.stickyModelSelectionByProvider;
             let nextOptionsByModel = state.stickyOptionsByModelByProvider;
@@ -3024,8 +3217,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextStickyMap[instanceKey] ??
                 base.modelSelectionByProvider[instanceKey] ??
                 createModelSelection(instanceKey, fallbackModel);
-              const rememberedModel =
-                normalizeModelSlug(options?.model, normalizedProvider) ?? stickyBase.model;
+              const rememberedModel = normalizeCustomModelSlug(options?.model) ?? stickyBase.model;
               if (providerOpts) {
                 nextStickyMap[instanceKey] = createModelSelection(
                   instanceKey,
@@ -3054,15 +3246,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextStickyActiveProvider = options.instanceId
                 ? instanceKey
                 : (base.activeProvider ?? instanceKey);
-            }
-
-            if (
-              Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
-              Equal.equals(state.stickyOptionsByModelByProvider, nextOptionsByModel) &&
-              state.stickyActiveProvider === nextStickyActiveProvider
-            ) {
-              return state;
             }
 
             const { modelSelectionExplicit: _previousExplicit, ...restBase } = base;
@@ -3643,6 +3826,18 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        setReplyTo: (threadRef, response) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const nextDraft = { ...existing, replyTo: response };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         removePreviewAnnotation: (threadRef, annotationId) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey || !annotationId) return;
@@ -3979,6 +4174,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               reviewComments: [],
               threadContexts: [],
               environmentContexts: [],
+              replyTo: null,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -4172,6 +4368,7 @@ export function subscribeComposerDraftModelReconciliation(input: {
   readonly shellStateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
+  readonly pendingThreadIdsAtom: (environmentId: EnvironmentId) => Atom.Atom<ReadonlySet<ThreadId>>;
 }): () => void {
   const draftsAtom = Atom.make(composerDraftStore.getState());
   const unsubscribeDrafts = composerDraftStore.subscribe((state) =>
@@ -4193,6 +4390,8 @@ export function subscribeComposerDraftModelReconciliation(input: {
       if (!ref || !pick || !threadKeys.has(key)) continue;
       const thread = get(input.threadShellAtom(ref));
       if (!thread || !draftModelPickMatchesThread(pick, thread.modelSelection)) continue;
+      // The pick can match an old model while an earlier pick in flight still replaces it.
+      if (get(input.pendingThreadIdsAtom(ref.environmentId)).has(ref.threadId)) continue;
       // Status and selection must come from the same emission; derived atoms can update apart.
       const shell = AsyncResult.getOrElse(get(input.shellStateAtom(ref.environmentId)), () => null);
       if (shell?.status !== "live") continue;
@@ -4347,6 +4546,17 @@ export function useComposerDraftModelState(
           }
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),
+  );
+}
+
+/** Threads a sent draft is launching into: from their shell's arrival until the server owns the send. */
+export function usePromotingDraftThreadKeys(): ReadonlyArray<string> {
+  return useComposerDraftStore(
+    useShallow((state) =>
+      Object.values(state.draftThreadsByThreadKey).flatMap((draft) =>
+        draft.promotedTo ? [scopedThreadKey(draft.promotedTo)] : [],
+      ),
+    ),
   );
 }
 

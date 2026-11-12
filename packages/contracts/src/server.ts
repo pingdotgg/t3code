@@ -23,6 +23,7 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
+import { ManagedPolicySummary } from "./managedPolicy.ts";
 import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -128,6 +129,9 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  // Absent means the provider's machine `models`, which keeps most snapshots small.
+  models: Schema.optional(Schema.Array(ServerProviderModel)),
+  modelsPending: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
@@ -138,6 +142,13 @@ export function isProviderWorkspaceSnapshotCurrent(
   nowMs: number,
 ): boolean {
   return nowMs - Date.parse(snapshot.checkedAt) < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
+}
+
+/** A pending snapshot keeps what it found before and is rescanned before its TTL. */
+export function isProviderWorkspaceSnapshotPending(
+  snapshot: Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "modelsPending">,
+): boolean {
+  return snapshot.slashCommandsPending === true || snapshot.modelsPending === true;
 }
 
 /** Unavailable snapshots must set installed and enabled false. */
@@ -620,12 +631,15 @@ export const ServerConfig = Schema.Struct({
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
+  /** Present when an administrator's policy file manages this environment. */
+  managedPolicy: Schema.optionalKey(ManagedPolicySummary),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave idle subagent children out of snapshots (`omitIdleSubagents`), and
    * `getThreadFamily` and `getWorktreeThreadIds` serve the rows it leaves out.
    */
   shellThreadFamilies: Schema.optionalKey(Schema.Boolean),
+  threadLinkMetadata: Schema.optionalKey(Schema.Boolean),
   /**
    * The shell can leave older settled threads out of snapshots (`omitOlderSettled`), and
    * `getOlderSettledThreads` serves them. Only servers that also advertise `shellThreadFamilies`.
@@ -642,6 +656,8 @@ export const ServerConfig = Schema.Struct({
   secretProviderSettings: Schema.optionalKey(Schema.Boolean),
   /** Secret settings may point at a secret provider; older servers drop the reference. */
   secretReferences: Schema.optionalKey(Schema.Boolean),
+  /** A secret request card may be answered with a secret provider reference. */
+  secretRequestReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
@@ -878,6 +894,29 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
 ) {
   override get message(): string {
     return `Provider update failed for ${this.provider}: ${this.reason}`;
+  }
+}
+
+export const ServerNpmReleaseInput = Schema.Struct({
+  spec: Schema.String.check(
+    Schema.isMaxLength(64),
+    Schema.isPattern(/^(?:latest|nightly|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/),
+  ),
+});
+export type ServerNpmReleaseInput = typeof ServerNpmReleaseInput.Type;
+
+export const ServerNpmRelease = Schema.Struct({
+  version: Schema.String,
+  databaseMigration: Schema.optionalKey(Schema.Int),
+});
+export type ServerNpmRelease = typeof ServerNpmRelease.Type;
+
+export class ServerNpmReleaseError extends Schema.TaggedError<ServerNpmReleaseError>()(
+  "ServerNpmReleaseError",
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return `Could not check the configured npm registry: ${this.reason}`;
   }
 }
 

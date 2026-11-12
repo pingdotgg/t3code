@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -94,7 +95,8 @@ export const makeDiscovery = Effect.gen(function* () {
         logins.find((entry) => entry.default === "true") ||
         logins[0];
       const fj = yield* probeSourceControlProvider({
-        cwd,
+        // fj reads the cwd repository even with --host and fails on an unborn branch.
+        cwd: yield* HostProcess.HomeDirectory,
         process,
         spec: {
           ...discovery,
@@ -113,11 +115,18 @@ export const makeDiscovery = Effect.gen(function* () {
                     account: login.user,
                     host: ForgejoCli.parseForgejoRemote(login.url)?.host,
                   })
-                : providerAuth({
-                    status: "unauthenticated",
-                    detail:
-                      "Authenticate this server with `fj --host <server-url> auth add-token`.",
-                  }),
+                : // fj prints this for transport failures (TLS, connect, DNS), never for a rejected token.
+                  login && result.stderr.includes("error sending request for url")
+                  ? providerAuth({
+                      status: "unknown",
+                      detail: `Could not reach ${login.url} to verify the fj login.`,
+                      host: ForgejoCli.parseForgejoRemote(login.url)?.host,
+                    })
+                  : providerAuth({
+                      status: "unauthenticated",
+                      detail:
+                        "Authenticate this server with `fj --host <server-url> auth add-token`.",
+                    }),
         },
       });
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
@@ -141,7 +150,10 @@ export const makeDiscovery = Effect.gen(function* () {
         return fj;
       }
       const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
-      return tea.status === "available" || fj.status === "missing" ? tea : fj;
+      // Discovery keeps the install hint only for an absent executable; a slow or broken fj
+      // explains itself better than tea's install advice.
+      const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
+      return tea.status === "available" || fjAbsent ? tea : fj;
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {
@@ -341,13 +353,13 @@ export const make = Effect.gen(function* () {
             Schema.Array(ForgejoPullRequestSchema),
           );
           for (const item of items) {
+            const normalized = toForgejoChangeRequest(item);
             if (
-              item.head.ref !== branch ||
+              normalized.headRefName !== branch ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
               (source?.owner && item.head.repo?.owner.login !== source.owner)
             )
               continue;
-            const normalized = toForgejoChangeRequest(item);
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
           if (items.length === 0) break;

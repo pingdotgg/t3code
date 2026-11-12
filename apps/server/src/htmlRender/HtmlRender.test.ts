@@ -4,6 +4,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -22,6 +23,7 @@ import * as ServerConfig from "../config.ts";
 import * as HtmlRender from "./HtmlRender.ts";
 import { HtmlRenderBrowserError } from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
+import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
 const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
 
@@ -258,6 +260,119 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("publishes a page from an .html file as a snapshot that path calls recover", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const threadId = ThreadId.make("thread-html-path");
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-page-" });
+      const file = path.join(directory, "report.html");
+      yield* fileSystem.writeFileString(file, "<!doctype html><p>First draft</p>");
+      const page = { path: file, title: "Report", height: 300 };
+
+      const first = yield* htmlRender.publish({ threadId, ...page });
+      yield* fileSystem.writeFileString(file, "<!doctype html><p>Second draft</p>");
+      const second = yield* htmlRender.publish({ threadId, ...page });
+      const inline = { html: "<!doctype html><p>First draft</p>", title: "Report", height: 300 };
+      const inlineReference = yield* htmlRender.publish({ threadId, ...inline });
+
+      const stored = yield* fileSystem.readFileString(
+        resolveAttachmentPathById({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId: first.attachmentId,
+        }) ?? "",
+      );
+      expect(stored).toContain("<p>First draft</p>");
+      expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, path: `${file}x` })).toBe(
+        undefined,
+      );
+      for (const html of [inline.html, false]) {
+        expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, html })).toBe(undefined);
+      }
+      expect(yield* mcpSessions.takeHtmlRender(threadId, { ...inline, path: null })).toEqual(
+        inlineReference,
+      );
+      expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, html: null })).toEqual(first);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(second);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses anything but a regular, singly linked .html file of at most 25 MiB", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const threadId = ThreadId.make("thread-html-path-guard");
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-page-" });
+      const secret = path.join(directory, "id_rsa");
+      yield* fileSystem.writeFileString(secret, "PRIVATE KEY");
+      const page = path.join(directory, "page.html");
+      yield* fileSystem.writeFileString(page, "<!doctype html><p>linked</p>");
+      const hardLinked = path.join(directory, "linked.html");
+      yield* fileSystem.link(page, hardLinked);
+      // `mv .env renamed.html` keeps one link and an .html name; only its bytes give it away.
+      const renamed = path.join(directory, "renamed.html");
+      yield* fileSystem.writeFileString(renamed, "API_KEY=abc123\n");
+      const folder = path.join(directory, "folder.html");
+      yield* fileSystem.makeDirectory(folder);
+      const internal = path.join(config.secretsDir, "page.html");
+      yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+      yield* fileSystem.writeFileString(internal, "<!doctype html><p>internal</p>");
+
+      for (const file of [
+        "page.html",
+        "//attacker/share/page.html",
+        path.join(directory, "missing.html"),
+        secret,
+        hardLinked,
+        renamed,
+        folder,
+        internal,
+      ]) {
+        const error = yield* htmlRender
+          .publish({ threadId, path: file, title: "X", height: 200 })
+          .pipe(Effect.flip);
+        expect(error, file).toBeInstanceOf(HtmlRender.HtmlRenderFileError);
+      }
+      const huge = path.join(directory, "huge.html");
+      yield* fileSystem.writeFileString(huge, "");
+      yield* fileSystem.truncate(huge, 25 * 1024 * 1024 + 1);
+      const tooLarge = yield* htmlRender
+        .publish({ threadId, path: huge, title: "X", height: 200 })
+        .pipe(Effect.flip);
+      expect(tooLarge).toBeInstanceOf(HtmlRender.HtmlRenderFileTooLargeError);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("refuses an .html symlink to another file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-page-" });
+      const secret = path.join(directory, "id_rsa");
+      yield* fileSystem.writeFileString(secret, "PRIVATE KEY");
+      const symlinked = path.join(directory, "symlinked.html");
+      yield* fileSystem.symlink(secret, symlinked);
+
+      const error = yield* htmlRender
+        .publish({
+          threadId: ThreadId.make("thread-html-path-link"),
+          path: symlinked,
+          title: "X",
+          height: 200,
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(HtmlRender.HtmlRenderFileError);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("removes the page when publishing is interrupted", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-html-cancel");
@@ -338,6 +453,7 @@ process.on("SIGTERM", () => {});
 const quit = () => { fs.writeFileSync(${JSON.stringify(exitRecord)}, "asked to close"); process.exit(0); };
 const reply = (message) => fs.writeSync(4, JSON.stringify(message) + "\\0");
 const results = {
+  "Target.createBrowserContext": { browserContextId: "context" },
   "Target.createTarget": { targetId: "page" },
   "Target.attachToTarget": { sessionId: "session" },
   "Runtime.evaluate": { result: { value: 100 } },
@@ -350,19 +466,55 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
   for (const { id, method, sessionId } of messages.map((raw) => JSON.parse(raw))) {
     if (method === "Browser.close") quit();
     reply({ id, sessionId, result: results[method] ?? {} });
-    if (method === "Page.navigate") reply({ sessionId, method: "Page.loadEventFired", params: {} });
+    if (method === "Page.navigate") {
+      const value = "x" + "\u{1F600}".repeat(300);
+      const params = { type: "log", args: [{ type: "string", value }] };
+      reply({ sessionId, method: "Runtime.consoleAPICalled", params });
+      reply({ sessionId, method: "Page.loadEventFired", params: {} });
+    }
   }
 });
 `,
             { mode: 0o755 },
           );
 
-          yield* HtmlRender.HtmlRender.use((htmlRender) =>
+          const preview = yield* HtmlRender.HtmlRender.use((htmlRender) =>
             htmlRender.preview({ html: "<p>x</p>" }),
           ).pipe(Effect.provide(layerHtmlRender(executable)));
+          const logged = preview.consoleMessages[0]?.text ?? "";
+          expect(logged.isWellFormed()).toBe(true);
+          expect(logged).toHaveLength(500);
 
           const exitedBy = yield* fileSystem.readFileString(exitRecord).pipe(Effect.option);
           expect(Option.getOrElse(exitedBy, () => "killed by a signal")).toBe("asked to close");
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+
+      it.live("names this server's home in the browser setup command", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-fake-browser-",
+          });
+          const executable = path.join(directory, "chrome-headless-shell");
+          yield* fileSystem.writeFileString(
+            executable,
+            `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(PreviewBrowserHost.NO_SANDBOX_SIGNATURE)});\nprocess.exit(1);\n`,
+            { mode: 0o755 },
+          );
+
+          const { error, baseDir } = yield* Effect.gen(function* () {
+            const { baseDir } = yield* ServerConfig.ServerConfig;
+            const htmlRender = yield* HtmlRender.HtmlRender;
+            const error = yield* htmlRender.preview({ html: "<p>x</p>" }).pipe(Effect.flip);
+            return { error, baseDir };
+          }).pipe(
+            Effect.provide(layerHtmlRender(executable)),
+            Effect.provideService(HostProcess.UserId, 1000),
+          );
+          expect(error).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserSandboxError);
+          expect(error.message).toContain(`browser setup --base-dir ${baseDir}`);
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       );
     },
