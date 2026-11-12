@@ -434,6 +434,7 @@ export function ReviewThreadCard({
             threadId={thread.id}
             completionScope={completionScope}
             pending={pending}
+            collapsed={!expanded}
             onReply={onReply}
             onSent={keepLoadedPage}
           />
@@ -449,6 +450,7 @@ export function PullRequestThreadReplyForm({
   threadId,
   completionScope,
   pending,
+  collapsed = false,
   className,
   onReply,
   onSent,
@@ -458,6 +460,8 @@ export function PullRequestThreadReplyForm({
   threadId: string;
   completionScope: PullRequestCompletionScope | null;
   pending: boolean;
+  /** Stops dictation, which would keep recording behind hidden controls. */
+  collapsed?: boolean;
   className?: string;
   onReply: (body: string) => Promise<boolean>;
   onSent?: () => void;
@@ -503,7 +507,7 @@ export function PullRequestThreadReplyForm({
       text={reply}
       textareaRef={replyRef}
       onTextChange={setReply}
-      disabled={pending}
+      disabled={pending || collapsed}
     >
       {(speech) => (
         <div className={cn("mt-2", className)}>
