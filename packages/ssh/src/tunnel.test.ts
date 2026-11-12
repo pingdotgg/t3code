@@ -133,7 +133,12 @@ const serve = (tries) => {
 serve(40);
 `;
 
-// Runs the remote half of an SSH command (`sh -l -s -- <key>`) as a local shell
+// The launch's POSIX bootstrap without the account login shell around it, so the
+// test machine's login profile cannot move HOME.
+const launchStateKey = (command: ChildProcess.Command) =>
+  /exec sh -s -- (\S+)"/u.exec(commandArgs(command).join(" "))?.[1];
+
+// Runs the remote half of an SSH launch as a local shell
 // whose HOME is the given directory. Every launch after the first starts once
 // a server is running (or after 10s), which lines up the race deterministically.
 const localRemoteShellLayer = (home: string) =>
@@ -151,7 +156,7 @@ const localRemoteShellLayer = (home: string) =>
         return spawner.spawn(
           ChildProcess.make(
             "sh",
-            ["-c", `${gate}exec sh -s -- "$1"`, "sh", ...commandArgs(command).slice(-1)],
+            ["-c", `${gate}exec sh -s -- "$1"`, "sh", launchStateKey(command) ?? ""],
             {
               ...command.options,
               env: { ...command.options.env, HOME: home },
@@ -165,6 +170,56 @@ const localRemoteShellLayer = (home: string) =>
   );
 
 describe("ssh tunnel scripts", () => {
+  it.live("distinguishes an incompatible remote Node from a missing executable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-node-" });
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      for (const missing of [false, true]) {
+        const nodeFixture = missing
+          ? "command() { return 1; }; "
+          : 'node() { cat >/dev/null; printf "Remote node 18.20.8 does not satisfy required range >=999.0.0.\\n" >&2; return 1; }; ';
+        const remoteShell = ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand") return spawner.spawn(command);
+          return spawner.spawn(
+            ChildProcess.make(
+              "sh",
+              ["-c", `${nodeFixture}eval "$(cat)"`, "sh", ...commandArgs(command).slice(-1)],
+              {
+                ...command.options,
+                env: {
+                  ...command.options.env,
+                  HOME: home,
+                  NVM_DIR: NodePath.join(home, ".nvm"),
+                  FNM_DIR: NodePath.join(home, ".fnm"),
+                  VOLTA_HOME: NodePath.join(home, ".volta"),
+                },
+              },
+            ),
+          );
+        });
+        const result = yield* SshTunnel.launchOrReuseRemoteServer(
+          { alias: "devbox", hostname: "devbox", username: null, port: null },
+          undefined,
+          { nodeScriptPath: "/unused/server.ts", nodeEngineRange: ">=999.0.0" },
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, remoteShell),
+          Effect.result,
+        );
+        assert.isTrue(Result.isFailure(result));
+        if (!Result.isFailure(result)) return;
+        assert.isTrue(isSshCommandError(result.failure));
+        if (!isSshCommandError(result.failure)) return;
+        assert.equal(result.failure.exitCode, 1);
+        assert.equal(result.failure.stderr.includes("missing node on PATH"), missing);
+        assert.equal(
+          result.failure.stderr.includes("does not satisfy required range >=999.0.0"),
+          !missing,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
@@ -296,12 +351,8 @@ describe("ssh tunnel scripts", () => {
       username: "julius",
       port: 2222,
     } as const;
-    const spawnedCommands: Array<ReadonlyArray<string>> = [];
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        spawnedCommands.push(commandArgs(command));
-        return makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n');
-      }),
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n')),
     );
     const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
     const layerProcess = Layer.merge(
@@ -312,9 +363,111 @@ describe("ssh tunnel scripts", () => {
     return Effect.gen(function* () {
       const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE);
       assert.equal(result.remotePort, 3774);
-      assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "loads login settings without changing the POSIX bootstrap or its state key",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-login-" });
+        const startupFile = `${directory}/bash-env`;
+        const bash = `${directory}/bash`;
+        // System profiles can reset HOME. Suppress profile reads while BASH_ENV
+        // checks that the launcher still requests Bash login mode.
+        yield* fs.writeFileString(bash, '#!/bin/sh\nexec /bin/bash --noprofile "$@"\n');
+        yield* fs.chmod(bash, 0o755);
+        yield* fs.writeFileString(
+          startupFile,
+          "if shopt -q login_shell; then export T3_SSH_LOGIN_ENV=loaded; fi\n",
+        );
+        const target = { alias: "login-test", hostname: "login-test", username: null, port: null };
+        let remoteCommand = "";
+        const capture = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            remoteCommand = args.slice(args.indexOf(target.alias) + 1).join(" ");
+            return makeSuccessfulProcess('{"remotePort":3774}\n');
+          }),
+        );
+        yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture),
+        );
+        yield* fs.writeFileString(
+          `${directory}/.zprofile`,
+          "if [[ -o login ]]; then export T3_SSH_LOGIN_ENV=loaded; fi\n",
+        );
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const cases = [
+          { shell: bash, outerShell: "/bin/sh", expected: "loaded" },
+          { shell: "/bin/sh", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "/unavailable/csh", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "/unavailable/tcsh", outerShell: "/bin/sh", expected: "missing" },
+          { shell: "/unavailable/pwsh", outerShell: "/bin/sh", expected: "missing" },
+        ];
+        if (yield* fs.exists("/bin/zsh")) {
+          cases.push({ shell: "/bin/zsh", outerShell: "/bin/zsh", expected: "loaded" });
+        }
+        if (yield* fs.exists("/bin/tcsh")) {
+          cases.push({ shell: "/bin/tcsh", outerShell: "/bin/tcsh", expected: "missing" });
+        }
+        const environment = yield* HostProcess.Environment;
+        for (const folder of (environment.PATH ?? "").split(":")) {
+          const nu = `${folder}/nu`;
+          if (folder && (yield* fs.exists(nu))) {
+            cases.push({ shell: nu, outerShell: nu, expected: "missing" });
+            break;
+          }
+        }
+        for (const { shell, outerShell, expected } of cases) {
+          const child = yield* spawner.spawn(
+            ChildProcess.make(outerShell, ["-c", remoteCommand], {
+              env: {
+                PATH: environment.PATH ?? "/usr/bin:/bin",
+                HOME: directory,
+                XDG_CONFIG_HOME: directory,
+                SHELL: shell,
+                BASH_ENV: startupFile,
+                ZDOTDIR: directory,
+                T3_SSH_LOGIN_ENV: "",
+              },
+              stdin: {
+                stream: Stream.make(
+                  new TextEncoder().encode('printf "%s:%s" "${T3_SSH_LOGIN_ENV:-missing}" "$1"'),
+                ),
+                endOnDone: true,
+              },
+            }),
+          );
+          const [stdout, stderr, exitCode] = yield* Effect.all(
+            [
+              child.stdout.pipe(
+                Stream.decodeText(),
+                Stream.runFold(
+                  () => "",
+                  (a, b) => a + b,
+                ),
+              ),
+              child.stderr.pipe(
+                Stream.decodeText(),
+                Stream.runFold(
+                  () => "",
+                  (a, b) => a + b,
+                ),
+              ),
+              child.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+          assert.equal(Number(exitCode), 0, stderr);
+          // First-run shell messages can precede the bootstrap response.
+          const response = stdout.trim().split(/\r?\n/u).at(-1) ?? "";
+          assert.match(response, new RegExp(`^${expected}:[a-f0-9]{16}$`), shell || "unset SHELL");
+        }
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
+  );
 
   it.effect("accepts pretty-printed pairing JSON after remote shell startup noise", () => {
     const target = {
@@ -795,7 +948,7 @@ describe("ssh tunnel scripts", () => {
               }
               return tunnel;
             }
-            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            if (args.includes("-c")) {
               if (isTarget) {
                 launches += 1;
                 remoteRunning = true;
@@ -972,17 +1125,20 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       const fakeServer = `${root}/fake-t3.cjs`;
       yield* fs.makeDirectory(home, { recursive: true });
       yield* fs.writeFileString(fakeServer, FAKE_SERVER);
-      // Runs the remote command locally under the temp HOME, without -l so the test
-      // machine's login profile cannot move HOME. setsid keeps a launched server alive
+      // Runs the remote command locally under the temp HOME. setsid keeps a launched server alive
       // when the command's process group goes away, as sshd would.
       const sshAsLocalShell = ChildProcessSpawner.make((command) => {
         if (command._tag !== "StandardCommand" || command.command !== "ssh") {
           return realSpawner.spawn(command);
         }
         if (command.args.includes("-G")) return Effect.succeed(makeSuccessfulProcess(""));
-        const remoteArgs = command.args.slice(command.args.indexOf("--") + 2);
+        const stateKey = launchStateKey(command);
+        const remoteArgs =
+          stateKey === undefined
+            ? command.args.slice(command.args.indexOf("--") + 2)
+            : ["sh", "-s", "--", stateKey];
         return realSpawner.spawn(
-          ChildProcess.make("setsid", ["-w", ...remoteArgs.filter((arg) => arg !== "-l")], {
+          ChildProcess.make("setsid", ["-w", ...remoteArgs], {
             ...command.options,
             env: { PATH: process.env.PATH ?? "", HOME: home },
             extendEnv: false,
