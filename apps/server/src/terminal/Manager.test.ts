@@ -1725,6 +1725,30 @@ it.layer(
     }),
   );
 
+  it.effect("falls back to cmd when group policy blocks PowerShell on Windows", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      const { manager } = yield* createManager(5, {
+        ptyAdapter,
+        env: {
+          ComSpec: "C:\\Windows\\System32\\cmd.exe",
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+      // ERROR_ACCESS_DISABLED_BY_POLICY, as node-pty's ConPTY reports it.
+      ptyAdapter.spawnFailures.push(
+        new Error("File not found: pwsh.exe"),
+        new Error("Cannot create process, error code: 1260"),
+        new Error("Cannot create process, error code: 1260"),
+      );
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs.at(-1)?.shell).toBe("C:\\Windows\\System32\\cmd.exe");
+    }),
+  );
+
   it.effect("closes an idle cmd fallback before rejecting its completion wrapper", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
