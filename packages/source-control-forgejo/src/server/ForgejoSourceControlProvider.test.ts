@@ -2114,13 +2114,31 @@ it.effect(
   "looks up a branch without a pull request in requests that do not grow with a Gitea repository's pull request count",
   () =>
     Effect.gen(function* () {
-      // Gitea ignores `head=` on the pull request list, so every page holds other branches' pull requests.
-      const lookupRequests = (pullRequestCount: number) => {
+      // Gitea ignores `head=` on the pull request list, so every page holds other branches' pull
+      // requests. Branch `reopened` has closed pull request 120 and open 130 on the same base.
+      const lookup = (pullRequestCount: number, headSelector: string) => {
         let requests = 0;
+        const repo = { full_name: "maria/project", owner: { login: "maria" } };
+        const pull = (number: number) => {
+          const head = number === 120 || number === 130 ? "reopened" : `branch-${number}`;
+          return {
+            number,
+            title: `PR ${number}`,
+            html_url: `https://gitea.test/maria/project/pulls/${number}`,
+            state: number === 120 ? "closed" : "open",
+            merged: false,
+            base: { ref: "main", label: "main", sha: "base", repo },
+            head: { ref: head, label: head, sha: "head", repo },
+          };
+        };
         return Effect.gen(function* () {
           const provider = yield* ForgejoSourceControlProvider.make;
-          yield* provider.listChangeRequests({ cwd: "/repo", headSelector: "no-pr", state: "all" });
-          return requests;
+          const found = yield* provider.listChangeRequests({
+            cwd: "/repo",
+            headSelector,
+            state: "all",
+          });
+          return { requests, numbers: found.map((pr) => pr.number) };
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -2136,6 +2154,12 @@ it.effect(
                 api: (input) => {
                   requests++;
                   const [path = "", query] = input.path.split("?");
+                  // Gitea answers with the first-created pull request for a base and head.
+                  if (path.endsWith("/pulls/main/reopened"))
+                    return encodeJsonEffect(pull(120)).pipe(
+                      Effect.orDie,
+                      Effect.map(processOutput),
+                    );
                   if (!path.endsWith("/pulls"))
                     return Effect.fail(
                       new ForgejoCli.ForgejoCliError({
@@ -2146,28 +2170,12 @@ it.effect(
                       }),
                     );
                   const page = Number(new URLSearchParams(query).get("page"));
-                  const repo = { full_name: "maria/project", owner: { login: "maria" } };
                   const numbers = Array.from(
                     { length: 50 },
                     (_, index) => (page - 1) * 50 + index + 1,
                   );
                   return encodeJsonEffect(
-                    numbers
-                      .filter((number) => number <= pullRequestCount)
-                      .map((number) => ({
-                        number,
-                        title: `PR ${number}`,
-                        html_url: `https://gitea.test/maria/project/pulls/${number}`,
-                        state: "open",
-                        merged: false,
-                        base: { ref: "main", label: "main", sha: "base", repo },
-                        head: {
-                          ref: `branch-${number}`,
-                          label: `branch-${number}`,
-                          sha: "head",
-                          repo,
-                        },
-                      })),
+                    numbers.filter((number) => number <= pullRequestCount).map(pull),
                   ).pipe(Effect.orDie, Effect.map(processOutput));
                 },
               }),
@@ -2175,8 +2183,11 @@ it.effect(
           ),
         );
       };
-      const small = yield* lookupRequests(100);
-      const large = yield* lookupRequests(3_000);
-      assert.strictEqual(large, small);
+      const small = yield* lookup(100, "no-pr");
+      const large = yield* lookup(3_000, "no-pr");
+      assert.strictEqual(large.requests, small.requests);
+      assert.deepStrictEqual(large.numbers, []);
+      const reopened = yield* lookup(3_000, "reopened");
+      assert.deepStrictEqual(reopened.numbers, [120, 130]);
     }),
 );

@@ -15,7 +15,11 @@ import {
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
-import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
+import {
+  ForgejoPullRequestSchema,
+  forgejoHeadBranch,
+  toForgejoChangeRequest,
+} from "./forgejoPullRequests.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
@@ -344,6 +348,14 @@ export const make = Effect.gen(function* () {
         const branch = SourceControlProvider.sourceBranch(input);
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
+        const matches = (item: typeof ForgejoPullRequestSchema.Type) =>
+          forgejoHeadBranch(item) === branch &&
+          !(source?.repository && item.head.repo?.full_name !== source.repository) &&
+          !(source?.owner && item.head.repo?.owner.login !== source.owner);
+        const add = (item: typeof ForgejoPullRequestSchema.Type) => {
+          const normalized = toForgejoChangeRequest(item);
+          if (input.state === "all" || normalized.state === input.state) results.push(normalized);
+        };
         for (let page = 1; results.length < limit; page++) {
           const items = yield* request(
             {
@@ -352,17 +364,46 @@ export const make = Effect.gen(function* () {
             },
             Schema.Array(ForgejoPullRequestSchema),
           );
-          for (const item of items) {
-            const normalized = toForgejoChangeRequest(item);
-            if (
-              normalized.headRefName !== branch ||
-              (source?.repository && item.head.repo?.full_name !== source.repository) ||
-              (source?.owner && item.head.repo?.owner.login !== source.owner)
-            )
-              continue;
-            if (input.state === "all" || normalized.state === input.state) results.push(normalized);
-          }
+          for (const item of items) if (matches(item)) add(item);
           if (items.length === 0) break;
+          // Gitea and Forgejo before 16 ignore `head=`. Rather than reading every page, ask
+          // `pulls/{base}/{head}` for each base seen on page 1. It answers with the first-created
+          // pull request only (go-gitea/gitea#35217), so only an open answer, the one open pull
+          // request a base and head can have, proves nothing newer is missing.
+          if (
+            page !== 1 ||
+            items.every((item) => item.head.ref === branch || item.head.label === branch)
+          )
+            continue;
+          const seen = new Set(items.map((item) => item.number));
+          const owner = source?.owner ?? source?.repository?.split("/")[0];
+          const head = encodeURIComponent(owner ? `${owner}:${branch}` : branch);
+          const probed: (typeof ForgejoPullRequestSchema.Type)[] = [];
+          let complete = true;
+          for (const base of new Set(items.map((item) => item.base.ref))) {
+            if (base === branch) continue;
+            const pull = yield* request(
+              {
+                ...input,
+                path: `${repositoryPath(repo.repository)}/pulls/${encodeURIComponent(base)}/${head}`,
+              },
+              ForgejoPullRequestSchema,
+            ).pipe(
+              Effect.catchIf(
+                (error) => error.httpStatus === 404,
+                () => Effect.succeed(null),
+              ),
+            );
+            if (pull === null) continue;
+            if (pull.state !== "open" || !matches(pull)) {
+              complete = false;
+              break;
+            }
+            if (!seen.has(pull.number)) probed.push(pull);
+          }
+          if (!complete) continue;
+          for (const pull of probed) add(pull);
+          break;
         }
         return results.slice(0, limit);
       },
