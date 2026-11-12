@@ -26,6 +26,8 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   let released: Map<HTMLElement, number> | null = null;
   const scroller = parent.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
   let scrollTop = scroller?.scrollTop ?? 0;
+  // A removal at the bottom would clamp scrollTop and shift every row; a temporary bottom
+  // margin holds the position instead and is trimmed as the user scrolls it out of view.
   let gap = 0;
   const setGap = (next: number) => {
     gap = next;
@@ -92,7 +94,6 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     const animation = clone.animate(
       [
         { opacity: entryProgress, transform: "translateY(0px)" },
-        { opacity: 0, offset: 0.5 },
         { opacity: 0, transform: `translateY(${travel}px)` },
       ],
       motionTiming,
