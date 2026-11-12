@@ -125,7 +125,25 @@ const CHOICES = {
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
 } satisfies Record<Route, { readonly title: string; readonly description: string }>;
 
-const formatSetup = (setup: Setup) => {
+/** The commands hints name, run with the caller's --base-dir and launcher. */
+const resolveHints = Effect.fn("cli.up.resolve_hints")(function* (baseDir: Option.Option<string>) {
+  const baseDirArgs = Option.match(baseDir, {
+    onNone: () => [],
+    onSome: (dir) => ["--base-dir", dir],
+  });
+  const command = (subcommand: string, args: ReadonlyArray<string> = []) =>
+    Effect.map(resolveHostCliCommand(subcommand, [...baseDirArgs, ...args]), (r) => r.command);
+  return {
+    run: yield* command(""),
+    pair: yield* command("pair"),
+    up: yield* command("up"),
+    upNoLan: yield* command("up", ["--no-lan"]),
+    connect: yield* command("connect"),
+  };
+});
+type Hints = Effect.Success<ReturnType<typeof resolveHints>>;
+
+const formatSetup = (setup: Setup, hints: Hints) => {
   const { service } = setup;
   // This home's access settings reach no service, so only the service is shown.
   if (service.otherBaseDir !== undefined) {
@@ -152,7 +170,7 @@ const formatSetup = (setup: Setup) => {
             setup.connect
               ? "on · your T3 account"
               : setup.connectRevoked
-                ? "off · link revoked. Run `t3 connect`."
+                ? `off · link revoked. Run \`${hints.connect}\`.`
                 : "off",
           ] as const,
         ]),
@@ -172,7 +190,7 @@ const formatSetup = (setup: Setup) => {
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
       : []),
     ...(setup.lanFromOldDefault
-      ? ["Older installs keep LAN access on. Turn it off: `t3 up --no-lan`."]
+      ? [`Older installs keep LAN access on. Turn it off: \`${hints.upNoLan}\`.`]
       : []),
   ];
   return [
@@ -181,18 +199,18 @@ const formatSetup = (setup: Setup) => {
   ].join("\n");
 };
 
-const formatNextSteps = (routes: Routes, serviceInstalled: boolean, pairCommand: string) =>
+const formatNextSteps = (routes: Routes, serviceInstalled: boolean, hints: Hints) =>
   [
     ...(routes.connect
       ? ["On your other device, sign in to T3 Connect with the same account."]
       : []),
-    ...(routes.lan ? [`Run \`${pairCommand}\`. Use the code on your other device.`] : []),
+    ...(routes.lan ? [`Run \`${hints.pair}\`. Use the code on your other device.`] : []),
     ...(routes.connect || routes.lan
       ? []
       : [
           serviceInstalled
             ? "Remote access is off. T3 Code still runs here in the background."
-            : "Remote access is off. Run `t3` to use T3 Code here.",
+            : `Remote access is off. Run \`${hints.run}\` to use T3 Code here.`,
         ]),
   ].join("\n");
 
@@ -211,7 +229,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     onNone: () => [],
     onSome: (dir) => ["--base-dir", dir],
   });
-  const { command: pairCommand } = yield* resolveHostCliCommand("pair", baseDirArgs);
+  const hints = yield* resolveHints(flags.baseDir);
   const before = yield* readSetup();
   // Before any question or write: install would refuse only after both.
   if (before.service.otherBaseDir !== undefined) {
@@ -237,7 +255,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const interactive = !flags.yes && interactiveTerminal();
   let routes = plan.routes;
   if (plan.ask.length > 0 && interactive) {
-    if (before.service.installed) yield* Console.log(`Current setup\n${formatSetup(before)}\n`);
+    if (before.service.installed)
+      yield* Console.log(`Current setup\n${formatSetup(before, hints)}\n`);
     const picked = yield* Prompt.run(
       Prompt.MultiSelect({
         message: "Allow connections through:",
@@ -274,7 +293,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       yield* disconnectCloud({ clearAuthorization: false });
     }
     if (current.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
-    return yield* Console.log(formatNextSteps(routes, false, pairCommand));
+    return yield* Console.log(formatNextSteps(routes, false, hints));
   }
   const { installedVersion } = before.service;
   const newer =
@@ -384,9 +403,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     if ("failed" in result && before.service.installed) {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
-      const { command } = yield* resolveHostCliCommand("up", baseDirArgs);
       yield* Console.log(
-        `Service setup failed: ${result.failed} Fix that, then run \`${command}\` again.`,
+        `Service setup failed: ${result.failed} Fix that, then run \`${hints.up}\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -429,10 +447,10 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const after = yield* readSetup();
   yield* Console.log(
     // From what took effect: a failed service step can undo a choice.
-    `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(
+    `\nThis machine\n${formatSetup(after, hints)}\n\n${formatNextSteps(
       { connect: after.connect === true, lan: after.lan },
       after.service.installed,
-      pairCommand,
+      hints,
     )}`,
   );
 });
@@ -536,12 +554,12 @@ export const statusCommand = Command.make("status", {
           ),
         ),
       );
+      if (flags.json) return yield* Console.log(setupJson(setup));
+      const hints = yield* resolveHints(flags.baseDir);
       yield* Console.log(
-        flags.json
-          ? setupJson(setup)
-          : setup.service.otherBaseDir !== undefined
-            ? `This machine\n${formatSetup(setup)}`
-            : `This machine\n${formatSetup(setup)}\n\nChange access: \`t3 up\`.`,
+        setup.service.otherBaseDir !== undefined
+          ? `This machine\n${formatSetup(setup, hints)}`
+          : `This machine\n${formatSetup(setup, hints)}\n\nChange access: \`${hints.up}\`.`,
       );
     }),
   ),
