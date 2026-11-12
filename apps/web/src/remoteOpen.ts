@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  isLocalLoopbackHost,
   isPrivateNetworkHost,
   isTailnetHost,
   normalizeHostname,
@@ -110,6 +111,8 @@ export function resolveRemoteOpenState(input: {
       routeHost !== null &&
       routeHost.length > 0 &&
       isPrivateNetworkHost(routeHost) &&
+      // A loopback route is a local port forward; its host is this client, not the server.
+      !isLocalLoopbackHost(routeHost) &&
       (sshdOnAllInterfaces || isTailnetHost(routeHost))
     ) {
       return {

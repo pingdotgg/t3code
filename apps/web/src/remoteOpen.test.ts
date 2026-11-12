@@ -87,6 +87,16 @@ describe("resolveRemoteOpenState", () => {
         hostEnvironmentId: null,
       }),
     ).toEqual({ mode: "remote-links", host: { kind: "route", host: "192.168.1.20" } });
+    expect(
+      resolveRemoteOpenState({
+        target: new BearerConnectionTarget({ environmentId, label: "sol", connectionId: "fwd" }),
+        sshTarget: null,
+        bearerHttpBaseUrl: "http://127.0.0.1:4773",
+        isDesktopRenderer: false,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: null,
+      }),
+    ).toEqual({ mode: "remote-links", host: TAILSCALE_TARGETS[0] });
     // Without an mdns target only the tailnet is known to take SSH (Tailscale SSH, tailnet-bound sshd).
     expect(
       resolveRemoteOpenState({
