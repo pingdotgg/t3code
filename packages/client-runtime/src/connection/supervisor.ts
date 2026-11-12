@@ -35,8 +35,8 @@ import {
   connectionRouteKind,
   connectionRoutes,
   type ConnectionRouteKind,
+  entryWithRoutes,
   insertRoute,
-  routeEntry,
   type ReportedEndpoint,
 } from "./routes.ts";
 
@@ -624,20 +624,28 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const latest = yield* Ref.get(currentEntry);
-        const route = connectionRoutes(latest).find(
-          (candidate) => connectionRouteId(candidate.target) === routeId,
-        );
+        const routes = connectionRoutes(latest);
+        const route = routes.find((candidate) => connectionRouteId(candidate.target) === routeId);
         if (route === undefined) return;
         const scope = yield* Scope.make();
+        // The whole entry goes along, because a learned route may borrow the
+        // token of another route, and only a lease over this route counts.
         const connected = yield* restore(
           driver
-            .connect(routeEntry(latest, route), () => Effect.void)
+            .connect(
+              entryWithRoutes(latest, [route, ...routes.filter((other) => other !== route)]),
+              () => Effect.void,
+            )
             .pipe(
               Scope.provide(scope),
               Effect.timeoutOption(Duration.sum(establishmentTimeout, synchronizationTimeout)),
             ),
         ).pipe(Effect.exit);
-        if (Exit.isSuccess(connected) && Option.isSome(connected.value)) {
+        if (
+          Exit.isSuccess(connected) &&
+          Option.isSome(connected.value) &&
+          connectionRouteId(connected.value.value.prepared.target) === routeId
+        ) {
           yield* Ref.set(upgrade, Option.some({ lease: connected.value.value, scope }));
           return yield* signal({ _tag: "BetterRouteAvailable", routeId });
         }

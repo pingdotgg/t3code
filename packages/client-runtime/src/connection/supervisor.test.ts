@@ -2057,6 +2057,77 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect("moves to a learned LAN route that borrows a plain HTTP pairing's token", () =>
+    Effect.gen(function* () {
+      const publicTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "bearer:public",
+      });
+      const learnedLanTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: `learned:${TARGET.environmentId}:http://192.168.1.10:3773@bearer:public`,
+      });
+      const entry: ConnectionCatalogEntry = {
+        target: learnedLanTarget,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: learnedLanTarget.connectionId,
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            httpBaseUrl: "http://192.168.1.10:3773/",
+            wsBaseUrl: "ws://192.168.1.10:3773/",
+            learned: true,
+          }),
+        ),
+        alternateRoutes: [
+          {
+            target: publicTarget,
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: publicTarget.connectionId,
+                environmentId: TARGET.environmentId,
+                label: TARGET.label,
+                httpBaseUrl: "http://203.0.113.5:3773/",
+                wsBaseUrl: "ws://203.0.113.5:3773/",
+              }),
+            ),
+          },
+        ],
+        enabled: true,
+      };
+      const lanReachable = yield* Ref.make(false);
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target === learnedLanTarget
+            ? Ref.get(lanReachable).pipe(
+                Effect.map((reachable) => (reachable ? "answered" : "silent")),
+              )
+            : Effect.succeed("answered"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* Ref.set(lanReachable, true);
+      yield* TestClock.adjust("60 seconds");
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target).toBe(
+        learnedLanTarget,
+      );
+    }),
+  );
+
   it.effect("keeps checking a LAN route every minute when it answers but cannot be prepared", () =>
     Effect.gen(function* () {
       const lanPreflights = yield* Ref.make(0);
