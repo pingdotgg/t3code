@@ -42,6 +42,7 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/orchestration"), async (original) => {
   const actual = await original();
   return {
+    ...actual,
     orchestrationEnvironment: {
       ...actual.orchestrationEnvironment,
       previousAgents: ((target: {
