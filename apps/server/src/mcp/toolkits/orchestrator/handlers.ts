@@ -108,6 +108,7 @@ const handlers = {
         title,
         schedule,
         enabled,
+        freshSession,
         bindToCurrentThread,
         runInBackground,
       }) =>
@@ -121,6 +122,7 @@ const handlers = {
             title,
             schedule,
             enabled,
+            freshSession,
             bindToCurrentThread,
             runInBackground,
           });

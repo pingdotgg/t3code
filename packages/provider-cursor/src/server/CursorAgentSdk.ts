@@ -2,6 +2,7 @@ import type {
   AgentMessage,
   AgentOptions,
   InteractionUpdate,
+  Run,
   RunResult,
   SDKUserMessage,
   SendOptions,
@@ -81,6 +82,7 @@ export const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
 export interface CursorAgentSdkOpenInput {
   readonly operation: "create" | "resume";
   readonly agentId?: string;
+  readonly storeCwd?: string;
   readonly options: AgentOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -401,7 +403,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
 
   return CursorAgentSdkRunner.of({
     open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
-      const { Agent } = yield* Effect.try({
+      const { Agent, createAgentPlatform } = yield* Effect.try({
         try: sdk.load,
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
       });
@@ -423,11 +425,30 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         },
       });
 
+      // Cursor uses cwd for both execution and store lookup; a moved thread keeps its original store.
+      const storeCwd = input.storeCwd;
+      const storePlatform =
+        input.operation === "resume" &&
+        storeCwd !== undefined &&
+        storeCwd !== input.options.local?.cwd
+          ? yield* Effect.tryPromise({
+              try: () =>
+                createAgentPlatform({
+                  workspaceRef: storeCwd,
+                  ...(input.options.local?.store === undefined
+                    ? {}
+                    : { localStore: input.options.local.store }),
+                }),
+              catch: (cause) => runnerError(cause, "agent.resume"),
+            })
+          : undefined;
       const agent = yield* Effect.tryPromise({
         try: () =>
           input.operation === "create"
             ? Agent.create(input.options)
-            : Agent.resume(input.agentId!, input.options),
+            : storePlatform === undefined
+              ? Agent.resume(input.agentId!, input.options)
+              : storePlatform.resumeAgent(input.agentId!, input.options),
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
       });
 
@@ -517,13 +538,29 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               (error) =>
                 Effect.gen(function* () {
                   abandonedRunRecoveryAvailable = false;
-                  const latestRun = yield* Effect.tryPromise({
-                    try: () => Agent.listRuns(agent.agentId, { ...runOptions, limit: 1 }),
-                    catch: (cause) => runnerError(cause, "agent.listRuns"),
-                  });
-                  const activeRun = latestRun.items.find(
-                    (candidate) => candidate.status === "running",
-                  );
+                  // Local stores list runs oldest first, so the active run is on the
+                  // last page and every page has to be read to reach it.
+                  let activeRun: Run | undefined;
+                  let cursor: string | undefined;
+                  do {
+                    const page = yield* Effect.tryPromise({
+                      try: () =>
+                        storePlatform === undefined
+                          ? Agent.listRuns(agent.agentId, {
+                              ...runOptions,
+                              ...(cursor === undefined ? {} : { cursor }),
+                            })
+                          : storePlatform.listRuns(
+                              agent.agentId,
+                              cursor === undefined ? {} : { cursor },
+                            ),
+                      catch: (cause) => runnerError(cause, "agent.listRuns"),
+                    });
+                    activeRun =
+                      page.items.findLast((candidate) => candidate.status === "running") ??
+                      activeRun;
+                    cursor = page.nextCursor;
+                  } while (cursor !== undefined);
                   if (activeRun === undefined) {
                     return yield* error;
                   }
@@ -533,7 +570,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                     payload: { type: "run.cancel", runId: activeRun.id },
                   });
                   yield* Effect.tryPromise({
-                    try: () => Agent.cancelRun(activeRun.id, runOptions),
+                    try: () =>
+                      storePlatform === undefined
+                        ? Agent.cancelRun(activeRun.id, runOptions)
+                        : storePlatform.cancelRun(activeRun.id),
                     catch: (cause) => runnerError(cause, "agent.cancelRun"),
                   });
                   return yield* startRun();
@@ -649,10 +689,15 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           Effect.andThen(
             Effect.tryPromise({
               try: () =>
-                Agent.messages.list(agent.agentId, {
-                  runtime: "local",
-                  ...(cwd === undefined ? {} : { cwd }),
-                }),
+                storePlatform === undefined
+                  ? Agent.messages.list(agent.agentId, {
+                      runtime: "local",
+                      ...(cwd === undefined ? {} : { cwd }),
+                      ...(input.options.local?.store === undefined
+                        ? {}
+                        : { store: input.options.local.store }),
+                    })
+                  : storePlatform.getAgentMessages(agent.agentId),
               catch: (cause) => runnerError(cause, "agent.messages.list"),
             }),
           ),

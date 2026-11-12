@@ -246,6 +246,7 @@ import {
   useQuietThreadShell,
   useThreadChipIcons,
 } from "../../state/entities";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -1333,6 +1334,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
 function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
+  /** A linked environment's sender title, for when this client cannot reach it. */
+  readonly senderTitle?: string;
   readonly summary: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
@@ -1341,7 +1344,7 @@ function AgentMessageFoldHeader(props: {
   const senderShell = useQuietThreadShell(
     props.senderThreadId ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
   );
-  const label = senderShell?.title.trim() || "Agent";
+  const label = senderShell?.title.trim() || props.senderTitle?.trim() || "Agent";
   return (
     <Pressable
       accessibilityRole="button"
@@ -1384,8 +1387,12 @@ function AgentMessageFoldHeader(props: {
 function OpenSenderThreadButton(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId: ThreadId;
+  /** In a linked environment, shown only when this client is connected to it. */
+  readonly linked?: boolean;
 }) {
   const openLinkedThread = useOpenLinkedThread();
+  const linkedEnvironment = useEnvironmentPresentation(props.linked ? props.environmentId : null);
+  if (props.linked && linkedEnvironment.presentation === null) return null;
   return (
     <Pressable
       accessibilityRole="link"
@@ -1916,6 +1923,12 @@ function renderFeedEntry(
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
+      // A linked environment's agent sent it from a thread there.
+      const senderRef =
+        message.linkedSender ??
+        (message.senderThreadId
+          ? scopeThreadRef(props.environmentId, message.senderThreadId)
+          : null);
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = props.userMessageGrouping.continuesSteer
@@ -2036,8 +2049,9 @@ function renderFeedEntry(
               {presentation.attribution === "guest" ? <GuestBubbleTint /> : null}
               {foldRowId !== null ? (
                 <AgentMessageFoldHeader
-                  environmentId={props.environmentId}
-                  senderThreadId={message.senderThreadId}
+                  environmentId={senderRef?.environmentId ?? props.environmentId}
+                  senderThreadId={senderRef?.threadId}
+                  {...(message.linkedSender ? { senderTitle: message.linkedSender.title } : {})}
                   summary={
                     replaceComposerContextReferences(presentation.text, (ref) => ref.label)
                       .split(/\r?\n/)
@@ -2144,10 +2158,11 @@ function renderFeedEntry(
           ) : null}
           {bubbleBodyVisible ? (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-              {foldRowId !== null && message.senderThreadId ? (
+              {foldRowId !== null && senderRef ? (
                 <OpenSenderThreadButton
-                  environmentId={props.environmentId}
-                  senderThreadId={message.senderThreadId}
+                  environmentId={senderRef.environmentId}
+                  senderThreadId={senderRef.threadId}
+                  linked={message.linkedSender !== undefined}
                 />
               ) : null}
               {intentBadge ? (
