@@ -1086,6 +1086,37 @@ describe("subagent worktree ownership", () => {
     }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
 
+  it.effect("removes a worktree shared by top-level threads once every one is eligible", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      fixture.setSettings({
+        storageCleanup: {
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: 8,
+        },
+      });
+      const first = shell({
+        branch: "feature",
+        worktreePath: fixture.worktree,
+        latestRunCompletedAt: at(-20 * DAY_MS),
+      });
+      const second = shell({
+        ...first,
+        id: ThreadId.make("thread-2"),
+        lineage: { ...first.lineage, rootThreadId: ThreadId.make("thread-2") },
+        latestRunCompletedAt: at(-15 * DAY_MS),
+      });
+      fixture.setThreads([first, second]);
+      const report = yield* fixture.service.runNow;
+      expect(report.entries[0]).toMatchObject({
+        outcome: "removed",
+        reason: "Inactive for 15 days",
+      });
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
   it.live.each([
     "running",
     "pending",
