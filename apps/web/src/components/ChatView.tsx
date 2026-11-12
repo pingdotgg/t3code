@@ -62,6 +62,7 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type AssistantCitation,
+  type ResponseContextRecord,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
   type EnvironmentId,
@@ -642,6 +643,17 @@ export default function ChatView(props: ChatViewProps) {
     return inserted;
   };
   const citeAssistantTextStable = useStableCallback(citeAssistantText);
+  const replyToResponseStable = useStableCallback((response: ResponseContextRecord) => {
+    const accepted = composerRef.current?.replyToResponse(response) ?? false;
+    if (!accepted) {
+      toastManager.add({
+        type: "warning",
+        title: "The composer is not ready",
+        description: "Try replying after the connection or pending input is resolved.",
+      });
+    }
+    return accepted;
+  });
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticBlobPreviews] = useState(createOptimisticBlobPreviews);
   const [heldOptimisticUserMessages, setHeldOptimisticUserMessages] = useState(() =>
@@ -3400,6 +3412,7 @@ export default function ChatView(props: ChatViewProps) {
                   citationRequest={citationRequest}
                   citationHistory={citationHistory}
                   onCiteAssistantText={citeAssistantTextStable}
+                  onReplyToResponse={replyToResponseStable}
                   {...(activeProject
                     ? { onRunShellCommand: parentPanel?.runShellCommand ?? runShellCommandStable }
                     : {})}
@@ -3419,6 +3432,7 @@ export default function ChatView(props: ChatViewProps) {
                     activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
                   }
                   activeTurnStartedAt={activeWorkStartedAt}
+                  providerStartingLabel={activeActivityRun?.providerStartingLabel ?? null}
                   worktreeSetup={worktreeSetup}
                   onCancelWorktreeSetup={onCancelWorktreeSetupStable}
                   retryableWorkspacePreparationRunIds={retryableWorkspacePreparationRunIds}
@@ -3847,6 +3861,7 @@ export default function ChatView(props: ChatViewProps) {
                   worktreePath={activeThread.worktreePath}
                   isServerThread={isServerThread}
                   {...(draftId ? { draftId } : {})}
+                  composerDraftTarget={composerDraftTarget}
                   activeProjectName={activeProject?.title}
                   activeProjectScripts={activeProject ? activeProjectScripts : undefined}
                   preferredScriptId={

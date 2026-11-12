@@ -9,6 +9,7 @@ import {
   ContextTransferId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextHandoffId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -55,6 +56,7 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+import { buildBoundedThreadStreamSnapshot } from "./ThreadStream.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
@@ -741,6 +743,37 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n");
       assert.include(plan, `USING INDEX sqlite_autoindex_orchestration_v2_projection_${table}_1`);
     }
+    // The filters every command reads with seek the rows they keep, not every row of the thread.
+    const command = traceSqlStatements();
+    yield* store
+      .getThreadRecords(threadId, ["nodes", "subagents", "turnItems", "contextTransfers"], {
+        turnItemTypes: ["user_message", "error"],
+        omitSettledLeafNodes: true,
+        omitSettledSubagents: true,
+        contextTransferStatuses: ["pending"],
+      })
+      .pipe(Effect.withTracer(command.tracer));
+    for (const [table, seeks] of [
+      ["turn_items", ["USING INDEX orchestration_v2_projection_turn_items_conversation_idx"]],
+      ["nodes", ["nodes_settled_leaf_idx (thread_id=? AND <expr>=?)"]],
+      ["subagents", ["USING COVERING INDEX orchestration_v2_projection_subagents_settled_idx"]],
+      [
+        "context_transfers",
+        [
+          "source_thread_status_idx (source_thread_id=? AND status=?)",
+          "target_thread_idx (target_thread_id=? AND status=?)",
+        ],
+      ],
+    ] as const) {
+      const query = command.statements.find((statement) =>
+        statement.includes(`FROM orchestration_v2_projection_${table}`),
+      );
+      assert.isDefined(query);
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+        .map((row) => row.detail)
+        .join("\n");
+      for (const seek of seeks) assert.include(plan, seek);
+    }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],
@@ -759,6 +792,441 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       latestProviderTurnUsageOnly: true,
     });
     assert.deepEqual([empty.runs, empty.providerTurns], [[], []]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// One thread holds every way a run can still matter after a compaction. A run is requested at
+// its ordinal in minutes and ends 30 seconds later, unless the table says otherwise.
+it.effect("a compacted thread reads every run, and run records only for its recent runs", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("compacted");
+    const created = yield* DateTime.now;
+    const at = (minutes: number) => DateTime.add(created, { minutes });
+    const runId = (ordinal: number) => RunId.make(`run:compacted:${ordinal}`);
+    const rootNodeId = (ordinal: number) => NodeId.make(`node:compacted:${ordinal}`);
+    const attemptId = (ordinal: number) => RunAttemptId.make(`attempt:compacted:${ordinal}`);
+    const providerThreadId = ProviderThreadId.make("provider-thread:compacted");
+    const messageId = (ordinal: number) => MessageId.make(`message:compacted:${ordinal}`);
+    const item = (
+      ordinal: number,
+      itemOrdinal: number,
+      status: "completed" | "failed" | "running",
+    ) => ({
+      threadId,
+      runId: runId(ordinal),
+      nodeId: rootNodeId(ordinal),
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: itemOrdinal,
+      status,
+      title: null,
+      startedAt: at(ordinal),
+      completedAt: status === "running" ? null : at(ordinal),
+      updatedAt: at(ordinal),
+    });
+    const compaction = (ordinal: number, status: "completed" | "failed" | "running") =>
+      store.apply({
+        id: EventId.make(`event:compacted:compaction-${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: rootNodeId(ordinal),
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          ...item(ordinal, ordinal * 10 + 1, status),
+          id: TurnItemId.make(`item:compacted:compaction-${ordinal}`),
+          type: "compaction",
+          driver,
+        },
+      });
+    for (const [ordinal, status, endedAt] of [
+      [2, "queued", null],
+      [3, "completed"],
+      // A held queue ran this old run after the compactions.
+      [4, "completed", at(11.5)],
+      [5, "completed"],
+      [6, "completed"],
+      [7, "completed"],
+      [8, "completed"],
+      [9, "completed"],
+      [10, "completed"],
+      [11, "completed"],
+      [12, "completed"],
+      [13, "rolled_back"],
+      [14, "completed"],
+      [15, "running", null],
+    ] as const) {
+      const text = `Prompt ${ordinal}`;
+      const authored = { createdBy: "user", creationSource: "web" } as const;
+      const nodeId = rootNodeId(ordinal);
+      const ended = endedAt === undefined ? at(ordinal + 0.5) : endedAt;
+      yield* store.apply({
+        id: EventId.make(`event:compacted:run-${ordinal}`),
+        type: "run.created",
+        threadId,
+        runId: runId(ordinal),
+        nodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: at(ordinal),
+        payload: {
+          id: runId(ordinal),
+          threadId,
+          ordinal,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: messageId(ordinal),
+          rootNodeId: nodeId,
+          activeAttemptId: attemptId(ordinal),
+          status,
+          requestedAt: at(ordinal),
+          startedAt: status === "queued" ? null : at(ordinal),
+          completedAt: ended,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:attempt-${ordinal}`),
+        type: "run-attempt.created",
+        threadId,
+        runId: runId(ordinal),
+        nodeId,
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          id: attemptId(ordinal),
+          runId: runId(ordinal),
+          attemptOrdinal: 1,
+          rootNodeId: nodeId,
+          providerInstanceId,
+          providerThreadId,
+          providerTurnId: null,
+          reason: "initial",
+          status: ended === null ? "running" : "completed",
+          startedAt: at(ordinal),
+          completedAt: ended,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:node-${ordinal}`),
+        type: "node.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId,
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          id: nodeId,
+          threadId,
+          runId: runId(ordinal),
+          rootNodeId: nodeId,
+          parentNodeId: null,
+          kind: "root_turn",
+          status: ended === null ? "running" : "completed",
+          countsForRun: true,
+          providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: at(ordinal),
+          completedAt: ended,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:turn-${ordinal}`),
+        type: "provider-turn.updated",
+        threadId,
+        nodeId,
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          id: ProviderTurnId.make(`turn:compacted:${ordinal}`),
+          providerThreadId,
+          nodeId,
+          runAttemptId: attemptId(ordinal),
+          nativeTurnRef: null,
+          ordinal,
+          status: ended === null ? "running" : "completed",
+          startedAt: at(ordinal),
+          completedAt: ended,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:message-${ordinal}`),
+        type: "message.updated",
+        threadId,
+        runId: runId(ordinal),
+        occurredAt: at(ordinal),
+        payload: {
+          ...authored,
+          id: messageId(ordinal),
+          threadId,
+          runId: runId(ordinal),
+          nodeId,
+          role: "user",
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: at(ordinal),
+          updatedAt: at(ordinal),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:prompt-${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId,
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          ...authored,
+          ...item(ordinal, ordinal * 10, status === "queued" ? "running" : "completed"),
+          ...(status === "queued" ? { status: "pending" as const } : {}),
+          id: TurnItemId.make(`item:compacted:prompt-${ordinal}`),
+          type: "user_message",
+          messageId: messageId(ordinal),
+          inputIntent: status === "queued" ? "queued_turn" : "turn_start",
+          text,
+          attachments: [],
+        },
+      });
+    }
+    // Each collection as the ordinals of the runs it was read for. Run 1 is the helper's.
+    const ordinals = (ids: ReadonlyArray<string | null>) =>
+      [...new Set(ids.map((id) => Number(id?.split(":").at(-1)) || 1))].toSorted((a, b) => a - b);
+    const read = (keepRunIds: ReadonlyArray<RunId> = [], keepMessageId = messageId(0)) =>
+      store
+        .getThreadRecords(
+          threadId,
+          ["runs", "attempts", "nodes", "providerTurns", "messages", "turnItems"],
+          {
+            messageRoles: ["user"],
+            omitSettledLeafNodes: true,
+            sinceLastCompaction: { keepRunIds, keepMessageId },
+          },
+        )
+        .pipe(
+          Effect.map((records) => ({
+            runs: records.runs.length,
+            attempts: ordinals(records.attempts.map((attempt) => attempt.runId)),
+            nodes: ordinals(records.nodes.map((node) => node.runId)),
+            providerTurns: ordinals(records.providerTurns.map((turn) => turn.runAttemptId)),
+            messages: ordinals(records.messages.map((message) => message.runId)),
+            turnItems: ordinals(records.turnItems.map((row) => row.runId)),
+          })),
+        );
+    const all = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    // Every run and every turn item is read, so a model switch is still measured from the last
+    // prompt. Run 1, the helper's, holds only a command item.
+    const expected = (recent: ReadonlyArray<number>) => ({
+      runs: 15,
+      attempts: recent,
+      nodes: recent,
+      providerTurns: recent,
+      messages: recent,
+      turnItems: [1, ...all],
+    });
+
+    // Nothing is compacted yet, so the whole history is current.
+    assert.deepEqual(yield* read(), expected(all));
+
+    // The window starts at the compaction's run. Queued run 2 and held run 4 are older but had
+    // not ended by then.
+    yield* compaction(7, "completed");
+    assert.deepEqual(yield* read(), expected([2, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15]));
+
+    // The latest compaction wins.
+    yield* compaction(11, "completed");
+    const latest = expected([2, 4, 11, 12, 13, 14, 15]);
+    assert.deepEqual(yield* read(), latest);
+
+    // A compaction that was rolled back, failed or is still running does not move the window.
+    yield* compaction(13, "completed");
+    yield* compaction(14, "failed");
+    yield* compaction(15, "running");
+    assert.deepEqual(yield* read(), latest);
+
+    // A named run and the run that holds a re-sent message are read too.
+    assert.deepEqual(
+      yield* read([runId(3)], messageId(6)),
+      expected([2, 3, 4, 6, 11, 12, 13, 14, 15]),
+    );
+
+    // A command also skips the node and the provider thread of each settled task. Tasks ended on
+    // both sides of the compaction; one ran in the provider thread the thread's own runs use.
+    const addProviderThread = (id: ProviderThreadId, appThreadId: ThreadId) =>
+      store.apply({
+        id: EventId.make(`event:compacted:${id}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: created,
+        payload: {
+          id,
+          appThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          createdAt: created,
+          updatedAt: created,
+        },
+      });
+    yield* addProviderThread(providerThreadId, threadId);
+    for (const [name, ordinal, delivery] of [
+      ["old-delivered", 5, "delivered"],
+      ["old-pending", 5, "pending"],
+      ["old-own-thread", 5, "delivered"],
+      ["recent-delivered", 12, "delivered"],
+      ["recent-pending", 12, "pending"],
+    ] as const) {
+      const id = NodeId.make(`node:compacted:task:${name}`);
+      const taskProviderThreadId =
+        name === "old-own-thread"
+          ? providerThreadId
+          : ProviderThreadId.make(`provider-thread:compacted:task:${name}`);
+      if (taskProviderThreadId !== providerThreadId) {
+        yield* addProviderThread(
+          taskProviderThreadId,
+          ThreadId.make(`thread:compacted:child:${name}`),
+        );
+      }
+      const task = {
+        id,
+        threadId,
+        runId: runId(ordinal),
+        parentNodeId: rootNodeId(ordinal),
+        status: "completed",
+        startedAt: at(ordinal),
+        completedAt: at(ordinal),
+      } as const;
+      yield* store.apply({
+        id: EventId.make(`event:compacted:task:${name}`),
+        type: "subagent.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: id,
+        driver,
+        providerInstanceId,
+        occurredAt: at(ordinal),
+        payload: {
+          ...task,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: taskProviderThreadId,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Do the work",
+          title: name,
+          model: null,
+          completionDelivery: { state: delivery, observedByRunId: null },
+          result: null,
+          updatedAt: at(ordinal),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:task-node:${name}`),
+        type: "node.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: id,
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          ...task,
+          rootNodeId: rootNodeId(ordinal),
+          kind: "subagent",
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+        },
+      });
+    }
+    const names = (ids: ReadonlyArray<string>) => ids.map((id) => id.split(":").at(-1)).toSorted();
+    const readWithTasks = (filter: ProjectionStore.ProjectionRecordFilter) =>
+      store
+        .getThreadRecords(
+          threadId,
+          [
+            "runs",
+            "attempts",
+            "nodes",
+            "providerThreads",
+            "providerTurns",
+            "messages",
+            "turnItems",
+          ],
+          { messageRoles: ["user"], omitSettledLeafNodes: true, ...filter },
+        )
+        .pipe(
+          Effect.map((records) => ({
+            runs: names(records.runs.map((run) => run.id)),
+            turnItems: names(records.turnItems.map((row) => row.id)),
+            attempts: names(records.attempts.map((attempt) => attempt.id)),
+            rootNodes: names(
+              records.nodes.flatMap((node) => (node.kind === "root_turn" ? [node.id] : [])),
+            ),
+            taskNodes: names(
+              records.nodes.flatMap((node) => (node.kind === "subagent" ? [node.id] : [])),
+            ),
+            providerThreads: names(records.providerThreads.map((thread) => thread.id)),
+            providerTurns: names(records.providerTurns.map((turn) => turn.id)),
+            messages: names(records.messages.map((message) => message.id)),
+          })),
+        );
+    const window = {
+      sinceLastCompaction: { keepRunIds: [runId(3)], keepMessageId: messageId(6) },
+    };
+    const windowed = yield* readWithTasks(window);
+    const unsettled = yield* readWithTasks({ omitSettledSubagentRecords: true });
+    const both = yield* readWithTasks({ ...window, omitSettledSubagentRecords: true });
+    // Each filter alone keeps records the other one drops.
+    assert.deepEqual(windowed.taskNodes, ["recent-delivered", "recent-pending"]);
+    assert.lengthOf(windowed.providerThreads, 5);
+    assert.deepEqual(unsettled.taskNodes, ["old-pending", "recent-pending"]);
+    assert.deepEqual(unsettled.providerThreads, ["compacted", "old-pending", "recent-pending"]);
+    assert.lengthOf(unsettled.rootNodes, all.length);
+    assert.lengthOf(unsettled.runs, 15);
+    // Together: every run, every turn item and the provider thread the runs use stay, and the
+    // windowed records are read for the recent and named runs, less each settled task's node.
+    const recentRuns = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
+    assert.deepEqual(both, {
+      ...unsettled,
+      attempts: recentRuns,
+      rootNodes: recentRuns,
+      taskNodes: ["recent-pending"],
+      providerTurns: recentRuns,
+      messages: recentRuns,
+    });
+    const keptUnsettled = new Map(Object.entries(unsettled));
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(windowed).map(([key, kept]) => [
+          key,
+          kept.filter((name) => keptUnsettled.get(key)?.includes(name)),
+        ]),
+      ),
+      both,
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -828,6 +1296,16 @@ it.effect("record reads filter notification sources without dropping matching me
       plan.some((detail) => detail.includes("turn_items_user_message_idx")),
       plan.join("\n"),
     );
+    // With every user item loaded, the items give the order and the lookup does not run.
+    const withItems = traceSqlStatements();
+    const ordered = yield* store
+      .getThreadRecords(threadId, ["messages", "turnItems"], {
+        messageRoles: ["user"],
+        turnItemTypes: ["user_message"],
+      })
+      .pipe(Effect.withTracer(withItems.tracer));
+    assert.deepEqual(ordered.messages, userMessages.messages);
+    assert.isFalse(withItems.statements.some((statement) => statement.includes("MIN(ordinal)")));
     assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
@@ -1532,6 +2010,8 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
 
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
+  const sharedSessionId = ProviderSessionId.make("session:settled-subagents:shared");
   const now = yield* DateTime.now;
   const threadId = yield* addRolledBackRecoveryCandidate("settled-leaf-nodes");
   const settledRun = (yield* store.getThreadProjection(threadId)).runs[0]!;
@@ -1742,7 +2222,7 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         createdBy: "agent",
         driver,
         providerInstanceId,
-        providerThreadId: null,
+        providerThreadId: ProviderThreadId.make(`provider-thread:settled-subagents:${name}`),
         childThreadId,
         nativeTaskRef: null,
         prompt: "Do the work",
@@ -1758,6 +2238,110 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         updatedAt: now,
       },
     });
+    // Each task has a node in this thread and a provider thread in its child thread.
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:node:${name}`),
+      type: "node.updated",
+      threadId,
+      runId: run.id,
+      nodeId: id,
+      driver,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId: run.id,
+        rootNodeId: run.rootNodeId!,
+        parentNodeId: run.rootNodeId,
+        kind: "subagent",
+        status,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make(`event:settled-subagents:provider-thread:${name}`),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make(`provider-thread:settled-subagents:${name}`),
+        appThreadId: ThreadId.make(`thread:settled-subagents:child:${name}`),
+        driver,
+        providerInstanceId,
+        // One settled task ran in a provider session this thread also uses.
+        providerSessionId: name === "acknowledged" ? sharedSessionId : null,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+  }
+  yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
+    (provider_session_id, thread_id) VALUES (${sharedSessionId}, ${threadId})`;
+  // A command drops the node and the provider thread of each task it drops. The provider thread
+  // in the shared session stays: detaching that session probes it for background work.
+  const kept = ["active-run-delivered", "claimed", "no-delivery", "pending-delivery", "running"];
+  const commandTrace = traceSqlStatements();
+  const commandRecords = yield* store
+    .getThreadRecords(threadId, ["nodes", "providerThreads"], {
+      omitSettledLeafNodes: true,
+      omitSettledSubagentRecords: true,
+    })
+    .pipe(Effect.withTracer(commandTrace.tracer));
+  assert.deepEqual(
+    commandRecords.nodes
+      .flatMap((node) => (node.kind === "subagent" ? [node.id.split(":").at(-1)] : []))
+      .toSorted(),
+    // A subagent node that no task record names stays.
+    [...kept, "settled-subagent"],
+  );
+  assert.deepEqual(
+    commandRecords.providerThreads.map((thread) => thread.id.split(":").at(-1)).toSorted(),
+    ["acknowledged", ...kept],
+  );
+  assert.lengthOf(
+    (yield* store.getThreadRecords(threadId, ["providerThreads"])).providerThreads,
+    subagents.length,
+  );
+  // Both reads stay inside their indexes: no scan of the thread's nodes or provider threads.
+  for (const [table, seeks] of [
+    [
+      "nodes",
+      [
+        "SEARCH node USING INTEGER PRIMARY KEY",
+        "SEARCH settled USING COVERING INDEX",
+        "SEARCH settled_node USING COVERING INDEX",
+        "subagents_settled_idx (thread_id=?)",
+      ],
+    ],
+    [
+      "provider_threads",
+      ["MULTI-INDEX OR", "provider_threads_session_idx (provider_session_id=?)"],
+    ],
+  ] as const) {
+    const query = commandTrace.statements.find((statement) =>
+      statement.includes(`FROM orchestration_v2_projection_${table}`),
+    );
+    assert.isDefined(query);
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+      .map((row) => row.detail)
+      .join("\n");
+    for (const seek of seeks) assert.include(plan, seek);
+    assert.notInclude(plan, `SCAN orchestration_v2_projection_${table}`);
   }
   const subagentNames = (records: {
     readonly subagents: ReadonlyArray<{ readonly title: string | null }>;
@@ -2550,6 +3134,142 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
     }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("SQL snapshot windows leave handoff bodies in SQLite without changing the wire", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-window");
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:handoff-window"),
+        title: "Handoff window",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const providerThreadId = ProviderThreadId.make("provider-thread:handoff-window");
+    const earlierItemId = TurnItemId.make("item:handoff-window:earlier");
+    const handoff = (id: string, status: "ready" | "superseded") => ({
+      id: ContextHandoffId.make(`handoff:handoff-window:${id}`),
+      transferId: null,
+      threadId,
+      targetRunId: RunId.make("run:handoff-window"),
+      fromProviderThreadIds: [providerThreadId],
+      toProviderThreadId: providerThreadId,
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "full_thread_summary" as const,
+      status,
+      summaryMessageId: null,
+      summaryText: `Summary ${id}`,
+      history: {
+        messages: [
+          {
+            role: "user" as const,
+            text: "Earlier request ".repeat(1_000),
+            threadId,
+            runId: null,
+            itemId: earlierItemId,
+            providerThreadId,
+            status: "completed",
+            kind: "user_message",
+          },
+        ],
+        coverage: "full",
+        omittedItems: 0,
+      },
+      delivery: { nativeThreadId: "native", status: "injected" as const, itemIds: [earlierItemId] },
+      createdByProviderInstanceId: providerInstanceId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    // The window keeps a ready handoff and one its rows show; the third is outside it.
+    const handoffs = [
+      handoff("ready", "ready"),
+      handoff("shown", "superseded"),
+      handoff("old", "superseded"),
+    ];
+    for (const payload of handoffs) {
+      yield* store.apply({
+        id: EventId.make(`event:${payload.id}`),
+        type: "context-handoff.updated",
+        threadId,
+        occurredAt: now,
+        payload,
+      });
+    }
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:item"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:handoff-window:handoff"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "handoff",
+        contextHandoffId: handoffs[1]!.id,
+        fromProviderThreadIds: [providerThreadId],
+        toProviderThreadId: providerThreadId,
+        fromProviderInstanceIds: [providerInstanceId],
+        toProviderInstanceId: providerInstanceId,
+        strategy: "full_thread_summary",
+      },
+    });
+
+    const window = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 10 });
+    const windowHandoffs = window.projection.contextHandoffs;
+    assert.deepEqual(
+      windowHandoffs.map((row) => row.id),
+      [handoffs[0]!.id, handoffs[1]!.id],
+    );
+    for (const row of windowHandoffs) {
+      assert.isUndefined(row.history);
+      assert.isUndefined(row.delivery);
+    }
+    const full = yield* store.getThreadSnapshot(threadId);
+    assert.deepEqual(full.projection.contextHandoffs, handoffs);
+    assert.deepEqual(
+      buildBoundedThreadStreamSnapshot(window),
+      buildBoundedThreadStreamSnapshot({
+        ...window,
+        projection: { ...window.projection, contextHandoffs: handoffs.slice(0, 2) },
+      }),
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -5180,7 +5900,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("looks up shell stop requests through the interrupt request index", () =>
+  it.effect("reads shell runs and item counts without walking a thread's history", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
@@ -5189,19 +5909,43 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* projectionStore
         .getShellSnapshot({ projectId, location: "active" })
         .pipe(Effect.withTracer(tracer));
+      const planOf = (statement: string) =>
+        sql
+          .unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`)
+          .pipe(Effect.map((rows) => rows.map((row) => row.detail)));
 
       const threadQuery = statements.find((statement) =>
         statement.includes("AS latest_run_stop_requested"),
       );
       assert.isDefined(threadQuery);
-      const stopRequestLookups = (yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${threadQuery}`,
-      ))
-        .map((row) => row.detail)
-        .filter((detail) => detail.startsWith("SEARCH stop_request "));
+      const plan = yield* planOf(threadQuery);
+      const stopRequestLookups = plan.filter((detail) => detail.startsWith("SEARCH stop_request "));
       assert.lengthOf(stopRequestLookups, 2);
       for (const lookup of stopRequestLookups) {
         assert.include(lookup, "orchestration_v2_projection_turn_items_stop_request_idx");
+      }
+      // The active, activity, and pending-secret lookups; walking the ordinal index instead
+      // reads every run of an idle thread.
+      const activeRunLookups = plan.filter(
+        (detail) => detail.startsWith("SEARCH r ") && detail.includes("(thread_id=?"),
+      );
+      assert.lengthOf(activeRunLookups, 4);
+      for (const lookup of activeRunLookups) {
+        assert.include(lookup, "orchestration_v2_projection_runs_thread_status_idx");
+      }
+      const lastExecutedIndex = plan.findIndex((detail) =>
+        detail.includes("orchestration_v2_projection_runs_last_executed_idx"),
+      );
+      assert.notStrictEqual(lastExecutedIndex, -1);
+      // The lookup that follows the search is the sort it no longer needs.
+      assert.notInclude(plan[lastExecutedIndex + 1] ?? "", "USE TEMP B-TREE");
+
+      const countQueries = statements.filter((statement) => statement.includes("item_count"));
+      assert.isNotEmpty(countQueries);
+      for (const countQuery of countQueries) {
+        for (const detail of yield* planOf(countQuery)) {
+          assert.notInclude(detail, "orchestration_v2_projection_turn_items");
+        }
       }
     }),
   );
@@ -5457,6 +6201,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             },
           });
         }
+        let runWrites = 0;
         const applyRun = (
           threadId: ThreadId,
           suffix: string,
@@ -5465,9 +6210,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ) => {
           const runId = RunId.make(`run:shell-item-counts:${suffix}`);
           const rootNodeId = NodeId.make(`node:shell-item-counts:${suffix}`);
+          runWrites += 1;
           return projectionStore
             .apply({
-              id: EventId.make(`event:shell-item-counts:${suffix}:run`),
+              id: EventId.make(`event:shell-item-counts:${suffix}:run:${runWrites}`),
               type: "run.created",
               threadId,
               runId,
@@ -5494,11 +6240,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             })
             .pipe(Effect.as(runId));
         };
-        let ordinal = 0;
-        const applyItem = (threadId: ThreadId, runId: RunId | null) => {
-          ordinal += 1;
+        let items = 0;
+        let writes = 0;
+        // Passing `rewrite` writes that earlier item again, possibly under another run.
+        const applyItem = (threadId: ThreadId, runId: RunId | null, rewrite?: number) => {
+          const ordinal = rewrite ?? (items += 1);
+          writes += 1;
           return projectionStore.apply({
-            id: EventId.make(`event:shell-item-counts:item:${ordinal}`),
+            id: EventId.make(`event:shell-item-counts:write:${writes}`),
             type: "turn-item.updated",
             threadId,
             ...(runId === null ? {} : { runId }),
@@ -5551,6 +6300,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           );
           assert.equal(shell?.itemCount, itemCount);
         }
+
+        // Writing an item again keeps its count; moving it to another run moves the count.
+        const itemCountOf = (threadId: ThreadId) =>
+          projectionStore.getThreadShell(threadId).pipe(Effect.map((shell) => shell?.itemCount));
+        yield* applyItem(busyThreadId, completedRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        yield* applyItem(busyThreadId, rolledBackRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyItem(busyThreadId, null, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+
+        // A run's rollback uncounts its items, and writing the run again counts them back.
+        yield* applyRun(busyThreadId, "busy-completed", 1, true);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyRun(busyThreadId, "busy-completed", 1, false);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        // Items written before their run exist count once it does.
+        const lateRunId = RunId.make("run:shell-item-counts:late");
+        yield* applyItem(otherThreadId, lateRunId);
+        assert.equal(yield* itemCountOf(otherThreadId), 1);
+        yield* applyRun(otherThreadId, "late", 2, false);
+        assert.equal(yield* itemCountOf(otherThreadId), 2);
       }),
   );
 
@@ -9002,6 +9773,193 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
           ["local", targetThreadId, "command_execution"],
         ],
+      );
+    }),
+  );
+
+  it.effect("hides source turns rewound before the fork from a fork's visible items", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const rewoundAt = DateTime.add(now, { minutes: 1 });
+      const forkedAt = DateTime.add(now, { minutes: 2 });
+      const prefix = "projection-fork-after-rewind";
+      const projectId = ProjectId.make(`project:${prefix}`);
+      const sourceThreadId = ThreadId.make(`thread:${prefix}:source`);
+      const targetThreadId = ThreadId.make(`thread:${prefix}:target`);
+      const sourceProviderThreadId = ProviderThreadId.make(`provider-thread:${prefix}:source`);
+      const runIds = [1, 2, 3].map((ordinal) => RunId.make(`run:${prefix}:${ordinal}`));
+      const nodeIds = [1, 2, 3].map((ordinal) => NodeId.make(`node:${prefix}:${ordinal}`));
+      const threadPayload = (input: {
+        readonly id: ThreadId;
+        readonly forkedFrom: { type: "run"; threadId: ThreadId; runId: RunId } | null;
+        readonly createdAt: DateTime.Utc;
+      }) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: input.id,
+        projectId,
+        title: input.id,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: sourceProviderThreadId,
+        lineage:
+          input.forkedFrom === null
+            ? { parentThreadId: null, relationshipToParent: null, rootThreadId: sourceThreadId }
+            : {
+                parentThreadId: sourceThreadId,
+                relationshipToParent: "fork" as const,
+                rootThreadId: sourceThreadId,
+              },
+        forkedFrom: input.forkedFrom,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+      const runPayload = (index: number, status: "completed" | "rolled_back") => ({
+        id: runIds[index]!,
+        threadId: sourceThreadId,
+        ordinal: index + 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: sourceProviderThreadId,
+        userMessageId: MessageId.make(`message:${prefix}:user:${index + 1}`),
+        rootNodeId: nodeIds[index]!,
+        activeAttemptId: null,
+        status,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: status === "rolled_back" ? rewoundAt : now,
+        checkpointId: null,
+        contextHandoffId: null,
+      });
+
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${prefix}:source-thread`),
+        type: "thread.created",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: threadPayload({ id: sourceThreadId, forkedFrom: null, createdAt: now }),
+      });
+      for (const [index, text] of ["one", "two", "three"].entries()) {
+        const runId = runIds[index]!;
+        const nodeId = nodeIds[index]!;
+        const ordinal = index + 1;
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${prefix}:run-${ordinal}`),
+          type: "run.created",
+          threadId: sourceThreadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: runPayload(index, "completed"),
+        });
+        for (const [offset, role] of (["user", "assistant"] as const).entries()) {
+          const itemBase = {
+            id: TurnItemId.make(`turn-item:${prefix}:${role}:${ordinal}`),
+            threadId: sourceThreadId,
+            runId,
+            nodeId,
+            providerThreadId: sourceProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: ordinal * 100 + offset,
+            status: "completed" as const,
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            messageId: MessageId.make(`message:${prefix}:${role}:${ordinal}`),
+          };
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${prefix}:${role}-item-${ordinal}`),
+            type: "turn-item.updated",
+            threadId: sourceThreadId,
+            runId,
+            nodeId,
+            driver,
+            occurredAt: now,
+            payload:
+              role === "user"
+                ? {
+                    ...itemBase,
+                    createdBy: "user",
+                    creationSource: "web",
+                    type: "user_message",
+                    inputIntent: "turn_start",
+                    text: `prompt ${text}`,
+                    attachments: [],
+                  }
+                : {
+                    ...itemBase,
+                    type: "assistant_message",
+                    text: `reply ${text}`,
+                    streaming: false,
+                  },
+          });
+        }
+        // Edit from here on prompt two rewinds run 2 before prompt three is sent.
+        if (ordinal === 2) {
+          yield* projectionStore.apply({
+            id: EventId.make(`event:${prefix}:run-2-rolled-back`),
+            type: "run.updated",
+            threadId: sourceThreadId,
+            runId,
+            nodeId,
+            driver,
+            occurredAt: rewoundAt,
+            payload: runPayload(index, "rolled_back"),
+          });
+        }
+      }
+
+      const forkedFrom = { type: "run" as const, threadId: sourceThreadId, runId: runIds[2]! };
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${prefix}:target-thread`),
+        type: "thread.created",
+        threadId: targetThreadId,
+        occurredAt: forkedAt,
+        payload: threadPayload({ id: targetThreadId, forkedFrom, createdAt: forkedAt }),
+      });
+
+      const visibleTexts = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
+        rows.map((row) =>
+          row.item.type === "user_message" || row.item.type === "assistant_message"
+            ? row.item.text
+            : row.item.type,
+        );
+      const source = yield* projectionStore.getThreadProjection(sourceThreadId);
+      assert.deepEqual(visibleTexts(source.visibleTurnItems), [
+        "prompt one",
+        "reply one",
+        "prompt three",
+        "reply three",
+      ]);
+      const expected = ["prompt one", "reply one", "prompt three", "reply three", "fork"];
+      const target = yield* projectionStore.getThreadProjection(targetThreadId);
+      assert.deepEqual(visibleTexts(target.visibleTurnItems), expected);
+      const page = yield* projectionStore.getTimelinePage(targetThreadId, {
+        view: "activity",
+        limit: 10,
+      });
+      assert.deepEqual(visibleTexts(page.items), expected);
+      const window = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
+        rowLimit: 10,
+      });
+      assert.deepEqual(visibleTexts(window.projection.visibleTurnItems), expected);
+      assert.equal(
+        (yield* projectionStore.getThreadShell(targetThreadId))?.visibleItemCount,
+        expected.length,
       );
     }),
   );
