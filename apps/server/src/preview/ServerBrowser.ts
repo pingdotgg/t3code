@@ -101,6 +101,8 @@ const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
+const RECORDING_BINARY_EXPORT_MIN_BYTES = 8 * 1024 * 1024;
+const RECORDING_DOWNLOAD_TIMEOUT_MS = 5_000;
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
@@ -294,6 +296,7 @@ interface EncoderWindow {
     frame(data: string, width: number): Promise<boolean>;
     stop(): Promise<{ mimeType: string | null; count: number; bytes: number }>;
     chunk(index: number): Promise<string>;
+    download(): void;
   };
 }
 
@@ -887,8 +890,8 @@ const make = Effect.gen(function* () {
     if (desktop) opened.push(desktop.close);
     // Attaching over CDP emulates a light scheme; a tab on System follows the desktop's.
     if (desktop) await desktop.page.emulateMedia({ colorScheme: null });
-    // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
-    if (!desktop && desktopChannel.available) {
+    // Otherwise a desktop that attaches late, or has no channel to draw it, shows its own page.
+    if (!desktop) {
       await runPromise(
         manager
           .markHeadless({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId })
@@ -1920,8 +1923,6 @@ const make = Effect.gen(function* () {
           message: "No recording is active for this tab.",
         });
       }
-      let mimeType: string | null;
-      const chunks: Array<Buffer> = [];
       try {
         await recording.session.send("Page.stopScreencast").catch(constVoid);
         await Promise.all(recording.framesInFlight);
@@ -1945,50 +1946,72 @@ const make = Effect.gen(function* () {
               .catch(constVoid);
           }
         }
-        const stopped = await recording.encoder.evaluate(() =>
+        const { mimeType, count, bytes } = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
         );
-        mimeType = stopped.mimeType;
         // Checked before the transfer so an oversized video never lands in this process.
-        if (stopped.bytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+        if (bytes > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
           throw new ServerBrowserPage.ServerBrowserOperationError({
             tag: "PreviewAutomationRecordingTooLargeError",
             message: "The recording is larger than the attachment limit.",
           });
         }
-        for (let index = 0; index < stopped.count; index += 1) {
-          const chunk = await recording.encoder.evaluate(
-            (chunkIndex) => (globalThis as unknown as EncoderWindow).__t3Recorder.chunk(chunkIndex),
-            index,
-          );
-          chunks.push(Buffer.from(chunk, "base64"));
+        if (!mimeType || bytes === 0) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: "The recording captured no frames.",
+          });
         }
+        const extension = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
+        const pendingId = `${PENDING_ATTACHMENT_THREAD_SEGMENT}-${NodeCrypto.randomUUID()}-${extension}`;
+        const path = NodePath.join(config.attachmentsDir, `${pendingId}.${extension}`);
+        await NodeFSP.mkdir(config.attachmentsDir, { recursive: true });
+        if (bytes >= RECORDING_BINARY_EXPORT_MIN_BYTES) {
+          const stagedPath = `${path}.partial`;
+          try {
+            const [download] = await Promise.all([
+              recording.encoder.waitForEvent("download", {
+                timeout: RECORDING_DOWNLOAD_TIMEOUT_MS,
+              }),
+              recording.encoder.evaluate(() =>
+                (globalThis as unknown as EncoderWindow).__t3Recorder.download(),
+              ),
+            ]);
+            await download.saveAs(stagedPath);
+            if ((await NodeFSP.stat(stagedPath)).size !== bytes) {
+              throw new Error("The recording download is incomplete.");
+            }
+            await NodeFSP.rename(stagedPath, path);
+          } finally {
+            await NodeFSP.rm(stagedPath, { force: true }).catch(constVoid);
+          }
+        } else {
+          const chunks: Array<Buffer> = [];
+          for (let index = 0; index < count; index += 1) {
+            const chunk = await recording.encoder.evaluate(
+              (chunkIndex) =>
+                (globalThis as unknown as EncoderWindow).__t3Recorder.chunk(chunkIndex),
+              index,
+            );
+            chunks.push(Buffer.from(chunk, "base64"));
+          }
+          const data = Buffer.concat(chunks);
+          if (data.byteLength !== bytes) throw new Error("The recording transfer is incomplete.");
+          await NodeFSP.writeFile(path, data);
+        }
+        return {
+          id: pendingId,
+          tabId: tab.tabId,
+          path,
+          mimeType: mimeType.split(";")[0]!,
+          sizeBytes: bytes,
+          createdAt: new Date().toISOString(),
+          uploadedAttachmentId: pendingId,
+        };
       } finally {
         await recording.encoder.close().catch(constVoid);
         tab.recording = null;
       }
-      const data = Buffer.concat(chunks);
-      if (!mimeType || data.byteLength === 0) {
-        throw new ServerBrowserPage.ServerBrowserOperationError({
-          tag: "PreviewAutomationExecutionError",
-          message: "The recording captured no frames.",
-        });
-      }
-
-      const extension = mimeType.startsWith("video/mp4") ? "mp4" : "webm";
-      const pendingId = `${PENDING_ATTACHMENT_THREAD_SEGMENT}-${NodeCrypto.randomUUID()}-${extension}`;
-      const path = NodePath.join(config.attachmentsDir, `${pendingId}.${extension}`);
-      await NodeFSP.mkdir(config.attachmentsDir, { recursive: true });
-      await NodeFSP.writeFile(path, data);
-      return {
-        id: pendingId,
-        tabId: tab.tabId,
-        path,
-        mimeType: mimeType.split(";")[0]!,
-        sizeBytes: data.byteLength,
-        createdAt: new Date().toISOString(),
-        uploadedAttachmentId: pendingId,
-      };
     });
 
   let pointerSequence = 0;
