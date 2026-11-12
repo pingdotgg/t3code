@@ -9,7 +9,8 @@ const NOTICE_MS = 72 * HOUR_MS;
 const MAX_REQUESTS_PER_RUN = 100;
 const MAX_CLOSES_PER_RUN = 50;
 const WRITE_PAUSE_MS = 1_000;
-const MERGEABLE_WAIT_MS = 60_000;
+// Measured here: about two and a half minutes until every open PR has an answer.
+const MERGEABLE_WAIT_MS = 150_000;
 // GitHub stamps a label event and the PR's updatedAt a second or two apart.
 const SAME_MOMENT_MS = 15_000;
 
@@ -17,8 +18,9 @@ const REBASE_LABEL = "needs-rebase";
 const CLOSING_LABEL = "triage:closing";
 const KEEP_OPEN_LABEL = "triage:keep-open";
 const UNVOUCHED_LABEL = "vouch:unvouched";
-const TRUSTED_VOUCH_STATUSES = new Set(["bot", "collaborator", "vouched"]);
+const WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 const EXEMPTIONS_PATH = ".github/TRIAGE_EXEMPTIONS.td";
+const VOUCHED_PATH = ".github/VOUCHED.td";
 const LOGIN_PATTERN = /^github:([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})$/;
 
 // `labels` matches a PR that carries any one of them.
@@ -45,7 +47,12 @@ const SWEEP_QUERY = `
 const RECHECK_QUERY = `
   query ($owner: String!, $repo: String!, $number: Int!) {
     repository(owner: $owner, name: $repo) {
-      pullRequest(number: $number) { state updatedAt labels(first: 100) { nodes { name } } }
+      pullRequest(number: $number) {
+        state
+        mergeable
+        updatedAt
+        labels(first: 100) { nodes { name } }
+      }
     }
   }`;
 
@@ -69,6 +76,17 @@ function parseExemptions(text) {
     logins.add(login);
   }
   if (logins.size === 0) throw new Error(`${EXEMPTIONS_PATH}: no entries`);
+  return logins;
+}
+
+// VOUCHED.td: one `github:login` per line, `#` comments, and `-github:login reason` to denounce.
+function vouchedLogins(text) {
+  const logins = new Set();
+  for (const raw of text.split("\n")) {
+    const entry = raw.trim().split(/\s+/)[0];
+    if (entry.startsWith("github:")) logins.add(entry.slice("github:".length).toLowerCase());
+  }
+  if (logins.size === 0) throw new Error(`${VOUCHED_PATH}: no entries`);
   return logins;
 }
 
@@ -167,7 +185,9 @@ async function sweep({ github, context, core, dryRun }) {
       const fresh = (await github.graphql(RECHECK_QUERY, { ...repo, number })).repository
         .pullRequest;
       if (fresh.state !== "OPEN") continue;
-      action = decide({ ...pr, updatedAt: fresh.updatedAt, labels: fresh.labels }, exemptions, now);
+      // A merge to the base can resolve a conflict without touching the PR, so this is re-read
+      // too. An answer that is not ready yet reads as "not conflicting" and waits for tomorrow.
+      action = decide({ ...pr, ...fresh }, exemptions, now);
       if (!action.startsWith("close")) continue;
     }
 
@@ -229,13 +249,16 @@ async function sweep({ github, context, core, dryRun }) {
 async function enforceOpenLimit({ github, context, core, dryRun }) {
   const pr = context.payload.pull_request;
   const author = pr.user.login;
-  const status = process.env.VOUCH_STATUS;
-  if (!status) {
-    core.warning(`PR #${pr.number}: no vouch status, leaving it open.`);
-    return;
-  }
-  if (TRUSTED_VOUCH_STATUSES.has(status)) return;
+  // Who is trusted is decided here rather than by the vouch action, which reports its own failed
+  // lookups as "not vouched". Every read below throws on failure, and a throw closes nothing.
+  if (pr.user.type === "Bot") return;
   if (parseExemptions(fs.readFileSync(EXEMPTIONS_PATH, "utf8")).has(author.toLowerCase())) return;
+  if (vouchedLogins(fs.readFileSync(VOUCHED_PATH, "utf8")).has(author.toLowerCase())) return;
+  const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+    ...context.repo,
+    username: author,
+  });
+  if (WRITE_PERMISSIONS.has(access.permission)) return;
   if (pr.labels.some((label) => label.name === KEEP_OPEN_LABEL)) return;
   // Someone else reopening a PR is a maintainer overriding the limit.
   const reopened = context.payload.action === "reopened";
