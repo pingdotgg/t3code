@@ -9,6 +9,7 @@ import {
   ContextTransferId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextHandoffId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -55,6 +56,7 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+import { buildBoundedThreadStreamSnapshot } from "./ThreadStream.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
@@ -2093,7 +2095,7 @@ const assertReadsThroughMessageOrdinalIndex = Effect.fn("assertReadsThroughMessa
 );
 
 // Each message's first item orders it, not the stored message order (the assistant reply is stored
-// first); the message-ordinal statement reads those ordinals through migration 84's index.
+// first); the message-ordinal statement reads those ordinals through migration 86's index.
 const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* SqlClient.SqlClient;
@@ -2786,6 +2788,142 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
     }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("SQL snapshot windows leave handoff bodies in SQLite without changing the wire", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-window");
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:handoff-window"),
+        title: "Handoff window",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const providerThreadId = ProviderThreadId.make("provider-thread:handoff-window");
+    const earlierItemId = TurnItemId.make("item:handoff-window:earlier");
+    const handoff = (id: string, status: "ready" | "superseded") => ({
+      id: ContextHandoffId.make(`handoff:handoff-window:${id}`),
+      transferId: null,
+      threadId,
+      targetRunId: RunId.make("run:handoff-window"),
+      fromProviderThreadIds: [providerThreadId],
+      toProviderThreadId: providerThreadId,
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "full_thread_summary" as const,
+      status,
+      summaryMessageId: null,
+      summaryText: `Summary ${id}`,
+      history: {
+        messages: [
+          {
+            role: "user" as const,
+            text: "Earlier request ".repeat(1_000),
+            threadId,
+            runId: null,
+            itemId: earlierItemId,
+            providerThreadId,
+            status: "completed",
+            kind: "user_message",
+          },
+        ],
+        coverage: "full",
+        omittedItems: 0,
+      },
+      delivery: { nativeThreadId: "native", status: "injected" as const, itemIds: [earlierItemId] },
+      createdByProviderInstanceId: providerInstanceId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    // The window keeps a ready handoff and one its rows show; the third is outside it.
+    const handoffs = [
+      handoff("ready", "ready"),
+      handoff("shown", "superseded"),
+      handoff("old", "superseded"),
+    ];
+    for (const payload of handoffs) {
+      yield* store.apply({
+        id: EventId.make(`event:${payload.id}`),
+        type: "context-handoff.updated",
+        threadId,
+        occurredAt: now,
+        payload,
+      });
+    }
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:item"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:handoff-window:handoff"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "handoff",
+        contextHandoffId: handoffs[1]!.id,
+        fromProviderThreadIds: [providerThreadId],
+        toProviderThreadId: providerThreadId,
+        fromProviderInstanceIds: [providerInstanceId],
+        toProviderInstanceId: providerInstanceId,
+        strategy: "full_thread_summary",
+      },
+    });
+
+    const window = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 10 });
+    const windowHandoffs = window.projection.contextHandoffs;
+    assert.deepEqual(
+      windowHandoffs.map((row) => row.id),
+      [handoffs[0]!.id, handoffs[1]!.id],
+    );
+    for (const row of windowHandoffs) {
+      assert.isUndefined(row.history);
+      assert.isUndefined(row.delivery);
+    }
+    const full = yield* store.getThreadSnapshot(threadId);
+    assert.deepEqual(full.projection.contextHandoffs, handoffs);
+    assert.deepEqual(
+      buildBoundedThreadStreamSnapshot(window),
+      buildBoundedThreadStreamSnapshot({
+        ...window,
+        projection: { ...window.projection, contextHandoffs: handoffs.slice(0, 2) },
+      }),
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -5416,7 +5554,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("looks up shell stop requests through the interrupt request index", () =>
+  it.effect("reads shell runs and item counts without walking a thread's history", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
@@ -5425,19 +5563,43 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* projectionStore
         .getShellSnapshot({ projectId, location: "active" })
         .pipe(Effect.withTracer(tracer));
+      const planOf = (statement: string) =>
+        sql
+          .unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`)
+          .pipe(Effect.map((rows) => rows.map((row) => row.detail)));
 
       const threadQuery = statements.find((statement) =>
         statement.includes("AS latest_run_stop_requested"),
       );
       assert.isDefined(threadQuery);
-      const stopRequestLookups = (yield* sql.unsafe<{ readonly detail: string }>(
-        `EXPLAIN QUERY PLAN ${threadQuery}`,
-      ))
-        .map((row) => row.detail)
-        .filter((detail) => detail.startsWith("SEARCH stop_request "));
+      const plan = yield* planOf(threadQuery);
+      const stopRequestLookups = plan.filter((detail) => detail.startsWith("SEARCH stop_request "));
       assert.lengthOf(stopRequestLookups, 2);
       for (const lookup of stopRequestLookups) {
         assert.include(lookup, "orchestration_v2_projection_turn_items_stop_request_idx");
+      }
+      // The active, activity, and pending-secret lookups; walking the ordinal index instead
+      // reads every run of an idle thread.
+      const activeRunLookups = plan.filter(
+        (detail) => detail.startsWith("SEARCH r ") && detail.includes("(thread_id=?"),
+      );
+      assert.lengthOf(activeRunLookups, 4);
+      for (const lookup of activeRunLookups) {
+        assert.include(lookup, "orchestration_v2_projection_runs_thread_status_idx");
+      }
+      const lastExecutedIndex = plan.findIndex((detail) =>
+        detail.includes("orchestration_v2_projection_runs_last_executed_idx"),
+      );
+      assert.notStrictEqual(lastExecutedIndex, -1);
+      // The lookup that follows the search is the sort it no longer needs.
+      assert.notInclude(plan[lastExecutedIndex + 1] ?? "", "USE TEMP B-TREE");
+
+      const countQueries = statements.filter((statement) => statement.includes("item_count"));
+      assert.isNotEmpty(countQueries);
+      for (const countQuery of countQueries) {
+        for (const detail of yield* planOf(countQuery)) {
+          assert.notInclude(detail, "orchestration_v2_projection_turn_items");
+        }
       }
     }),
   );
@@ -5693,6 +5855,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             },
           });
         }
+        let runWrites = 0;
         const applyRun = (
           threadId: ThreadId,
           suffix: string,
@@ -5701,9 +5864,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ) => {
           const runId = RunId.make(`run:shell-item-counts:${suffix}`);
           const rootNodeId = NodeId.make(`node:shell-item-counts:${suffix}`);
+          runWrites += 1;
           return projectionStore
             .apply({
-              id: EventId.make(`event:shell-item-counts:${suffix}:run`),
+              id: EventId.make(`event:shell-item-counts:${suffix}:run:${runWrites}`),
               type: "run.created",
               threadId,
               runId,
@@ -5730,11 +5894,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             })
             .pipe(Effect.as(runId));
         };
-        let ordinal = 0;
-        const applyItem = (threadId: ThreadId, runId: RunId | null) => {
-          ordinal += 1;
+        let items = 0;
+        let writes = 0;
+        // Passing `rewrite` writes that earlier item again, possibly under another run.
+        const applyItem = (threadId: ThreadId, runId: RunId | null, rewrite?: number) => {
+          const ordinal = rewrite ?? (items += 1);
+          writes += 1;
           return projectionStore.apply({
-            id: EventId.make(`event:shell-item-counts:item:${ordinal}`),
+            id: EventId.make(`event:shell-item-counts:write:${writes}`),
             type: "turn-item.updated",
             threadId,
             ...(runId === null ? {} : { runId }),
@@ -5787,6 +5954,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           );
           assert.equal(shell?.itemCount, itemCount);
         }
+
+        // Writing an item again keeps its count; moving it to another run moves the count.
+        const itemCountOf = (threadId: ThreadId) =>
+          projectionStore.getThreadShell(threadId).pipe(Effect.map((shell) => shell?.itemCount));
+        yield* applyItem(busyThreadId, completedRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        yield* applyItem(busyThreadId, rolledBackRunId, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyItem(busyThreadId, null, 3);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+
+        // A run's rollback uncounts its items, and writing the run again counts them back.
+        yield* applyRun(busyThreadId, "busy-completed", 1, true);
+        assert.equal(yield* itemCountOf(busyThreadId), 3);
+        yield* applyRun(busyThreadId, "busy-completed", 1, false);
+        assert.equal(yield* itemCountOf(busyThreadId), 4);
+        // Items written before their run exist count once it does.
+        const lateRunId = RunId.make("run:shell-item-counts:late");
+        yield* applyItem(otherThreadId, lateRunId);
+        assert.equal(yield* itemCountOf(otherThreadId), 1);
+        yield* applyRun(otherThreadId, "late", 2, false);
+        assert.equal(yield* itemCountOf(otherThreadId), 2);
       }),
   );
 
