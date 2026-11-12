@@ -905,7 +905,27 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
   const isMacosGit = platform === "darwin" && command === "git";
+
+  // On POSIX, ensure fallback CLI directories are on the spawn PATH so a
+  // discovered executable can find its interpreter (e.g. node for a script).
   if (platform !== "win32" && !isMacosGit) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    const env =
+      options.env === undefined
+        ? hostEnvironment
+        : options.extendEnv
+          ? { ...hostEnvironment, ...options.env }
+          : options.env;
+    const fallbackDirs = resolveKnownPosixCliDirs(env, platform);
+    if (fallbackDirs.length > 0) {
+      const delimiter = pathDelimiterForPlatform(platform);
+      const existingPath = env.PATH ?? "";
+      const existingEntries = new Set(existingPath.split(delimiter));
+      const missing = fallbackDirs.filter((dir) => !existingEntries.has(dir));
+      if (missing.length > 0) {
+        env.PATH = [...missing, existingPath].filter(Boolean).join(delimiter);
+      }
+    }
     return { command, args: [...args], shell: false };
   }
 
@@ -1034,18 +1054,17 @@ function resolveKnownPosixCliDirs(
     dirs.push(`${npmPrefix}/bin`);
   }
 
-  // nvm default node version
+  // nvm: search all installed versions (newest first) so a CLI installed in
+  // an older version's bin dir is still found when the newest lacks it.
   const nvmDir = env.NVM_DIR?.trim() ?? (home ? `${home}/.nvm` : undefined);
   if (nvmDir) {
     try {
       const versionsDir = NodePath.join(nvmDir, "versions", "node");
       const versions = NodeFS.readdirSync(versionsDir).filter((v) => v.startsWith("v"));
-      if (versions.length > 0) {
-        // Compare version components numerically so v22.10.0 sorts above v22.9.0.
-        const latest = versions.sort((a, b) =>
-          b.localeCompare(a, undefined, { numeric: true }),
-        )[0]!;
-        dirs.push(NodePath.join(versionsDir, latest, "bin"));
+      // Compare version components numerically so v22.10.0 sorts above v22.9.0.
+      const sorted = versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+      for (const version of sorted) {
+        dirs.push(NodePath.join(versionsDir, version, "bin"));
       }
     } catch {
       // nvm not installed or no versions

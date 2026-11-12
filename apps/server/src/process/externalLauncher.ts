@@ -113,6 +113,8 @@ const CommandLookupEnvConfig = Config.all({
   path: Config.String("path").pipe(Config.option),
   PATHEXT: Config.String("PATHEXT").pipe(Config.option),
   HOME: Config.String("HOME").pipe(Config.option),
+  NVM_DIR: Config.String("NVM_DIR").pipe(Config.option),
+  npm_config_prefix: Config.String("npm_config_prefix").pipe(Config.option),
   LOCALAPPDATA: Config.String("LOCALAPPDATA").pipe(Config.option),
   ProgramFiles: Config.String("ProgramFiles").pipe(Config.option),
   ProgramW6432: Config.String("ProgramW6432").pipe(Config.option),
