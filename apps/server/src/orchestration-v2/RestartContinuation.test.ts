@@ -999,6 +999,37 @@ it("backs off twice from a continuation the provider never took, then lets it fa
   );
 });
 
+it.effect.each([1, 22])(
+  "stops continuing a run cut by its fourth restart in a row %i minutes apart",
+  (minutesApart) =>
+    Effect.gen(function* () {
+      const cut = cutMidTurn();
+      const at = (restartsAgo: number) =>
+        DateTime.subtract(now, { minutes: minutesApart * restartsAgo });
+      const chain = [3, 2, 1].map((restartsAgo) => ({
+        ...cut.runs[0]!,
+        id: RunId.make(`run:crash-${restartsAgo}`),
+        ordinal: 4 - restartsAgo,
+        activeAttemptId: RunAttemptId.make(`attempt:crash-${restartsAgo}`),
+        requestedAt: at(restartsAgo + 1),
+        completedAt: at(restartsAgo),
+        restartContinuationOfRunId:
+          restartsAgo === 3 ? undefined : RunId.make(`run:crash-${restartsAgo + 1}`),
+      }));
+      const source = {
+        ...cut.runs[0]!,
+        ordinal: 4,
+        requestedAt: at(1),
+        restartContinuationOfRunId: chain[2]!.id,
+      };
+      const dispatches = yield* continuationDispatches({
+        ...cut,
+        runs: [...chain, source],
+      } as unknown as OrchestrationV2ThreadProjection);
+      assert.lengthOf(dispatches, 0);
+    }),
+);
+
 it.effect("continues again after a continuation fails before its prompt", () =>
   Effect.gen(function* () {
     const cut = cutMidTurn();
