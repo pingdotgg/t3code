@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - a plain Node build script with no Effect runtime: it
+// lists the example folders.
 // Builds each example's web half to its dist/web.js with the example's own vite.config.ts.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

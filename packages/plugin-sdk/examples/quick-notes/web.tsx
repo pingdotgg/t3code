@@ -53,9 +53,12 @@ export default defineWebPlugin<QuickNotesRpc>({
               className="quick-notes-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                void api.rpc
-                  .invoke("add", { text: draft })
-                  .then(() => setDraft(""), showFailure("Quick notes couldn't save that"));
+                const text = draft;
+                void api.rpc.invoke("add", { text }).then(
+                  // Keeps what was typed while it saved.
+                  () => setDraft((current) => (current === text ? "" : current)),
+                  showFailure("Quick notes couldn't save that"),
+                );
               }}
             >
               <Input

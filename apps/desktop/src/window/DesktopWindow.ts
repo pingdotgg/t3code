@@ -329,8 +329,9 @@ function concealPendingQuitWindow(
   window.setOpacity(0);
 }
 
+// The overlay is drawn over the page, so its symbols follow the page's canvas, not the system theme.
 function getWindowTitleBarOptions(
-  shouldUseDarkColors: boolean,
+  canvasDark: boolean,
   platform: NodeJS.Platform,
 ): WindowTitleBarOptions {
   if (platform === "darwin") {
@@ -348,7 +349,7 @@ function getWindowTitleBarOptions(
     titleBarOverlay: {
       color: TITLEBAR_COLOR,
       height: TITLEBAR_HEIGHT,
-      symbolColor: shouldUseDarkColors ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
+      symbolColor: canvasDark ? TITLEBAR_DARK_SYMBOL_COLOR : TITLEBAR_LIGHT_SYMBOL_COLOR,
     },
   };
 }
@@ -364,8 +365,9 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(resolveWindowCanvas(shouldUseDarkColors, themeBackground).color);
-    const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
+    const canvas = resolveWindowCanvas(shouldUseDarkColors, themeBackground);
+    window.setBackgroundColor(canvas.color);
+    const { titleBarOverlay } = getWindowTitleBarOptions(canvas.dark, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
@@ -463,6 +465,7 @@ export const make = Effect.gen(function* () {
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
+    const canvas = resolveWindowCanvas(shouldUseDarkColors, persistedSettings.windowBackground);
     const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
@@ -493,11 +496,10 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: resolveWindowCanvas(shouldUseDarkColors, persistedSettings.windowBackground)
-        .color,
+      backgroundColor: canvas.color,
       ...iconOption,
       title: environment.displayName,
-      ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
+      ...getWindowTitleBarOptions(canvas.dark, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
         // Hidden-renderer throttling stalls first paint; re-enable it after the first reveal.

@@ -179,6 +179,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginWebFiles",
           ["base.css"],
         );
         assert.isUndefined(state?.webRevision);
+        // The route reads through its own checks, not the list's.
+        assert.isDefined(yield* served(host, "linking", "/styles/base.css"));
+        assert.isUndefined(yield* served(host, "linking", "/styles/secret.css"));
+        assert.isUndefined(yield* served(host, "linking", "/web.js"));
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );

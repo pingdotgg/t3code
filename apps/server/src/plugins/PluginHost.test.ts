@@ -819,7 +819,7 @@ module.exports = { activate() {} };`,
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("keeps a quiet channel's value while a busy channel overflows its buffer", () =>
+  it.effect("keeps a quiet channel's value, as published, while a busy channel overflows", () =>
     Effect.gen(function* () {
       yield* writeInstalledPlugin(
         "channels",
@@ -827,7 +827,9 @@ module.exports = { activate() {} };`,
   api.rpc.register("wake", () => api.rpc.publish("quiet", "wake"), { access: "read" });
   api.rpc.register("burst", () => {
     for (let index = 0; index < 100; index++) api.rpc.publish("busy", index);
-    api.rpc.publish("quiet", "after");
+    const after = { said: "after" };
+    api.rpc.publish("quiet", after);
+    after.said = "x".repeat(300 * 1024);
   }, { access: "read" });
 } };`,
       );
@@ -856,7 +858,7 @@ module.exports = { activate() {} };`,
         yield* Deferred.await(reached);
         yield* call("burst");
         yield* Deferred.succeed(release, undefined);
-        assert.deepStrictEqual(yield* Fiber.join(quiet), ["wake", "after"]);
+        assert.deepStrictEqual(yield* Fiber.join(quiet), ["wake", { said: "after" }]);
       }).pipe(Effect.provide(layerHost()));
     }).pipe(Effect.provide(layerConfig())),
   );
@@ -1061,10 +1063,26 @@ module.exports = { activate(api) {
       }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("puts the working version back when a new dropped version fails to start", () =>
+  it.effect("puts the working version back when a new dropped version fails to install", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { stateDir } = yield* ServerConfig.ServerConfig;
+      // Fails the next write of plugins.json once armed.
+      let failConfigWrite = false;
+      const layerConfigWriteFails = layerFileSystemWith((fs) => ({
+        rename: (from, to) => {
+          if (!failConfigWrite || !to.endsWith("plugins.json")) return fs.rename(from, to);
+          failConfigWrite = false;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "rename",
+              pathOrDescriptor: to,
+            }),
+          );
+        },
+      }));
       const encode = (text: string) => new TextEncoder().encode(text);
       const upgrade = (version: string, activate = "") => [
         {
@@ -1105,7 +1123,20 @@ module.exports = { activate(api) {
           yield* fs.readFileString(`${stateDir}/plugins/upgrade/server.cjs`),
           "refuses to start",
         );
-      }).pipe(Effect.provide(layerHost()));
+
+        // A plugins.json that can't be written refuses the install before anything moves.
+        failConfigWrite = true;
+        const unsaved = yield* installer.installFiles(upgrade("3.0.0")).pipe(Effect.flip);
+        assert.strictEqual(unsaved._tag, "PluginConfigError");
+        assert.include(stateOf(yield* listStates(host), "upgrade"), {
+          version: "1.0.0",
+          status: "active",
+        });
+        assert.include(
+          yield* fs.readFileString(`${stateDir}/plugins/upgrade/t3-plugin.json`),
+          '"version":"1.0.0"',
+        );
+      }).pipe(Effect.provide(layerHost().pipe(Layer.provide(layerConfigWriteFails))));
     }).pipe(Effect.provide(layerConfig())),
   );
 

@@ -84,6 +84,22 @@ export const loadsPluginUi = (
   primaryEnvironmentId: EnvironmentId | null,
 ) => choices.get(environmentId) ?? environmentId === primaryEnvironmentId;
 
+/**
+ * Settings hides the choice while the main environment is the only option and is on, but not
+ * while it is off, so it can be turned back on.
+ */
+export const hidesPluginUiChoice = (
+  choices: PluginUiChoices,
+  optionIds: ReadonlyArray<EnvironmentId>,
+  primaryEnvironmentId: EnvironmentId | null,
+) =>
+  primaryEnvironmentId !== null &&
+  optionIds.every(
+    (environmentId) =>
+      environmentId === primaryEnvironmentId &&
+      loadsPluginUi(choices, environmentId, primaryEnvironmentId),
+  );
+
 /** A choice equal to the default is dropped. */
 export function withPluginUiChoice(
   choices: PluginUiChoices,

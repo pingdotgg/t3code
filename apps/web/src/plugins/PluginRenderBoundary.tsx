@@ -7,12 +7,20 @@ import { type PluginOwner, setPluginWebFailure } from "./pluginRegistry";
 // Once per plugin start: a panel that breaks on every render would otherwise report each time.
 const reported = new WeakSet<PluginOwner>();
 
+// A plugin can throw anything, including a value that throws when made into text.
+const errorText = (error: unknown) =>
+  (error instanceof Error && typeof error.message === "string"
+    ? error.message
+    : typeof error === "string" && error !== ""
+      ? error
+      : "a value that isn't an Error"
+  ).slice(0, 500);
+
 const reportRenderFailure = (owner: PluginOwner, what: string, error: unknown) => {
   if (reported.has(owner)) return;
   reported.add(owner);
-  const reason = error instanceof Error ? error.message : String(error);
-  const message = `${what} stopped with an error: ${reason}`;
-  setPluginWebFailure(owner.environmentId, owner.pluginId, message);
+  const message = `${what} stopped with an error: ${errorText(error)}`;
+  setPluginWebFailure(owner.environmentId, owner.pluginId, "web", message);
   toastManager.add({
     type: "error",
     title: `${owner.pluginName} hit an error`,

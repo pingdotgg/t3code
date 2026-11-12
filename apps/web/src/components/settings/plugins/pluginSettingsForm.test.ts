@@ -93,6 +93,30 @@ describe("pluginSettingsForm", () => {
     ],
     ["a union", { type: "object", properties: { a: { anyOf: [{ type: "string" }] } } }, "json"],
     ["a non-object root", { type: "string" }, "json"],
+    [
+      "an object with additional keys and no named ones",
+      { type: "object", properties: {}, additionalProperties: { type: "string" } },
+      "json",
+    ],
+    [
+      "named fields and additional keys",
+      { type: "object", properties: { a: { type: "string" } }, additionalProperties: true },
+      "json",
+    ],
+    [
+      "named fields and pattern keys",
+      {
+        type: "object",
+        properties: { a: { type: "string" } },
+        patternProperties: { "^x-": { type: "string" } },
+      },
+      "json",
+    ],
+    [
+      "named fields closed to other keys",
+      { type: "object", properties: { a: { type: "string" } }, additionalProperties: false },
+      "fields",
+    ],
   ] as const)("gives %s the right form kind", (_name, schema, kind) => {
     expect(pluginSettingsForm(schema).kind).toBe(kind);
   });

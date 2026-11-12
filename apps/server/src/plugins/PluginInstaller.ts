@@ -227,6 +227,11 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
           // it on. A replaced one keeps its switch.
           const enabled =
             existing !== undefined && (yield* host.config).enabled?.[manifest.id] === true;
+          // Before anything stops or moves, so a plugins.json that can't be written changes nothing.
+          yield* host.writeConfig((current) => ({
+            ...current,
+            enabled: { ...current.enabled, [manifest.id]: enabled },
+          }));
           stopped = true;
           yield* host.stop(manifest.id);
           yield* fs
@@ -244,10 +249,6 @@ export const make = Effect.fn("PluginInstaller.make")(function* (host: PluginIns
               hadPrevious ? fs.rename(previous, target).pipe(Effect.ignore) : Effect.void,
             ),
           );
-          yield* host.writeConfig((current) => ({
-            ...current,
-            enabled: { ...current.enabled, [manifest.id]: enabled },
-          }));
           return {
             target,
             hadPrevious,

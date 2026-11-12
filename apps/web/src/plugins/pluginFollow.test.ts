@@ -1,7 +1,11 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { chosenPluginUiEnvironments, withPluginUiChoice } from "./pluginFollow";
+import {
+  chosenPluginUiEnvironments,
+  hidesPluginUiChoice,
+  withPluginUiChoice,
+} from "./pluginFollow";
 
 describe("plugin UI choices", () => {
   it("loads the main environment until it is turned off, and others only once turned on", () => {
@@ -23,5 +27,10 @@ describe("plugin UI choices", () => {
     const mainOff = withPluginUiChoice(both, main, false, main);
     expect(chosenPluginUiEnvironments(mainOff, main)).toEqual([other, remote]);
     expect(withPluginUiChoice(mainOff, main, true, main)).toEqual(both);
+    // Settings hides the choice while the main environment is the only option and is on, and
+    // keeps it while the main environment is off so it can be turned back on.
+    expect(hidesPluginUiChoice(none, [main], main)).toBe(true);
+    expect(hidesPluginUiChoice(mainOff, [main], main)).toBe(false);
+    expect(hidesPluginUiChoice(none, [main, remote], main)).toBe(false);
   });
 });

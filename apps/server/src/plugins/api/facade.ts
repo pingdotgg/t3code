@@ -139,10 +139,7 @@ export const makeFacadeContext = (input: {
         Effect.runForkWith(context)(
           effect.pipe(
             Effect.catchCause((cause) =>
-              Effect.logWarning("plugin background work failed", {
-                pluginId,
-                cause: Cause.pretty(cause).slice(0, 500),
-              }),
+              Effect.logWarning("plugin background work failed", { pluginId }, cause),
             ),
           ),
         ),

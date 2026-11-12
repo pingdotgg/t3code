@@ -172,6 +172,8 @@ it.layer(layer)("PluginRunEvents", (it) => {
       }
       const sql = yield* SqlClient.SqlClient;
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      // Its own history, so a cursor of 0 is older than the pruned point even when run alone.
+      yield* store.appendAgentEvents({ events: [runEvent("run:before-prune", "completed")] });
       const prunedThroughSequence = yield* store.latestApplicationSequence;
       yield* sql`
         INSERT OR REPLACE INTO orchestration_v2_projection_metadata
