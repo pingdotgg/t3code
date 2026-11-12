@@ -932,9 +932,9 @@ export function decodeNotesJson(
     const note = decodeNoteEntry(entry);
     if (Exit.isFailure(note)) continue;
     const value = note.value;
-    if (value.system === true) {
-      const reviewState = SYSTEM_NOTE_REVIEW_STATES.get(value.body?.trim() ?? "");
-      if (reviewState === undefined) continue;
+    const reviewState =
+      value.system === true ? SYSTEM_NOTE_REVIEW_STATES.get(value.body?.trim() ?? "") : undefined;
+    if (reviewState !== undefined) {
       comments.push({
         id: String(value.id),
         kind: "review",
@@ -959,6 +959,8 @@ export function decodeNotesJson(
       url: null,
       path: trimmed(value.position?.new_path) ?? trimmed(value.position?.old_path),
       reviewState: null,
+      // GitLab rejects edits to its own activity notes, such as assignments and pushes.
+      ...(value.system === true ? { canEdit: false } : {}),
     });
   }
   return Result.succeed({ comments, rawCount: decoded.success.length });

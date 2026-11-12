@@ -443,7 +443,7 @@ describe("decodePipelineStageChecksJson", () => {
 });
 
 describe("decodeNotesJson", () => {
-  it("keeps comments and drops GitLab's own activity notes", () => {
+  it("keeps comments and GitLab's own activity notes, read-only", () => {
     const notes = expectSuccess(
       decodeNotesJson(
         JSON.stringify([
@@ -464,12 +464,19 @@ describe("decodeNotesJson", () => {
       ),
     );
 
-    expect(notes.comments).toHaveLength(1);
+    expect(notes.comments).toHaveLength(2);
     expect(notes.comments[0]).toMatchObject({
+      id: "1",
+      kind: "issue-comment",
+      body: "assigned to @bilal",
+      canEdit: false,
+    });
+    expect(notes.comments[1]).toMatchObject({
       id: "2",
       kind: "issue-comment",
       body: "Looks good.",
     });
+    expect(notes.comments[1]).not.toHaveProperty("canEdit");
     expect(notes.rawCount).toBe(3);
   });
 
