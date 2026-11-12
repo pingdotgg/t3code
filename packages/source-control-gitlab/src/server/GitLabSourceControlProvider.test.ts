@@ -61,14 +61,7 @@ it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
       remoteName: "origin",
       remoteUrl: "https://Self-Hosted.Example.Test/group/project.git",
     },
-    auth: {
-      exitCode: ChildProcessSpawner.ExitCode(0),
-      stdout: `self-hosted.example.test
-  ✓ Logged in to self-hosted.example.test as gitlab-user
-  ✓ Token found: ******
-`,
-      stderr: "",
-    },
+    auth: { exitCode: ChildProcessSpawner.ExitCode(0), stdout: "gitlab-user\n", stderr: "" },
   });
 
   assert.deepStrictEqual(provider, {
@@ -79,7 +72,7 @@ it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
 });
 
 it("tells a host glab has no login for apart from output that cannot say", () => {
-  const refine = (stderr: string) =>
+  const refine = (exitCode: number, stdout: string) =>
     GitLabSourceControlProvider.discovery.refineUnknownRemote?.({
       cwd: "/repo",
       context: {
@@ -91,18 +84,11 @@ it("tells a host glab has no login for apart from output that cannot say", () =>
         remoteName: "origin",
         remoteUrl: "https://git.example.test/group/project.git",
       },
-      auth: { exitCode: ChildProcessSpawner.ExitCode(1), stdout: "", stderr },
+      auth: { exitCode: ChildProcessSpawner.ExitCode(exitCode), stdout, stderr: "" },
     });
 
-  assert.strictEqual(
-    refine("x git.example.test has not been authenticated with glab. Run `glab auth login`"),
-    null,
-  );
-  assert.strictEqual(
-    refine("No GitLab instances have been authenticated with glab. Run `glab auth login`"),
-    null,
-  );
-  assert.strictEqual(refine("git.example.test\n  x API call failed: 503"), undefined);
+  assert.strictEqual(refine(0, "\n"), null);
+  assert.strictEqual(refine(1, ""), undefined);
 });
 
 // regression: #15395 self-hosted GitLab remotes resolve bare MR numbers once glab is signed in
@@ -145,18 +131,11 @@ it.effect.each([
                     { command, args, cwd },
                     {
                       command: "glab",
-                      args: ["auth", "status", "--hostname", expectedAuthHost],
+                      args: ["config", "get", "user", "--host", expectedAuthHost],
                       cwd: "/repo",
                     },
                   );
-                  return Effect.succeed(
-                    processOutput(
-                      authenticated
-                        ? `${expectedAuthHost}\n  ✓ Logged in to ${expectedAuthHost} as gitlab-user\n`
-                        : "x code.example.test has not been authenticated with glab.",
-                      { exitCode: ChildProcessSpawner.ExitCode(authenticated ? 0 : 1) },
-                    ),
-                  );
+                  return Effect.succeed(processOutput(authenticated ? "gitlab-user\n" : ""));
                 },
               },
             }).pipe(

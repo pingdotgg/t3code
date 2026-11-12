@@ -87,19 +87,10 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
-const GITLAB_HOST_NOT_LOGGED_IN_PATTERN =
-  /\bnot (?:been )?authenticated with glab\b|\bno gitlab instances? ha(?:s|ve) been authenticated\b/iu;
-
+// `glab config get user --host` reads the stored login, so an offline host still answers.
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
-  const host = input.context.provider.name.toLowerCase();
-  const output = combinedAuthOutput(input.auth);
-  const authenticated = parseGitLabAuthStatusHosts(output).some(
-    (entry) => entry.account !== null && entry.host === host,
-  );
-
-  if (!authenticated) {
-    return GITLAB_HOST_NOT_LOGGED_IN_PATTERN.test(output) ? null : undefined;
-  }
+  if (input.auth.exitCode !== 0) return undefined;
+  if (input.auth.stdout.trim() === "") return null;
 
   return {
     kind: SourceControlProviderKind.make("gitlab"),
@@ -158,7 +149,7 @@ export const discovery = {
     const host = remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
       ? remoteHost.slice(0, provider.name.length)
       : provider.name;
-    return ["auth", "status", "--hostname", host];
+    return ["config", "get", "user", "--host", host];
   },
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
