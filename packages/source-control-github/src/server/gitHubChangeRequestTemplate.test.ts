@@ -16,6 +16,9 @@ const TEMPLATE_DIRECTORIES = [
   ".github/PULL_REQUEST_TEMPLATE",
   "PULL_REQUEST_TEMPLATE",
   "docs/PULL_REQUEST_TEMPLATE",
+  ".github/pull_request_template",
+  "pull_request_template",
+  "docs/pull_request_template",
 ] as const;
 
 const layerPrTemplateDetectionTest = Layer.merge(
