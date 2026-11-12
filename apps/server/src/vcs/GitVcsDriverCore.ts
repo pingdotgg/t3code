@@ -1565,23 +1565,37 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
 
+  // Same rule as resolvePrimaryRemoteName: origin when present, else the first remote.
+  const resolvePrimaryRemoteDefaultBranch = Effect.fn("resolvePrimaryRemoteDefaultBranch")(
+    function* (cwd: string, gitDirArgs: ReadonlyArray<string> = []) {
+      const remotesResult = yield* executeGit(
+        "GitVcsDriver.resolvePrimaryRemoteDefaultBranch.remotes",
+        cwd,
+        [...gitDirArgs, "remote"],
+        { allowNonZeroExit: true },
+      );
+      if (remotesResult.exitCode !== 0) return null;
+      const remoteNames = parseRemoteNamesInGitOrder(remotesResult.stdout);
+      const remoteName = remoteNames.includes("origin") ? "origin" : remoteNames[0];
+      if (remoteName === undefined) return null;
+      const headResult = yield* executeGit(
+        "GitVcsDriver.resolvePrimaryRemoteDefaultBranch.head",
+        cwd,
+        [...gitDirArgs, "symbolic-ref", `refs/remotes/${remoteName}/HEAD`],
+        { allowNonZeroExit: true },
+      );
+      if (headResult.exitCode !== 0) return null;
+      return parseDefaultBranchFromRemoteHeadRef(headResult.stdout, remoteName);
+    },
+  );
+
   const defaultBranchCache = yield* Cache.makeWith(
     (gitCommonDir: string) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fetchCwd =
           path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-        return yield* executeGit(
-          "GitVcsDriver.statusDetails.defaultBranch",
-          fetchCwd,
-          ["--git-dir", gitCommonDir, "symbolic-ref", "refs/remotes/origin/HEAD"],
-          { allowNonZeroExit: true },
-        ).pipe(
-          Effect.map((result) => {
-            if (result.exitCode !== 0) return null;
-            return parseDefaultBranchFromRemoteHeadRef(result.stdout, "origin");
-          }),
-        );
+        return yield* resolvePrimaryRemoteDefaultBranch(fetchCwd, ["--git-dir", gitCommonDir]);
       }),
     {
       capacity: 2_048,
@@ -2114,7 +2128,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const defaultBranch = yield* resolveDefaultBranchName(cwd, "origin");
+    const defaultBranch = yield* resolvePrimaryRemoteDefaultBranch(cwd);
     const isDefaultBranch =
       branch !== null &&
       (branch === defaultBranch ||
@@ -2260,7 +2274,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
         statusCacheKey
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
-          : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
+          : resolvePrimaryRemoteDefaultBranch(cwd).pipe(Effect.orElseSucceed(() => null)),
         statusCacheKey
           ? Cache.get(primaryRemoteExistsCache, statusCacheKey).pipe(
               Effect.orElseSucceed(() => false),
