@@ -1,19 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
 import * as NodeURL from "node:url";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import {
-  CodexSettings,
-  EnvironmentId,
-  ProviderInstanceId,
-  ProviderSetupError,
-} from "@t3tools/contracts";
+import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,7 +23,6 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
-import { CodexShadowHomeSqliteConflictError } from "./Drivers/CodexHomeLayout.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeSettings = Schema.decodeSync(CodexSettings);
@@ -128,11 +121,9 @@ it.live.each(
           if (account === "primary") {
             assert.equal(effective.config.homePath, sharedHome);
             assert.equal(runtime.homeLayout.mode, "direct");
-            assert.isUndefined(effective.environment.CODEX_SQLITE_HOME);
           } else {
-            assert.equal(effective.environment.CODEX_SQLITE_HOME, sharedHome);
             assert.include(effective.config.homePath, instanceId);
-            assert.include(effective.config.homePath, path.join("userdata", "providers", "codex"));
+            assert.include(effective.config.homePath, "userdata/providers/codex");
             assert.equal(runtime.homeLayout.mode, "authOverlay");
             assert.equal(
               yield* fs.readLink(path.join(effective.config.homePath, "sessions")),
@@ -282,114 +273,6 @@ it.live.each(
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-managed-runtime-",
-        }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-      ),
-    ),
-);
-
-it.live.skipIf(!symlinksSupported)(
-  "managed additional account preserves dirty legacy SQLite state and returns a structured setup error",
-  () =>
-    Effect.gen(function* () {
-      const instanceId = ProviderInstanceId.make("codex-personal");
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "codex-shared-home-" });
-      yield* fs.writeFileString(path.join(sharedHome, "config.toml"), "# shared config\n");
-
-      const data = new Map<string, Uint8Array>();
-      const secrets = ServerSecretStore.ServerSecretStore.of({
-        get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
-        set: (key, value) =>
-          Effect.sync(() => {
-            data.set(key, value);
-          }),
-        remove: (key) =>
-          Effect.sync(() => {
-            data.delete(key);
-          }),
-        create: () => Effect.die("unused"),
-        getOrCreateRandom: () => Effect.die("unused"),
-      });
-      const executable = {
-        executablePath: "/user/bin/codex",
-        managedVersionDirectory: null,
-        source: "local" as const,
-        version: "0.166.0",
-      };
-      const layerInstaller = Layer.mock(CodexInstallation.CodexInstallation)({
-        managedDirectory: "/isolated/tools/codex",
-        resolve: () => Effect.succeed(executable),
-        acquire: () => Effect.succeed(executable),
-      });
-
-      yield* Effect.gen(function* () {
-        const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
-        const json = yield* encodeJson({
-          clientId: "oaiapp_test",
-          accessToken: "dummy-owned-access",
-          refreshToken: "dummy-refresh",
-          expiresAt: (yield* Clock.currentTimeMillis) + 3_600_000,
-          earliestRefreshAt: null,
-          scopes: ["chatgpt.tokens.use.direct"],
-          subject: "test-user",
-          email: null,
-        });
-        yield* store.set(new TextEncoder().encode(json));
-
-        const hostEnv = yield* HostProcess.Environment;
-        const runtime = yield* makeCodexManagedRuntime({
-          instanceId,
-          enabled: true,
-          config: decodeSettings({ setupMode: "managed", homePath: sharedHome }),
-          environment: {
-            PATH: hostEnv.PATH,
-            SystemRoot: hostEnv.SystemRoot,
-          },
-        });
-        assert.equal(runtime.homeLayout.mode, "authOverlay");
-        const shadowHome = runtime.homePath;
-        yield* fs.makeDirectory(shadowHome, { recursive: true });
-
-        const databaseName = "thread_history_1.sqlite";
-        const database = path.join(sharedHome, databaseName);
-        const linkedDatabase = path.join(shadowHome, databaseName);
-        const sidecar = path.join(shadowHome, `${databaseName}-shm`);
-        yield* fs.writeFileString(database, "shared-database");
-        yield* fs.symlink(database, linkedDatabase);
-        yield* fs.writeFileString(sidecar, "shadow-sidecar");
-
-        const error = yield* runtime.resolve.pipe(Effect.flip);
-
-        assert.instanceOf(error, ProviderSetupError);
-        assert.equal(error.operation, "runtime");
-        assert.instanceOf(error.cause, CodexShadowHomeSqliteConflictError);
-        assert.include(error.detail, "Codex SQLite recovery is required");
-        assert.equal(yield* fs.readLink(linkedDatabase), database);
-        assert.equal(yield* fs.readFileString(sidecar), "shadow-sidecar");
-      }).pipe(
-        Effect.provide(CodexManagedTokenBroker.layer),
-        Effect.provideService(HostProcess.Arguments, [
-          process.execPath,
-          NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)),
-        ]),
-        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
-          getEnvironmentId: Effect.succeed(
-            EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
-          ),
-        }),
-        Effect.provide(layerInstaller),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("fresh credentials must not require HTTP")),
-        ),
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3-managed-runtime-sqlite-conflict-",
         }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
       ),
     ),

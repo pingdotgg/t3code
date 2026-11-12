@@ -9,7 +9,6 @@ import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -44,7 +43,6 @@ import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
-import { resolveManagedCodexHomeLayout } from "../CodexManagedHome.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 
 const layerDeps = ServerConfig.layerTest(process.cwd(), {
@@ -108,112 +106,6 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
-  it.effect.skipIf(!symlinksSupported)(
-    "surfaces managed SQLite recovery while preserving authenticated provider state",
-    () =>
-      Effect.gen(function* () {
-        const instanceId = ProviderInstanceId.make("sqlite-conflict-managed-account");
-        const credentials = new Map<string, Uint8Array>();
-        const secrets = ServerSecretStore.ServerSecretStore.of({
-          get: (key) => Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
-          set: (key, value) =>
-            Effect.sync(() => {
-              credentials.set(key, value);
-            }),
-          remove: (key) =>
-            Effect.sync(() => {
-              credentials.delete(key);
-            }),
-          create: () => Effect.die("unused"),
-          getOrCreateRandom: () => Effect.die("unused"),
-        });
-
-        yield* Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const serverConfig = yield* ServerConfig.ServerConfig;
-          const installation = yield* CodexInstallation.CodexInstallation;
-          const sharedHome = NodePath.join(serverConfig.stateDir, "sqlite-conflict-shared-home");
-          yield* fs.makeDirectory(sharedHome, { recursive: true });
-          yield* fs.writeFileString(NodePath.join(sharedHome, "config.toml"), "# shared config\n");
-          const config = {
-            ...CodexDriver.defaultConfig(),
-            setupMode: "managed" as const,
-            homePath: sharedHome,
-          };
-          const layout = yield* resolveManagedCodexHomeLayout(
-            serverConfig.stateDir,
-            instanceId,
-            config,
-          );
-          const shadowHome = layout.effectiveHomePath!;
-          yield* fs.makeDirectory(shadowHome, { recursive: true });
-          const databaseName = "thread_history_1.sqlite";
-          const database = NodePath.join(sharedHome, databaseName);
-          const linkedDatabase = NodePath.join(shadowHome, databaseName);
-          const sidecar = NodePath.join(shadowHome, `${databaseName}-shm`);
-          yield* fs.writeFileString(database, "shared-database");
-          yield* fs.symlink(database, linkedDatabase);
-          yield* fs.writeFileString(sidecar, "shadow-sidecar");
-
-          const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
-          const json = yield* encodeCredentials({
-            clientId: "oaiapp_test",
-            accessToken: "dummy-owned-access",
-            refreshToken: "dummy-refresh",
-            expiresAt: Number.MAX_SAFE_INTEGER,
-            earliestRefreshAt: null,
-            scopes: ["chatgpt.tokens.use.direct"],
-            subject: "test-user",
-            email: "account@example.test",
-          });
-          yield* store.set(new TextEncoder().encode(json));
-
-          const executable = {
-            executablePath: "/user/bin/codex",
-            managedVersionDirectory: null,
-            source: "local" as const,
-            version: "0.166.0",
-          };
-          const instance = yield* CodexDriver.create({
-            instanceId,
-            displayName: "SQLite conflict account",
-            enabled: true,
-            environment: [],
-            config,
-          }).pipe(
-            Effect.provideService(
-              CodexInstallation.CodexInstallation,
-              CodexInstallation.CodexInstallation.of({
-                ...installation,
-                managedDirectory: "unused-managed-installation",
-                resolve: () => Effect.succeed(executable),
-                acquire: () => Effect.succeed(executable),
-              }),
-            ),
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make(() => Effect.die("SQLite conflict must fail before spawn")),
-            ),
-            Effect.provideService(
-              HttpClient.HttpClient,
-              HttpClient.make(() => Effect.die("SQLite conflict must fail before HTTP")),
-            ),
-          );
-
-          const snapshot = yield* instance.snapshot.refresh;
-
-          expect(snapshot.status).toBe("error");
-          expect(snapshot.installed).toBe(true);
-          expect(snapshot.auth.status).toBe("authenticated");
-          expect(snapshot.auth.email).toBe("account@example.test");
-          expect(snapshot.models).toEqual([]);
-          expect(snapshot.message).toContain("Codex SQLite recovery is required");
-          expect(yield* fs.readLink(linkedDatabase)).toBe(database);
-          expect(yield* fs.readFileString(sidecar)).toBe("shadow-sidecar");
-        }).pipe(Effect.provideService(ServerSecretStore.ServerSecretStore, secrets));
-      }),
-  );
-
   const checkManagedAccount = (replacementTiming: "unchanged" | "during-probe") =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");

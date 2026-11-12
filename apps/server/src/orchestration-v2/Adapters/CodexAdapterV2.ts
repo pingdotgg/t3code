@@ -113,7 +113,6 @@ import {
   toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
 import {
-  codexHomeEnvironment,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
@@ -1702,7 +1701,6 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const processEnv =
     hooks.resolveRuntime === undefined
       ? yield* materializeCodexShadowHome(homeLayout, environmentOverrides).pipe(
-          Effect.andThen(() => codexHomeEnvironment(homeLayout, environmentOverrides)),
           Effect.mapError(
             (cause) =>
               new ProviderAdapterDriverCreateError({

@@ -11,7 +11,7 @@ import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeR
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
-import { codexHomeEnvironment, materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
+import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
@@ -92,7 +92,6 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       profileKey,
     ]);
     const homeEnvironment = yield* materializeCodexShadowHome(homeLayout, options.environment).pipe(
-      Effect.andThen(() => codexHomeEnvironment(homeLayout, options.environment)),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.mapError(

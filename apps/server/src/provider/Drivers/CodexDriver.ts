@@ -52,7 +52,6 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
   codexContinuationIdentity,
-  codexHomeEnvironment,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -204,7 +203,6 @@ export const CodexDriver: ProviderDriver<
       continuationGroupKey: continuationIdentity.continuationKey,
     });
     const processEnv = yield* materializeCodexShadowHome(homeLayout, environmentOverrides).pipe(
-      Effect.andThen(() => codexHomeEnvironment(homeLayout, environmentOverrides)),
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({

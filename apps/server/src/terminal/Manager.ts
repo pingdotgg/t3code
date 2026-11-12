@@ -67,7 +67,6 @@ import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   codexHomeEnvironment,
-  materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
@@ -1480,23 +1479,10 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
       if (layout.mode === "authOverlay") {
-        const hostEnv = yield* HostProcess.Environment;
-        const clientEnv = input.env ?? {};
-        const isWindows = (yield* HostProcess.Platform) === "win32";
-        const sqliteOverride = (environment: NodeJS.ProcessEnv) =>
-          Object.entries(environment).find(([name]) =>
-            isWindows ? name.toUpperCase() === "CODEX_SQLITE_HOME" : name === "CODEX_SQLITE_HOME",
-          )?.[1];
-        // Preserve client-over-host precedence even when Windows supplies a different casing.
-        const selectedOverride = sqliteOverride(clientEnv) ?? sqliteOverride(hostEnv);
-        const inherited = yield* mergeProviderInstanceEnvironment(instance.environment, {
-          ...hostEnv,
-          ...clientEnv,
-          ...(selectedOverride !== undefined ? { CODEX_SQLITE_HOME: selectedOverride } : {}),
-        });
-        const sqliteEnvironment = yield* Effect.gen(function* () {
-          yield* materializeCodexShadowHome(layout, inherited);
-          return yield* codexHomeEnvironment(layout, inherited);
+        const hostEnvironment = yield* HostProcess.Environment;
+        const sqliteEnvironment = yield* codexHomeEnvironment(layout, {
+          ...hostEnvironment,
+          ...resolved,
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -1511,14 +1497,9 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
           Effect.provideService(FileSystem.FileSystem, input.fileSystem),
           Effect.provideService(Path.Path, input.path),
         );
-        resolved = {
-          ...Object.fromEntries(
-            Object.entries(resolved).filter(
-              ([key]) => !isWindows || key.toUpperCase() !== "CODEX_SQLITE_HOME",
-            ),
-          ),
-          CODEX_SQLITE_HOME: sqliteEnvironment.CODEX_SQLITE_HOME,
-        };
+        if (sqliteEnvironment.CODEX_SQLITE_HOME) {
+          resolved = { ...resolved, CODEX_SQLITE_HOME: sqliteEnvironment.CODEX_SQLITE_HOME };
+        }
       }
     }
   } else if (instance.driver === "claudeAgent") {
