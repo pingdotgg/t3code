@@ -1021,7 +1021,20 @@ export const make = Effect.fn("ManagedRelayClient.makeWithBackgroundRelay")(func
     ...primary,
     listDevices: background.listDevices,
     registerDevice: background.registerDevice,
-    unregisterDevice: background.unregisterDevice,
+    unregisterDevice: Effect.fn("ManagedRelayClient.unregisterDeviceFromRelays")(function* (
+      input: Parameters<typeof primary.unregisterDevice>[0],
+    ) {
+      // An override can leave a device registered at the previous primary destination.
+      const [primaryResult, backgroundResult] = yield* Effect.all(
+        [
+          Effect.exit(primary.unregisterDevice(input)),
+          Effect.exit(background.unregisterDevice(input)),
+        ],
+        { concurrency: 2 },
+      );
+      yield* primaryResult;
+      return yield* backgroundResult;
+    }),
     registerLiveActivity: background.registerLiveActivity,
     getAgentActivitySnapshot: background.getAgentActivitySnapshot,
     resetTokenCache: primary.resetTokenCache.pipe(Effect.ensuring(background.resetTokenCache)),

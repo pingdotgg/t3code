@@ -43,14 +43,29 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
-  it.effect.each([false, true])(
-    "routes background delivery separately and clears both caches (store clear defects: %s)",
-    (defectOnClear) => {
+  it.effect.each([
+    { defectOnClear: false, failedUnregistrationRelay: null },
+    { defectOnClear: true, failedUnregistrationRelay: null },
+    { defectOnClear: false, failedUnregistrationRelay: "https://relay.example.test" },
+    { defectOnClear: false, failedUnregistrationRelay: "https://background.example.test" },
+  ])(
+    "routes background delivery separately and clears registrations and caches (%j)",
+    ({ defectOnClear, failedUnregistrationRelay }) => {
       const requests: Array<{ url: string; authorization: string | null }> = [];
+      const registrations = new Set(["https://relay.example.test"]);
       let exchanges = 0;
       const fetchFn = ((input, init) => {
         const url = String(input);
         requests.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+        if (url.endsWith("/v1/mobile/devices") && init?.method === "POST") {
+          registrations.add(new URL(url).origin);
+        }
+        if (url.endsWith("/v1/mobile/devices/device-1") && init?.method === "DELETE") {
+          if (new URL(url).origin === failedUnregistrationRelay) {
+            return Promise.reject(new Error("Relay is unavailable"));
+          }
+          registrations.delete(new URL(url).origin);
+        }
         if (url.endsWith("/v1/client/dpop-token")) {
           exchanges += 1;
           const payload = new URLSearchParams(
@@ -127,13 +142,26 @@ describe("ManagedRelayClient", () => {
           payload: { deviceId: "device-1", activityPushToken: "activity-token" },
         });
         yield* client.getAgentActivitySnapshot({ clerkToken: token });
-        yield* client.unregisterDevice({ clerkToken: token, deviceId: "device-1" });
+        const unregistered = yield* Effect.exit(
+          client.unregisterDevice({ clerkToken: token, deviceId: "device-1" }),
+        );
+        expect(Exit.isFailure(unregistered)).toBe(failedUnregistrationRelay !== null);
+        expect([...registrations]).toEqual(
+          failedUnregistrationRelay === null ? [] : [failedUnregistrationRelay],
+        );
         expect(client.relayUrl).toBe(primaryUrl);
         expect(
           requests.slice(0, primaryRequests).every((request) => request.url.startsWith(primaryUrl)),
         ).toBe(true);
         expect(
-          requests.slice(primaryRequests).every((request) => request.url.startsWith(backgroundUrl)),
+          requests
+            .slice(primaryRequests)
+            .every(
+              (request) =>
+                request.url.startsWith(backgroundUrl) ||
+                request.url === `${primaryUrl}/v1/mobile/devices/device-1` ||
+                request.url === `${primaryUrl}/v1/client/dpop-token`,
+            ),
         ).toBe(true);
         for (const request of requests.filter(
           (request) =>
