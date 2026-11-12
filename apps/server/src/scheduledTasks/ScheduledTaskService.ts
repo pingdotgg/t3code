@@ -768,10 +768,12 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
+      readonly pause: boolean;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
+            enabled = CASE WHEN ${input.pause ? 1 : 0} = 1 THEN 0 ELSE enabled END,
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
@@ -1045,6 +1047,13 @@ export const layer = Layer.effect(
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
+        // An archived destination fails every later run too, so pause instead of retrying.
+        const destinationArchived =
+          !runSucceeded &&
+          Option.exists(
+            Cause.findErrorOption<{ readonly _tag: string }>(result.cause),
+            (error) => error._tag === "ThreadManagementThreadArchivedError",
+          );
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
         // files, and the transaction holds SQLite's writer lock.
@@ -1052,7 +1061,10 @@ export const layer = Layer.effect(
         const record = Effect.gen(function* () {
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
-          const scheduleSource = current ?? task;
+          const scheduleSource = {
+            ...(current ?? task),
+            ...(destinationArchived ? { enabled: false } : {}),
+          };
           const completed: ScheduledTask = {
             ...scheduleSource,
             updatedAt: iso(completedAt),
@@ -1077,6 +1089,7 @@ export const layer = Layer.effect(
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            pause: destinationArchived,
           });
           let written = false;
           if (webhook === undefined) written = yield* completion;
