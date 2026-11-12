@@ -1,4 +1,4 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type { OrchestrationV2HistoricalMessage, ThreadSpecialist } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -511,6 +511,8 @@ export interface ProviderAdapterV2EnsureThreadInput {
   readonly providerSessionId?: ProviderSessionId;
   readonly existingProviderThread?: OrchestrationV2ProviderThread;
   readonly forceNewNativeThread?: boolean;
+  /** Durable specialist binding; providers merge its MCP servers at thread launch. */
+  readonly specialist?: ThreadSpecialist;
 }
 
 export interface ProviderAdapterV2TurnInput {

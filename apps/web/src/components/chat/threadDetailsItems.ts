@@ -11,6 +11,7 @@ export const THREAD_DETAILS_ITEMS = [
   { id: "work", label: "Work", defaultVisible: true },
   { id: "servers", label: "Servers", defaultVisible: true },
   { id: "specialist", label: "Specialist", defaultVisible: true },
+  { id: "role", label: "Role tools", defaultVisible: true },
   { id: "automations", label: "Automations", defaultVisible: true },
   { id: "lineage", label: "Lineage", defaultVisible: true },
   { id: "sideChats", label: "Side chats", defaultVisible: true },

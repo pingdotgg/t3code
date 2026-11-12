@@ -24,6 +24,7 @@ import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadOwnedWorkPanel } from "./ThreadOwnedWorkPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
+import { ThreadSpecialistLoadoutPanel } from "./ThreadSpecialistLoadoutPanel";
 import { ThreadSpecialistPanel } from "./ThreadSpecialistPanel";
 import {
   ThreadDetailsContext,
@@ -256,6 +257,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
               {density === "full" && !props.draftId && visible.specialist ? (
                 <ThreadSpecialistPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
+              ) : null}
+
+              {density === "full" && !props.draftId && visible.role ? (
+                <ThreadSpecialistLoadoutPanel
                   environmentId={props.environmentId}
                   threadId={props.threadId}
                 />

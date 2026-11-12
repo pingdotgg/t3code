@@ -40,6 +40,8 @@ import {
   ThreadSpecialistInstructions,
   ThreadSpecialistKey,
   ThreadSpecialistLabel,
+  ThreadSpecialistMcpServers,
+  ThreadSpecialistSkillNames,
 } from "./threadSpecialist.ts";
 import {
   OrchestrationV2Actor,
@@ -355,6 +357,18 @@ export const OrchestratorMcpFindOrOpenSpecialistInput = Schema.Struct({
   instructions: Schema.optional(
     ThreadSpecialistInstructions.annotate({
       description: "Domain brief stored on the binding. Applied when creating or rebinding.",
+    }),
+  ),
+  skills: Schema.optional(
+    ThreadSpecialistSkillNames.annotate({
+      description:
+        "Skill names attached to this role. Agents in the role get them in their loadout automatically.",
+    }),
+  ),
+  mcpServers: Schema.optional(
+    ThreadSpecialistMcpServers.annotate({
+      description:
+        "Extra MCP servers merged into the provider session for this role (http or stdio).",
     }),
   ),
   title: Schema.optional(

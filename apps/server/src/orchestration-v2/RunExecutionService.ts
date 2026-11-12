@@ -23,6 +23,7 @@ import {
   type RunAttemptId,
   type ThreadId,
   type TurnItemId,
+  formatSpecialistRoleLoadout,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
@@ -1802,7 +1803,7 @@ export const layer: Layer.Layer<
           }),
         );
         yield* touchMcpCredential;
-        const appContext = (yield* mcpAppModelContext
+        const mcpAppContext = (yield* mcpAppModelContext
           .forThread(input.run.threadId)
           .pipe(
             Effect.catch((cause) =>
@@ -1817,6 +1818,14 @@ export const layer: Layer.Layer<
           key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
           text: entry.text,
         }));
+        const specialist = input.appThread.specialist;
+        const specialistRoleLoadout = formatSpecialistRoleLoadout(specialist);
+        const appContext = [
+          ...mcpAppContext,
+          ...(specialist === undefined || specialistRoleLoadout === undefined
+            ? []
+            : [{ key: `specialist_role_${specialist.key}`, text: specialistRoleLoadout }]),
+        ];
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,

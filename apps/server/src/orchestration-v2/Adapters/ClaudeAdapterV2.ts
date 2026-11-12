@@ -131,6 +131,9 @@ import {
   type ThreadId,
   resolveIdleCompaction,
   isDelegatedAppThread,
+  formatSpecialistRoleLoadout,
+  specialistMcpServerEntries,
+  type ThreadSpecialist,
 } from "@t3tools/contracts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -1915,6 +1918,8 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** Role brief + skills for a durable specialist thread. */
+  readonly specialistRoleLoadout?: string;
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -2046,6 +2051,7 @@ export function makeClaudeQueryOptions(input: {
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
+        ...(input.specialistRoleLoadout === undefined ? [] : [input.specialistRoleLoadout]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -2171,17 +2177,48 @@ export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 // allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
 // limited to annotated read-only tools in read-only sandboxes.
 
+function claudeSpecialistMcpServers(
+  specialist: ThreadSpecialist | undefined,
+): NonNullable<ClaudeQueryOptions["mcpServers"]> {
+  const servers: NonNullable<ClaudeQueryOptions["mcpServers"]> = {};
+  for (const [name, server] of specialistMcpServerEntries(specialist)) {
+    servers[name] =
+      server.type === "http"
+        ? {
+            type: "http" as const,
+            url: server.url,
+            ...(server.headers === undefined ? {} : { headers: server.headers }),
+          }
+        : {
+            type: "stdio" as const,
+            command: server.command,
+            ...(server.args === undefined ? {} : { args: [...server.args] }),
+            ...(server.env === undefined ? {} : { env: server.env }),
+          };
+  }
+  return servers;
+}
+
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly readOnlySandbox: boolean;
   readonly allowedTools?: ReadonlyArray<string>;
+  readonly specialist?: ThreadSpecialist;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
+  const roleServers = claudeSpecialistMcpServers(input.specialist);
   const session = input.mcpSession;
   if (session === undefined) {
-    return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
+    const mcpServers =
+      Object.keys(roleServers).length === 0
+        ? undefined
+        : (roleServers as ClaudeQueryOptions["mcpServers"]);
+    return {
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(mcpServers === undefined ? {} : { mcpServers }),
+    };
   }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
@@ -2189,6 +2226,7 @@ export function claudeMcpQueryOverrides(input: {
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
+      ...roleServers,
       "t3-code": {
         type: "http",
         url: session.endpoint,
@@ -11359,6 +11397,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           const queryPolicy = yield* queryPolicyForTurn(turnInput);
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const specialist = turnInput.appThread.specialist;
+          const specialistRoleLoadout = formatSpecialistRoleLoadout(specialist);
           const mcpOverrides = claudeMcpQueryOverrides({
             mcpSession,
             readOnlySandbox:
@@ -11366,6 +11406,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(queryPolicy.allowedTools === undefined
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
+            ...(specialist === undefined ? {} : { specialist }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(
@@ -11497,6 +11538,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpOverrides.mcpServers === undefined
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
+            ...(specialistRoleLoadout === undefined ? {} : { specialistRoleLoadout }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined

@@ -235,7 +235,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
 
 const FindOrOpenSpecialistTool = Tool.make("find_or_open_specialist", {
   description:
-    "Add or restore a durable specialist thread by stable `key` (e.g. `dev-ui`) in a project: resume an existing binding, unarchive a retired seat, or create one. Keeps context across days; not a turn-scoped `delegate_task`. Creating needs an active run. Pair with `retire_specialist` to stop-archive. In your reply, name it as its `link` verbatim.",
+    "Resume or create a durable specialist thread by stable `key` (e.g. `dev-ui`) in a project. Optional `skills` and `mcpServers` attach to the role and are injected automatically on turns. Add, restore, or unarchive an existing binding. Keeps context across days; not a turn-scoped `delegate_task`. Creating needs an active run. Pair with `retire_specialist` to stop-archive. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpFindOrOpenSpecialistInput,
   success: OrchestratorMcpFindOrOpenSpecialistResult,
   failure: OrchestratorMcpFailure,
