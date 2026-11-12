@@ -67,6 +67,23 @@ function permissionRequest(
 }
 
 describe("AntigravityAdapterV2 flavor", () => {
+  it("selects native Auto and asks about permissions the agent still escalates", () => {
+    const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "auto",
+      interactionMode: "default",
+      cwd: "/workspace",
+    });
+    assert.strictEqual(flavor.sessionModeForPolicy?.(policy), "auto");
+    assert.strictEqual(flavor.runtimeModeForSessionMode?.("auto"), "auto");
+    assert.strictEqual(
+      flavor.permissionDisposition?.(
+        policy,
+        permissionRequest("command", [{ optionId: "allow", name: "Allow", kind: "allow_once" }]),
+      ),
+      "ask",
+    );
+  });
+
   it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
     const batch = flavor.extractSubagentUpdate?.({
       toolCallId: "trajectory:4",

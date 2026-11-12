@@ -283,9 +283,16 @@ export const AntigravityDriver: ProviderDriver<
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
-        ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
-          : {}),
+        setMode: Effect.fn("AntigravityDriver.setMode")(function* (modeId: string) {
+          const modes = yield* runtime.getModeState;
+          const selected =
+            modeId === "auto" && !modes?.availableModes.some((mode) => mode.id === "auto")
+              ? "default"
+              : modeId;
+          return yield* runtime.setMode(
+            executable.harnessPath === null ? antigravityCliSessionMode(selected) : selected,
+          );
+        }),
         start: () =>
           runtime
             .start()
