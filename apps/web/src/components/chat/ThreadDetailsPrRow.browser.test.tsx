@@ -414,8 +414,6 @@ it("requires fresh confirmation when the project default merge method changes", 
   expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain("using merge");
   state.projectMergeMethods = { repository: "squash" };
   await screen.rerender(row("After"));
-  expect(document.querySelector('[role="alertdialog"]')?.getAttribute("data-ending-style")).toBe(
-    "",
-  );
+  await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
   expect(state.perform).not.toHaveBeenCalled();
 });
