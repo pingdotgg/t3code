@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - a plain test that scans the source tree once.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
