@@ -138,6 +138,11 @@ export function observeSelectionActions({
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
     if (event.key === "Escape") {
+      // A showing action owns this Escape; the chat would otherwise also stop the agent.
+      if (getActionElement?.()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       dismiss();
     } else if (!pointerDown) {
       cancelPending();

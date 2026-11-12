@@ -60,6 +60,7 @@ import {
   DEFAULT_WHEN_VARIABLE,
   isKnownWhenVariable,
   keybindingConflictLabels,
+  commandRecordsEscape,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
   groupKeybindingRows,
@@ -740,9 +741,9 @@ function useKeybindingRowEditor({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (event.key === "Escape" && !(isRecording && commandRecordsEscape(row.command))) {
       const field = event.currentTarget;
       flushSync(() => setDraft({ keyDraft: row.key, isRecording: false }));
       // The field may unmount for the pill; focus would otherwise drop to the page.
@@ -754,7 +755,13 @@ function useKeybindingRowEditor({
       layoutCharacter: true,
     });
     if (!next) return;
-    setDraft({ keyDraft: next, isRecording: false });
+    if (event.key !== "Escape") {
+      setDraft({ keyDraft: next, isRecording: false });
+      return;
+    }
+    // Re-recording the saved Esc swaps the field for the pill; without focus the next Esc closes settings.
+    flushSync(() => setDraft({ keyDraft: next, isRecording: false }));
+    pillRef.current?.focus();
   };
 
   return {
@@ -1073,9 +1080,9 @@ function useNewKeybindingDraft({
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
-    if (event.key === "Escape") {
-      // An unhandled Escape closes the settings page.
-      event.stopPropagation();
+    // An unhandled Escape closes the settings page.
+    if (event.key === "Escape") event.stopPropagation();
+    if (event.key === "Escape" && !(isRecording && commandRecordsEscape(commandDraft))) {
       setDraft({ keyDraft: "", isRecording: false });
       event.currentTarget.blur();
       return;
