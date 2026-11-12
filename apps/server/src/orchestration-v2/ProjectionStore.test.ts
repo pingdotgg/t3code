@@ -5039,8 +5039,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
       );
 
-      // A steer cancels the queued run before it starts while the steered run keeps writing, so
-      // the queued message leaves the window but its run is still the shell's latest run.
+      // A steer moves the cancelled queued message outside the window.
       const steeredItemId = "turn-item:bounded-sql-history:steered-output";
       const steeredRunId = RunId.make("run:bounded-sql-history:1000");
       yield* sql`
@@ -5078,7 +5077,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isFalse(
         steeredSnapshot.projection.turnItems.some((item) => item.runId === cancelledRunId),
       );
-      assert.isTrue(steeredSnapshot.projection.runs.some((run) => run.id === cancelledRunId));
+      const latestRunId = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )?.latestRunId;
+      assert.equal(latestRunId, hiddenRunId);
+      assert.isFalse(
+        steeredSnapshot.projection.turnItems.some((item) => item.runId === latestRunId),
+      );
+      assert.isTrue(steeredSnapshot.projection.runs.some((run) => run.id === latestRunId));
       yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${steeredItemId}`;
 
       const interruptRunId = RunId.make("run:bounded-sql-history:interrupt");
