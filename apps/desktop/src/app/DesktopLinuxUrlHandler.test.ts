@@ -26,7 +26,10 @@ interface RecordedRegistration {
   readonly files: Array<{ readonly path: string; readonly content: string }>;
   readonly commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
   readonly copies: Array<{ readonly source: string; readonly destination: string }>;
+  readonly icons: Array<{ readonly path: string; readonly bytes: ReadonlyArray<number> }>;
 }
+
+const ICON_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
 const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {}) =>
   DesktopEnvironment.DesktopEnvironment.of({
@@ -69,7 +72,7 @@ const layerHandler = (
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
     readonly iconSource?: string;
-    readonly iconCopyError?: PlatformError.PlatformError;
+    readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
@@ -92,10 +95,25 @@ const layerHandler = (
         }),
         FileSystem.layerNoop({
           copyFile: (source, destination) =>
-            input.iconCopyError
-              ? Effect.fail(input.iconCopyError)
+            Effect.sync(() => {
+              recorded.copies.push({ source, destination });
+            }),
+          readFile: (path) =>
+            path === input.iconSource
+              ? Effect.succeed(ICON_BYTES)
+              : Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "readFile",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+          writeFile: (path, bytes) =>
+            input.iconWriteError
+              ? Effect.fail(input.iconWriteError)
               : Effect.sync(() => {
-                  recorded.copies.push({ source, destination });
+                  recorded.icons.push({ path, bytes: [...bytes] });
                 }),
           readFileString: () => Effect.succeed(input.existingEntry ?? ""),
           makeDirectory: (path) =>
@@ -162,6 +180,7 @@ const emptyRecording = (): RecordedRegistration => ({
   files: [],
   commands: [],
   copies: [],
+  icons: [],
 });
 
 describe("DesktopLinuxUrlHandler", () => {
@@ -290,22 +309,21 @@ describe("DesktopLinuxUrlHandler", () => {
         }),
       });
       assert.deepEqual(recorded.files, []);
-      assert.deepEqual(recorded.copies, [
-        { source: "/tmp/.mount_T3/resources/icon.png", destination: iconPath },
-      ]);
+      assert.deepEqual(recorded.copies, [], "icon must not be copied out of the app bundle");
+      assert.deepEqual(recorded.icons, [{ path: iconPath, bytes: [...ICON_BYTES] }]);
       assert.equal(recorded.commands.at(-1)?.command, "xdg-mime");
     });
   });
 
-  it.effect("still registers the handler when copying its icon fails", () => {
+  it.effect("still registers the handler when installing its icon fails", () => {
     const recorded = emptyRecording();
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         iconSource: "/tmp/.mount_T3/resources/icon.png",
-        iconCopyError: PlatformError.systemError({
+        iconWriteError: PlatformError.systemError({
           _tag: "PermissionDenied",
           module: "FileSystem",
-          method: "copyFile",
+          method: "writeFile",
           description: "read-only icon directory",
         }),
       });
@@ -366,68 +384,70 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "continues registration after a timed-out cache helper ignores SIGTERM",
-    () =>
-      Effect.gen(function* () {
-        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const nodeExecutable = yield* HostProcess.ExecutablePath;
-        const recorded = emptyRecording();
-        const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
-        const ready = yield* Deferred.make<void>();
-        const processSpawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
-            if (!ChildProcess.isStandardCommand(command)) {
-              return yield* Effect.die("expected a single registration command");
-            }
-            recorded.commands.push({ command: command.command, args: command.args });
-            if (command.command !== "update-desktop-database") return mockProcess(0);
-            const child = yield* realSpawner.spawn(
-              ChildProcess.make(
-                nodeExecutable,
-                [
-                  "-e",
-                  // The watchdog makes the unfixed case exit with a distinguishable code.
-                  "process.on('SIGTERM', () => setTimeout(() => process.exit(99), 5000));" +
-                    "process.stdout.write('ready\\n'); setInterval(() => {}, 2147483647);",
-                ],
-                { ...command.options, stdout: "pipe" },
+  for (const stalledHelper of ["update-desktop-database", "xdg-mime"] as const) {
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+      `finishes registration after a timed-out ${stalledHelper} ignores SIGTERM`,
+      () =>
+        Effect.gen(function* () {
+          const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const nodeExecutable = yield* HostProcess.ExecutablePath;
+          const recorded = emptyRecording();
+          const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+          const ready = yield* Deferred.make<void>();
+          const processSpawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command)) {
+                return yield* Effect.die("expected a single registration command");
+              }
+              recorded.commands.push({ command: command.command, args: command.args.map(String) });
+              if (command.command !== stalledHelper) return mockProcess(0);
+              const child = yield* realSpawner.spawn(
+                ChildProcess.make(
+                  nodeExecutable,
+                  [
+                    "-e",
+                    // The watchdog makes the unfixed case exit with a distinguishable code.
+                    "process.on('SIGTERM', () => setTimeout(() => process.exit(99), 5000));" +
+                      "process.stdout.write('ready\\n'); setInterval(() => {}, 2147483647);",
+                  ],
+                  { ...command.options, stdout: "pipe" },
+                ),
+              );
+              yield* Deferred.succeed(spawned, child);
+              yield* Stream.runHead(child.stdout);
+              yield* Deferred.succeed(ready, undefined);
+              return child;
+            }),
+          );
+          const registration = yield* runRegister(recorded, { processSpawner }).pipe(
+            Effect.forkScoped,
+          );
+          const child = yield* Deferred.await(spawned);
+          yield* Effect.addFinalizer(() =>
+            child.isRunning.pipe(
+              Effect.flatMap((running) =>
+                running ? child.kill({ killSignal: "SIGKILL" }) : Effect.void,
               ),
-            );
-            yield* Deferred.succeed(spawned, child);
-            yield* Stream.runHead(child.stdout);
-            yield* Deferred.succeed(ready, undefined);
-            return child;
-          }),
-        );
-        const registration = yield* runRegister(recorded, { processSpawner }).pipe(
-          Effect.forkScoped,
-        );
-        const child = yield* Deferred.await(spawned);
-        yield* Effect.addFinalizer(() =>
-          child.isRunning.pipe(
-            Effect.flatMap((running) =>
-              running ? child.kill({ killSignal: "SIGKILL" }) : Effect.void,
+              Effect.ignore,
             ),
-            Effect.ignore,
-          ),
-        );
-        yield* Deferred.await(ready);
-        yield* TestClock.adjust("5 seconds");
-        yield* Fiber.join(registration);
+          );
+          yield* Deferred.await(ready);
+          yield* TestClock.adjust("5 seconds");
+          yield* Fiber.join(registration);
 
-        const exit = yield* Effect.exit(child.exitCode);
-        if (Exit.isFailure(exit)) {
-          assert.include(Cause.pretty(exit.cause), "SIGKILL");
-        } else {
-          assert.fail(`cache helper exited with ${exit.value} instead of being force-killed`);
-        }
-        assert.deepEqual(
-          recorded.commands.map(({ command }) => command),
-          ["update-desktop-database", "xdg-mime"],
-        );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+          const exit = yield* Effect.exit(child.exitCode);
+          if (Exit.isFailure(exit)) {
+            assert.include(Cause.pretty(exit.cause), "SIGKILL");
+          } else {
+            assert.fail(`${stalledHelper} exited with ${exit.value} instead of being force-killed`);
+          }
+          assert.deepEqual(
+            recorded.commands.map(({ command }) => command),
+            ["update-desktop-database", "xdg-mime"],
+          );
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 });
 
 interface ThemeIconRun {

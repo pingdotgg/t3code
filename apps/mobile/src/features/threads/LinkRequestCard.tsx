@@ -1,13 +1,16 @@
 import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  ANOTHER_ADDRESS,
   type LinkableMachine,
+  linkDestination,
   linkRequestAnswerInput,
   linkRequestDefaultAccess,
   linkRequestDisplay,
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   type LinkRequestItem,
+  linkRequestTarget,
   linkRequestTargetName,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
@@ -24,7 +27,7 @@ import {
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { useMemo, useRef, useState } from "react";
-import { Modal, Platform, Pressable, ScrollView, View, type ColorValue } from "react-native";
+import { Pressable, ScrollView, View, type ColorValue } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -37,6 +40,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { Button } from "../../components/ui/Button";
+import { Sheet } from "../../components/ui/Sheet";
 import { RUNTIME_MODE_CHOICES } from "./thread-settings-options";
 
 /** The same five levels as web's access picker: read-only, then the runtime modes. */
@@ -56,9 +60,6 @@ const accessLabel = (access: AuthMcpClientAccess) =>
   ACCESS_CHOICES.find((choice) => choice.access === access)?.label ?? access;
 
 const LINK_SYMBOL: AppSymbolName = { ios: "link", android: "desktop_windows" };
-
-/** The machine list's row for linking by an address typed in. */
-const ANOTHER_ADDRESS = "another-address";
 
 /** Whether the agent left the machine for the user to pick. */
 const picksMachine = (item: LinkRequestItem) =>
@@ -140,11 +141,6 @@ function PendingLinkRequest(props: {
         {item.reason.trim() ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted">{item.reason}</Text>
         ) : null}
-        {item.label !== undefined && item.url !== undefined ? (
-          <Text className="font-sans text-xs text-foreground-muted" numberOfLines={1}>
-            {item.url}
-          </Text>
-        ) : null}
       </View>
       {error !== null ? (
         <Text
@@ -193,37 +189,6 @@ function PendingLinkRequest(props: {
   );
 }
 
-/** What the sheet links; see web's LinkRequestDialog for the same rules. */
-type SheetTarget =
-  | { readonly kind: "none" }
-  | {
-      readonly kind: "machine";
-      readonly environmentId: EnvironmentId;
-      readonly label: string;
-      readonly urls: ReadonlyArray<string>;
-      readonly linked: boolean;
-    }
-  | { readonly kind: "address" };
-
-function resolveTarget(
-  item: LinkRequestItem,
-  machines: ReadonlyArray<LinkableMachine>,
-  choice: string | null,
-): SheetTarget {
-  if (item.environmentId === undefined && item.url !== undefined) return { kind: "address" };
-  const chosen = item.environmentId ?? choice;
-  if (chosen === null) return { kind: "none" };
-  if (chosen === ANOTHER_ADDRESS) return { kind: "address" };
-  const machine = machines.find((candidate) => candidate.environmentId === chosen);
-  return {
-    kind: "machine",
-    environmentId: machine?.environmentId ?? (chosen as EnvironmentId),
-    label: machine?.label ?? linkRequestTargetName(item),
-    urls: [...new Set([...(machine?.urls ?? []), ...(item.url === undefined ? [] : [item.url])])],
-    linked: machine?.linked ?? false,
-  };
-}
-
 function LinkRequestSheet(props: {
   readonly environmentId: EnvironmentId;
   readonly item: LinkRequestItem;
@@ -250,17 +215,22 @@ function LinkRequestSheet(props: {
     reportDefect: false,
   });
   const selected = choice ?? linkRequestInitialMachine(item, machines);
-  const target = resolveTarget(item, machines, selected);
+  const target = linkRequestTarget(item, machines, selected);
   const targetName = target.kind === "machine" ? target.label : linkRequestTargetName(item);
-  // This phone can mint a code there when it is connected to that environment
-  // with a session that may create pairing links.
   const targetId = target.kind === "machine" ? target.environmentId : null;
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
-  const canMint =
-    targetId !== null && Option.isSome(connected) && mayMint && !mintFailed.has(targetId);
   const needsAddress =
     target.kind === "address" || (target.kind === "machine" && target.urls.length === 0);
+  // This phone mints a code there when it is connected with a session that may
+  // create pairing links, and only for its own addresses: anything can answer
+  // as that machine at one typed in, so that one gets a code the user fetched.
+  const canMint =
+    targetId !== null &&
+    !needsAddress &&
+    Option.isSome(connected) &&
+    mayMint &&
+    !mintFailed.has(targetId);
   const useExisting = target.kind === "machine" && target.linked;
   const ready =
     target.kind !== "none" &&
@@ -287,10 +257,7 @@ function LinkRequestSheet(props: {
     }
     return linkRequestAnswerInput(item, {
       type: "link",
-      target:
-        target.kind === "address"
-          ? { url: address }
-          : { ...target, urls: needsAddress ? [address.trim()] : target.urls },
+      target: target.kind === "machine" && target.urls.length > 0 ? target : { url: address },
       access,
       pairingCode: code,
     });
@@ -316,34 +283,45 @@ function LinkRequestSheet(props: {
   };
 
   return (
-    <Modal
-      animationType="slide"
-      presentationStyle={Platform.OS === "ios" ? "pageSheet" : "fullScreen"}
+    <Sheet
+      title={pickMachine ? "Link a machine" : `Link ${targetName}`}
+      onClose={props.onClose}
       // An answer that lands after a close would still link, and would close a reopened sheet.
-      onRequestClose={() => {
-        if (!busy) props.onClose();
-      }}
+      dismissDisabled={busy}
     >
       <ScrollView
         className="flex-1 bg-sheet-solid"
+        contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
         contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
         keyboardShouldPersistTaps="handled"
       >
         <View className="gap-1">
-          <Text className="font-t3-bold text-lg text-foreground">
-            {pickMachine ? "Link a machine" : `Link ${targetName}`}
-          </Text>
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
             Agents here can then launch, message and wait on threads there. It appears in that
             machine's Connections, where it can be revoked.
           </Text>
-          {!pickMachine && item.url !== undefined ? (
+          {item.url !== undefined && target.kind === "machine" ? (
             <Text className="font-sans text-xs text-foreground-muted" numberOfLines={1}>
               {item.url}
             </Text>
           ) : null}
         </View>
+        {needsAddress && !useExisting && address.trim() ? (
+          <View
+            accessibilityRole="alert"
+            className="gap-1 rounded-xl border border-warning-border bg-warning p-3"
+          >
+            <Text className="font-t3-bold text-sm text-warning-foreground">Check this address</Text>
+            <Text className="font-sans text-xs leading-snug text-warning-foreground">
+              This app cannot confirm it is one of your machines. The pairing code you paste is sent
+              there.
+            </Text>
+            <Text selectable className="font-sans text-xs leading-snug text-warning-foreground">
+              {linkDestination(address)}
+            </Text>
+          </View>
+        ) : null}
         {pickMachine ? (
           <SettingsSection title="Machine">
             {machines.map((machine, index) => (
@@ -372,7 +350,7 @@ function LinkRequestSheet(props: {
             />
           </SettingsSection>
         ) : null}
-        {needsAddress && !(item.url !== undefined && item.environmentId === undefined) ? (
+        {needsAddress && item.url === undefined ? (
           <View className="gap-2">
             <TextInput
               accessibilityLabel="Address"
@@ -457,7 +435,7 @@ function LinkRequestSheet(props: {
         />
         <Button label="Cancel" tone="secondary" disabled={busy} onPress={props.onClose} fullWidth />
       </ScrollView>
-    </Modal>
+    </Sheet>
   );
 }
 
