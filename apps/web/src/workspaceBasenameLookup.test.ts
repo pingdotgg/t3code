@@ -5,8 +5,11 @@ import {
   pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
   pickWorkspaceLinkMatch,
+  threadCommandDirectories,
   workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
+import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 describe("pickWorkspaceBasenameMatch", () => {
   const entries = [
@@ -110,6 +113,51 @@ describe("chat file links into another project", () => {
     expect(
       pickProjectLinkMatch("rules/categories.ts", [appB, { ...appB, root: "/home/user/app-c" }]),
     ).toBeNull();
+  });
+
+  it("counts one file reached through two roots once", () => {
+    expect(
+      pickProjectLinkMatch("rules/categories.ts", [appB, { ...appB, root: "/home/user/app-b/" }]),
+    ).toBe("/home/user/app-b/src/api/rules/categories.ts");
+  });
+});
+
+describe("threadCommandDirectories", () => {
+  const command = (ordinal: number, input: string): OrchestrationV2TurnItem => ({
+    id: TurnItemId.make(`command-${ordinal}`),
+    threadId: ThreadId.make("thread"),
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status: "completed",
+    title: null,
+    startedAt: null,
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe("2026-11-12T00:00:00.000Z"),
+    type: "command_execution",
+    input,
+  });
+
+  // regression: #35337 a checkout outside every project, known only from the agent's `cd`
+  it("returns absolute directories the commands changed into outside the workspace", () => {
+    expect(
+      threadCommandDirectories(
+        [
+          command(0, "cd /work/repo-b-feature && git status"),
+          command(1, `/bin/bash -lc 'cd "/work/with space/" && ls'`),
+          command(2, "cd /work/repo-b-feature; ls"),
+          command(3, "cd ../sibling && ls"),
+          command(4, "cd / && cd /home/user && ls"),
+          command(5, "cd /home/user/acme/packages/web && ls"),
+          command(6, "abcd /not/a/cd"),
+        ],
+        "/home/user/acme",
+      ),
+    ).toEqual(["/work/repo-b-feature", "/work/with space"]);
   });
 });
 

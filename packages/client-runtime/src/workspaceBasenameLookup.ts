@@ -1,7 +1,9 @@
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import {
   isAbsolutePath,
   isWindowsAbsolutePath,
   resolveWorkspaceFilePath,
+  workspaceRelativeFilePath,
 } from "@t3tools/shared/path";
 
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
@@ -133,5 +135,30 @@ export function pickProjectLinkMatch(
     const match = pickWorkspaceLinkMatch(relativePath, root, entries);
     return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
   });
-  return matches.length === 1 ? (matches[0] ?? null) : null;
+  return new Set(matches).size === 1 ? (matches[0] ?? null) : null;
+}
+
+const COMMAND_CD_PATTERN = /(?:^|[\s;&|('"])cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|()'"]+))/g;
+
+/** Absolute directories the thread's commands `cd` into outside `cwd`, where its links may point. */
+export function threadCommandDirectories(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  cwd: string,
+): string[] {
+  const directories = new Set<string>();
+  for (const item of items) {
+    if (item.type !== "command_execution") continue;
+    for (const match of item.input.matchAll(COMMAND_CD_PATTERN)) {
+      const directory = (match[1] ?? match[2] ?? match[3] ?? "").replace(/(.)[\\/]+$/, "$1");
+      // Searching an ancestor of the workspace (`cd ~`, `cd /`) would crawl far past the checkout.
+      if (
+        isAbsolutePath(directory) &&
+        workspaceRelativeFilePath(directory, cwd) === null &&
+        workspaceRelativeFilePath(cwd, directory) === null
+      ) {
+        directories.add(directory);
+      }
+    }
+  }
+  return [...directories];
 }

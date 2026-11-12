@@ -153,6 +153,7 @@ import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentThreadDetails } from "../state/threads";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
@@ -175,6 +176,7 @@ import {
   claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
   pickProjectLinkMatch,
+  threadCommandDirectories,
   pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
   workspaceLinkLookupQuery,
@@ -811,13 +813,21 @@ function useChatMarkdownState({
     const ownMatch = pickWorkspaceLinkMatch(workspaceRelativePath, cwd, own.entries);
     if (ownMatch !== null) return ownMatch;
     const threadProjectId = threadRef ? readThreadShell(threadRef)?.projectId : undefined;
-    const otherRoots = projects.flatMap((project) =>
+    const projectRoots = projects.flatMap((project) =>
       project.environmentId === environmentId &&
       project.id !== threadProjectId &&
       project.workspaceRoot !== cwd
         ? [project.workspaceRoot]
         : [],
     );
+    const commandDirectories = threadRef
+      ? threadCommandDirectories(
+          appAtomRegistry.get(environmentThreadDetails.threadAtom(threadRef))?.projection
+            .turnItems ?? [],
+          cwd,
+        )
+      : [];
+    const otherRoots = [...new Set([...projectRoots, ...commandDirectories])];
     if (otherRoots.length === 0) return null;
     // Another project's file never replaces a thread-local file the search missed.
     if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
