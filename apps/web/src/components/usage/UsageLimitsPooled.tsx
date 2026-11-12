@@ -12,6 +12,12 @@ import {
   type ResetCreditChoice,
 } from "@t3tools/shared/usageLimits";
 import { T, useGT, useMessages } from "gt-react";
+import {
+  poolBurn,
+  projectionHorizon,
+  projectPool,
+  recordedPool,
+} from "@t3tools/shared/usagePoolProjection";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
@@ -21,6 +27,7 @@ import {
   type ReactNode,
   type RefObject,
   use,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -42,9 +49,14 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   cursorUsageWindowDetails,
+  formatDuration,
   formatResetsIn,
   resetCreditChoices,
 } from "@t3tools/shared/usageLimitsCopy";
+import { UsagePoolChart } from "./UsagePoolChart";
+import { poolHistoryKey, readPoolHistory, recordPoolReadings } from "./usagePoolHistory";
+
+const BURN_LOOKBACK_MS = 3 * 3_600_000;
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -589,47 +601,120 @@ function PoolBar({
   );
 }
 
+function PoolStat({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="truncate text-sm font-medium text-foreground tabular-nums">{children}</span>
+    </div>
+  );
+}
+
 function PoolWindowCard({
   pool,
+  historyKey,
   color,
   now,
   label,
   description,
 }: {
   readonly pool: LimitPoolWindow;
+  readonly historyKey: string;
   readonly color: string;
   readonly now: number;
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
-  const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const gt = useGT();
+  const m = useMessages();
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const samples = readPoolHistory(historyKey);
+  const horizon = projectionHorizon(pool);
+  const burn = poolBurn(pool, samples, now, BURN_LOOKBACK_MS);
+  const projection = projectPool(pool, now, { burnPerHour: burn.perHour, horizonMs: horizon });
+  const from = now - horizon * 0.3;
+  const formatTime = (at: number) =>
+    formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now, undefined, m);
+  const nextRefill = projection.refills[0];
+  const firstEmpty = projection.firstEmpty
+    ? pool.members.find((member) => member.account.key === projection.firstEmpty?.accountKey)
+    : undefined;
+  const burnText = `${burn.perHour >= 10 ? Math.round(burn.perHour) : burn.perHour.toFixed(1)}%/h`;
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
-      <div className="flex flex-col gap-1">
-        {label !== null ? (
-          <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
-        ) : null}
-        <span className="flex items-baseline gap-2">
-          <span className="text-3xl font-semibold text-foreground tabular-nums">
-            {pool.remainingPercent}%
-          </span>
-          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>
-              <T context="remaining usage percentage">left</T>
+    <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-4">
+      <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
+        <div className="flex flex-col gap-1">
+          {label !== null ? (
+            <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+          ) : null}
+          <span className="flex items-baseline gap-2">
+            <span className="text-4xl font-semibold text-foreground tabular-nums">
+              {Math.round(projection.remaining)}%
             </span>
-            {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground tabular-nums">
+              <span>
+                {gt("of {capacity}%", {
+                  capacity: projection.capacity,
+                  $context: "share of the pooled usage capacity",
+                })}
+              </span>
+              {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+            </span>
           </span>
-        </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
-          </span>
-        ) : null}
+        </div>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-4">
+          <PoolStat label={gt("Pool empty")}>
+            {projection.poolEmpty === null
+              ? gt("Not by {date}", {
+                  date: new Date(now + horizon).toLocaleDateString([], {
+                    month: "short",
+                    day: "numeric",
+                  }),
+                })
+              : projection.poolEmpty <= now
+                ? gt("Empty now")
+                : formatTime(projection.poolEmpty)}
+          </PoolStat>
+          <PoolStat label={gt("First empty")}>
+            {firstEmpty && projection.firstEmpty ? (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                {pool.members.length > 1 ? (
+                  <AccountName account={firstEmpty.account} className="min-w-0 truncate" />
+                ) : null}
+                <span>
+                  {projection.firstEmpty.at <= now
+                    ? gt("now", { $context: "an account is already empty" })
+                    : gt("in {duration}", {
+                        duration: formatDuration(projection.firstEmpty.at - now, m),
+                      })}
+                </span>
+              </span>
+            ) : (
+              gt("None", { $context: "no account runs out" })
+            )}
+          </PoolStat>
+          <PoolStat label={gt("Next reset")}>
+            {nextRefill ? `+${Math.round(nextRefill.restores)}% ${formatTime(nextRefill.at)}` : "–"}
+          </PoolStat>
+          <PoolStat
+            label={burn.source === "measured" ? gt("Burn, last 3h") : gt("Burn, window avg")}
+          >
+            {burnText}
+          </PoolStat>
+        </div>
       </div>
+      <UsagePoolChart
+        color={color}
+        label={label ?? pool.label}
+        recorded={recordedPool(pool, samples, from)}
+        projection={projection}
+        from={from}
+        to={now + horizon}
+        now={now}
+        formatTime={formatTime}
+      />
       <PoolBar pool={pool} color={color} now={now} />
-      {description ? (
-        <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
-      ) : null}
+      {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
     </div>
   );
 }
@@ -658,6 +743,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
             pool={window}
+            historyKey={poolHistoryKey(pool, window)}
             color={color}
             now={now}
             label={details?.label}
@@ -681,6 +767,12 @@ export function UsageLimitsPooled({
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  // Readings are stamped with each provider's checkedAt, so re-renders of the same data store
+  // nothing new.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps this browser's localStorage reading history in step with the limits it has been shown
+  useEffect(() => {
+    recordPoolReadings(pools, now);
+  }, [pools, now]);
   const notices = collectLimitNotices(presentations, m);
   const externalLinks = collectExternalUsageLinks(presentations, m);
   return (
