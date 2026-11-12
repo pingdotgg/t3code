@@ -31,7 +31,9 @@ function createTooltipHoverTracker() {
     },
     dismissUnfocused() {
       const tooltip = hovered;
-      if (!tooltip || tooltip.trigger.contains(tooltip.trigger.ownerDocument.activeElement)) {
+      if (!tooltip) return;
+      const focused = tooltip.trigger.ownerDocument.activeElement;
+      if (focused && tooltip.trigger.contains(focused) && focused.matches(":focus-visible")) {
         return;
       }
       hovered = null;
