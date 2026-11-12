@@ -327,8 +327,8 @@ function pullRequestWatchTasks(
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
             // Once every check on the head has passed, a person moves the PR next, so the watch
-            // stays listed but no longer holds the thread. A push resets `passed` at the next read.
-            ...(link.watch.passed && (link.watch.owedChecks ?? []).length === 0
+            // stays listed but no longer holds the thread. A push resets both at the next read.
+            ...(link.watch.passed && link.watch.checksPending === false
               ? {}
               : { awaited: true as const }),
           },

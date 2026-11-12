@@ -182,6 +182,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     (left.owedChecks ?? []).join("\n") === (right.owedChecks ?? []).join("\n") &&
     (left.awaitingApproval ?? []).join("\n") === (right.awaitingApproval ?? []).join("\n") &&
     (left.approvalAnnounced ?? false) === (right.approvalAnnounced ?? false) &&
+    left.checksPending === right.checksPending &&
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&

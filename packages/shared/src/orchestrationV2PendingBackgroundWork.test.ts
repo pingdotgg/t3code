@@ -429,7 +429,13 @@ describe("derivePendingBackgroundWork kinds", () => {
         pullRequests: [
           {
             ...link(1, {}),
-            watch: { ...watch, headSha: "abc123", passed: true, passedChecks: ["ci", "lint"] },
+            watch: {
+              ...watch,
+              headSha: "abc123",
+              passed: true,
+              passedChecks: ["ci", "lint"],
+              checksPending: false,
+            },
           },
         ],
       });
@@ -440,6 +446,18 @@ describe("derivePendingBackgroundWork kinds", () => {
           pendingBackgroundTasks: tasks,
         }),
       ).toBe(false);
+      const rerun = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [
+          {
+            ...link(1, {}),
+            watch: { ...watch, headSha: "abc123", passed: true, checksPending: true },
+          },
+        ],
+      });
+      expect(backgroundWorkHoldsCompletion(rerun)).toBe(true);
     });
 
     it("keeps a thread that never ran waiting on its watch", () => {

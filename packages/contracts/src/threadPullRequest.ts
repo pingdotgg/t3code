@@ -91,6 +91,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Approval holds keyed by workflow run URL, or check name when no run URL is known. */
   awaitingApproval: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** A check on the head was still running at the last read; absent until the head is read. */
+  checksPending: Schema.optional(Schema.Boolean),
   /** The agent was told checks await approval on this head, so later ones stay quiet. */
   approvalAnnounced: Schema.optional(Schema.Boolean),
   remarksThrough: IsoDateTime,

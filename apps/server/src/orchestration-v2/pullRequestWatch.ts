@@ -56,12 +56,14 @@ export function evaluatePullRequestWatch(
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
+  let checksPending = headMoved ? undefined : watch.checksPending;
   // An unavailable approval read cannot establish success or that no checks exist.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
   if (checks.length > 0) {
+    checksPending = checks.some((check) => check.status === "pending");
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
     if (!approvalAnnounced && awaiting.length > 0) {
@@ -200,6 +202,7 @@ export function evaluatePullRequestWatch(
       owedChecks,
       awaitingApproval,
       approvalAnnounced,
+      ...(checksPending !== undefined && { checksPending }),
       remarksThrough,
       remarkIds,
       conflicting,

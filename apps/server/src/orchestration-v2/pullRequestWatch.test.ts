@@ -309,8 +309,13 @@ describe("evaluatePullRequestWatch", () => {
     const botPending = detail({ checks: [...done.checks, check("bot", "pending")] });
     const churn = evaluatePullRequestWatch(final.next, botPending, noRemarks);
     assert.deepEqual(churn.changes, []);
+    // It still holds the thread while it runs, though the watch stays passed.
+    assert.equal(final.next.checksPending, false);
+    assert.equal(churn.next.checksPending, true);
     const botDone = detail({ checks: [...done.checks, check("bot", "success")] });
-    assert.deepEqual(evaluatePullRequestWatch(churn.next, botDone, noRemarks).changes, []);
+    const settled = evaluatePullRequestWatch(churn.next, botDone, noRemarks);
+    assert.deepEqual(settled.changes, []);
+    assert.equal(settled.next.checksPending, false);
 
     // A pending check that turns required on the next read still finishes with one wake.
     const promoted = detail({
