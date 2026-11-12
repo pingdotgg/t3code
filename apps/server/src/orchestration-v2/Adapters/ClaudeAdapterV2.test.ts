@@ -3839,7 +3839,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("shows a card-answer verdict before a Bash tool", () =>
+  it.effect.each([
+    {
+      text: "Your answer holds up on the basics. Before I say what's missing, I'll check the code that runs, so I teach what it does and not what the notes say.",
+      shown: [["assistant_message", "Your answer holds up on the basics."]],
+    },
+    { text: "Let me open the file first.", shown: [["reasoning", "Let me open the file first."]] },
+  ] as const)("shows a card-answer verdict before a Bash tool: $text", ({ text, shown }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       yield* harness.runtime.startTurn(
@@ -3847,7 +3853,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("card-answer-verdict-before-bash"),
+          attemptId: RunAttemptId.make(`card-answer-verdict-${text.slice(0, 8)}`),
           text: 'Quiz answer: "High", right.\n\n(card card-1)',
           attachments: [],
           lesson: true,
@@ -3862,12 +3868,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           message: { id: uuid, model: "claude-sonnet-5-5", content },
         });
       for (const frame of [
-        snapshot("card-answer-verdict-text", [
-          {
-            type: "text",
-            text: "Your answer holds up on the basics. Before I say what's missing, I'll check the code that runs, so I teach what it does and not what the notes say.",
-          },
-        ]),
+        snapshot("card-answer-verdict-text", [{ type: "text", text }]),
         snapshot("card-answer-verdict-tool", [
           { type: "tool_use", id: "bash-1", name: "Bash", input: {} },
         ]),
@@ -3884,12 +3885,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       assert.deepEqual(
         items.map((item) => [item.type, item.text]),
-        [
-          [
-            "assistant_message",
-            "Your answer holds up on the basics. Before I say what's missing, I'll check the code that runs, so I teach what it does and not what the notes say.",
-          ],
-        ],
+        shown,
       );
     }).pipe(
       Effect.scoped,
@@ -3925,6 +3921,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected:
         "A green KiCad DRC doesn't prove the board is safe: the grader enforces the 5.5 mm figure.",
     },
+    ...[
+      "A Type I error rejects a true null hypothesis.",
+      "Current I equals V divided by R, and I is in amperes.",
+      "Multiply both sides by i, and i squared becomes −1.",
+      "The Me group donates electrons to my favourite ring.",
+    ].map((teaching) => ({ name: teaching, input: teaching, expected: teaching })),
     {
       name: "teaching stays",
       input: "Net displacement compares endpoints, while distance adds the length of each leg.",

@@ -2337,11 +2337,14 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         .map((line) => {
           const narration =
             /^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
-          const firstPerson = /\b(?:I['’](?:m|ll|ve|d)|I (?!is\b|was\b)[a-z]+|[Mm]e|[Mm]y)\b/u;
+          const firstPerson = /\bI['’](?:m|ll|ve|d)\b/u;
           return line
             .split(/(?<=[.!?])\s+/u)
             .flatMap((sentence) => {
-              const tail = /,\s*(?:so|and)\s+I(?:['’](?:m|ll|ve|d)\b|\b)[\s\S]*$/iu.exec(sentence);
+              const tail =
+                /,\s*(?:so|and)\s+I(?:['’](?:m|ll|ve|d)\b| (?!is\b|equals\b)[a-z])[\s\S]*$/u.exec(
+                  sentence,
+                );
               const withoutTail = tail === null ? sentence : `${sentence.slice(0, tail.index)}.`;
               const clauses = withoutTail.split(";");
               const kept = clauses.filter((clause) => {
@@ -2414,11 +2417,13 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
           normalizeToolName(block.name) === "quiz_card" ||
           normalizeToolName(block.name) === "question_card";
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
-        const showCardAnswerVerdict = lesson && sample.verdictPending && texts.length === 0;
-        // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
-        // After a card, short text before a drawing tool is working talk and stays a Thought too.
-        if (
-          showCardAnswerVerdict ||
+        const short = held.reduce((total, text) => total + text.length, 0) <= 300;
+        if (lesson && sample.verdictPending && texts.length === 0 && short && !isCard) {
+          texts.push(...held.map(stripLessonNarration).filter((text) => text !== ""));
+        } else if (
+          // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
+          // After a card, short text before a drawing tool is working talk and stays a Thought too.
+
           (isT3Mcp && (!sample.lessonCardSeen || isCard)) ||
           held.reduce((total, text) => total + text.length, 0) > 300
         ) {

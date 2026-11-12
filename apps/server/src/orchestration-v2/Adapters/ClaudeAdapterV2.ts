@@ -2153,14 +2153,17 @@ function isLessonStatusLine(text: string) {
 function stripLessonNarration(text: string) {
   const narration =
     /^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
-  const firstPerson = /\b(?:I['’](?:m|ll|ve|d)|I (?!is\b|was\b)[a-z]+|[Mm]e|[Mm]y)\b/u;
+  const firstPerson = /\bI['’](?:m|ll|ve|d)\b/u;
   return text
     .split("\n")
-    .map((line) => {
-      return line
+    .map((line) =>
+      line
         .split(/(?<=[.!?])\s+/u)
         .flatMap((sentence) => {
-          const tail = /,\s*(?:so|and)\s+I(?:['’](?:m|ll|ve|d)\b|\b)[\s\S]*$/iu.exec(sentence);
+          const tail =
+            /,\s*(?:so|and)\s+I(?:['’](?:m|ll|ve|d)\b| (?!is\b|equals\b)[a-z])[\s\S]*$/u.exec(
+              sentence,
+            );
           const withoutTail = tail === null ? sentence : `${sentence.slice(0, tail.index)}.`;
           const clauses = withoutTail.split(";");
           const kept = clauses.filter((clause) => {
@@ -2178,8 +2181,8 @@ function stripLessonNarration(text: string) {
               .join(" "),
           ];
         })
-        .join(" ");
-    })
+        .join(" "),
+    )
     .join("\n")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
@@ -8104,12 +8107,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           const held = context.assistant.heldText;
           context.assistant.heldText = [];
-          const showCardAnswerVerdict =
-            isLessonCardAnswerTurn(context.input) &&
-            context.assistant.emittedNativeItemIds.size === 0;
+          const short = held.reduce((total, item) => total + item.text.length, 0) <= 300;
+          // A verdict on the learner's answer shows even when the tutor reads code next.
           if (
-            held.reduce((total, item) => total + item.text.length, 0) <= 300 &&
-            !showCardAnswerVerdict &&
+            short &&
+            !isLessonCardTool(block.name) &&
+            isLessonCardAnswerTurn(context.input) &&
+            context.assistant.emittedNativeItemIds.size === 0
+          ) {
+            for (const item of held) {
+              const verdict = stripLessonNarration(item.text);
+              if (verdict === "") yield* emitHeldAssistantTextItemAsReasoning(context, item);
+              else yield* emitAssistantTextArtifacts({ context, ...item, text: verdict });
+            }
+            return;
+          }
+          if (
+            short &&
             (resolveT3McpToolId(block.name) === null ||
               (context.assistant.cardSeen && !isLessonCardTool(block.name)))
           ) {

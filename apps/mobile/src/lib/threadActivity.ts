@@ -1621,7 +1621,8 @@ export function deriveThreadFeedPresentation(
     ? sourceFeed.map((entry, index) => {
         if (entry.type !== "html-render" || entry.runId === null) return entry;
         let pendingCardId: string | undefined;
-        for (const candidate of sourceFeed.slice(index + 1)) {
+        for (let next = index + 1; next < sourceFeed.length; next += 1) {
+          const candidate = sourceFeed[next]!;
           if (candidate.type === "message" && candidate.message.role === "user") break;
           if (candidate.type === "quiz-card" && candidate.runId === entry.runId) {
             pendingCardId = candidate.id;

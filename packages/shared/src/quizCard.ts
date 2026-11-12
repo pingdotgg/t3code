@@ -399,6 +399,13 @@ export function cardAnswerMessage(text: string, cardId: string) {
   return `${text}\n\n(card ${cardId})`;
 }
 
+// The shown order is for the tutor; the learner's own message hides it.
+const SHOWN_OPTIONS = / Options as shown: \d+\. ".*?"(?:; \d+\. ".*?")*\./su;
+
+export function withoutShownOptions(text: string) {
+  return text.replace(SHOWN_OPTIONS, "");
+}
+
 export function withoutCardAnswerTag(text: string) {
   return text.replace(CARD_ANSWER_TAG, "");
 }

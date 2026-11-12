@@ -16,6 +16,8 @@ import { cn } from "../../lib/cn";
 import { uuidv4 } from "../../lib/uuid";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 
+const nowIso = () => new Date().toISOString();
+
 export function QuizCard(props: {
   readonly quizCard: QuizCardData;
   readonly seed: string;
@@ -71,7 +73,7 @@ export function QuizCard(props: {
         text: message,
         attachments: [],
         dispatchMode: "queue",
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso(),
       });
       setSubmitted(true);
     } catch (cause) {
