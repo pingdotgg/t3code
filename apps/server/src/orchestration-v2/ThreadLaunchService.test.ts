@@ -15,7 +15,6 @@ import {
   ComposerContextId,
   type ChatAttachment,
   CommandId,
-  DEFAULT_SERVER_SETTINGS,
   GitCommandError,
   MessageId,
   ProjectId,
@@ -786,9 +785,10 @@ it.effect("arms durable title generation after accepting the first message", () 
       });
       const generated = yield* threads.getThreadProjection(launched.threadId);
       assert.equal(generated.thread.title, "Generated title");
+      // The thread titles itself with its own model.
       assert.deepEqual(
         harness.generateThreadTitle.mock.calls[0]?.[0]?.modelSelection,
-        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        modelSelection,
       );
 
       const manualRequestId = CommandId.make("command:title-generation:manual");

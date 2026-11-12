@@ -547,6 +547,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "not installed, fallback disabled for project",
   "signed out",
   "signed out, fallback failed",
+  "disabled",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -582,6 +583,9 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           : {}),
         ...(primaryState.startsWith("signed out") && instanceId === primary
           ? { status: "error", auth: { status: "unauthenticated" } }
+          : {}),
+        ...(primaryState === "disabled" && instanceId === primary
+          ? { enabled: false, status: "disabled" }
           : {}),
         ...(primaryState === "signed out, fallback failed" && instanceId === fallback
           ? { status: "error", auth: { status: "unknown" } }

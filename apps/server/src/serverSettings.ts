@@ -495,15 +495,6 @@ function migrateLegacyProviderSettings(
   };
 }
 
-const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
-
-function selectionSupportsTextGeneration(
-  settings: ServerSettings,
-  selection: ModelSelection,
-): boolean {
-  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
-}
-
 type DriverAllowed = (driver: ProviderDriverKind) => boolean;
 const anyDriver: DriverAllowed = () => true;
 
@@ -513,7 +504,6 @@ function resolveTextGenerationProvider(
 ): ServerSettings {
   const selection = settings.textGenerationModelSelection;
   return isModelSelectionProviderEnabled(settings, selection) &&
-    selectionSupportsTextGeneration(settings, selection) &&
     isDriverAllowed(
       settings.providerInstances[selection.instanceId]?.driver ??
         ProviderDriverKind.make(selection.instanceId),

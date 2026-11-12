@@ -108,8 +108,10 @@ export const make = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
     // Only a failed probe counts: a pending one is also not installed yet.
+    // A disabled instance never runs.
     const unusable =
       textGeneratorCannotRun ||
+      selected?.enabled === false ||
       (selected?.enabled === true &&
         selected.status === "error" &&
         (!selected.installed || selected.auth.status === "unauthenticated"));
@@ -146,6 +148,12 @@ export const make = Effect.gen(function* () {
         operation,
         detail:
           "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control.",
+      });
+    }
+    if (selected?.enabled === false && selection.instanceId === selected.instanceId) {
+      return yield* new TextGenerationError({
+        operation,
+        detail: `${selected.displayName ?? selection.instanceId} is disabled and no enabled provider can write this text. Pick another model in Settings → Threads → Text generation.`,
       });
     }
     return yield* installationGate.execute(

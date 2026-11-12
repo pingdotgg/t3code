@@ -4758,6 +4758,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     }
 
+    if (
+      command.type === "thread.title.regeneration.complete" &&
+      command.failure !== undefined &&
+      thread.titleRegeneration?.requestId === command.requestId
+    ) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        providerInstanceId: updatedThread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`title-generation-failed:${command.requestId}`),
+          threadId: command.threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal({ thread }),
+          status: "failed",
+          title: "Title generation failed",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "system_notice",
+          message: `Title generation failed: ${command.failure}`,
+        },
+      });
+    }
+
     if (command.type === "thread.archive") {
       const projection = yield* loadProjectionForCommand(
         command,

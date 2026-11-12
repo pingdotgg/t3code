@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -518,7 +519,13 @@ describe("ThreadTitleRegenerationService", () => {
   it.effect("clears the marker and keeps the title when generation fails", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
-        generateTitle: () => Effect.die(new Error("model unavailable")),
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: "401 invalid_refresh_token",
+            }),
+          ),
       });
       yield* Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
@@ -540,6 +547,47 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        // The user sees why, not just a server log line.
+        const notice = projection.turnItems.find((item) => item.type === "system_notice");
+        assert.equal(
+          notice?.type === "system_notice" ? notice.message : undefined,
+          "Title generation failed: 401 invalid_refresh_token",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("titles with the thread's own model and session, without the handoff header", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:own:create",
+          thread: "thread:title:own",
+        });
+        yield* recordRun({
+          threadId,
+          runId: RunId.make("run:title:own:1"),
+          ordinal: 1,
+          user: [
+            "Context handoff (full_thread_summary):",
+            "From thread parent, runs 1-3.",
+            "",
+            "User message:",
+            "Migrate sessions to Postgres",
+          ].join("\n"),
+          assistant: "Done.",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:own:1", threadId });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        const call = harness.generateThreadTitle.mock.calls[0]?.[0];
+        assert.deepEqual(call?.modelSelection, modelSelection);
+        assert.equal(call?.sourceSessionId, "native");
+        assert.include(call?.message, "USER:\nMigrate sessions to Postgres");
+        assert.notInclude(call?.message, "Context handoff");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

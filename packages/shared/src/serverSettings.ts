@@ -68,6 +68,7 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "pi",
   "opencode",
   "antigravity",
+  "acpRegistry",
 ].map((driver) => ProviderDriverKind.make(driver));
 
 /** Configured instances come after every default instance, so they only win when no default qualifies. */
@@ -600,6 +601,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.speechPostProcessingModelSelection !== undefined
       ? { speechPostProcessingModelSelection: patch.speechPostProcessingModelSelection }
+      : {}),
+    ...(patch.threadTitleModelSelection !== undefined
+      ? { threadTitleModelSelection: patch.threadTitleModelSelection }
       : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }

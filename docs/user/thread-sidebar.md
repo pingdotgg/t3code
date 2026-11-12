@@ -121,6 +121,10 @@ To generate a fresh title from the conversation, open a thread's menu and choose
 **Regenerate title**. The action is unavailable while title generation is in progress
 or when the connected environment needs a server update.
 
+Each thread is titled by its own provider and model. If title generation fails, the thread shows
+a notice with the reason. To title every thread with one model instead, turn on **Title model** in
+**Settings → Threads → Text generation**, under Advanced.
+
 To change how titles are written, add **Thread title instructions** in **Settings → Threads →
 Text generation**, under Advanced, such as a length limit or an identifier to put first. They apply to new and
 regenerated titles. Select a project to give it its own instructions.
