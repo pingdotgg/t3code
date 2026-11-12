@@ -114,6 +114,8 @@ const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const BLOB_ARCHIVE_MAX_BYTES = 64 * 1024 * 1024;
 /** Matches what a per-file read could carry. */
 const BLOB_MAX_BYTES = ITEM_CONTENT_MAX_OUTPUT_BYTES;
+/** Blobs past this, together, are left to per-file reads, which hold a few at a time. */
+const BLOB_BATCH_MAX_BYTES = 16 * 1024 * 1024;
 const BLOB_ID = /^[0-9a-f]{40}$/i;
 /** Review history is unpaged and independent of diff size. */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -678,7 +680,7 @@ export const make = Effect.gen(function* () {
           const contents = new Map<string, AzureDevOpsItemContent>();
           if (size > BLOB_ARCHIVE_MAX_BYTES) return contents;
           const zip = yield* fileSystem.readFile(archive).pipe(Effect.mapError(readFailure));
-          const entries = readBlobZip(zip, BLOB_MAX_BYTES);
+          const entries = readBlobZip(zip, BLOB_MAX_BYTES, BLOB_BATCH_MAX_BYTES);
           if (entries === null) return yield* readFailure("Azure returned an unreadable archive.");
           for (const [id, bytes] of entries) {
             const content = requested.has(id) ? blobContent(bytes) : null;

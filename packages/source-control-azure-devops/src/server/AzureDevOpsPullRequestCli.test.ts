@@ -950,6 +950,32 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       }),
   );
 
+  it.effect("leaves blobs past the batch's total size to per-file reads", () =>
+    Effect.gen(function* () {
+      const ids = ["1", "2", "3", "4", "5", "6"].map((digit) => digit.repeat(40));
+      // Compresses to a few KiB each, so only the inflated total can bound memory.
+      const blob = new Uint8Array(3 * 1024 * 1024).fill(0x61);
+      mockedExecute.mockImplementationOnce((input) =>
+        Effect.sync(() => {
+          NodeFS.writeFileSync(
+            input.args[input.args.indexOf("--out-file") + 1] ?? "",
+            streamedZip(ids.map((name) => ({ name, data: blob }))),
+          );
+          return output("");
+        }),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const blobs = yield* cli.readBlobs({
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        objectIds: ids,
+      });
+
+      expect([...blobs.keys()]).toEqual(ids.slice(0, 5));
+    }),
+  );
+
   it.effect("escapes characters in a file path that would cut the query string", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ content: "x" }))));

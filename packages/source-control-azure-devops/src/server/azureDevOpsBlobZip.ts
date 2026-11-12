@@ -16,11 +16,13 @@ const entryName = new TextDecoder();
 /**
  * The entries of the zip Azure's Blobs API answers with, keyed by lowercase blob id. Azure streams
  * entries with data descriptors, so sizes come from the central directory. Null for an archive
- * this cannot read; an entry over `maxEntryBytes` or in another method is left out.
+ * this cannot read; an entry over `maxEntryBytes`, past `maxTotalBytes` in all, or in another method
+ * is left out.
  */
 export function readBlobZip(
   zip: Uint8Array,
   maxEntryBytes: number,
+  maxTotalBytes: number,
 ): ReadonlyMap<string, Uint8Array> | null {
   const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
   // The end record is 22 bytes followed by a comment of at most 65,535.
@@ -37,6 +39,7 @@ export function readBlobZip(
   if (count === 0xffff || at === ZIP64_MARKER) return null;
 
   const entries = new Map<string, Uint8Array>();
+  let total = 0;
   for (let entry = 0; entry < count; entry += 1) {
     if (at + 46 > zip.length || view.getUint32(at, true) !== CENTRAL_DIRECTORY_ENTRY) return null;
     const method = view.getUint16(at + 10, true);
@@ -52,16 +55,18 @@ export function readBlobZip(
     if (local + 30 > zip.length || view.getUint32(local, true) !== LOCAL_FILE_HEADER) return null;
     const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
     if (start + compressedSize > zip.length) return null;
-    if (size > maxEntryBytes) continue;
+    if (size > maxEntryBytes || total + size > maxTotalBytes) continue;
     const data = zip.subarray(start, start + compressedSize);
     if (method === STORED) {
       if (compressedSize !== size) return null;
       entries.set(name, data);
+      total += size;
     } else if (method === DEFLATED) {
       try {
         const inflated = NodeZlib.inflateRawSync(data, { maxOutputLength: maxEntryBytes });
         if (inflated.length !== size) return null;
         entries.set(name, inflated);
+        total += size;
       } catch {
         return null;
       }
