@@ -1,16 +1,22 @@
+import { useSyncLayout } from "@legendapp/list/react";
 import { type OrchestrationV2CheckpointFileTotals, type RunId } from "@t3tools/contracts";
 import { type MouseEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
-import { ChevronRightIcon, FileDiffIcon } from "lucide-react";
-import { ChevronsDownUp, ChevronsUpDown, Folder, FolderClosed } from "lucide";
+import {
+  ChevronRightIcon,
+  FileDiffIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+  FolderClosedIcon,
+  FolderIcon,
+} from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
-import { MorphIcon } from "~/components/MorphIcon";
 import { observeResize } from "~/lib/observeResize";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
@@ -45,6 +51,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onOpenTurnDiff,
     onFileContextMenu,
   } = props;
+  const syncTimelineLayout = useSyncLayout();
   const hiddenFileCount = totals.count - files.length;
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
 
@@ -83,14 +90,18 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                       allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
                     }
                     data-scroll-anchor-ignore
-                    onClick={onToggleAllDirectories}
+                    onClick={() => {
+                      onToggleAllDirectories();
+                      syncTimelineLayout();
+                    }}
                   />
                 }
               >
-                <MorphIcon
-                  className="size-3"
-                  icon={allDirectoriesExpanded ? ChevronsDownUp : ChevronsUpDown}
-                />
+                {allDirectoriesExpanded ? (
+                  <ChevronsDownUpIcon className="size-3" />
+                ) : (
+                  <ChevronsUpDownIcon className="size-3" />
+                )}
               </TooltipTrigger>
               <TooltipPopup side="top">
                 {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
@@ -157,6 +168,7 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     key: string | null;
     overrides: Record<string, boolean>;
   }>({ key: null, overrides: {} });
+  const syncTimelineLayout = useSyncLayout();
   const treeNodes = buildTurnDiffTree(files);
   const directoryPathsKey = collectDirectoryPaths(treeNodes).join("\u0000");
   const hasDirectoryNodes = directoryPathsKey.length > 0;
@@ -177,6 +189,8 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         },
       };
     });
+    // Measure before paint instead of waiting for LegendList's deferred shrink measurement.
+    syncTimelineLayout();
   };
 
   const rows = collectExpandedRows(treeNodes, expandedDirectories, allDirectoriesExpanded);
@@ -203,10 +217,11 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
               isExpanded && "rotate-90",
             )}
           />
-          <MorphIcon
-            className="size-3.5 shrink-0 text-muted-foreground/75"
-            icon={isExpanded ? Folder : FolderClosed}
-          />
+          {isExpanded ? (
+            <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+          ) : (
+            <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
+          )}
           <span className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90">
             {node.name}
           </span>

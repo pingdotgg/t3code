@@ -163,7 +163,6 @@ export function ThreadDetailsPrRow({
     reference,
     terminology,
     onSuccess: () => {
-      detailQuery.refresh();
       checksQuery.refresh();
       onActed?.();
     },
@@ -212,6 +211,8 @@ export function ThreadDetailsPrRow({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         reviewThreads: [],
         comments: [],
         checks: detail.checks,
@@ -408,7 +409,7 @@ export function ThreadDetailsPrRow({
             size="sm"
             part={part}
             multiline={wrap}
-            className={wrap ? "items-start [&>svg]:mt-0.5" : undefined}
+            className={wrap ? "items-start [&>svg]:mt-px" : undefined}
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}
@@ -438,7 +439,7 @@ export function ThreadDetailsPrRow({
       {detail !== null && (showChecks || trailingAction !== null || watching) ? (
         <div className="pb-1.5">
           {openRow(detail.title, "row", true)}
-          <div className="flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
+          <div className="mt-1.5 flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
             <span className="me-1 shrink-0 tabular-nums">#{number}</span>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover

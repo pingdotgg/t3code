@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -122,13 +123,13 @@ it.each([
   expect(ServiceProtection.loadedRemoteAccessUnits(shown)).toEqual(expected);
 });
 
-const fakeSudo = (exitCode: number, onRun: () => void) =>
+const fakeSudo = (exitCode: number, onRun: (command: ChildProcess.StandardCommand) => void) =>
   ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand" || command.command !== "sudo") {
         return yield* Effect.die("Unexpected command");
       }
-      onRun();
+      onRun(command);
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(123),
         stdout: Stream.empty,
@@ -180,11 +181,13 @@ it.effect("lowers no score before the manager default is in place, and undoes in
       writesManagerDropIn = false,
     ) => {
       let atSudo: ReturnType<typeof present> | undefined;
+      let sudoOptions: ChildProcess.CommandOptions | undefined;
       return effect.pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
-          fakeSudo(exitCode, () => {
+          fakeSudo(exitCode, (command) => {
             atSudo = present();
+            sudoOptions = command.options;
             if (writesManagerDropIn) {
               NodeFS.mkdirSync(NodePath.dirname(managerDropIn), { recursive: true });
               NodeFS.writeFileSync(managerDropIn, "[Service]\nOOMScoreAdjust=-900\n");
@@ -192,7 +195,7 @@ it.effect("lowers no score before the manager default is in place, and undoes in
           }),
         ),
         Effect.exit,
-        Effect.map((exit) => ({ exit, atSudo })),
+        Effect.map((exit) => ({ exit, atSudo, sudoOptions })),
       );
     };
     const refused = yield* withSudo(ServiceProtection.applyProtection(plan), 1);
@@ -209,6 +212,8 @@ it.effect("lowers no score before the manager default is in place, and undoes in
 
     const applied = yield* withSudo(ServiceProtection.applyProtection(plan), 0);
     expect(applied.atSudo).toEqual({ managerDefaults: true, user: 0 });
+    // sudo needs the controlling terminal to ask for a password.
+    expect(applied.sudoOptions).toMatchObject({ detached: false, stdin: "inherit" });
     expect(present()).toEqual({ managerDefaults: true, user: plan.user.length });
 
     const removed = yield* withSudo(ServiceProtection.removeProtection(plan), 0);

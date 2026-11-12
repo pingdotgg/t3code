@@ -15,6 +15,7 @@ import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThre
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
@@ -90,7 +91,7 @@ function useThreadActionExecutor(
   const deleteMutation = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const settleMutation = useAtomCommand(threadEnvironment.settle, { reportFailure: false });
   const unsettleMutation = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
-  const inFlightThreadKeys = useRef(new Set<string>());
+  const latestPendingActions = useRef(new Map<string, { readonly action: ThreadListAction }>());
 
   const executeAction = async (
     action: ThreadListAction,
@@ -99,11 +100,13 @@ function useThreadActionExecutor(
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
-    if (inFlightThreadKeys.current.has(key)) {
+    // Drop only a repeat of the latest pending action; Settle → Un-settle → Settle must all send.
+    if (latestPendingActions.current.get(key)?.action === action) {
       return false;
     }
 
-    inFlightThreadKeys.current.add(key);
+    const pending = { action };
+    latestPendingActions.current.set(key, pending);
     selectionHaptic();
     const succeeded = await (async () => {
       if (
@@ -162,7 +165,7 @@ function useThreadActionExecutor(
       onCompleted?.(action, thread);
       return true;
     })();
-    inFlightThreadKeys.current.delete(key);
+    if (latestPendingActions.current.get(key) === pending) latestPendingActions.current.delete(key);
     return succeeded;
   };
 
@@ -307,9 +310,7 @@ export function useThreadListActions(): {
       if (!canSnooze(thread, { now: new Date().toISOString() })) {
         Dialog.alert(
           "Could not snooze thread",
-          thread.hasPendingApprovals ||
-            thread.hasPendingUserInput ||
-            thread.pendingSubagentRequest != null
+          thread.hasPendingApprovals || thread.pendingSubagentRequest != null
             ? "This thread is waiting on you. Respond to the pending request before snoozing it."
             : "This thread is still starting a turn. Try again once it's running.",
         );
@@ -591,6 +592,10 @@ export function useThreadListActions(): {
       return settled;
     }
     const configs = appAtomRegistry.get(environmentServerConfigsAtom);
+    const connectedEnvironmentIds = new Set(appAtomRegistry.get(connectedEnvironmentIdsAtom));
+
+    if (!connectedEnvironmentIds.has(thread.environmentId)) return false;
+
     if (!configs.has(thread.environmentId)) {
       Dialog.alert(
         "Could not move thread",
@@ -610,7 +615,9 @@ export function useThreadListActions(): {
       allThreads: shells,
       ordered,
       section,
-      reorderableEnvironmentIds: new Set(configs.keys()),
+      reorderableEnvironmentIds: new Set(
+        [...configs.keys()].filter((environmentId) => connectedEnvironmentIds.has(environmentId)),
+      ),
     })(scopedThreadKey(thread.environmentId, thread.id), direction);
     if (assignments === null) return false;
     const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
