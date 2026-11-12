@@ -118,7 +118,7 @@ describe("runMigrations", () => {
   it.effect("drops the stream sequence index and keeps the indexes event reads use", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 82 });
+      yield* runMigrations({ toMigrationInclusive: 83 });
       yield* sql`
         INSERT INTO orchestration_events (
           event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
@@ -132,7 +132,7 @@ describe("runMigrations", () => {
       `;
 
       assert.deepStrictEqual(yield* runMigrations(), [
-        [83, "DropOrchestrationEventStreamSequenceIndex"],
+        [84, "DropOrchestrationEventStreamSequenceIndex"],
       ]);
 
       const indexes = yield* sql<{ readonly name: string }>`
