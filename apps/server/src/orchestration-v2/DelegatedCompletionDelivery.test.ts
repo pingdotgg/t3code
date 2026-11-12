@@ -4059,6 +4059,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         ]),
       });
       const parentReads: Array<string> = [];
+      const transferReadParams: Array<ReadonlyArray<unknown>> = [];
       const observe: Statement.Transformer = (statement) => {
         const [query, params] = statement.compile();
         if (
@@ -4069,6 +4070,9 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
             ))
         ) {
           parentReads.push(query);
+          if (query.includes("FROM orchestration_v2_projection_context_transfers")) {
+            transferReadParams.push(params);
+          }
         }
         return Effect.succeed(statement);
       };
@@ -4096,6 +4100,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         transferReads.filter((query) => !/AND source_thread_id (=|IN)/.test(query)),
         [],
         "a parent context-transfer read is not narrowed",
+      );
+      // An existing result transfer is found only when the read asks for this child's.
+      assert.deepEqual(
+        transferReadParams.filter((params) => !params.includes(child.childThreadId)),
+        [],
+        "a parent context-transfer read names another thread",
       );
       // Nodes and cards by the task's node, messages by id.
       for (const [table, narrowed] of [
