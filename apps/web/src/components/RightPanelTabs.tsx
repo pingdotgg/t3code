@@ -737,15 +737,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const { hasActions, registerActions } = usePanelTabActionsHost();
   const mobileDiff = isMobile && props.mode === "embedded" && focusedSurface?.kind === "diff";
-  const tabSlots = {
-    breadcrumb: mobileDiff ? mobileBreadcrumbSlot : breadcrumbSlot,
-    actions: actionsSlot,
-    registerActions,
-  };
   // A layout pane's tabs sit in its notch (pen JiaZk), like a chat's.
   const notched = props.mode === "embedded" || props.pane === true;
   // On the connected bar the tab names its kind and its breadcrumb sits beside it.
   const breadcrumbOnBar = useConnectedPaneTabs() && notched;
+  const tabSlots = {
+    breadcrumb: mobileDiff ? mobileBreadcrumbSlot : breadcrumbSlot,
+    actions: actionsSlot,
+    registerActions,
+    breadcrumbOnBar,
+  };
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
