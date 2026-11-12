@@ -1119,6 +1119,25 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     return options?.extraArgs?.["append-system-prompt"];
   };
 
+  it("sends append text too long for one argument over stdin with the file folded in", () => {
+    const inline = "x".repeat(ClaudeAdapterV2.CLAUDE_COMMAND_LINE_APPEND_MAX_BYTES);
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-claude-long-append",
+      resume: false,
+      cwd: "/workspace",
+      settings: {
+        ...DEFAULT_CLAUDE_SETTINGS,
+        launchArgs: `--append-system-prompt ${inline} --append-system-prompt-file rules.md`,
+      },
+      appendSystemPromptFile: { path: "/workspace/rules.md", text: "File sentinel\n" },
+    });
+    const append = (options.systemPrompt as { readonly append?: string }).append ?? "";
+    assert.isTrue(append.endsWith(`\n\nFile sentinel\n\n${inline}`));
+    assert.isUndefined(options.extraArgs?.["append-system-prompt"]);
+    assert.isUndefined(options.extraArgs?.["append-system-prompt-file"]);
+  });
+
   it.effect("sends append launch arguments to Claude after the T3 instructions", () =>
     Effect.scoped(
       Effect.gen(function* () {

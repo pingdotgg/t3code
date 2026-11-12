@@ -267,6 +267,8 @@ function claudePromptCacheTtlMs(
 // Below that, Claude compacts 33,000 tokens short of the window: Claude Code 2.1.305's
 // getContextUsage reports a 150,000 window as a 117,000 threshold, for every catalog model.
 const CLAUDE_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
+// Well under Linux's 128 KiB per argument and Windows' 32K command line.
+export const CLAUDE_COMMAND_LINE_APPEND_MAX_BYTES = 16_384;
 
 function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
   const windowTokens = Number(autoCompactWindow);
@@ -1929,7 +1931,7 @@ export function makeClaudeQueryOptions(input: {
   readonly onElicitation?: ClaudeQueryOptions["onElicitation"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
-  readonly appendSystemPromptFile?: string;
+  readonly appendSystemPromptFile?: { readonly path: string; readonly text: string };
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -1945,9 +1947,6 @@ export function makeClaudeQueryOptions(input: {
     settings: _launchArgSettings,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
-  // Claude Code replaces all CLI append text with an initialize appendSystemPrompt,
-  // which would drop a wrapper binary's own --append-system-prompt-file, so the
-  // append text goes on the command line. The file goes by path to keep argv small.
   const launchAppendSystemPrompt =
     typeof launchArgAppendSystemPrompt === "string" && launchArgAppendSystemPrompt.length > 0
       ? [launchArgAppendSystemPrompt]
@@ -1988,6 +1987,46 @@ export function makeClaudeQueryOptions(input: {
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const t3AppendSystemPrompt =
+    buildRuntimeInstructions({ harness: "Claude Code" }) +
+    (input.mcpServers === undefined
+      ? ""
+      : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+        CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+        (deviceInstructions ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : ""));
+  const commandLineAppendSystemPrompt = [t3AppendSystemPrompt, ...launchAppendSystemPrompt].join(
+    "\n\n",
+  );
+  // Claude Code replaces all CLI append text with an initialize appendSystemPrompt,
+  // dropping a wrapper binary's own --append-system-prompt-file, so the text goes on
+  // the command line. Text too long for that goes over stdin as before, with the
+  // launch-argument file folded in; the CLI puts file text before inline text.
+  const appendOptions: Pick<ClaudeAgentSdkQueryOptions, "systemPrompt" | "extraArgs"> =
+    Buffer.byteLength(commandLineAppendSystemPrompt) <= CLAUDE_COMMAND_LINE_APPEND_MAX_BYTES
+      ? {
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          extraArgs: {
+            ...extraArgs,
+            ...(input.appendSystemPromptFile === undefined
+              ? {}
+              : { "append-system-prompt-file": input.appendSystemPromptFile.path }),
+            "append-system-prompt": commandLineAppendSystemPrompt,
+          },
+        }
+      : {
+          systemPrompt: {
+            type: "preset",
+            preset: "claude_code",
+            append: [
+              t3AppendSystemPrompt,
+              input.appendSystemPromptFile?.text.replace(/\r?\n$/, ""),
+              ...launchAppendSystemPrompt,
+            ]
+              .filter((text): text is string => text !== undefined && text.length > 0)
+              .join("\n\n"),
+          },
+          ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
+        };
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -2037,27 +2076,10 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
-    systemPrompt: { type: "preset" as const, preset: "claude_code" as const },
+    ...appendOptions,
     ...(deviceInstructions
       ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
       : {}),
-    extraArgs: {
-      ...extraArgs,
-      ...(input.appendSystemPromptFile === undefined
-        ? {}
-        : { "append-system-prompt-file": input.appendSystemPromptFile }),
-      "append-system-prompt": [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
-        ...launchAppendSystemPrompt,
-      ].join("\n\n"),
-    },
   };
   const additionalDirectories = [
     ...(input.cwd === null ? [] : [input.cwd]),
@@ -2103,7 +2125,7 @@ const resolveClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: 
     expandHomePath(file, yield* HostProcess.HomeDirectory),
   );
   return yield* input.fileSystem.readFileString(filePath).pipe(
-    Effect.as(filePath),
+    Effect.map((text) => ({ path: filePath, text })),
     Effect.mapError((cause) => new ClaudeAppendSystemPromptFileError({ path: filePath, cause })),
   );
 });
