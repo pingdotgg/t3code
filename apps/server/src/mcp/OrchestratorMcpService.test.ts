@@ -3889,7 +3889,9 @@ describe("OrchestratorMcpService thread list", () => {
     {
       ...shell("thread:a-awaiting-command", "project:a", false),
       activityRunStatus: null,
-      pendingBackgroundTasks: [{ taskId: "sleep-600", kind: "command" as const, awaited: true }],
+      pendingBackgroundTasks: [
+        { taskId: "sleep-600", kind: "command" as const, awaited: true as const },
+      ],
     },
   ];
   const service = layerOrchestratorService.pipe(
