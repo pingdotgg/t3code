@@ -11,6 +11,7 @@ import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions
 import { BearerConnectionTarget, RelayConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
+  connectionRoutes,
   connectionRouteKind,
   connectionRouteLabel,
   credentialConnectionId,
@@ -214,6 +215,27 @@ describe("learned routes", () => {
       `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773`,
       "relay",
       `learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773`,
+    ]);
+  });
+
+  it("keeps a learned route where the user moved it when the server briefly stops reporting it", () => {
+    const serve = { kind: "tailnet", httpBaseUrl: "https://desk.tail1234.ts.net/" };
+    const first = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported: [serve],
+      allowInsecure: true,
+    })!;
+    const reordered = entryWithRoutes(relayOnly, [first[1]!, first[0]!]);
+    const apply = (entry: ConnectionCatalogEntry, reported: ReadonlyArray<typeof serve>) => {
+      const next = mergeLearnedRoutes({ entry, activeRoute: RELAY, reported, allowInsecure: true });
+      return next === null ? entry : entryWithRoutes(entry, next);
+    };
+    // A restarting server reports no Serve URL until its self-probe answers.
+    const returned = apply(apply(reordered, []), [serve]);
+    expect(ids(connectionRoutes(returned))).toEqual([
+      "relay",
+      `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net`,
     ]);
   });
 
