@@ -24,6 +24,7 @@ import { migrationManifest, runMigrations } from "./Migrations.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
 const workers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
+const workerData = vi.hoisted((): Array<unknown> => []);
 
 vi.mock("node:worker_threads", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeWorkerThreads>();
@@ -31,6 +32,7 @@ vi.mock("node:worker_threads", async (importOriginal) => {
     constructor(...args: ConstructorParameters<typeof actual.Worker>) {
       super(...args);
       workers.push(this);
+      workerData.push(args[1]?.workerData);
     }
   }
   return { ...actual, Worker: RecordedWorker };
@@ -187,6 +189,43 @@ it.effect("drops planner statistics a database already has", () => {
         "SEARCH parent USING INDEX sqlite_autoindex_walk_probe_1 (node_id=?)",
       );
     }).pipe(Effect.provide(persistence()));
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("upgrades an existing database on a read-write worker connection", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-upgrade-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+
+  return Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL;`;
+      yield* runMigrations({ toMigrationInclusive: 81 });
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+    const startedBefore = workerData.length;
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        rows.map((row) => [row.migration_id, row.name] as const),
+        migrationManifest,
+      );
+    }).pipe(
+      Effect.provide(
+        SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+      ),
+    );
+    assert.deepInclude(workerData.slice(startedBefore), {
+      filename: dbPath,
+      readOnly: false,
+      allowExtension: false,
+      prepareCacheSize: 200,
+    });
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
