@@ -1834,3 +1834,68 @@ it.effect.each(["Stop", "Force stop"] as const)(
       );
     }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("Force stop alone stops a stranded run's delegated cohort and later agent watches", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:force-stop-stranded");
+    yield* createWatchingThread(threadId, 8);
+    yield* send(threadId, "parent", "start_immediately");
+    yield* delegate(threadId, "stranded child");
+    const now = yield* DateTime.now;
+    const started = yield* orchestrator.getThreadProjection(threadId);
+    const run = started.runs[0]!;
+    const attempt = started.attempts[0]!;
+    const apply = (event: Omit<OrchestrationV2DomainEvent, "id" | "threadId">) =>
+      projections.apply({
+        ...event,
+        id: EventId.make(`event:force-stop-stranded:${event.type}`),
+        threadId,
+      } as OrchestrationV2DomainEvent);
+    yield* apply({
+      type: "run.updated",
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        ...run,
+        status: "running",
+        startedAt: now,
+        delegatedCompletion: { disposition: "open", nextGeneration: 1, delivery: null },
+      },
+    });
+    yield* apply({
+      type: "run-attempt.updated",
+      occurredAt: now,
+      payload: { ...attempt, status: "completed", startedAt: now, completedAt: now },
+    });
+    yield* apply({
+      type: "provider-turn.updated",
+      occurredAt: now,
+      payload: {
+        id: ProviderTurnId.make("provider-turn:force-stop-stranded"),
+        providerThreadId: run.providerThreadId!,
+        nodeId: run.rootNodeId!,
+        runAttemptId: attempt.id,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.forceStopThread({ threadId, runId: run.id });
+    const stopped = yield* orchestrator.getThreadProjection(threadId);
+    assert.deepEqual(
+      stopped.runs.map((candidate) => [
+        candidate.status,
+        candidate.delegatedCompletion?.disposition,
+      ]),
+      [["interrupted", "stopped"]],
+    );
+    assert.equal(stopped.subagents[0]?.completionDelivery?.state, "disposed");
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 9))));
+  }).pipe(Effect.provide(layerTest)),
+);
