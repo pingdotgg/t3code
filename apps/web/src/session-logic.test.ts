@@ -37,6 +37,7 @@ import {
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
+  revertFileDiffTarget,
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
@@ -1867,4 +1868,33 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
       ],
     })[0]?.kind,
   ).toBe("message");
+});
+
+describe("revertFileDiffTarget", () => {
+  type Run = Parameters<typeof revertFileDiffTarget>[0][number];
+  const run = (ordinal: number, status: Run["status"] = "completed"): Run => ({
+    id: RunId.make(`run-${ordinal}`),
+    ordinal,
+    status,
+  });
+  const ready = (ordinal: number, status: "ready" | "error" = "ready") => ({
+    runId: RunId.make(`run-${ordinal}`),
+    status,
+  });
+
+  it("diffs to the latest completed run with a ready checkpoint", () => {
+    expect(
+      revertFileDiffTarget(
+        [run(1), run(2), run(3), run(4, "rolled_back"), run(5, "queued")],
+        [ready(1), ready(2), ready(3)],
+        1,
+      ),
+    ).toBe(3);
+  });
+
+  it("assumes changes when the latest run's edits are in no ready checkpoint", () => {
+    expect(revertFileDiffTarget([run(1), run(2, "interrupted")], [ready(1)], 0)).toBeNull();
+    expect(revertFileDiffTarget([run(1)], [ready(1, "error")], 0)).toBeNull();
+    expect(revertFileDiffTarget([], [], 0)).toBeNull();
+  });
 });
