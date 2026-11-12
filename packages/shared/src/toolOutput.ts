@@ -29,7 +29,8 @@ import {
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
-const MAX_COURSE_PARSED_BYTES = 64 * 1024;
+// Server-side read of our own course_add result; large OCW courses run to hundreds of units.
+const MAX_COURSE_PARSED_BYTES = 512 * 1024;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
 const MAX_THREADS = 100;
@@ -139,8 +140,8 @@ function boundedId(value: unknown): string | undefined {
 function readCourse(value: unknown): CourseOutlineData | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_COURSE_PARSED_BYTES,
-    remainingNodes: MAX_ENVELOPE_NODES * 16,
-    maxArrayLength: 256,
+    remainingNodes: 50_000,
+    maxArrayLength: 2_000,
     exceeded: false,
   };
   const result = readResult(value, budget);

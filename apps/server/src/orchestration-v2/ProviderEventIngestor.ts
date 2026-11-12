@@ -584,66 +584,34 @@ export const layer: Layer.Layer<
                 runId: item.runId,
                 nodeId: item.nodeId,
               });
-              const reply =
-                item.type === "dynamic_tool" && item.status === "completed"
-                  ? lessonCardFromToolItem(item)?.reply
-                  : undefined;
-              const outline =
-                item.type === "dynamic_tool" && item.status === "completed"
-                  ? courseOutlineFromToolItem(item)
-                  : undefined;
-              if (!reply && !outline) return [updated];
+              const completedTool = item.type === "dynamic_tool" && item.status === "completed";
+              const reply = completedTool ? lessonCardFromToolItem(item)?.reply : undefined;
+              const outline = completedTool && !reply ? courseOutlineFromToolItem(item) : undefined;
+              const text = reply ?? outline;
+              if (!text) return [updated];
               const createdAt = item.startedAt ?? item.updatedAt;
               return [
                 updated,
-                ...(reply
-                  ? [
-                      yield* makeDomainEvent(input, {
-                        type: "message.updated",
-                        threadId: item.threadId,
-                        payload: {
-                          createdBy: "agent",
-                          creationSource: "provider",
-                          id: lessonCardReplyMessageId(item.id),
-                          threadId: item.threadId,
-                          runId: item.runId,
-                          nodeId: item.nodeId,
-                          role: "assistant",
-                          text: reply,
-                          attachments: [],
-                          streaming: false,
-                          createdAt,
-                          updatedAt: item.completedAt ?? item.updatedAt,
-                        },
-                        runId: item.runId,
-                        nodeId: item.nodeId,
-                      }),
-                    ]
-                  : []),
-                ...(outline
-                  ? [
-                      yield* makeDomainEvent(input, {
-                        type: "message.updated",
-                        threadId: item.threadId,
-                        payload: {
-                          createdBy: "agent",
-                          creationSource: "provider",
-                          id: courseOutlineMessageId(item.id),
-                          threadId: item.threadId,
-                          runId: item.runId,
-                          nodeId: item.nodeId,
-                          role: "assistant",
-                          text: outline,
-                          attachments: [],
-                          streaming: false,
-                          createdAt,
-                          updatedAt: item.completedAt ?? item.updatedAt,
-                        },
-                        runId: item.runId,
-                        nodeId: item.nodeId,
-                      }),
-                    ]
-                  : []),
+                yield* makeDomainEvent(input, {
+                  type: "message.updated",
+                  threadId: item.threadId,
+                  payload: {
+                    createdBy: "agent",
+                    creationSource: "provider",
+                    id: reply ? lessonCardReplyMessageId(item.id) : courseOutlineMessageId(item.id),
+                    threadId: item.threadId,
+                    runId: item.runId,
+                    nodeId: item.nodeId,
+                    role: "assistant",
+                    text,
+                    attachments: [],
+                    streaming: false,
+                    createdAt,
+                    updatedAt: item.completedAt ?? item.updatedAt,
+                  },
+                  runId: item.runId,
+                  nodeId: item.nodeId,
+                }),
               ];
             }
             case "runtime_request.updated":
