@@ -123,6 +123,34 @@ describe("tailscale", () => {
     }),
   );
 
+  it.effect("does not treat another T3 server behind the Serve URL as this server", () =>
+    Effect.gen(function* () {
+      const answer = (environmentId: string) =>
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                environmentId,
+                label: "T3 server",
+                platform: { os: "linux", arch: "x64" },
+                serverVersion: "0.1.9",
+                capabilities: { repositoryIdentity: true },
+              }),
+            ),
+          ),
+        );
+      const probe = (served: string) =>
+        probeTailscaleHttpsEndpoint({
+          baseUrl: "https://desktop.example.ts.net",
+          environmentId: "this-environment",
+        }).pipe(Effect.provideService(HttpClient.HttpClient, answer(served)));
+
+      assert.isTrue(yield* probe("this-environment"));
+      assert.isFalse(yield* probe("another-environment"));
+    }),
+  );
+
   it("finds the Serve routes that forward to the bound address, and only those", () => {
     const status = JSON.stringify({
       TCP: {
