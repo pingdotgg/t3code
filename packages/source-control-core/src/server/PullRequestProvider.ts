@@ -314,6 +314,12 @@ export interface PullRequestProviderApi {
   /** Use matching checkout keys instead of `owner/name`. */
   readonly repositoryKey?: (input: { readonly canonicalKey: string }) => string;
   /**
+   * For a forge whose accounts belong to something narrower than the host, such as an Azure
+   * DevOps organization: what a remote's viewer is resolved and cached under on its host. Absent
+   * or `null` means one viewer for the whole host.
+   */
+  readonly viewerScope?: (input: { readonly remoteUrl: string }) => string | null;
+  /**
    * Names the repository in every request and authenticates by host, so a change request on the
    * definition's `publicHost` can be read from a project with no checkout of its repository.
    */

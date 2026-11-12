@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
 import {
   decodeItemContentJson,
@@ -21,6 +22,7 @@ import {
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
+  decodeConnectionAccountJson,
   decodeViewerJson,
   type AzureDevOpsChangeEntry,
   type AzureDevOpsItemContent,
@@ -276,8 +278,11 @@ function isReviewerName(value: string): boolean {
 }
 
 /** @public */
-export const make = Effect.gen(function* () {
+const CONNECTION_DATA_MAX_OUTPUT_BYTES = 256 * 1024;
+
+const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
   const rest = yield* AzureDevOpsRest.AzureDevOpsRest;
 
   // Let `az` parse all three remote formats.
@@ -477,55 +482,100 @@ export const make = Effect.gen(function* () {
 
   return AzureDevOpsPullRequestCli.of({
     getViewer: Effect.fn("AzureDevOpsPullRequestCli.getViewer")(function (input) {
-      return executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
-        Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
-          if (!Result.isSuccess(decoded)) {
-            return Effect.fail(
-              new AzureDevOpsPullRequestReadError({
-                command: "az",
-                cwd: input.cwd,
-                operation: "getViewer",
-                cause: decoded.failure,
-              }),
-            );
-          }
-          return decoded.success === null
-            ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
-            : Effect.succeed(decoded.success);
-        }),
-        // `az account show` cannot identify PAT logins; the extension resolves `--creator me`.
-        Effect.catchIf(
-          (error) => error._tag !== "AzureDevOpsCliUnavailableError",
-          () =>
-            executeJson({
-              cwd: input.cwd,
-              args: [
-                "repos",
-                "pr",
-                "list",
-                ...detectArgs,
-                "--creator",
-                "me",
-                "--status",
-                "all",
-                "--top",
-                "1",
-              ],
-            }).pipe(
-              Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-                const decoded = decodePullRequestListJson(result.stdout.trim() || "[]");
-                const login = Result.isSuccess(decoded)
-                  ? decoded.success.items[0]?.author?.login
-                  : undefined;
-                return login === undefined
-                  ? Effect.fail(
-                      new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
-                    )
-                  : Effect.succeed(login);
+      // The extension resolves `--creator me` for whichever credential it uses, a PAT included.
+      const viaCreator = Effect.suspend(() =>
+        executeJson({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "list",
+            ...detectArgs,
+            "--creator",
+            "me",
+            "--status",
+            "all",
+            "--top",
+            "1",
+          ],
+        }).pipe(
+          Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
+            const decoded = decodePullRequestListJson(result.stdout.trim() || "[]");
+            const login = Result.isSuccess(decoded)
+              ? decoded.success.items[0]?.author?.login
+              : undefined;
+            return login === undefined
+              ? Effect.fail(
+                  new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
+                )
+              : Effect.succeed(login);
+          }),
+        ),
+      );
+      const viaAccount = Effect.suspend(() =>
+        executeJson({
+          cwd: input.cwd,
+          args: ["account", "show", "--query", "user"],
+        }).pipe(
+          Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
+            const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
+            if (!Result.isSuccess(decoded)) {
+              return Effect.fail(
+                new AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: input.cwd,
+                  operation: "getViewer",
+                  cause: decoded.failure,
+                }),
+              );
+            }
+            return decoded.success === null
+              ? Effect.fail(
+                  new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
+                )
+              : Effect.succeed(decoded.success);
+          }),
+          // `az account show` cannot identify PAT logins.
+          Effect.catchIf(
+            (error) => error._tag !== "AzureDevOpsCliUnavailableError",
+            () => viaCreator,
+          ),
+        ),
+      );
+      // The saved token's own account, which needs no pull request history; `--creator me` is the
+      // fallback when Azure does not answer directly.
+      const viaSavedToken = (saved: AzureDevOpsCredentials.SavedOrganizationToken) =>
+        rest
+          .getJson({
+            cwd: input.cwd,
+            url: `https://${saved.organization}/_apis/connectionData`,
+            maxOutputBytes: CONNECTION_DATA_MAX_OUTPUT_BYTES,
+            apiVersion: "7.1-preview",
+          })
+          .pipe(
+            Effect.map(
+              Option.flatMap((body) => {
+                const decoded = decodeConnectionAccountJson(body);
+                return Result.isSuccess(decoded)
+                  ? Option.fromNullishOr(decoded.success)
+                  : Option.none();
               }),
             ),
+            Effect.flatMap(Option.match({ onNone: () => viaCreator, onSome: Effect.succeed })),
+          );
+      return credentials.savedTokenForCheckout(input.cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AzureDevOpsCli.AzureDevOpsSavedTokenUnreadableError({
+              operation: "execute",
+              command: "az",
+              cwd: input.cwd,
+              argumentCount: 0,
+              cause,
+            }),
         ),
+        // `az account show` names the az login account, not the one a saved token belongs to.
+        Effect.flatMap((saved) => (Option.isSome(saved) ? viaSavedToken(saved.value) : viaAccount)),
       );
     }),
 

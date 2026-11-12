@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -13,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import { isAzureDevOpsServicesUrl } from "./azureDevOpsPullRequestJson.ts";
 
 /** Azure DevOps' application id, the resource every Entra token for it is issued to. */
@@ -55,6 +57,8 @@ export class AzureDevOpsRest extends Context.Service<
       /** An Azure DevOps Services URL, without `api-version`; any other URL answers `None`. */
       readonly url: string;
       readonly maxOutputBytes: number;
+      /** Defaults to 7.1; some resources, such as connection data, exist only as previews. */
+      readonly apiVersion?: string;
     }) => Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsRest") {}
@@ -70,10 +74,16 @@ function organizationKey(url: URL): string {
 const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
   const httpClient = yield* HttpClient.HttpClient;
+  const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
   const tokenLock = yield* Semaphore.make(1);
   let held: HeldToken | null = null;
   let tokenRetryAt = 0;
-  const refusedUntil = new Map<string, number>();
+  // Per organization, the credential it refused: a saved token, or null for the az login. A
+  // corrected token is tried at once; the one refused waits out the window.
+  const refusals = new Map<
+    string,
+    { readonly until: number; readonly by: Redacted.Redacted<string> | null }
+  >();
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* HostProcess.Environment;
   const profilePath = NodePath.join(
@@ -93,7 +103,9 @@ const make = Effect.gen(function* () {
         accountGeneration += 1;
         held = null;
         tokenRetryAt = 0;
-        refusedUntil.clear();
+        for (const [organization, refusal] of refusals) {
+          if (refusal.by === null) refusals.delete(organization);
+        }
       }
       profileVersion = version;
     }),
@@ -151,15 +163,34 @@ const make = Effect.gen(function* () {
       const organization = organizationKey(url);
       yield* tokenLock.withPermit(followAccount);
       const generation = accountGeneration;
+      // A token saved for this organization is used instead of the az login account, chosen from
+      // the URL as it will be sent. One that cannot be read sends nothing; the az path reports it.
+      // Drop a refused token at the first read after its window, or once the organization uses
+      // another, including reads that end below without sending anything.
       const now = yield* Clock.currentTimeMillis;
-      if ((refusedUntil.get(organization) ?? 0) > now) return Option.none();
+      for (const [held, refusal] of refusals) {
+        if (refusal.until <= now) refusals.delete(held);
+      }
+      const saved = yield* credentials.savedToken(url.href).pipe(Effect.option);
+      if (Option.isNone(saved)) return Option.none();
+      const credential = Option.getOrNull(saved.value);
+      const refusal = refusals.get(organization);
+      if (refusal !== undefined) {
+        const same =
+          refusal.by === null || credential === null
+            ? refusal.by === credential
+            : Redacted.value(refusal.by) === Redacted.value(credential);
+        if (same) return Option.none();
+        refusals.delete(organization);
+      }
+      const authorize = Option.isSome(saved.value)
+        ? Option.some(HttpClientRequest.basicAuth("", Redacted.value(saved.value.value)))
+        : Option.map(yield* token(input.cwd), (bearer) => HttpClientRequest.bearerToken(bearer));
+      if (Option.isNone(authorize)) return Option.none();
 
-      const bearer = yield* token(input.cwd);
-      if (Option.isNone(bearer)) return Option.none();
-
-      url.searchParams.set("api-version", REST_API_VERSION);
+      url.searchParams.set("api-version", input.apiVersion ?? REST_API_VERSION);
       const request = HttpClientRequest.get(url.toString()).pipe(
-        HttpClientRequest.bearerToken(bearer.value),
+        authorize.value,
         HttpClientRequest.acceptJson,
       );
       return yield* httpClient.execute(request).pipe(
@@ -173,8 +204,8 @@ const make = Effect.gen(function* () {
           ) {
             return Clock.currentTimeMillis.pipe(
               Effect.map((at) => {
-                if (generation === accountGeneration) {
-                  refusedUntil.set(organization, at + ORGANIZATION_RETRY_MS);
+                if (credential !== null || generation === accountGeneration) {
+                  refusals.set(organization, { until: at + ORGANIZATION_RETRY_MS, by: credential });
                 }
                 return Option.none<string>();
               }),

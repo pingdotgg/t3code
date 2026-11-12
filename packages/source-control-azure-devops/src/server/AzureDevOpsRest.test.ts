@@ -8,10 +8,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { VcsProcessExitError } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  SecretProviderId,
+  type SettingsSecretValue,
+  VcsProcessExitError,
+} from "@t3tools/contracts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
 
 const ACME = "https://dev.azure.com/acme/p1/_apis/git/repositories/r1/pullRequests/7/threads";
@@ -38,6 +44,7 @@ function setup(input: {
   ) => Response | Effect.Effect<Response>;
   readonly issue?: () => Effect.Effect<string, VcsProcessExitError>;
   readonly profile?: { mtime: Date };
+  readonly tokens?: Record<string, SettingsSecretValue>;
 }) {
   const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
     (input.issue ?? (() => Effect.succeed(tokenJson("t1", 3600))))().pipe(
@@ -53,7 +60,16 @@ function setup(input: {
     }),
   );
   const layer = AzureDevOpsRest.layer.pipe(
-    Layer.provide(TestSourceControlHost.layer({ process: { run } })),
+    Layer.provide(AzureDevOpsCredentials.layer),
+    Layer.provideMerge(
+      TestSourceControlHost.layer({
+        process: { run },
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHosts: { "azure-devops": { tokens: input.tokens ?? {} } },
+        },
+      }),
+    ),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
     Layer.provide(azureProfile(input.profile)),
   );
@@ -180,6 +196,7 @@ it.effect(
     );
     const execute = vi.fn((_request: HttpClientRequest.HttpClientRequest) => Effect.never);
     const layer = AzureDevOpsRest.layer.pipe(
+      Layer.provide(AzureDevOpsCredentials.layer),
       Layer.provide(TestSourceControlHost.layer({ process: { run } })),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute))),
       Layer.provide(azureProfile()),
@@ -242,3 +259,74 @@ it.effect("ignores a delayed refusal from the previous az login account", () =>
     }).pipe(Effect.provide(layer));
   }),
 );
+
+it.effect("reads with the token saved for the organization instead of the az login", () => {
+  const { run, execute, layer, read } = setup({
+    respond: () => ok({ value: [] }),
+    tokens: { "dev.azure.com/acme": "acme-pat" },
+  });
+  return Effect.gen(function* () {
+    assert.isTrue(Option.isSome(yield* read(ACME)));
+    assert.isTrue(Option.isSome(yield* read(GLOBEX)));
+    const [acme, globex] = execute.mock.calls.map(([request]) => request.headers.authorization);
+    expect(acme).toBe(`Basic ${Buffer.from(":acme-pat").toString("base64")}`);
+    expect(globex).toBe("Bearer t1");
+    // Only the organization without a saved token asked az for one.
+    expect(run).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("picks the token for the organization a request reaches, after dot segments", () => {
+  const { execute, layer, read } = setup({
+    respond: () => ok({ value: [] }),
+    tokens: { "dev.azure.com/acme": "acme-pat", "dev.azure.com/globex": "globex-pat" },
+  });
+  return Effect.gen(function* () {
+    yield* read("https://dev.azure.com/acme/../globex/p1/_apis/git/repositories/r1/items");
+    yield* read("https://dev.azure.com/acme/%2e%2e/globex/p1/_apis/git/repositories/r1/items");
+    for (const [request] of execute.mock.calls) {
+      expect(request.url).toMatch(/^https:\/\/dev\.azure\.com\/globex\//u);
+      expect(request.headers.authorization).toBe(
+        `Basic ${Buffer.from(":globex-pat").toString("base64")}`,
+      );
+    }
+    expect(execute).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("sends nothing when the organization's saved secret cannot be read", () => {
+  const { run, execute, layer, read } = setup({
+    respond: () => ok({ value: [] }),
+    tokens: {
+      "dev.azure.com/acme": { provider: SecretProviderId.make("missing"), reference: "acme-pat" },
+    },
+  });
+  return Effect.gen(function* () {
+    assert.isTrue(Option.isNone(yield* read(ACME)));
+    expect(execute).not.toHaveBeenCalled();
+    // No Entra token either: that would be another account.
+    expect(run).not.toHaveBeenCalled();
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("tries a corrected saved token at once, and not the one refused", () => {
+  const refused = `Basic ${Buffer.from(":old-pat").toString("base64")}`;
+  const { execute, layer, read } = setup({
+    respond: (request) =>
+      request.headers.authorization === refused ? new Response("", { status: 401 }) : ok({}),
+    tokens: { "dev.azure.com/acme": "old-pat" },
+  });
+  return Effect.gen(function* () {
+    assert.isTrue(Option.isNone(yield* read(ACME)));
+    assert.isTrue(Option.isNone(yield* read(ACME)));
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    const host = yield* SourceControlHost.SourceControlHost;
+    yield* host.settings.update({
+      sourceControlHosts: { "azure-devops": { tokens: { "dev.azure.com/acme": "new-pat" } } },
+    });
+
+    assert.isTrue(Option.isSome(yield* read(ACME)));
+    expect(execute).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer));
+});

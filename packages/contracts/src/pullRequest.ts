@@ -350,6 +350,11 @@ export const PullRequestListEntry = Schema.Struct({
   stack: Schema.optional(PullRequestStackMembership),
   provider: SourceControlProviderKind,
   host: TrimmedNonEmptyString,
+  /**
+   * The account the row was read as, when accounts on its host differ per organization. Absent
+   * means the host's entry in `viewers`.
+   */
+  viewer: Schema.optional(TrimmedNonEmptyString),
   projectId: ProjectId,
   projectTitle: TrimmedNonEmptyString,
   repository: TrimmedNonEmptyString,

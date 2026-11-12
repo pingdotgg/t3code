@@ -1,7 +1,9 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import {
@@ -19,6 +21,8 @@ import {
   type NormalizedAzureDevOpsPullRequestRecord,
 } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -49,6 +53,19 @@ export class AzureDevOpsCliAuthenticationError extends Schema.TaggedError<AzureD
 ) {
   get detail(): string {
     return "Azure DevOps CLI is not authenticated. Run `az devops login` and retry.";
+  }
+
+  override get message(): string {
+    return `Azure DevOps CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+export class AzureDevOpsSavedTokenUnreadableError extends Schema.TaggedError<AzureDevOpsSavedTokenUnreadableError>()(
+  "AzureDevOpsSavedTokenUnreadableError",
+  azureDevOpsCommandErrorFields,
+) {
+  get detail(): string {
+    return "The token saved for this organization could not be read from its secret provider. Unlock or fix it in Settings, then try again.";
   }
 
   override get message(): string {
@@ -195,6 +212,7 @@ export class AzureDevOpsRepositoryDecodeError extends Schema.TaggedError<AzureDe
 export const AzureDevOpsCliError = Schema.Union([
   AzureDevOpsCliUnavailableError,
   AzureDevOpsCliAuthenticationError,
+  AzureDevOpsSavedTokenUnreadableError,
   AzureDevOpsCliRateLimitError,
   AzureDevOpsPullRequestNotFoundError,
   AzureDevOpsCommandFailedError,
@@ -366,32 +384,40 @@ const classifyAzFailure = (stderr: string): VcsProcessExitFailureKind | null => 
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
 
-  const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
-        cwd: input.cwd,
-        classifyFailure: classifyAzFailure,
-        notFoundDetail: "Pull request not found.",
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          AzureDevOpsCommandFailedError.fromVcsError(
-            {
-              operation: "execute",
-              command: "az",
-              cwd: input.cwd,
-              argumentCount: input.args.length,
-            },
-            error,
+  const execute: AzureDevOpsCli["Service"]["execute"] = (input) => {
+    const context = {
+      operation: "execute",
+      command: "az",
+      cwd: input.cwd,
+      argumentCount: input.args.length,
+    } as const;
+    return credentials.savedTokenForCheckout(input.cwd).pipe(
+      // Never fall back to another account when the organization's own token cannot be read.
+      Effect.mapError((cause) => new AzureDevOpsSavedTokenUnreadableError({ ...context, cause })),
+      Effect.flatMap((token) =>
+        process
+          .run({
+            operation: "AzureDevOpsCli.execute",
+            command: "az",
+            args: input.args,
+            cwd: input.cwd,
+            // The extension reads a PAT from here for whichever organization it detects.
+            ...(Option.isSome(token)
+              ? { env: { AZURE_DEVOPS_EXT_PAT: Redacted.value(token.value.token) } }
+              : {}),
+            classifyFailure: classifyAzFailure,
+            notFoundDetail: "Pull request not found.",
+            timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+          })
+          .pipe(
+            Effect.mapError((error) => AzureDevOpsCommandFailedError.fromVcsError(context, error)),
           ),
-        ),
-      );
+      ),
+    );
+  };
 
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
     execute({

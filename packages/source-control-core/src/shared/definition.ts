@@ -181,6 +181,22 @@ export interface SourceControlHostCredentials {
   /** What a token must be granted, completing "Give it …". */
   readonly tokenAccess: string;
   readonly newTokenUrl: (host: string) => string;
+  /**
+   * For a forge whose tokens belong to something narrower than a hostname, such as an
+   * organization: the token form's label for the key, an example of one, and the key a typed
+   * value is saved under (`null` when it names none). By default the form asks for a host,
+   * suggests `publicHost`, and saves the host lower-cased.
+   */
+  readonly tokenKey?: {
+    readonly label: string;
+    readonly placeholder: string;
+    readonly normalize: (input: string) => string | null;
+  };
+  /**
+   * Completes "A token saved here is used before … and the … login, so …". By default, that the
+   * forge works without the CLI.
+   */
+  readonly savedTokenUse?: string;
   /** Signing in through the forge's own app instead of a token or CLI login. */
   readonly appSignIn?: SourceControlAppSignIn;
 }

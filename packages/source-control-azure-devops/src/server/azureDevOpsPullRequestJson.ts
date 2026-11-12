@@ -104,6 +104,26 @@ const RawViewerSchema = Schema.Struct({
   ),
 });
 
+const RawConnectionDataSchema = Schema.Struct({
+  authenticatedUser: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        properties: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              Account: Schema.optional(
+                Schema.NullOr(
+                  Schema.Struct({ $value: Schema.optional(Schema.NullOr(Schema.String)) }),
+                ),
+              ),
+            }),
+          ),
+        ),
+      }),
+    ),
+  ),
+});
+
 export interface AzureDevOpsRepositoryLocation {
   readonly project: string;
   readonly repository: string;
@@ -269,6 +289,7 @@ const decodePullRequest = decodeJsonResult(RawPullRequestSchema);
 const decodeThreadPage = decodeJsonResult(RawThreadPageSchema);
 const decodeThreadEntry = Schema.decodeUnknownExit(RawThreadSchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
+const decodeConnectionData = decodeJsonResult(RawConnectionDataSchema);
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 
@@ -314,6 +335,19 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
   const decoded = decodeViewer(raw);
   return Result.isSuccess(decoded)
     ? Result.succeed(trimmed(decoded.success.user?.name))
+    : Result.fail(decoded.failure);
+}
+
+/**
+ * The sign-in name of the account a token belongs to, from `_apis/connectionData`. It is the
+ * `uniqueName` pull requests name their author and reviewers by.
+ */
+export function decodeConnectionAccountJson(
+  raw: string,
+): Result.Result<string | null, DecodeFailure> {
+  const decoded = decodeConnectionData(raw);
+  return Result.isSuccess(decoded)
+    ? Result.succeed(trimmed(decoded.success.authenticatedUser?.properties?.Account?.$value))
     : Result.fail(decoded.failure);
 }
 

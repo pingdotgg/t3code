@@ -1,9 +1,12 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { SettingsSecretUnresolvedError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
 import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
@@ -12,6 +15,10 @@ const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>
 const mockedGetJson = vi.fn<AzureDevOpsRest.AzureDevOpsRest["Service"]["getJson"]>(
   () => Effect.succeedNone,
 );
+const SAVED_ACME = { organization: "dev.azure.com/acme", token: Redacted.make("acme-pat") };
+const mockedSavedTokenForCheckout = vi.fn<
+  AzureDevOpsCredentials.AzureDevOpsCredentials["Service"]["savedTokenForCheckout"]
+>(() => Effect.succeedNone);
 
 const layer = it.layer(
   AzureDevOpsPullRequestCli.layer.pipe(
@@ -21,6 +28,11 @@ const layer = it.layer(
       }),
     ),
     Layer.provide(Layer.mock(AzureDevOpsRest.AzureDevOpsRest)({ getJson: mockedGetJson })),
+    Layer.provide(
+      Layer.mock(AzureDevOpsCredentials.AzureDevOpsCredentials)({
+        savedTokenForCheckout: mockedSavedTokenForCheckout,
+      }),
+    ),
   ),
 );
 
@@ -114,6 +126,8 @@ afterEach(() => {
   mockedExecute.mockReset();
   mockedGetJson.mockReset();
   mockedGetJson.mockImplementation(() => Effect.succeedNone);
+  mockedSavedTokenForCheckout.mockReset();
+  mockedSavedTokenForCheckout.mockImplementation(() => Effect.succeedNone);
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
@@ -312,6 +326,62 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(argsOfCall(1)).toEqual(expect.arrayContaining(["--creator", "me", "--top", "1"]));
       const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
       assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
+    }),
+  );
+
+  it.effect("names the saved token's account even when it has no pull requests of its own", () =>
+    Effect.gen(function* () {
+      mockedSavedTokenForCheckout.mockReturnValue(Effect.succeedSome(SAVED_ACME));
+      mockedGetJson.mockReturnValue(
+        Effect.succeedSome(
+          JSON.stringify({
+            authenticatedUser: { properties: { Account: { $value: "pat@acme.dev" } } },
+          }),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "pat@acme.dev");
+      expect(mockedGetJson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: "https://dev.azure.com/acme/_apis/connectionData",
+          apiVersion: "7.1-preview",
+        }),
+      );
+      // Neither the az login account nor a pull request search.
+      expect(mockedExecute).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("names the saved token's account by its pull requests when Azure does not say", () =>
+    Effect.gen(function* () {
+      mockedSavedTokenForCheckout.mockReturnValue(Effect.succeedSome(SAVED_ACME));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([{ ...pullRequestRow, createdBy: { uniqueName: "pat@acme.dev" } }]),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "pat@acme.dev");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(argsOfCall(0)).toEqual(expect.arrayContaining(["--creator", "me"]));
+    }),
+  );
+
+  it.effect("names no viewer when the organization's saved token cannot be read", () =>
+    Effect.gen(function* () {
+      mockedSavedTokenForCheckout.mockReturnValue(
+        Effect.fail(new SettingsSecretUnresolvedError({ provider: "Keychain" })),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
+
+      assert.strictEqual(error._tag, "AzureDevOpsSavedTokenUnreadableError");
+      expect(mockedExecute).not.toHaveBeenCalled();
     }),
   );
 

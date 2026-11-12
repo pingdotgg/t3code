@@ -34,6 +34,7 @@ import type {
   AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
+import { azureDevOpsOrganizationKey } from "../shared/organization.ts";
 
 /** Each file pays for two Python startups. */
 const DIFF_FILE_CONCURRENCY = 4;
@@ -86,6 +87,9 @@ function azureDevOpsProviderFailure(
 ): PullRequestProviderFailure {
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "AzureDevOpsCliAuthenticationError") return { reason: "unauthenticated" };
+  // Not "unauthenticated": that shows the az login requirement, and signing in to az cannot read
+  // the saved token. Its own detail says to fix the secret provider.
+  if (error._tag === "AzureDevOpsSavedTokenUnreadableError") return { reason: "failed" };
   if (error._tag === "AzureDevOpsCliRateLimitError") return { reason: "rate-limited" };
   if (error._tag === "AzureDevOpsPullRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
@@ -270,6 +274,8 @@ export const make = Effect.gen(function* () {
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     // The bare repository name repeats across an organization; the project path does not.
     repositoryKey: ({ canonicalKey }) => canonicalKey,
+    // Each organization can sign in with its own saved token, so each has its own viewer.
+    viewerScope: ({ remoteUrl }) => azureDevOpsOrganizationKey(remoteUrl),
 
     getViewer: (input) =>
       cli.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
