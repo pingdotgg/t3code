@@ -88,7 +88,9 @@ is running update the picker without waiting for another provider probe.
 ## Commands and skills
 
 Slash commands the agent provides appear under **Provider** in the `/` menu while a session is
-running. Commands the agent names with a `$` prefix appear in T3 Code's `$` skill menu instead.
+running. Advertised `skill:` commands, such as `/skill:logo-archive`, can also be completed after
+other text in a prompt. Other provider commands must start the message. Commands the agent names
+with a `$` prefix appear in T3 Code's `$` skill menu instead.
 
 ## Native sessions
 
