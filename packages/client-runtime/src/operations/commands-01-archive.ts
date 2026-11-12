@@ -1,0 +1,679 @@
+import { allocateCommandId, createThread, dispatch, getProjection, persistAttachments, simpleThreadCommand } from "./commands-02-command.ts";
+import type { ArchiveThreadInput, CancelQueuedRunInput, DismissThreadUserInputInput, EditQueuedRunInput, ForkSideChatInput, ForkThreadFromRunInput, InterruptThreadTurnInput, LinkThreadPullRequestInput, MarkThreadUnreadInput, MergeThreadBackInput, PinThreadInput, PromoteQueuedRunInput, ReorderActiveThreadInput, ReorderPinnedThreadInput, RespondToThreadApprovalInput, RespondToThreadUserInputInput, ResumeThreadQueueInput, RetryWorkspacePreparationInput, RevertThreadCheckpointInput, SetThreadAutoSettleInput, SetThreadInteractionModeInput, SetThreadRuntimeModeInput, SettleThreadInput, SnoozeThreadInput, StartThreadTurnInput, StopThreadSessionInput, UnarchiveThreadInput, UnlinkThreadPullRequestInput, UnpinThreadInput, UnsettleThreadInput, UnsnoozeThreadInput, UpdateThreadMetadataInput, VisitThreadInput, WatchThreadPullRequestInput } from "./commands-02-command.ts";
+import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
+import {
+  type ThreadLinkedPullRequest,
+  CommandId,
+  CheckpointId,
+  CheckpointScopeId,
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2CheckpointUnavailableError,
+  WS_METHODS,
+  type ChatAttachment,
+  MessageId,
+  type ModelSelection,
+  type NodeId,
+  type OrchestrationV2Command,
+  type OrchestrationV2CreationSource,
+  type PlanId,
+  type ProjectId,
+  type ProjectIconOverride,
+  type ProjectScript,
+  type ProviderApprovalDecision,
+  type ProviderInteractionMode,
+  type ProviderUserInputAnswers,
+  type RunId,
+  type RuntimeMode,
+  type RuntimeRequestId,
+  type ThreadId,
+  type ThreadEnvMode,
+  type UploadChatAttachment,
+  type GuestMessageId,
+} from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import * as Effect from "effect/Effect";
+import { getInitialServerConfig, request } from "../rpc/client.ts";
+
+export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (
+  input: ArchiveThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.archive", input);
+});
+
+export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(function* (
+  input: UnarchiveThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.unarchive", input);
+});
+
+export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
+  input: SettleThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.settle", input);
+});
+
+export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
+  input: PinThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  return yield* dispatch({
+    type: "thread.pin",
+    commandId,
+    threadId: input.threadId,
+    ...(input.orderKey === undefined ? {} : { orderKey: input.orderKey }),
+  });
+});
+
+export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoSettle")(function* (
+  input: SetThreadAutoSettleInput,
+) {
+  return yield* dispatch({
+    type: "thread.auto-settle.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    enabled: input.enabled,
+  });
+});
+
+export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
+  input: ReorderPinnedThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  return yield* dispatch({
+    type: "thread.pin.reorder",
+    commandId,
+    threadId: input.threadId,
+    orderKey: input.orderKey,
+  });
+});
+
+export const reorderActiveThread = Effect.fn("EnvironmentCommands.reorderActiveThread")(function* (
+  input: ReorderActiveThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.active.reorder",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    orderKey: input.orderKey,
+  });
+});
+
+export const unpinThread = Effect.fn("EnvironmentCommands.unpinThread")(function* (
+  input: UnpinThreadInput,
+) {
+  return yield* simpleThreadCommand("thread.unpin", input);
+});
+
+export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(function* (
+  input: UnsettleThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.unsettle",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: input.reason,
+  });
+});
+
+export const snoozeThread = Effect.fn("EnvironmentCommands.snoozeThread")(function* (
+  input: SnoozeThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.snooze",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    snoozedUntil: input.snoozedUntil,
+  });
+});
+
+export const unsnoozeThread = Effect.fn("EnvironmentCommands.unsnoozeThread")(function* (
+  input: UnsnoozeThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.unsnooze",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: input.reason,
+  });
+});
+
+export const visitThread = Effect.fn("EnvironmentCommands.visitThread")(function* (
+  input: VisitThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.visit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    visitedAt: input.visitedAt,
+    ...(input.opened ? { opened: true } : {}),
+    ...(input.searchQuery ? { searchQuery: input.searchQuery } : {}),
+  });
+});
+
+export const markThreadUnread = Effect.fn("EnvironmentCommands.markThreadUnread")(function* (
+  input: MarkThreadUnreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.mark-unread",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
+export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadMetadata")(
+  function* (input: UpdateThreadMetadataInput) {
+    const commandId = yield* allocateCommandId(input);
+    let result = null;
+    if (
+      input.title !== undefined ||
+      input.branch !== undefined ||
+      input.worktreePath !== undefined ||
+      input.regenerateTitle !== undefined ||
+      input.linkedPullRequest !== undefined ||
+      input.limitRecovery !== undefined
+    ) {
+      result = yield* dispatch({
+        type: "thread.metadata.update",
+        ...(input.limitRecovery === undefined ? {} : { limitRecovery: input.limitRecovery }),
+        commandId,
+        threadId: input.threadId,
+        ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.branch === undefined ? {} : { branch: input.branch }),
+        ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+        ...(input.expectedEmpty === true ? { expectedEmpty: true } : {}),
+        ...(input.regenerateTitle === undefined ? {} : { regenerateTitle: input.regenerateTitle }),
+        ...(input.linkedPullRequest === undefined
+          ? {}
+          : { linkedPullRequest: input.linkedPullRequest }),
+      });
+    }
+    if (input.modelSelection !== undefined) {
+      result = yield* dispatch({
+        type: "thread.model-selection.set",
+        commandId: result === null ? commandId : CommandId.make(`${commandId}:model-selection`),
+        threadId: input.threadId,
+        modelSelection: input.modelSelection,
+      });
+    }
+    return result ?? { sequence: 0 };
+  },
+);
+
+export const setThreadRuntimeMode = Effect.fn("EnvironmentCommands.setThreadRuntimeMode")(
+  function* (input: SetThreadRuntimeModeInput) {
+    return yield* dispatch({
+      type: "thread.runtime-mode.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      runtimeMode: input.runtimeMode,
+    });
+  },
+);
+
+export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThreadInteractionMode")(
+  function* (input: SetThreadInteractionModeInput) {
+    return yield* dispatch({
+      type: "thread.interaction-mode.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      interactionMode: input.interactionMode,
+    });
+  },
+);
+
+export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
+  input: StartThreadTurnInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  const attachments = yield* persistAttachments(
+    input.threadId,
+    input.message.messageId,
+    input.message.attachments,
+  );
+  const context = remapComposerContextAttachments(
+    input.message.context,
+    input.message.attachments,
+    attachments,
+  );
+  const bootstrap = input.bootstrap?.createThread;
+  const prepareWorktree = input.bootstrap?.prepareWorktree;
+  if (bootstrap !== undefined || prepareWorktree !== undefined) {
+    const existingProjection =
+      bootstrap === undefined ? yield* getProjection(input.threadId) : null;
+    const thread = bootstrap ?? existingProjection!.thread;
+    const workspaceStrategy =
+      prepareWorktree !== undefined
+        ? {
+            type: "worktree" as const,
+            baseRef: prepareWorktree.baseBranch,
+            ...(prepareWorktree.branch === undefined ? {} : { branch: prepareWorktree.branch }),
+            ...(prepareWorktree.startFromOrigin === undefined
+              ? {}
+              : { startFromOrigin: prepareWorktree.startFromOrigin }),
+          }
+        : bootstrap?.worktreePath
+          ? {
+              type: "existing_worktree" as const,
+              worktreePath: bootstrap.worktreePath,
+              ...(bootstrap.branch === null ? {} : { branch: bootstrap.branch }),
+            }
+          : {
+              type: "root" as const,
+              ...(bootstrap?.branch === null || bootstrap?.branch === undefined
+                ? {}
+                : { branch: bootstrap.branch }),
+            };
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+      commandId,
+      creationSource: input.creationSource ?? "web",
+      threadId: input.threadId,
+      ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
+      projectId: thread.projectId,
+      title: input.titleSeed ?? thread.title,
+      generateTitle: input.titleSeed !== undefined,
+      modelSelection: input.modelSelection ?? thread.modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      workspaceStrategy,
+      initialMessage: {
+        messageId: input.message.messageId,
+        text: input.message.text,
+        ...(context ? { context } : {}),
+        attachments,
+      },
+    });
+  }
+
+  const requestedMode = input.dispatchMode ?? "auto";
+  if (requestedMode === "start") {
+    return yield* dispatch({
+      type: "message.dispatch",
+      commandId,
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+      threadId: input.threadId,
+      messageId: input.message.messageId,
+      ...(input.manualContinuationOfRunId === undefined
+        ? {}
+        : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
+      text: input.message.text,
+      ...(context ? { context } : {}),
+      ...(input.message.idleCompaction === undefined
+        ? {}
+        : { idleCompaction: input.message.idleCompaction }),
+      attachments,
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.sourceProposedPlan === undefined
+        ? {}
+        : { sourcePlanRef: input.sourceProposedPlan }),
+      dispatchMode: { type: "start_immediately" },
+    });
+  }
+
+  const dispatchMode =
+    requestedMode === "queue"
+      ? ({ type: "queue_after_active" } as const)
+      : ({ type: "start_immediately" } as const);
+  return yield* dispatch({
+    type: "message.dispatch",
+    commandId,
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    threadId: input.threadId,
+    messageId: input.message.messageId,
+    text: input.message.text,
+    ...(context ? { context } : {}),
+    ...(input.message.idleCompaction === undefined
+      ? {}
+      : { idleCompaction: input.message.idleCompaction }),
+    attachments,
+    ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+    ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+    ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
+    ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
+    dispatchMode,
+  });
+});
+
+export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
+  input: InterruptThreadTurnInput,
+) {
+  let threadId = input.threadId;
+  if (input.subagentId !== undefined) {
+    const projection = yield* getProjection(input.threadId);
+    const subagent = projection.subagents.find((agent) => agent.id === input.subagentId);
+    if (subagent?.origin === "app_owned" && subagent.childThreadId !== null) {
+      // The parent ends the task even when its child lost track of it. Older
+      // servers reject this for app-owned tasks, so the child stop below still runs.
+      if (subagent.runId !== null) {
+        yield* dispatch({
+          type: "subagent.stop",
+          commandId: yield* allocateCommandId({}),
+          threadId: input.threadId,
+          runId: subagent.runId,
+          subagentId: subagent.id,
+        }).pipe(Effect.ignore);
+      }
+      threadId = subagent.childThreadId;
+    } else {
+      if (subagent?.runId == null) return { sequence: 0 };
+      return yield* dispatch({
+        type: "subagent.stop",
+        commandId: yield* allocateCommandId(input),
+        threadId: input.threadId,
+        runId: subagent.runId,
+        subagentId: subagent.id,
+      });
+    }
+  }
+  // A run named by the caller belongs to the parent, not the rerouted child.
+  let runId =
+    threadId === input.threadId ? (input.runId ?? (input.turnId as RunId | undefined)) : undefined;
+  if (runId === undefined) {
+    const config = yield* getInitialServerConfig();
+    if (config.environment.capabilities.threadStop === true) {
+      // A paginated projection can omit commands still running from earlier turns.
+      return yield* dispatch({
+        type: "thread.stop",
+        commandId: yield* allocateCommandId(input),
+        threadId,
+      });
+    }
+  }
+  if (runId === undefined) {
+    const projection = yield* getProjection(threadId);
+    runId = projection.runs.findLast(
+      (run) =>
+        run.status === "preparing" ||
+        run.status === "starting" ||
+        run.status === "running" ||
+        run.status === "waiting",
+    )?.id;
+    if (runId === undefined) {
+      const latestRun = projection.runs.at(-1);
+      if (
+        derivePendingBackgroundWork({
+          latestRun,
+          providerThreads: projection.providerThreads,
+          turnItems: projection.turnItems,
+          activeProviderThreadId: projection.thread.activeProviderThreadId,
+          runs: projection.runs,
+        }).length > 0
+      ) {
+        runId = latestRun?.id;
+      }
+    }
+    if (runId === undefined) {
+      let result = { sequence: 0 };
+      for (const link of visibleThreadPullRequests(projection.thread.pullRequests ?? [])) {
+        if (link.watch === undefined) continue;
+        result = yield* dispatch({
+          type: "thread.pull-request.watch",
+          commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
+          threadId,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+          watching: false,
+        });
+      }
+      return result;
+    }
+  }
+  if (runId === undefined) return { sequence: 0 };
+  return yield* dispatch({
+    type: "run.interrupt",
+    commandId: yield* allocateCommandId(input),
+    threadId,
+    runId,
+    holdQueue: true,
+  });
+});
+
+export const respondToThreadApproval = Effect.fn("EnvironmentCommands.respondToThreadApproval")(
+  function* (input: RespondToThreadApprovalInput) {
+    return yield* dispatch({
+      type: "runtime-request.respond",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      requestId: input.requestId,
+      decision: input.decision,
+      ...(input.feedback === undefined ? {} : { feedback: input.feedback }),
+    });
+  },
+);
+
+export const respondToThreadUserInput = Effect.fn("EnvironmentCommands.respondToThreadUserInput")(
+  function* (input: RespondToThreadUserInputInput) {
+    return yield* dispatch({
+      type: "runtime-request.respond",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      requestId: input.requestId,
+      answers: input.answers,
+      ...(input.attachmentsByQuestionId === undefined
+        ? {}
+        : { attachmentsByQuestionId: input.attachmentsByQuestionId }),
+    });
+  },
+);
+
+export const dismissThreadUserInput = Effect.fn("EnvironmentCommands.dismissThreadUserInput")(
+  function* (input: DismissThreadUserInputInput) {
+    return yield* dispatch({
+      type: "thread.user-input.dismiss",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      requestId: input.requestId,
+    });
+  },
+);
+
+export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThreadCheckpoint")(
+  function* (input: RevertThreadCheckpointInput) {
+    if (input.checkpointId !== undefined && input.scopeId !== undefined) {
+      return yield* dispatch({
+        type: "checkpoint.rollback",
+        ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
+        commandId: yield* allocateCommandId(input),
+        threadId: input.threadId,
+        scopeId: CheckpointScopeId.make(input.scopeId),
+        checkpointId: CheckpointId.make(input.checkpointId),
+      });
+    }
+    const projection = yield* getProjection(input.threadId);
+    const checkpoint =
+      projection.checkpoints.find(
+        (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
+      ) ??
+      projection.checkpoints.findLast((candidate) =>
+        input.turnCount === 0
+          ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
+          : candidate.appRunOrdinal === input.turnCount,
+      );
+    if (checkpoint === undefined || checkpoint.status !== "ready") {
+      const target =
+        input.checkpointId === undefined
+          ? `run ordinal ${input.turnCount ?? "unknown"}`
+          : `checkpoint ${input.checkpointId}`;
+      return yield* new OrchestrationV2CheckpointUnavailableError({
+        threadId: input.threadId,
+        target,
+      });
+    }
+    return yield* dispatch({
+      type: "checkpoint.rollback",
+      ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      scopeId: checkpoint.scopeId,
+      checkpointId: checkpoint.id,
+    });
+  },
+);
+
+export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSession")(function* (
+  input: StopThreadSessionInput,
+) {
+  const projection = yield* getProjection(input.threadId);
+  const commandId = yield* allocateCommandId(input);
+  let result = { sequence: 0 };
+  for (const session of projection.providerSessions) {
+    result = yield* dispatch({
+      type: "provider-session.detach",
+      commandId: CommandId.make(`${commandId}:detach:${session.id}`),
+      threadId: input.threadId,
+      providerSessionId: session.id,
+      reason: "client-requested",
+    });
+  }
+  return result;
+});
+
+export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRun")(function* (
+  input: ForkThreadFromRunInput,
+) {
+  return yield* dispatch({
+    type: "thread.fork",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "run", runId: input.runId },
+    ...(input.title === undefined ? {} : { title: input.title }),
+  });
+});
+
+/** Forks the thread's latest stable point into a hidden side chat; works while it runs. */
+export const forkSideChat = Effect.fn("EnvironmentCommands.forkSideChat")(function* (
+  input: ForkSideChatInput,
+) {
+  return yield* dispatch({
+    type: "thread.fork",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "latest_stable" },
+    sideChat: true,
+    ...(input.title === undefined ? {} : { title: input.title }),
+  });
+});
+
+export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(function* (
+  input: MergeThreadBackInput,
+) {
+  return yield* dispatch({
+    type: "thread.merge_back",
+    commandId: yield* allocateCommandId(input),
+    createdBy: "user",
+    creationSource: input.creationSource ?? "web",
+    sourceThreadId: input.sourceThreadId,
+    targetThreadId: input.targetThreadId,
+    sourcePoint: { type: "run", runId: input.runId },
+  });
+});
+
+export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
+  input: ResumeThreadQueueInput,
+) {
+  return yield* dispatch({
+    ...(input.runId === undefined
+      ? { type: "queue.resume" as const }
+      : { type: "queued-run.start" as const, runId: input.runId }),
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
+export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
+  input: PromoteQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-message.promote-to-steer",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    queuedRunId: input.queuedRunId,
+    targetRunId: input.targetRunId,
+  });
+});
+
+export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(function* (
+  input: CancelQueuedRunInput,
+) {
+  return yield* dispatch({
+    type: "queued-run.cancel",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+  });
+});
+
+export const retryWorkspacePreparation = Effect.fn("EnvironmentCommands.retryWorkspacePreparation")(
+  function* (input: RetryWorkspacePreparationInput) {
+    return yield* dispatch({
+      type: "prepared-run.retry",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      runId: input.runId,
+    });
+  },
+);
+
+export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(function* (
+  input: EditQueuedRunInput,
+) {
+  const attachments =
+    input.edit === undefined
+      ? undefined
+      : yield* persistAttachments(input.threadId, input.edit.messageId, input.edit.attachments);
+  return yield* dispatch({
+    type: "queued-run.edit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+    text: input.text,
+    ...(attachments === undefined ? {} : { attachments }),
+    ...(input.edit?.context && attachments
+      ? {
+          context: remapComposerContextAttachments(
+            input.edit.context,
+            input.edit.attachments,
+            attachments,
+          ),
+        }
+      : {}),
+  });
+});
+
+export const linkThreadPullRequest = Effect.fn("EnvironmentCommands.linkThreadPullRequest")(
+  function* (input: LinkThreadPullRequestInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.pull-request.link",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
+export const watchThreadPullRequest = Effect.fn("EnvironmentCommands.watchThreadPullRequest")(
+  function* (input: WatchThreadPullRequestInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.pull-request.watch",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
+export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThreadPullRequest")(
+  function* (input: UnlinkThreadPullRequestInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.pull-request.unlink",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
+
