@@ -15,7 +15,7 @@ import {
 import type * as DateTime from "effect/DateTime";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -194,6 +194,7 @@ export function makeAcpReplayRuntime(input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly customModels?: AcpSessionRuntime.AcpSessionRuntimeOptions["customModels"];
   readonly cancelMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelMeta"];
+  readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
   readonly initializeMeta?: AcpSessionRuntime.AcpSessionRuntimeOptions["initializeMeta"];
   readonly replayGate?: ProviderReplayGate;
 }): (
@@ -201,10 +202,9 @@ export function makeAcpReplayRuntime(input: {
 ) => Effect.Effect<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
-  Crypto.Crypto | Scope.Scope
+  SecureRandom.SecureRandom | Scope.Scope
 > {
-  // Recorded transcripts outgrow the kernel's 128 KiB limit on one environment
-  // variable, so the agent reads the transcript from a file beside its status.
+  // Transcripts exceed the kernel's 128 KiB per-environment-variable limit.
   const transcriptPath = `${input.statusPath}.transcript.json`;
   return (runtimeInput) =>
     Effect.gen(function* () {
@@ -236,6 +236,7 @@ export function makeAcpReplayRuntime(input: {
           authMethodId: "replay",
           ...(input.customModels === undefined ? {} : { customModels: input.customModels }),
           ...(input.cancelMeta === undefined ? {} : { cancelMeta: input.cancelMeta }),
+          ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
           ...(input.initializeMeta === undefined ? {} : { initializeMeta: input.initializeMeta }),
           ...(input.replayGate === undefined
             ? {}

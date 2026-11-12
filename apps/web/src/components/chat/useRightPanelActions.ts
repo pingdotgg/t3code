@@ -1,13 +1,12 @@
+import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { Dispatch } from "react";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { type SetStateAction, useEffect } from "react";
+import { useEffect } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -15,14 +14,17 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
-  selectActiveRightPanel,
+  selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
+import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { setActivePreviewTab } from "../../previewStateStore";
-import { BrowserSettingsReadError } from "../../browser/openFileInPreview";
+import { isBrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
+import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
+import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
@@ -37,9 +39,12 @@ interface RightPanelActionsInput {
   readonly activeRightPanelSurface: RightPanelSurface | null;
   readonly activePreviewState: ThreadPreviewState;
   readonly deviceState: ReturnType<typeof useDeviceState>["state"];
+  readonly deviceStateLoaded: boolean;
   readonly pullRequestPanelTarget: ReturnType<typeof threadPullRequestPanelTarget> | null;
   readonly threadPanelPresentation: ThreadPanelPresentation;
   readonly isServerThread: boolean;
+  /** A side chat pane; the main view already answers preview bus actions. */
+  readonly embedded: boolean;
   readonly isGitRepo: boolean;
   readonly browserAvailable: boolean;
   readonly canOperatePreview: boolean;
@@ -52,8 +57,6 @@ interface RightPanelActionsInput {
   readonly pullRequestsSurfaceAvailable: boolean;
   readonly gitCwd: string | null;
   readonly activeProjectCwd: string | null;
-  readonly explicitDiffOpenRef: { current: ScopedThreadRef | null };
-  readonly setTerminalFocusRequestId: Dispatch<SetStateAction<number>>;
   readonly onDiffPanelOpen: (() => void) | undefined;
   readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
 }
@@ -70,9 +73,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activeRightPanelSurface,
     activePreviewState,
     deviceState,
+    deviceStateLoaded,
     pullRequestPanelTarget,
     threadPanelPresentation,
     isServerThread,
+    embedded,
     isGitRepo,
     browserAvailable,
     canOperatePreview,
@@ -85,8 +90,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     pullRequestsSurfaceAvailable,
     gitCwd,
     activeProjectCwd,
-    explicitDiffOpenRef,
-    setTerminalFocusRequestId,
     onDiffPanelOpen,
   } = input;
 
@@ -112,7 +115,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
-      if (error instanceof BrowserSettingsReadError) {
+      if (isBrowserSettingsReadError(error)) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -166,9 +169,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           .getState()
           .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
       } else if (activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target) {
-        usePreviewMiniPlayerStore
-          .getState()
-          .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
+        floatDeviceSurface(
+          activeThreadRef,
+          { kind: "device", ...activeRightPanelSurface.target },
+          deviceStateLoaded ? deviceState : null,
+        );
       }
       useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);
@@ -192,17 +197,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const togglePreviewPanelStable = useStableCallback(togglePreviewPanel);
   const activateRightPanelSurface = (surface: RightPanelSurface) => {
     if (!activeThreadRef) return;
-    explicitDiffOpenRef.current = resolveExplicitDiffOpenOnActivate({
-      surfaceKind: surface.kind,
-      diffOpen,
-      activeThreadRef,
-    });
     useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
     if (surface.kind === "preview" && surface.resourceId) {
       setActivePreviewTab(activeThreadRef, surface.resourceId);
     }
     if (surface.kind === "terminal") {
-      setTerminalFocusRequestId((value) => value + 1);
+      focusTerminal(activeThreadRef, surface.activeTerminalId);
     }
     if (surface.kind === "diff" && !diffOpen) {
       onDiffPanelOpen?.();
@@ -216,15 +216,28 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       return;
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
+    focusActivePanelTerminal(activeThreadRef);
   };
   const toggleRightPanelStable = useStableCallback(toggleRightPanel);
   const toggleThreadPanel = () => {
     if (!activeThreadRef) return;
-    useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
+    const store = useRightPanelStore.getState();
+    if (threadPanelPresentation === "inline") {
+      const open = selectThreadPanelOpen(
+        store.threadPanelVisibilityByThreadKey,
+        activeThreadRef,
+        "inline",
+      );
+      if (!open) requestWorkspaceFocus({ area: "details" });
+      else if (document.activeElement?.closest('[data-workspace-area="details"]'))
+        requestWorkspaceContentFocus();
+    }
+    store.toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
   const toggleRightPanelMaximized = () => {
     if (!canMaximizeRightPanel || !activeThreadRef) return;
+    if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };
   const toggleRightPanelMaximizedStable = useStableCallback(toggleRightPanelMaximized);
@@ -277,20 +290,26 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const addPullRequestSurfaceStable = useStableCallback(addPullRequestSurface);
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
     if (!isServerThread || !activeThreadRef) return;
-    const diffOpen =
-      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) === "diff";
-    explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
     useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   };
+  const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
+    if (!isServerThread || !activeThreadRef) return;
+    useDiffPanelStore.getState().selectToolCall(activeThreadRef, target);
+    useRightPanelStore.getState().open(activeThreadRef, "diff");
+    onDiffPanelOpen?.();
+  });
   const onOpenTurnDiffStable = useStableCallback(onOpenTurnDiff);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the preview action bus to toggle the preview panel
   useEffect(
     () =>
-      subscribePreviewAction((action) => {
-        if (action === "toggle-panel") togglePreviewPanelStable();
-      }),
-    [togglePreviewPanelStable],
+      embedded
+        ? undefined
+        : subscribePreviewAction((action) => {
+            if (action === "toggle-panel") togglePreviewPanelStable();
+          }),
+    [embedded, togglePreviewPanelStable],
   );
 
   const shortcuts = {
@@ -319,6 +338,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     createBrowserSurface,
     createBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
+    onOpenToolDiffStable,
     onOpenTurnDiffStable,
     onToggleDiffStable,
     openChangesFromThreadPanelStable,

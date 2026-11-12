@@ -6,10 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { loadWindowsForegroundApi } from "../electron/WindowsForeground.ts";
 
-/**
- * `id` is the CGWindowNumber on macOS and the HWND on Windows, which is what
- * the capture backends key on.
- */
+/** id is CGWindowNumber on macOS or HWND on Windows, matching the capture backend. */
 export type ActiveWindow = {
   readonly platform: "macos" | "windows";
   readonly id: number;
@@ -30,23 +27,32 @@ export type ActiveWindow = {
 
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
-const MacActiveWindow = Schema.Struct({
-  id: Schema.Number,
-  title: Schema.String,
-  bounds: Schema.Struct({
-    x: Schema.Number,
-    y: Schema.Number,
-    width: Schema.Number,
-    height: Schema.Number,
-  }),
+const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
+
+const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
     name: Schema.String,
-    processId: Schema.Number,
     path: Schema.String,
     bundleId: Schema.String,
   }),
+  windows: Schema.Array(
+    Schema.Struct({
+      id: Schema.Number,
+      processId: Schema.Number,
+      title: Schema.String,
+      bounds: Schema.Struct({
+        x: Schema.Number,
+        y: Schema.Number,
+        width: Schema.Number,
+        height: Schema.Number,
+      }),
+      alpha: Schema.Number,
+    }),
+  ),
 });
-const decodeMacActiveWindow = Schema.decodeUnknownSync(Schema.fromJsonString(MacActiveWindow));
+const decodeMacActiveWindowLookup = Schema.decodeUnknownSync(
+  Schema.fromJsonString(MacActiveWindowLookup),
+);
 
 const MAC_LOOKUP_SCRIPT = `
 ObjC.import("CoreGraphics");
@@ -56,33 +62,39 @@ function run() {
   if (app.isNil()) return "";
   const pid = app.processIdentifier;
   const appName = String(app.localizedName.js || "");
+  let ownerName = appName;
   const list = $.CGWindowListCopyWindowInfo(
     $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements,
     $.kCGNullWindowID,
   );
   $.CFMakeCollectable(list);
   const count = $.CFArrayGetCount(list);
+  const windows = [];
   for (let i = 0; i < count; i++) {
     const w = ObjC.castRefToObject($.CFArrayGetValueAtIndex(list, i));
     if (w.objectForKey("kCGWindowLayer").js !== 0) continue;
-    const ownerPid = w.objectForKey("kCGWindowOwnerPID").js;
-    const ownerName = String(ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || "");
+    const windowPid = w.objectForKey("kCGWindowOwnerPID").js;
+    const windowOwnerName = String(ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || "");
     // Nested apps such as Device Hub can be frontmost while NSWorkspace reports PID -1.
-    if (pid > 0 ? ownerPid !== pid : !appName || ownerName !== appName) continue;
+    if (pid > 0 ? windowPid !== pid : !appName || windowOwnerName !== appName) continue;
+    if (!ownerName) ownerName = windowOwnerName;
     const b = ObjC.deepUnwrap(w.objectForKey("kCGWindowBounds"));
-    return JSON.stringify({
+    windows.push({
       id: w.objectForKey("kCGWindowNumber").js,
+      processId: windowPid,
       title: String(ObjC.unwrap(w.objectForKey("kCGWindowName")) || ""),
       bounds: { x: b.X, y: b.Y, width: b.Width, height: b.Height },
-      owner: {
-        name: appName || ownerName,
-        processId: ownerPid,
-        path: String(app.bundleURL.path.js || ""),
-        bundleId: String(app.bundleIdentifier.js || ""),
-      },
+      alpha: w.objectForKey("kCGWindowAlpha").js,
     });
   }
-  return "";
+  return JSON.stringify({
+    owner: {
+      name: ownerName,
+      path: String(app.bundleURL.path.js || ""),
+      bundleId: String(app.bundleIdentifier.js || ""),
+    },
+    windows,
+  });
 }`;
 
 function runMacLookup(): Promise<string> {
@@ -90,7 +102,7 @@ function runMacLookup(): Promise<string> {
     NodeChildProcess.execFile(
       "/usr/bin/osascript",
       ["-l", "JavaScript", "-e", MAC_LOOKUP_SCRIPT],
-      { timeout: MAC_LOOKUP_TIMEOUT_MS, maxBuffer: 64 * 1024 },
+      { timeout: MAC_LOOKUP_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
       (error, stdout) => {
         if (error) reject(error);
         else resolve(stdout);
@@ -102,17 +114,45 @@ function runMacLookup(): Promise<string> {
 async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
-  const window = decodeMacActiveWindow(output);
+  const lookup = decodeMacActiveWindowLookup(output);
+  const visible = lookup.windows.filter(
+    (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
+  );
+  // Helpers belong to the content behind them, which may not be the app's largest window.
+  const window = visible.find((candidate, index) => {
+    if (candidate.title.trim() !== "") return true;
+    const bounds = candidate.bounds;
+    return !visible.some((reference, referenceIndex) => {
+      if (referenceIndex <= index) return false;
+      return (
+        (bounds.x === reference.bounds.x &&
+          bounds.width === reference.bounds.width &&
+          bounds.y <= reference.bounds.y &&
+          reference.bounds.y - bounds.y <=
+            reference.bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
+          bounds.height <= bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
+          bounds.height <= reference.bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO) ||
+        (bounds.y === reference.bounds.y &&
+          bounds.height === reference.bounds.height &&
+          bounds.x <= reference.bounds.x &&
+          reference.bounds.x - bounds.x <=
+            reference.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
+          bounds.width <= bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO &&
+          bounds.width <= reference.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO)
+      );
+    });
+  });
+  if (!window) return undefined;
   return {
     platform: "macos",
     id: window.id,
     title: window.title,
     bounds: window.bounds,
     owner: {
-      name: window.owner.name,
-      processId: window.owner.processId,
-      path: window.owner.path,
-      ...(window.owner.bundleId ? { bundleId: window.owner.bundleId } : {}),
+      name: lookup.owner.name,
+      processId: window.processId,
+      path: lookup.owner.path,
+      ...(lookup.owner.bundleId ? { bundleId: lookup.owner.bundleId } : {}),
     },
   };
 }

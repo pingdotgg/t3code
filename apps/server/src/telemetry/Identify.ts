@@ -1,4 +1,4 @@
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as FileSystem from "effect/FileSystem";
@@ -225,8 +225,8 @@ const upsertAnonymousId = Effect.gen(function* () {
     return existing.value;
   }
 
-  const anonymousId = yield* Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.randomUUIDv4()),
+  const anonymousId = yield* SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((crypto) => crypto.uuidV4()),
     Effect.mapError(
       (cause) =>
         new TelemetryAnonymousIdGenerationError({
@@ -271,15 +271,10 @@ const readProviderLogins = Effect.fn("TelemetryIdentity.readProviderLogins")(fun
 });
 
 /**
- * `distinctId` keeps the rule every earlier build used, so analytics stay
- * continuous: the hashed Codex `account_id`, else the Claude machine `userID`,
- * else the install's anonymous id. It can change when someone logs in, and a
- * Codex Team shares one. `installId` is the hashed anonymous id, which never
- * changes for an install; count installs and people with it.
- *
- * A null `distinctId` turns telemetry off. A missing file falls through quietly,
- * and so does an API-key-only Codex auth.json. Only unreadable or malformed
- * files warn.
+ * `distinctId` preserves legacy priority: hashed Codex account_id, Claude userID, then anonymous id.
+ * It can change on login or be shared by a Codex Team; hashed `installId` stays stable per install.
+ * A null `distinctId` disables telemetry. Missing files and API-key-only Codex auth fall through;
+ * only unreadable or malformed files warn.
  */
 export const getTelemetryIdentityForHome = Effect.fn("getTelemetryIdentityForHome")(function* (
   homeDirectory: string,

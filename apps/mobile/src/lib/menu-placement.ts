@@ -1,9 +1,6 @@
 import type { VerticalHinge } from "./layout";
 
-/**
- * Places a menu beside its anchor within the screen region that holds it. A creased hinge splits
- * the overlay into two regions, so a menu never straddles the fold.
- */
+/** Keep menus on their anchor's side of a creased hinge. */
 export function deriveMenuHorizontalPlacement(input: {
   readonly anchorX: number;
   readonly anchorWidth: number;
@@ -25,4 +22,32 @@ export function deriveMenuHorizontalPlacement(input: {
     center <= (start + end) / 2 ? input.anchorX : input.anchorX + input.anchorWidth - width;
   const left = Math.min(Math.max(preferredLeft, start + input.margin), end - width - input.margin);
   return { left, width };
+}
+
+/** In the overlay's coordinates; `bottom` is measured up from the overlay's bottom edge. */
+export function deriveMenuVerticalPlacement(input: {
+  readonly anchorY: number;
+  readonly anchorHeight: number;
+  readonly overlayHeight: number;
+  readonly keyboardInset: number;
+  readonly gap: number;
+  readonly margin: number;
+  readonly minHeight: number;
+}) {
+  const usableBottom = input.overlayHeight - input.keyboardInset;
+  const spaceBelow = usableBottom - (input.anchorY + input.anchorHeight) - input.gap - input.margin;
+  const spaceAbove = input.anchorY - input.gap - input.margin;
+  const opensDown = spaceBelow >= 280 || spaceBelow >= spaceAbove;
+  const maxHeight = Math.min(opensDown ? spaceBelow : spaceAbove, 480);
+  if (maxHeight < input.minHeight) {
+    // Neither side fits (e.g. a code block taller than the screen): overlap the anchor instead.
+    const top = Math.max(
+      input.margin,
+      Math.min(input.anchorY, usableBottom - input.margin - input.minHeight),
+    );
+    return { maxHeight: Math.min(usableBottom - input.margin - top, 480), top };
+  }
+  return opensDown
+    ? { maxHeight, top: input.anchorY + input.anchorHeight + input.gap }
+    : { maxHeight, bottom: input.overlayHeight - input.anchorY + input.gap };
 }

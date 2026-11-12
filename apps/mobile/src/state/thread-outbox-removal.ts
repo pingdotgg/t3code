@@ -47,8 +47,7 @@ async function cleanUpRemovedMessages(
       await flushComposerDrafts();
     }
   } catch (error) {
-    // The outbox removal is already durable. Keep the files and report the
-    // secondary cleanup failure without changing the successful result.
+    // Removal is already durable; retain files and report secondary cleanup failure without changing success.
     console.warn("[thread-outbox] failed to clean up removed pending task drafts", error);
     return;
   }
@@ -56,11 +55,7 @@ async function cleanUpRemovedMessages(
   scheduleUnusedComposerAttachmentCleanup(attachments);
 }
 
-/**
- * `expectedRevision` (from `threadOutboxRevision`) and `canRemove` make the
- * removal a compare-and-set: when an edit was accepted or an editor takes the
- * message, it stays queued, nothing is released, and this returns false.
- */
+/** Returns false without releasing files if expectedRevision changed or canRemove rejects current ownership. */
 export async function removeThreadOutboxMessage(
   message: QueuedThreadMessage,
   expectedRevision?: number,
@@ -70,16 +65,13 @@ export async function removeThreadOutboxMessage(
   if (removed === null) {
     return false;
   }
-  // The removed payload, not the caller's snapshot: an accepted update may
-  // have added files the snapshot never saw.
+  // Clean the removed payload; accepted updates may contain files absent from the caller's snapshot.
   await cleanUpRemovedMessages([removed]);
   return true;
 }
 
 export async function clearThreadOutboxEnvironment(environmentId: EnvironmentId): Promise<void> {
-  // clearEnvironment loads and merges persisted messages itself and reports
-  // what it actually removed, so the release set cannot miss messages a
-  // failed earlier hydration would have hidden.
+  // Use the actual removed set, including persisted messages missed by an earlier failed hydration.
   const removed = await threadOutboxManager.clearEnvironment(environmentId);
   await cleanUpRemovedMessages(removed);
 }

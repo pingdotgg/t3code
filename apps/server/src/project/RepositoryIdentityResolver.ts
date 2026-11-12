@@ -6,24 +6,22 @@ import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
-import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
+import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-// Background sweeps resolve every project each minute. A long TTL keeps them
-// from spawning git each time. Clone, publish, and PR discovery (after a turn
-// and before it saves links) resolve with `refresh: true`.
+// Minute-by-minute sweeps need cached hits; clone, publish and PR discovery force refresh.
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
-  readonly positiveCacheTtl?: Duration.Input;
-  readonly negativeCacheTtl?: Duration.Input;
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
@@ -39,8 +37,7 @@ export class RepositoryIdentityResolver extends Context.Service<
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
-// Local remotes (GitButler's `gb-local` is `.`) name a path on this machine,
-// not a repository, so unrelated repos would share one identity.
+// Local paths such as GitButler's gb-local=. would give unrelated repos the same identity.
 function isLocalRemoteUrl(url: string): boolean {
   if (/^file:/i.test(url)) return true;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return false;
@@ -53,11 +50,10 @@ function isLocalRemoteUrl(url: string): boolean {
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
+  for (const line of stdout.split(/\r?\n/)) {
+    // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
+    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
     if (!match) continue;
     const [, remoteName = "", remoteUrl = "", direction = ""] = match;
     if (
@@ -73,10 +69,21 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
+// `gh repo set-default` marks the chosen remote with `remote.<name>.gh-resolved base`.
+function parseGhDefaultRemoteName(stdout: string): string | null {
+  const marked = stdout
+    .split("\n")
+    .map((line) => /^remote\.(.+)\.gh-resolved\s+base$/.exec(line.trim())?.[1])
+    .filter((name): name is string => name !== undefined);
+  return marked.length === 1 ? marked[0]! : null;
+}
+
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
+  ghDefaultRemoteName: string | null,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  for (const preferredRemoteName of ["upstream", "origin"] as const) {
+  for (const preferredRemoteName of [ghDefaultRemoteName, "upstream", "origin"]) {
+    if (preferredRemoteName === null) continue;
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
       return { remoteName: preferredRemoteName, remoteUrl };
@@ -140,13 +147,27 @@ class RepositoryIdentityCacheKey extends Data.Class<{
   readonly isBare: boolean;
 }> {}
 
+const gitEnv = (platform: NodeJS.Platform): NodeJS.ProcessEnv => ({
+  ...unsetInheritedRepositoryEnv(process.env, platform),
+  ...explicitBareRepositoryEnv(process.env, platform),
+});
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
-    const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const env = gitEnv(yield* HostProcess.Platform);
 
-    // git is a real executable on every platform — no cmd.exe shell mode, which
-    // would split paths containing spaces during cmd's re-tokenization.
+    // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
+    const isFolder = yield* fileSystem.stat(cwd).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      Effect.orElseSucceed(() => true),
+    );
+    if (!isFolder) return null;
+
+    // git is always a real executable; cmd shell mode would split spaced paths on re-tokenization.
     const topLevelResult = yield* processRunner
       .run({
         command: "git",
@@ -166,7 +187,25 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
     }
 
     // Explicit Git directories preserve safe.bareRepository=explicit for both layouts.
-    for (const gitDir of [".", ".git"]) {
+    for (const [gitDir, entry] of [
+      [".", "HEAD"],
+      [".git", ".git"],
+    ] as const) {
+      // An explicit --git-dir fails unless the folder has this entry; a symlink counts even
+      // when its target is missing, as git reads a symlinked HEAD's target text.
+      const target = path.join(cwd, entry);
+      const hasEntry = yield* fileSystem.exists(target).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? Effect.succeed(true)
+            : fileSystem.readLink(target).pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              ),
+        ),
+        Effect.orElseSucceed(() => true),
+      );
+      if (!hasEntry) continue;
       const bareResult = yield* processRunner
         .run({
           command: "git",
@@ -207,7 +246,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     .run({
       command: "git",
       args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), "remote", "-v"],
-      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      env: gitEnv(yield* HostProcess.Platform),
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);
@@ -215,8 +254,28 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
+  const ghResolvedResult = yield* processRunner
+    .run({
+      command: "git",
+      args: [
+        "-C",
+        cacheKey.rootPath,
+        ...(cacheKey.isBare ? ["--git-dir=."] : []),
+        "config",
+        "--get-regexp",
+        "^remote\\..*\\.gh-resolved$",
+      ],
+      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(Effect.option);
+  const ghDefaultRemoteName =
+    ghResolvedResult._tag === "Some" && ghResolvedResult.value.code === 0
+      ? parseGhDefaultRemoteName(ghResolvedResult.value.stdout)
+      : null;
+
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
-  const remote = pickPrimaryRemote(remotes);
+  const remote = pickPrimaryRemote(remotes, ghDefaultRemoteName);
   return remote
     ? buildRepositoryIdentity({
         ...remote,
@@ -230,14 +289,14 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
-        value === null
-          ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-          : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+        value === null ? DEFAULT_NEGATIVE_CACHE_TTL : DEFAULT_POSITIVE_CACHE_TTL,
       onFailure: () => Duration.zero,
     });
 
@@ -245,6 +304,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       ),
     { capacity: cacheCapacity, timeToLive },
   );
