@@ -179,12 +179,20 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     const file = { path: path.join(root, name), records: [] as UsageRecord[] };
     files.push(file);
     // Taken before the snapshot opens, so a write that races the scan invalidates its rows.
-    const fileVersion = (yield* Effect.forEach([file.path, `${file.path}-wal`], (target) =>
-      fileSystem.stat(target).pipe(
-        Effect.map((info) => `${info.size}:${Option.getOrNull(info.mtime)?.getTime()}`),
-        Effect.orElseSucceed(() => "none"),
-      ),
-    )).join("/");
+    const [main, wal] = yield* Effect.forEach([file.path, `${file.path}-wal`], (target) =>
+      Effect.option(fileSystem.stat(target)),
+    );
+    const stamp = (info: Option.Option<FileSystem.File.Info>) =>
+      Option.match(info, {
+        onNone: () => "none",
+        onSome: (stat) => `${stat.size}:${Option.getOrNull(stat.mtime)?.getTime()}`,
+      });
+    // A replaced database can repeat rowids and change markers, so its identity is part of every key.
+    const identity = Option.match(main!, {
+      onNone: () => "none",
+      onSome: (stat) =>
+        `${stat.dev}:${Option.getOrNull(stat.ino)}:${Option.getOrNull(stat.birthtime)?.getTime()}`,
+    });
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // Fail promptly on live-writer locks instead of stalling the server.
@@ -205,7 +213,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         const timestamp = columns.has("time_created") ? "time_created" : "NULL";
         const updated = columns.has("time_updated") ? "time_updated" : "NULL";
         // Without time_updated an in-place edit can keep the length, so any database write counts.
-        const version = updated === "NULL" ? fileVersion : "";
+        const version =
+          updated === "NULL" ? `${identity}/${stamp(main!)}/${stamp(wal!)}` : identity;
         const predicates = table === "session_message" ? ["type = 'assistant'"] : [];
         if (timestamp !== "NULL") predicates.push("time_created >= ?");
         // List rowids and change markers so SQLite can use time indexes without reading message

@@ -197,6 +197,37 @@ describe("readOpenCodeUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not reuse rows from a replaced database file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-replaced-" });
+      const write = (name: string, input: number) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const db = yield* openDatabase(path.join(dir, name));
+            yield* db.unsafe("PRAGMA journal_mode = WAL");
+            yield* db.unsafe(
+              "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)",
+            );
+            yield* db.unsafe(
+              "INSERT INTO message(rowid, id, session_id, time_created, time_updated, data) VALUES (1, 'a', 's', 1, 1, ?)",
+              [JSON.stringify({ modelID: "m", tokens: { input } })],
+            );
+          }),
+        );
+      const input = Effect.map(
+        readOpenCodeUsage(dir, 0),
+        (result) => result.files[0]?.records[0]?.totals.uncachedInputTokens,
+      );
+      yield* write("opencode.db", 100);
+      assert.strictEqual(yield* input, 100);
+      yield* write("replacement.db", 900);
+      yield* fileSystem.rename(path.join(dir, "replacement.db"), path.join(dir, "opencode.db"));
+      assert.strictEqual(yield* input, 900);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("counts migrated OpenCode messages once and sees subsequent WAL writes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
