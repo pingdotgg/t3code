@@ -6,6 +6,7 @@ export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
+  | "continue-elsewhere"
   | "project-settings"
   | "pin"
   | "unpin"
@@ -95,6 +96,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** A server with linked machines, which can start this thread's work on one of them. */
+  readonly canContinueElsewhere?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -200,6 +203,15 @@ export function buildThreadActionMenuItems(
             label: "Turn into project",
             icon: "folder-plus",
             disabled: state.isRunning,
+          },
+        ]
+      : []),
+    ...(state.canContinueElsewhere
+      ? [
+          {
+            id: "continue-elsewhere" as const,
+            label: "Continue on another machine",
+            icon: "monitor-up",
           },
         ]
       : []),

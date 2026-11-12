@@ -79,6 +79,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  MonitorUpIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
@@ -138,6 +139,7 @@ import {
 } from "../state/environments";
 import {
   useAnyEnvironmentHiding,
+  useEnvironmentCanContinueElsewhere,
   useHiddenThreadKeys,
   useEnvironmentThreadRefs,
   useProjects,
@@ -257,6 +259,7 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openContinueOnMachineDialog } from "./chat/continueOnMachineDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -492,6 +495,9 @@ function OpenCommandPaletteDialog(props: {
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
+  );
+  const canContinueActiveThreadElsewhere = useEnvironmentCanContinueElsewhere(
+    activeThread?.environmentId ?? null,
   );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
@@ -1480,6 +1486,20 @@ function OpenCommandPaletteDialog(props: {
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
+      },
+    });
+  }
+
+  if (activeThread !== null && canContinueActiveThreadElsewhere) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:continue-thread-elsewhere",
+      searchTerms: ["continue", "machine", "move", "transfer", "remote", "linked", "handoff"],
+      title: "Continue on another machine",
+      icon: <MonitorUpIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openContinueOnMachineDialog(threadRef);
       },
     });
   }

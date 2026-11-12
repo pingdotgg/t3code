@@ -363,6 +363,21 @@ ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
 
+To move a thread's work yourself, choose **Continue on another machine** in the
+thread menu or the command palette and pick a linked machine. A new thread
+starts there, in the project with the same repository, from this thread's
+conversation, and this thread stays as it is. If the thread's folder has
+uncommitted changes, you choose whether to transfer them too. An agent can ask
+for the same with `workFiles: "transfer"` on `delegate_task`.
+
+- In a git checkout, the changed, staged, deleted and untracked (not ignored)
+  files go, and the other machine's checkout must be on the same commit.
+  Outside git, every file goes except `.git`, `node_modules` and build output.
+- Files that look like secrets, such as `.env` files and private keys, stay on
+  this machine.
+- Nothing is changed there if any of those files has its own local changes
+  there. The transfer is at most 100 MiB and 5,000 files.
+
 ## Manage or revoke access
 
 On the host, **Settings → Sharing & access** lets authorized administrators create

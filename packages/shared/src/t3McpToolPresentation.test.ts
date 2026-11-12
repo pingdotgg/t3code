@@ -53,6 +53,15 @@ describe("resolveT3McpToolDefinition", () => {
       "Used",
     );
   });
+
+  it("labels a delegation that carries work files apart from one that does not", () => {
+    expect(
+      resolveT3McpToolDefinition("delegate_task", { workFiles: "transfer" })?.displayName,
+    ).toBe("Delegate a child task with work files");
+    expect(resolveT3McpToolDefinition("delegate_task", { workFiles: "skip" })?.displayName).toBe(
+      "Delegate a child task",
+    );
+  });
 });
 
 describe("resolveT3McpSummaryAction", () => {

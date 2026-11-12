@@ -2548,6 +2548,12 @@ const make = Effect.gen(function* () {
           ? awaitTask(scope, taskId, taskId, input.timeoutMs)
           : readTask(scope, taskId, false, true);
       }
+      if (input.workFiles === "transfer") {
+        return yield* failure(
+          "invalid_request",
+          "workFiles 'transfer' needs target.environmentId on another machine; a task here already shares this checkout.",
+        );
+      }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
       if (
         input.target?.projectId !== undefined &&

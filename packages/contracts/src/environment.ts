@@ -172,6 +172,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       in them. Absent on servers from before linking, which clients must not
       offer linking for. */
   peerLinks: Schema.optionalKey(Schema.Boolean),
+  /** Server continues a thread on a linked environment, with its work files
+      if asked. Older servers lack the RPC, so clients offer it only when set. */
+  continueOnEnvironment: Schema.optionalKey(Schema.Boolean),
   /** Server's `/mcp` narrows an OAuth client's modes from `T3-Mode-Limit`, so
       a linked environment's calls keep its agent's limits. Another environment
       links to this one only when it is set. */

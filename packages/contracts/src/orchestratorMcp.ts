@@ -33,6 +33,7 @@ import {
   ThreadPullRequestLinkSource,
 } from "./threadPullRequest.ts";
 import { secretRequestPageUrl } from "./secretRequest.ts";
+import { WorkFilesMode } from "./workFiles.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { LastThreadTitleRegeneration, ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
@@ -194,6 +195,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     }),
   ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  workFiles: Schema.optional(
+    WorkFilesMode.annotate({
+      description:
+        "Remote target only. 'transfer': first copy your uncommitted files (not secrets) to that checkout, which must be on your commit.",
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 

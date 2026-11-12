@@ -30,6 +30,7 @@ import type {
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
+import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentPresentations } from "./presentation";
@@ -358,6 +359,20 @@ export function readEnvironmentSupportsServerBrowser(environmentId: EnvironmentI
 
 export function readEnvironmentServerConfigLoaded(environmentId: EnvironmentId): boolean {
   return appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId);
+}
+
+const canContinueElsewhere = (config: Parameters<typeof offersLinkedEnvironments>[0]) =>
+  offersLinkedEnvironments(config) &&
+  config?.environment.capabilities.continueOnEnvironment === true;
+
+/** Whether the environment can continue a thread on one of its linked machines. */
+export function readEnvironmentCanContinueElsewhere(environmentId: EnvironmentId): boolean {
+  return canContinueElsewhere(appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId));
+}
+
+export function useEnvironmentCanContinueElsewhere(environmentId: EnvironmentId | null): boolean {
+  const configs = useServerConfigs();
+  return environmentId !== null && canContinueElsewhere(configs.get(environmentId));
 }
 
 export function readEnvironmentSupportsAutoSettleOptOut(environmentId: EnvironmentId): boolean {
