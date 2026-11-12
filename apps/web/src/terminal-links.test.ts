@@ -64,6 +64,10 @@ describe("extractTerminalLinks", () => {
     expect(extractTerminalLinks(`see ${quote}${text}${quote}.`)).toEqual([
       { kind: "path", text, start: 5, end: 5 + text.length },
     ]);
+    const atText = "src/my contact@support.vue:12:3";
+    expect(extractTerminalLinks(`see ${quote}${atText}${quote}.`)).toEqual([
+      { kind: "path", text: atText, start: 5, end: 5 + atText.length },
+    ]);
   });
 
   it.each([
@@ -130,6 +134,8 @@ describe("extractTerminalLinks", () => {
     "src/routes/(app)/+page@.svelte:12:3",
     "src/contact@support.vue:12:3",
     String.raw`src\contact@support.ts:12:3`,
+    "src/équipe@home.ts:12:3",
+    "src/foo$contact@support.ts:12:3",
     "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
     "app/routes/posts.$id.tsx:5",
   ])("keeps the complete relative path %s", (text) => {
