@@ -13,7 +13,11 @@ import type {
 import { EnvironmentId } from "@t3tools/contracts";
 import * as RelayDb from "../db.ts";
 import * as RelayConfiguration from "../Config.ts";
-import { relayMobileDevices, relayEnvironmentLinks } from "../persistence/schema.ts";
+import {
+  relayMobileDevices,
+  relayEnvironmentLinks,
+  relayWidgetRevocations,
+} from "../persistence/schema.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import * as ApnsClient from "./ApnsClient.ts";
@@ -22,6 +26,18 @@ import type { ApnsDeliveryJobPayload } from "./apnsDeliveryJobs.ts";
 
 export class WidgetRefreshUnauthorized extends Schema.TaggedError<WidgetRefreshUnauthorized>()(
   "WidgetRefreshUnauthorized",
+  {},
+) {}
+
+export const WIDGET_REVOCATION_RATE_LIMIT = { limit: 60, periodSeconds: 60 } as const;
+
+export class WidgetRevocationRateLimiter extends Context.Service<
+  WidgetRevocationRateLimiter,
+  { readonly allow: Effect.Effect<boolean> }
+>()("t3code-relay/agentActivity/WidgetRevocationRateLimiter") {}
+
+export class WidgetRefreshRateLimited extends Schema.TaggedError<WidgetRefreshRateLimited>()(
+  "WidgetRefreshRateLimited",
   {},
 ) {}
 
@@ -48,7 +64,10 @@ export class AgentWidgetRefresh extends Context.Service<
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, WidgetRefreshError>;
     readonly revoke: (input: {
       readonly token: string;
-    }) => Effect.Effect<void, WidgetRefreshPersistenceError | WidgetRefreshUnauthorized>;
+    }) => Effect.Effect<
+      void,
+      WidgetRefreshPersistenceError | WidgetRefreshUnauthorized | WidgetRefreshRateLimited
+    >;
     readonly notify: (input: {
       readonly userId: string;
     }) => Effect.Effect<
@@ -63,6 +82,7 @@ export class AgentWidgetRefresh extends Context.Service<
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+  const revocationLimiter = yield* WidgetRevocationRateLimiter;
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const queue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;
   const apns = yield* ApnsClient.ApnsClient;
@@ -73,7 +93,13 @@ const make = Effect.gen(function* () {
   return AgentWidgetRefresh.of({
     revoke: Effect.fn("relay.agent_widget.revoke")(function* ({ token }) {
       if (!/^[a-f0-9]{64}$/.test(token)) return yield* new WidgetRefreshUnauthorized();
+      if (!(yield* revocationLimiter.allow)) return yield* new WidgetRefreshRateLimited();
       const tokenHash = NodeCrypto.createHash("sha256").update(token).digest("hex");
+      yield* db
+        .insert(relayWidgetRevocations)
+        .values({ tokenHash })
+        .onConflictDoNothing()
+        .pipe(persistenceError("revoke"));
       yield* db
         .update(relayMobileDevices)
         .set({ widgetAccessTokenHash: null, widgetPushToken: null })
@@ -95,6 +121,13 @@ const make = Effect.gen(function* () {
         .limit(1)
         .pipe(persistenceError("authorize"));
       if (!device) return yield* new WidgetRefreshUnauthorized();
+      const [revoked] = yield* db
+        .select()
+        .from(relayWidgetRevocations)
+        .where(eq(relayWidgetRevocations.tokenHash, tokenHash))
+        .limit(1)
+        .pipe(persistenceError("authorize"));
+      if (revoked) return yield* new WidgetRefreshUnauthorized();
       if (
         pushToken !== undefined &&
         pushToken !== device.widgetPushToken &&

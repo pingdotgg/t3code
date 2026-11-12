@@ -46,6 +46,11 @@ export const relayMobileDevices = pgTable(
   ],
 );
 
+// Revocation must survive a registration that arrives after sign-out's DELETE.
+export const relayWidgetRevocations = pgTable("relay_widget_revocations", {
+  tokenHash: text("token_hash").primaryKey(),
+});
+
 export const relayLiveActivities = pgTable(
   "relay_live_activities",
   {

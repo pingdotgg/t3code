@@ -218,6 +218,13 @@ export const layer = Api.make(
         period: MobileTelemetry.MOBILE_TELEMETRY_RATE_LIMIT.periodSeconds,
       },
     });
+    const widgetRevocationRateLimit = yield* Cloudflare.RateLimit("WIDGET_REVOCATION_RATE_LIMIT", {
+      namespaceId: 1004,
+      simple: {
+        limit: AgentWidgetRefresh.WIDGET_REVOCATION_RATE_LIMIT.limit,
+        period: AgentWidgetRefresh.WIDGET_REVOCATION_RATE_LIMIT.periodSeconds,
+      },
+    });
     const mobileSourceMaps = yield* Cloudflare.R2.ReadBucket(observability.mobileSourceMaps);
     const mobileTelemetryToken = yield* observability.mobileTelemetryIngestToken.token;
     const mobileTracesUrl = yield* observability.traces.otelTracesEndpoint;
@@ -304,7 +311,26 @@ export const layer = Api.make(
         ),
       ),
       Layer.provideMerge(DpopProofs.layer),
-      Layer.provideMerge(ApnsDeliveries.layer.pipe(Layer.provideMerge(AgentWidgetRefresh.layer))),
+      Layer.provideMerge(
+        ApnsDeliveries.layer.pipe(
+          Layer.provideMerge(
+            AgentWidgetRefresh.layer.pipe(
+              Layer.provide(
+                Layer.succeed(AgentWidgetRefresh.WidgetRevocationRateLimiter, {
+                  // Bound unauthenticated tombstone writes across every token and source; failures retain native retries.
+                  allow: widgetRevocationRateLimit
+                    .limit({ key: `${stage}:widget-revocations` })
+                    .pipe(
+                      Effect.map((result) => result.success),
+                      Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+                      Effect.orElseSucceed(() => false),
+                    ),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
       Layer.provideMerge(
         FcmDeliveries.layer.pipe(
           Layer.provide(

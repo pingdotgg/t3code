@@ -32,8 +32,10 @@ struct AgentWidgetTimelineProvider: TimelineProvider {
         }.map { Entry(cached: $0) }
         // Ask for another read even if no agent state changes. WidgetKit controls
         // the actual schedule; pushes complement this, they don't replace it.
-        completion(Timeline(entries: entries.isEmpty ? [placeholder(in: context)] : entries,
-          policy: .after(Date().addingTimeInterval(5 * 60))))
+        completion(Timeline(
+          entries: entries.isEmpty ? [placeholder(in: context)] : entries,
+          policy: .after(Date().addingTimeInterval(5 * 60))
+        ))
       }
     }
   }
@@ -60,6 +62,13 @@ struct AgentWidgetEntryView: View {
 }
 
 enum AgentWidgetNetwork {
+  struct Configuration {
+    let url: String
+    let token: String
+    let generation: String
+    let pushToken: String?
+  }
+
   static var defaults: UserDefaults? {
     guard let group = Bundle.main.object(forInfoDictionaryKey: "ExpoWidgetsAppGroupIdentifier") as? String else { return nil }
     return UserDefaults(suiteName: group)
@@ -67,15 +76,18 @@ enum AgentWidgetNetwork {
 
   static func refresh(completion: @escaping @Sendable (Bool) -> Void) {
     AgentWidgetStorage.retryRevocations()
-    let configuration = AgentWidgetStorage.withLock { defaults -> (String, String, String, String?)? in
+    let configuration = AgentWidgetStorage.withLock { defaults -> Configuration? in
       guard defaults.string(forKey: "t3_agent_widget_identity") != nil,
             let rawURL = defaults.string(forKey: "t3_agent_widget_url"),
             let token = AgentWidgetCredential.read() else { return nil }
-      return (rawURL, token, AgentWidgetStorage.generation(in: defaults), defaults.string(forKey: "t3_agent_widget_push_token"))
+      return Configuration(url: rawURL, token: token, generation: AgentWidgetStorage.generation(in: defaults), pushToken: defaults.string(forKey: "t3_agent_widget_push_token"))
     }.flatMap { $0 }
-    guard let (rawURL, token, generation, pushToken) = configuration,
-          var components = URLComponents(string: rawURL) else { completion(false); return }
-    if let pushToken {
+    guard let configuration,
+          var components = URLComponents(string: configuration.url) else { completion(false); return }
+    let rawURL = configuration.url
+    let token = configuration.token
+    let generation = configuration.generation
+    if let pushToken = configuration.pushToken {
       components.queryItems = [URLQueryItem(name: "pushToken", value: pushToken)]
     }
     guard let url = components.url else { completion(false); return }
@@ -95,8 +107,10 @@ enum AgentWidgetNetwork {
           $0.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         }
         let environmentIds = body["environmentIds"] as? [String] ?? (aggregate?["activities"] as? [[String: Any]] ?? []).compactMap { $0["environmentId"] as? String }
-        return AgentWidgetStorage.commit(AgentWidgetState.timeline(aggregate: aggregate, environmentIds: environmentIds,
-          localObservation: localObservation, now: Date()), generation: generation, in: defaults)
+        return AgentWidgetStorage.commit(AgentWidgetState.timeline(
+          aggregate: aggregate, environmentIds: environmentIds,
+          localObservation: localObservation, now: Date()
+        ), generation: generation, in: defaults)
       } ?? false
       completion(stored)
     }.resume()
@@ -114,7 +128,6 @@ struct AgentWidgetPushHandler: WidgetPushHandler {
 
 extension WidgetConfiguration {
   func agentWidgetPushHandler() -> some WidgetConfiguration {
-    if #available(iOS 26.0, *) { return self.pushHandler(AgentWidgetPushHandler.self) }
-    else { return self }
+    if #available(iOS 26.0, *) { return self.pushHandler(AgentWidgetPushHandler.self) } else { return self }
   }
 }

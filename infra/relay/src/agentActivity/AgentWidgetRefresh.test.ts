@@ -1,6 +1,12 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- a synchronous sha256 fixture mirrors the stored token hash.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { PgClient } from "@effect/sql-pg/PgClient";
+import { PGlite } from "@electric-sql/pglite";
+import { makeWithDefaults } from "drizzle-orm/effect-postgres";
+import * as FileSystem from "effect/FileSystem";
+import * as Devices from "./Devices.ts";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { PgDialect } from "drizzle-orm/pg-core";
@@ -8,7 +14,7 @@ import type { SQL } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { relayEnvironmentLinks } from "../persistence/schema.ts";
+import { relayEnvironmentLinks, relayWidgetRevocations } from "../persistence/schema.ts";
 import * as RelayDb from "../db.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
@@ -52,8 +58,11 @@ const state: RelayAgentActivityState = {
 
 function fixture(
   response: ApnsClient.ApnsDeliveryResult = { ok: true, status: 200, apnsId: "apns-id" },
+  database?: RelayDb.RelayDb["Service"],
 ) {
   let present = true;
+  let revocationsAllowed = true;
+  const revocations = new Set<string>();
   let activity = state;
   const queries: Array<ReadonlyArray<unknown>> = [];
   const updates: Array<Record<string, unknown>> = [];
@@ -80,13 +89,27 @@ function fixture(
     select: () => ({
       from: (table: unknown) => ({
         where:
-          table === relayEnvironmentLinks
+          table === relayWidgetRevocations
             ? (condition: SQL) => {
                 const params = dialect.sqlToQuery(condition).params;
-                queries.push(params);
-                return Effect.succeed(params.includes(true) ? [] : [{ environmentId: "env-a" }]);
+                const result = Effect.succeed(revocations.has(String(params[0])) ? [{}] : []);
+                return Object.assign(result, { limit: () => result });
               }
-            : select,
+            : table === relayEnvironmentLinks
+              ? (condition: SQL) => {
+                  const params = dialect.sqlToQuery(condition).params;
+                  queries.push(params);
+                  return Effect.succeed(params.includes(true) ? [] : [{ environmentId: "env-a" }]);
+                }
+              : select,
+      }),
+    }),
+    insert: () => ({
+      values: ({ tokenHash }: { tokenHash: string }) => ({
+        onConflictDoNothing: () =>
+          Effect.sync(() => {
+            revocations.add(tokenHash);
+          }),
       }),
     }),
     update: () => ({
@@ -105,7 +128,10 @@ function fixture(
   const layer = AgentWidgetRefresh.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(RelayDb.RelayDb, db),
+        Layer.succeed(RelayDb.RelayDb, database ?? db),
+        Layer.succeed(AgentWidgetRefresh.WidgetRevocationRateLimiter, {
+          allow: Effect.sync(() => revocationsAllowed),
+        }),
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
           upsert: () => Effect.succeed(true),
           remove: () => Effect.void,
@@ -178,6 +204,9 @@ function fixture(
     revoke: () => {
       present = false;
     },
+    allowRevocations: (allowed: boolean) => {
+      revocationsAllowed = allowed;
+    },
     complete: () => {
       activity = { ...activity, phase: "completed", headline: "Done" };
     },
@@ -186,11 +215,98 @@ function fixture(
 
 describe("AgentWidgetRefresh", () => {
   it.effect(
+    "keeps revocation effective before a late registration and across registration retries",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const pg = yield* Effect.acquireRelease(
+          Effect.promise(() => PGlite.create()),
+          (client) => Effect.promise(() => client.close()),
+        );
+        const migrations = new URL("../../migrations/postgres/", import.meta.url).pathname;
+        for (const folder of (yield* fs.readDirectory(migrations)).toSorted()) {
+          const migration = yield* fs.readFileString(`${migrations}/${folder}/migration.sql`);
+          yield* Effect.promise(() => pg.exec(migration));
+        }
+        const client = {
+          unsafe: (query: string, params: ReadonlyArray<unknown> = []) => {
+            const result = Effect.promise(() =>
+              pg.query<Record<string, unknown>>(query, [...params]),
+            );
+            return Object.assign(result.pipe(Effect.map((result) => result.rows)), {
+              raw: result,
+              withoutTransform: result.pipe(Effect.map((result) => result.rows)),
+              values: result.pipe(
+                Effect.map((result) =>
+                  result.rows.map((row) => result.fields.map((field) => row[field.name])),
+                ),
+              ),
+            });
+          },
+        } as unknown as PgClient;
+        const db = yield* makeWithDefaults().pipe(Effect.provideService(PgClient, client));
+        const registration = {
+          deviceId: device.deviceId,
+          label: "Phone",
+          platform: "ios" as const,
+          widgetAccessToken: token,
+          preferences: {
+            notificationsEnabled: false,
+            liveActivitiesEnabled: false,
+            notifyOnApproval: true,
+            notifyOnInput: true,
+            notifyOnCompletion: true,
+            notifyOnFailure: true,
+          },
+        };
+        yield* Effect.gen(function* () {
+          const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+          const devices = yield* Devices.Devices;
+          yield* widgets.revoke({ token });
+          for (let attempt = 0; attempt < 2; attempt++) {
+            yield* devices.register({ userId: device.userId, registration });
+            expect((yield* Effect.flip(widgets.refresh({ token })))._tag).toBe(
+              "WidgetRefreshUnauthorized",
+            );
+          }
+          const nextToken = "b".repeat(64);
+          yield* devices.register({
+            userId: device.userId,
+            registration: { ...registration, widgetAccessToken: nextToken },
+          });
+          expect((yield* widgets.refresh({ token: nextToken })).aggregate?.activeCount).toBe(1);
+          yield* widgets.revoke({ token: nextToken });
+          yield* devices.register({
+            userId: device.userId,
+            registration: { ...registration, widgetAccessToken: nextToken },
+          });
+          expect((yield* Effect.flip(widgets.refresh({ token: nextToken })))._tag).toBe(
+            "WidgetRefreshUnauthorized",
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              fixture(undefined, db).layer,
+              Devices.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, db))),
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
     "revokes only the presented capability and rejects subsequent reads and queued pushes",
     () => {
       const test = fixture();
       return Effect.gen(function* () {
         const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+        test.allowRevocations(false);
+        expect((yield* Effect.flip(widgets.revoke({ token })))._tag).toBe(
+          "WidgetRefreshRateLimited",
+        );
+        expect(test.updates).toEqual([]);
+        expect((yield* widgets.refresh({ token })).aggregate?.activeCount).toBe(1);
+        test.allowRevocations(true);
         yield* widgets.revoke({ token: "b".repeat(64) });
         expect((yield* widgets.refresh({ token })).aggregate?.activeCount).toBe(1);
         yield* widgets.revoke({ token });

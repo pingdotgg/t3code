@@ -259,6 +259,28 @@ describe("live widget activity", () => {
           updatedAt: DateTime.makeUnsafe("2026-09-05T11:00:00.000Z"),
         }),
         thread({
+          id: ThreadId.make("parent"),
+          status: "completed",
+          settledOverride: "settled",
+          snoozedAt: DateTime.makeUnsafe(NOW),
+          snoozedUntil: DateTime.makeUnsafe(NOW_MS + 60_000),
+        }),
+        thread({
+          id: ThreadId.make("child"),
+          creationSource: "mcp",
+          activityRunStatus: "running",
+          lineage: {
+            rootThreadId: ThreadId.make("parent"),
+            parentThreadId: ThreadId.make("parent"),
+            relationshipToParent: "subagent",
+          },
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-approval"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        }),
+        thread({
           id: ThreadId.make("orphan"),
           projectId: ProjectId.make("missing"),
           status: "running",
@@ -266,6 +288,22 @@ describe("live widget activity", () => {
       ]),
     );
     try {
+      expect(
+        h.registry
+          .get(h.atom)
+          .get(ENVIRONMENT)
+          ?.map((value) => value.status),
+      ).toEqual(["Approval", "Input", "Failed", "Done", "Approval"]);
+      const current = h.registry.get(h.shellAtoms(ENVIRONMENT));
+      if (Option.isNone(current.snapshot)) throw new Error("missing snapshot");
+      h.registry.set(
+        h.shellAtoms(ENVIRONMENT),
+        shell(
+          current.snapshot.value.threads.map((value) =>
+            value.id === ThreadId.make("child") ? { ...value, pendingRuntimeRequest: null } : value,
+          ),
+        ),
+      );
       expect(
         h.registry
           .get(h.atom)

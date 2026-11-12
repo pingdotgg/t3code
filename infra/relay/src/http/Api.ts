@@ -53,6 +53,7 @@ import {
   RelayManagedEndpointRecoveryProofPayload,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
+  RelayWidgetRateLimitedError,
 } from "@t3tools/contracts/relay";
 import {
   normalizeRelayIssuer,
@@ -793,6 +794,11 @@ export const layerWidgetApi = HttpApiBuilder.group(
             return { ok: true as const };
           },
           mapErrorTags({
+            WidgetRefreshRateLimited: (_error, traceId) =>
+              new RelayWidgetRateLimitedError({
+                code: "widget_rate_limited",
+                traceId,
+              }),
             WidgetRefreshUnauthorized: (_error, traceId) =>
               new RelayAuthInvalidError({
                 code: "auth_invalid",
