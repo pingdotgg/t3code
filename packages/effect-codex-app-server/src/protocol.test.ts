@@ -869,6 +869,41 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("reports a process exit that breaks a write", () =>
+    Effect.gen(function* () {
+      const { stdio: baseStdio } = yield* makeInMemoryStdio();
+      const exitError = new CodexError.CodexAppServerProcessExitedError({
+        code: 1,
+        pid: 123,
+        stderr: "Error: Missing optional dependency @openai/codex-linux-x64.",
+      });
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio: Stdio.make({
+          args: baseStdio.args,
+          stdin: baseStdio.stdin,
+          stdout: () =>
+            Sink.forEach(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "Stdio",
+                  method: "stdout",
+                  cause: new Error("EPIPE"),
+                }),
+              ),
+            ),
+          stderr: baseStdio.stderr,
+        }),
+        terminationError: Effect.succeed(exitError),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+      yield* transport.request("initialize", {}).pipe(Effect.forkScoped);
+
+      assert.strictEqual(yield* Deferred.await(termination), exitError);
+    }),
+  );
+
   it.effect("reports a process exit that follows input end", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
