@@ -57,6 +57,7 @@ enum AgentWidgetState {
     }
     func merged(at date: Date) -> [String: Any] {
       var props = base
+      props["isStale"] = !retainedScope.isEmpty && localObservation?["isStale"] as? Bool == true
       let directRows = localRows.map { row in
         localDeadline.map { $0 > date } == true ? row : stale(row)
       }

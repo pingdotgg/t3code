@@ -129,18 +129,30 @@ const unused = () => Effect.die("Unexpected test dependency call");
 describe("startup agent activity", () => {
   it.effect("backfills pre-start completions silently", () =>
     Effect.gen(function* () {
-      const { relay, publications } = yield* makeTestRelay({
-        readShell: () =>
-          Effect.succeed(
-            shell({
-              status: "completed",
-              latestRunCompletedAt: DateTime.makeUnsafe("1969-12-31T00:00:00.000Z"),
-            }),
-          ),
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        backfillThread: shell({
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe("1969-12-31T00:00:00.000Z"),
+        }),
       });
       yield* relay.publishThread(THREAD_ID);
       assert.equal(publications.length, 1);
       assert.equal(publications[0]?.replay, true);
+      yield* TestClock.adjust("1 second");
+      yield* Ref.update(
+        currentShell,
+        (thread) =>
+          thread && {
+            ...thread,
+            latestRunCompletedAt: DateTime.makeUnsafe(1_000),
+            updatedAt: DateTime.makeUnsafe(1_000),
+          },
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+      assert.equal(publications.at(-1)?.replay, false);
     }),
   );
   it("publishes active work and older unsettled completions after startup", () => {

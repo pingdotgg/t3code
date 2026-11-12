@@ -91,6 +91,16 @@ const make = Effect.gen(function* () {
   const persistenceError = (stage: string) =>
     Effect.mapError((cause) => new WidgetRefreshPersistenceError({ stage, cause }));
 
+  const isRevoked = Effect.fn("relay.agent_widget.is_revoked")(function* (tokenHash: string) {
+    const [revoked] = yield* db
+      .select()
+      .from(relayWidgetRevocations)
+      .where(eq(relayWidgetRevocations.tokenHash, tokenHash))
+      .limit(1)
+      .pipe(persistenceError("authorize-push-target"));
+    return revoked !== undefined;
+  });
+
   return AgentWidgetRefresh.of({
     revoke: Effect.fn("relay.agent_widget.revoke")(function* ({ token }) {
       if (!/^[a-f0-9]{64}$/.test(token)) return yield* new WidgetRefreshUnauthorized();
@@ -241,8 +251,11 @@ const make = Effect.gen(function* () {
           ),
         )
         .pipe(persistenceError("list-push-targets"));
+      const authorized = yield* Effect.filter(targets, (target) =>
+        isRevoked(target.widgetAccessTokenHash ?? "").pipe(Effect.map((revoked) => !revoked)),
+      );
       return yield* Effect.forEach(
-        targets,
+        authorized,
         (target) =>
           queue.enqueueLiveActivity({
             kind: "widget_refresh",
@@ -279,6 +292,7 @@ const make = Effect.gen(function* () {
         apnsId: null,
       };
       if (!device || !device.widgetAccessTokenHash || !config.apns) return skipped;
+      if (yield* isRevoked(device.widgetAccessTokenHash)) return skipped;
       const now = yield* DateTime.now;
       const result = yield* apns.sendPushNotificationRequest({
         credentials: {
