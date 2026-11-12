@@ -88,6 +88,8 @@ import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "~/rightPanelLayout";
 import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
 import { ServerBrowserSurface, type ServerBrowserHandle } from "~/browser/ServerBrowserSurface";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -171,6 +173,8 @@ export function PreviewView({
   onSendAnnotation,
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
+  // Narrow windows show the panel as a sheet (--z-sheet: 46); the surface must sit above it.
+  const surfaceZIndex = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY) ? 47 : 30;
   const [find, setFind] = useState<{ tabId: string; requestId: number } | null>(null);
   const [pickActive, setPickActive] = useState(false);
   const canSendAnnotation =
@@ -1096,6 +1100,7 @@ export function PreviewView({
               key={runtimeTabId}
               tabId={runtimeTabId}
               visible={visible && !isUnreachable}
+              zIndex={surfaceZIndex}
               className="absolute inset-0 h-full w-full"
             />
           ) : (
