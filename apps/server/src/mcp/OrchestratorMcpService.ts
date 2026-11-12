@@ -803,8 +803,10 @@ function threadSnooze(
 
 function threadPullRequests(
   links: OrchestrationV2ThreadShell["pullRequests"],
+  includeLinks = true,
 ): Pick<OrchestratorMcpThreadListItem, "pullRequests" | "pullRequestCount"> {
   const visible = visibleThreadPullRequests(links ?? []);
+  if (!includeLinks) return { pullRequestCount: visible.length };
   return {
     pullRequests: visible
       .filter((link) => link.snapshot?.state !== "merged" && link.snapshot?.state !== "closed")
@@ -866,6 +868,7 @@ function threadDetail(
   itemCount: number,
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
+  firstPage: boolean,
 ): OrchestratorMcpThreadDetail {
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
@@ -884,7 +887,7 @@ function threadDetail(
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
-    ...threadPullRequests(projection.thread.pullRequests),
+    ...threadPullRequests(projection.thread.pullRequests, firstPage),
     titleRegeneration:
       projection.thread.titleRegeneration === undefined ||
       projection.thread.titleRegeneration === null
@@ -3114,6 +3117,7 @@ const make = Effect.gen(function* () {
           timeline.totalItems,
           shell,
           yield* Clock.currentTimeMillis,
+          input.afterPosition === undefined && input.itemId === undefined,
         ),
         recentRuns: target.runs
           .toSorted((left, right) => right.ordinal - left.ordinal)

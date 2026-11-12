@@ -232,6 +232,12 @@ it("readThread preserves caller access errors and prefers activity-run status ov
       watching: true,
       watchStartedAt: "2026-08-04T11:30:00.000Z",
     });
+    const laterPage = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      afterPosition: 0,
+    });
+    expect(laterPage.thread.pullRequests).toBeUndefined();
+    expect(laterPage.thread.pullRequestCount).toBe(2);
 
     callerUnavailable = true;
     const denied = yield* service
