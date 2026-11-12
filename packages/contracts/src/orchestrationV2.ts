@@ -45,6 +45,7 @@ import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
+import { ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
 import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -456,6 +457,12 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+const OrchestrationV2LastTitleRegeneration = Schema.Struct({
+  ...ThreadTitleRegenerationOutcome.fields,
+  requestId: CommandId,
+  completedAt: Schema.DateTimeUtc,
+});
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -519,6 +526,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(
     Schema.NullOr(
@@ -2212,6 +2220,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2379,6 +2388,14 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
         requestId: CommandId,
         startedAt: Schema.DateTimeUtcFromString,
       }),
+    ),
+  ),
+  lastTitleRegeneration: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2LastTitleRegeneration.mapFields((fields) => ({
+        ...fields,
+        completedAt: Schema.DateTimeUtcFromString,
+      })),
     ),
   ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2820,6 +2837,14 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
       }),
     ),
   ),
+  lastTitleRegeneration: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2LastTitleRegeneration.mapFields((fields) => ({
+        ...fields,
+        completedAt: Schema.DateTimeUtcFromString,
+      })),
+    ),
+  ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2ThreadShellJson = typeof OrchestrationV2ThreadShellJson.Type;
@@ -3211,6 +3236,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optional(TrimmedNonEmptyString),
+    outcome: Schema.optional(ThreadTitleRegenerationOutcome),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),

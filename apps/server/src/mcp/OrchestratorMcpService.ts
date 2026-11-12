@@ -898,6 +898,13 @@ function threadDetail(
             requestId: projection.thread.titleRegeneration.requestId,
             startedAt: DateTime.formatIso(projection.thread.titleRegeneration.startedAt),
           },
+    lastTitleRegeneration:
+      projection.thread.lastTitleRegeneration == null
+        ? null
+        : {
+            ...projection.thread.lastTitleRegeneration,
+            completedAt: DateTime.formatIso(projection.thread.lastTitleRegeneration.completedAt),
+          },
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
     parentThreadId: projection.thread.lineage.parentThreadId,

@@ -232,6 +232,7 @@ import {
   useActiveRowReveal,
 } from "./sidebar/routeReveal";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { titleRegenerationToast } from "./threadTitleRegenerationToast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import { Button } from "./ui/button";
@@ -934,6 +935,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     deleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
   });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
@@ -2453,25 +2457,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return;
       }
       if (clicked.value === "regenerate-title") {
-        for (const thread of regeneratableTitleThreads) {
-          const result = await updateThreadMetadata({
-            environmentId: thread.environmentId,
-            input: { threadId: thread.id, regenerateTitle: true },
-          });
-          if (result._tag === "Success") continue;
-          if (!isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to regenerate thread titles",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          }
-          return;
-        }
         clearSelection();
+        const toast = titleRegenerationToast(
+          await Promise.all(
+            regeneratableTitleThreads.map((thread) =>
+              regenerateThreadTitle({
+                environmentId: thread.environmentId,
+                input: { threadId: thread.id },
+              }),
+            ),
+          ),
+        );
+        if (toast) toastManager.add(toast);
         return;
       }
       if (clicked.value === "settle") {
@@ -2784,20 +2781,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
-            const result = await updateThreadMetadata({
-              environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, regenerateTitle: true },
-            });
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "Failed to regenerate thread title",
-                  description: error instanceof Error ? error.message : "An error occurred.",
-                }),
-              );
-            }
+            const toast = titleRegenerationToast([
+              await regenerateThreadTitle({
+                environmentId: threadRef.environmentId,
+                input: { threadId: threadRef.threadId },
+              }),
+            ]);
+            if (toast) toastManager.add(toast);
             return;
           }
           case "mark-unread":
