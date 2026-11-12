@@ -6,8 +6,6 @@ import {
 } from "./ProviderTextDeltaCoalescer.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Directory junctions keep these fixtures available on Windows.
-import * as NodeFSP from "node:fs/promises";
 import {
   CommandId,
   CheckpointId,
@@ -1772,7 +1770,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const target = `${root}/physical`;
         const alias = `${root}/alias`;
         yield* fs.makeDirectory(target);
-        yield* Effect.tryPromise(() => NodeFSP.symlink(target, alias, "junction"));
+        yield* fs.symlink(target, alias);
         const expectedCwd = platform === "win32" ? alias : yield* fs.realPath(target);
         const policy = { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" as const, cwd: alias };
         const requests: Array<unknown> = [];
@@ -1897,7 +1895,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const alias = `${root}/alias`;
       const targets = [`${root}/first`, `${root}/second`];
       for (const target of targets) yield* fs.makeDirectory(target);
-      yield* Effect.tryPromise(() => NodeFSP.symlink(targets[0]!, alias, "junction"));
+      yield* fs.symlink(targets[0]!, alias);
       const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [];
       for (const [index, target] of targets.entries()) {
         const preamble = codexReplayPreamble({
@@ -1942,7 +1940,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       );
       for (const [index, target] of targets.entries()) {
         yield* fs.remove(alias);
-        yield* Effect.tryPromise(() => NodeFSP.symlink(target, alias, "junction"));
+        yield* fs.symlink(target, alias);
         yield* harness.runtime.startTurn({
           ...makeCodexTestTurnInput({
             threadId: harness.threadId,
