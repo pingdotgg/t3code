@@ -120,9 +120,11 @@ const MARKER_AVATAR_LIMIT = 3;
 
 function ResolvedThreadsMarker({
   threads,
+  autoFocus,
   onOpen,
 }: {
   threads: ReadonlyArray<PullRequestReviewThread>;
+  autoFocus: boolean;
   onOpen: () => void;
 }) {
   const authors = new Map<string, PullRequestActor | null>();
@@ -145,6 +147,7 @@ function ResolvedThreadsMarker({
             data-resolved-threads
             aria-label={label}
             aria-expanded={false}
+            autoFocus={autoFocus}
             // Sits on the commented line, which is the row above this zero-height annotation.
             className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             contentEditable={false}
@@ -162,15 +165,25 @@ function ResolvedThreadsMarker({
   );
 }
 
+/** How a conversation on a diff line folds away to its avatar marker. */
+export interface ReviewThreadFold {
+  /** Folded cards stay mounted, so an unsent reply survives the fold. */
+  readonly folded: boolean;
+  readonly focusHeader: boolean;
+  readonly onCollapse: () => void;
+}
+
 /** The conversations on one diff line. Resolved ones show as avatars until opened. */
 export function InlineReviewThreads({
   threads,
   renderThread,
 }: {
   threads: ReadonlyArray<PullRequestReviewThread>;
-  renderThread: (thread: PullRequestReviewThread, onCollapse: () => void) => ReactNode;
+  renderThread: (thread: PullRequestReviewThread, fold: ReviewThreadFold) => ReactNode;
 }) {
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
+  // Folding swaps the focused control for another, so focus is handed to its replacement.
+  const [focus, setFocus] = useState<"marker" | { readonly threadId: string } | null>(null);
   // A conversation resolved while open stays open until the reader collapses it.
   const seenOpen = threads.filter((thread) => !thread.isResolved && !opened.has(thread.id));
   if (seenOpen.length > 0) {
@@ -182,15 +195,22 @@ export function InlineReviewThreads({
       {folded.length > 0 ? (
         <ResolvedThreadsMarker
           threads={folded}
-          onOpen={() => setOpened(new Set([...opened, ...folded.map((thread) => thread.id)]))}
+          autoFocus={focus === "marker"}
+          onOpen={() => {
+            setOpened(new Set([...opened, ...folded.map((thread) => thread.id)]));
+            setFocus(folded[0] ? { threadId: folded[0].id } : null);
+          }}
         />
       ) : null}
       {threads.map((thread) =>
-        folded.includes(thread)
-          ? null
-          : renderThread(thread, () =>
-              setOpened((current) => new Set([...current].filter((id) => id !== thread.id))),
-            ),
+        renderThread(thread, {
+          folded: folded.includes(thread),
+          focusHeader: focus !== null && focus !== "marker" && focus.threadId === thread.id,
+          onCollapse: () => {
+            setOpened((current) => new Set([...current].filter((id) => id !== thread.id)));
+            setFocus("marker");
+          },
+        }),
       )}
     </>
   );
@@ -216,7 +236,7 @@ export function ReviewThreadCard({
   onEditComment,
   onToggleResolved,
   onReacted,
-  onCollapse,
+  fold,
 }: {
   thread: PullRequestReviewThread;
   workspaceRoot: string;
@@ -241,10 +261,9 @@ export function ReviewThreadCard({
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
-  /** Given on a diff line, where a resolved conversation folds away to its avatar marker. */
-  onCollapse?: () => void;
+  fold?: ReviewThreadFold;
 }) {
-  const [expanded, setExpanded] = useState(onCollapse !== undefined || !thread.isResolved);
+  const [expanded, setExpanded] = useState(fold !== undefined || !thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -317,6 +336,8 @@ export function ReviewThreadCard({
     }));
   };
 
+  if (fold?.folded) return null;
+
   return (
     <div
       className={cn(CARD_CLASS, !expanded && "py-1")}
@@ -333,8 +354,9 @@ export function ReviewThreadCard({
           type="button"
           className="hover:text-foreground"
           aria-expanded={expanded}
+          autoFocus={fold?.focusHeader === true}
           onClick={() => {
-            if (expanded && thread.isResolved && onCollapse) onCollapse();
+            if (expanded && thread.isResolved && fold) fold.onCollapse();
             else setExpanded((current) => !current);
           }}
         >

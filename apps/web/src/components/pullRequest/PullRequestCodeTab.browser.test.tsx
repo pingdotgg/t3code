@@ -373,6 +373,11 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
       reference={detail}
       detail={{
         ...detail,
+        capabilities: {
+          ...detail.capabilities,
+          review: { ...detail.capabilities.review, reply: true },
+        },
+        viewerPermissions: { ...detail.viewerPermissions, comment: true },
         reviewThreads: [
           {
             id: "thread",
@@ -407,7 +412,11 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
 
   await marker().click();
   await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
+  await expect.element(card("Resolved")).toHaveFocus();
   await expect.element(marker()).not.toBeInTheDocument();
+  const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
+  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await reply().fill("Unsent");
 
   // Reopened and resolved again under the reader, it stays open until they collapse it.
   await screen.rerender(withThread(false));
@@ -416,6 +425,9 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
   await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
 
   await card("Resolved").click();
-  await expect.element(marker()).toBeVisible();
+  await expect.element(marker()).toHaveFocus();
   await expect.element(card("Resolved")).not.toBeInTheDocument();
+
+  await marker().click();
+  await expect.element(reply()).toHaveValue("Unsent");
 });

@@ -117,6 +117,7 @@ import {
   InlineReviewThreads,
   PendingReviewCommentCard,
   ReviewThreadCard,
+  type ReviewThreadFold,
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
@@ -996,7 +997,7 @@ function PullRequestCodeTab({
     return true;
   };
 
-  const renderThreadCard = (thread: PullRequestReviewThread, onCollapse?: () => void) => (
+  const renderThreadCard = (thread: PullRequestReviewThread, fold?: ReviewThreadFold) => (
     <ReviewThreadCard
       // Host thread ids can collide across pull requests.
       key={`${reference.projectId}#${reference.number}:${thread.id}`}
@@ -1061,7 +1062,7 @@ function PullRequestCodeTab({
         )
       }
       onReacted={onRefresh}
-      {...(onCollapse ? { onCollapse } : {})}
+      {...(fold ? { fold } : {})}
     />
   );
 
