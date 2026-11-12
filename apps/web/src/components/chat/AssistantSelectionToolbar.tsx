@@ -32,6 +32,7 @@ export function AssistantSelectionToolbar({
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
+    above: boolean;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
@@ -44,7 +45,8 @@ export function AssistantSelectionToolbar({
     if (!toolbar || !selection) return;
     const rect = toolbar.getBoundingClientRect();
     toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
-    toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
+    const top = selection.above ? selection.position.y - rect.height : selection.position.y;
+    toolbar.style.top = `${Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))}px`;
   }, [selection]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to document selectionchange and keydown to track text selections in the viewport
@@ -133,13 +135,14 @@ export function AssistantSelectionToolbar({
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.item(rects.length - 1) ?? rect,
-          // Below the released line, so a click beside the release point misses Cite.
+          // Cite's bottom edge sits above the released line, clear of clicks beside the pointer.
           pointer:
             pointer && pointerLine
-              ? { x: pointer.x, y: Math.max(pointer.y, pointerLine.bottom) + 4 }
+              ? { x: pointer.x, y: Math.min(pointer.y, pointerLine.top) - 4 }
               : null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
+        above: pointerLine !== undefined,
       });
     };
     const actions = observeSelectionActions({

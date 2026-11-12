@@ -41,8 +41,8 @@ test(
     await expect(screen.getByRole("button", "Cite selection in composer")).toBeVisible();
     await app.screenshot("cite-open");
 
-    // A click meant to clear the selection, 5px right of and below where the drag ended.
-    await browser.mouse.move(release.x + 5, release.y + 5);
+    // A click meant to clear the selection, just right of and below where the drag ended.
+    await browser.mouse.move(release.x + 8, release.y + 15);
     await browser.mouse.down();
     await browser.mouse.up();
     await app.screenshot("after-nearby-click");
