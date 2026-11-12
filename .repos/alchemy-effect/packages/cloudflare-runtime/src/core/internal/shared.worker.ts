@@ -11,13 +11,11 @@
  * that import it).
  */
 
-export function assert(
-  condition: unknown,
-  message?: string,
-): asserts condition {
+export function assert(condition: unknown, message?: string): asserts condition {
   if (!condition) throw new Error(message ?? "Assertion failed");
 }
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- plain workerd runtime code (no Effect); `name`/`toResponse` form the HTTP error protocol
 export class HttpError extends Error {
   constructor(
     readonly code: number,
@@ -59,12 +57,11 @@ export class Timers {
   now = () => this.#fakeTimestamp ?? Date.now();
 
   queueMicrotask(closure: () => Awaitable<unknown>): void {
-    if (this.#fakeTimestamp === undefined)
-      return queueMicrotask(() => void closure());
+    if (this.#fakeTimestamp === undefined) return queueMicrotask(() => void closure());
     const result = closure();
     if (result instanceof Promise) {
       this.#fakeRunningTasks.add(result);
-      result.finally(() => this.#fakeRunningTasks.delete(result));
+      void result.finally(() => this.#fakeRunningTasks.delete(result));
     }
   }
 
@@ -107,9 +104,7 @@ export function base64DecodeBytes(encoded: string): Uint8Array {
 }
 
 export function hexEncode(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function utf8ByteLength(value: string): number {
@@ -217,9 +212,7 @@ export type BlobId = string;
 function generateBlobId(): BlobId {
   const bytes = new Uint8Array(40);
   crypto.getRandomValues(bytes.subarray(0, 32));
-  const timestamp = BigInt(
-    Math.floor(performance.timeOrigin + performance.now()),
-  );
+  const timestamp = BigInt(Math.floor(performance.timeOrigin + performance.now()));
   new DataView(bytes.buffer).setBigInt64(32, timestamp);
   return hexEncode(bytes);
 }
@@ -267,16 +260,14 @@ async function writeMultipleRanges(
     const start = range.start;
     const end = Math.min(range.end, contentLength - 1);
     await writer.write(
-      ENCODER.encode(
-        `Content-Range: bytes ${start}-${end}/${contentLength}\r\n\r\n`,
-      ),
+      ENCODER.encode(`Content-Range: bytes ${start}-${end}/${contentLength}\r\n\r\n`),
     );
     writer.releaseLock();
     // Fetch and write the range
     const res = await fetcher.fetch(url, { headers: rangeHeaders(range) });
     assert(
       res.ok && res.body !== null,
-      `Failed to fetch ${url}[${range.start},${range.end}], received ${res.status} ${res.statusText}`,
+      `Failed to fetch ${url.href}[${range.start},${range.end}], received ${res.status} ${res.statusText}`,
     );
     // If we specified a range, but received full content, make sure the range
     // covered the full content
@@ -315,10 +306,7 @@ export class BlobStore {
     return url.toString().startsWith(this.#baseURL) ? url : null;
   }
 
-  get(
-    id: BlobId,
-    range?: InclusiveRange,
-  ): Promise<ReadableStream<Uint8Array> | null>;
+  get(id: BlobId, range?: InclusiveRange): Promise<ReadableStream<Uint8Array> | null>;
   get(
     id: BlobId,
     ranges: Array<InclusiveRange>,
@@ -331,8 +319,7 @@ export class BlobStore {
   ): Promise<ReadableStream<Uint8Array> | MultipartReadableStream | null> {
     const idURL = this.#idURL(id);
     if (idURL === null) return null;
-    if (Array.isArray(range))
-      return this.#getMultipleRanges(idURL, range, opts);
+    if (Array.isArray(range)) return this.#getMultipleRanges(idURL, range, opts);
     return this.#getSingleRange(idURL, range);
   }
 
@@ -347,9 +334,7 @@ export class BlobStore {
     if (range !== undefined && res.status !== 206) {
       // If we specified a range, but received full content, make sure the
       // range covered the full content
-      const contentLength = parseInt(
-        res.headers.get("Content-Length") ?? "NaN",
-      );
+      const contentLength = parseInt(res.headers.get("Content-Length") ?? "NaN");
       assert(!Number.isNaN(contentLength));
       assertFullRangeRequest(range, contentLength);
     }
@@ -417,9 +402,7 @@ export interface KeyEntry<Metadata = unknown> {
 export interface KeyValueEntry<Metadata = unknown> extends KeyEntry<Metadata> {
   value: ReadableStream<Uint8Array>;
 }
-export interface KeyMultipartValueEntry<
-  Metadata = unknown,
-> extends KeyEntry<Metadata> {
+export interface KeyMultipartValueEntry<Metadata = unknown> extends KeyEntry<Metadata> {
   value: MultipartReadableStream;
 }
 export interface KeyEntriesQuery {
@@ -492,9 +475,7 @@ export class KeyValueStorage<Metadata = unknown> {
     // corresponding blobs in the background, ignoring errors. Blob IDs are
     // unguessable, so a blob without references can't be accessed: failed
     // deletes just leave a dangling file taking up disk space.
-    this.#timers.queueMicrotask(() =>
-      this.#blob.delete(blobId).catch(() => {}),
-    );
+    this.#timers.queueMicrotask(() => this.#blob.delete(blobId).catch(() => {}));
   }
 
   get(key: string): Promise<KeyValueEntry<Metadata> | null>;
@@ -505,15 +486,10 @@ export class KeyValueStorage<Metadata = unknown> {
   async get(
     key: string,
     optsFactory?: KeyValueRangesFactory<Metadata>,
-  ): Promise<
-    KeyValueEntry<Metadata> | KeyMultipartValueEntry<Metadata> | null
-  > {
+  ): Promise<KeyValueEntry<Metadata> | KeyMultipartValueEntry<Metadata> | null> {
     // Try to get key from metadata store, returning null if not found
     const row = this.#sql
-      .exec<Row>(
-        "SELECT key, blob_id, expiration, metadata FROM _mf_entries WHERE key = ?1",
-        key,
-      )
+      .exec<Row>("SELECT key, blob_id, expiration, metadata FROM _mf_entries WHERE key = ?1", key)
       .toArray()
       .at(0);
     if (row === undefined) return null;
@@ -535,10 +511,7 @@ export class KeyValueStorage<Metadata = unknown> {
     if (!opts || opts.ranges === undefined || opts.ranges.length <= 1) {
       // If no range was requested, or just a single one was, return a regular
       // stream
-      const value = await this.#blob.get(
-        row.blob_id,
-        opts ? opts.ranges?.[0] : undefined,
-      );
+      const value = await this.#blob.get(row.blob_id, opts ? opts.ranges?.[0] : undefined);
       if (value === null) return null;
       return { ...entry, value };
     } else {
@@ -549,9 +522,7 @@ export class KeyValueStorage<Metadata = unknown> {
     }
   }
 
-  async put(
-    entry: KeyValueEntry<Awaitable<Metadata>> & { signal?: AbortSignal },
-  ): Promise<void> {
+  async put(entry: KeyValueEntry<Awaitable<Metadata>> & { signal?: AbortSignal }): Promise<void> {
     // (`Awaitable` allows metadata to be a `Promise`; the Cache simulator uses
     // this to include `size` in the metadata, which may only be known once
     // the stream is written to the blob store if no `Content-Length` header
@@ -572,17 +543,13 @@ export class KeyValueStorage<Metadata = unknown> {
     }
 
     // Resolve metadata before entering the (synchronous) transaction
-    const metadata =
-      entry.metadata === undefined ? undefined : await entry.metadata;
+    const metadata = entry.metadata === undefined ? undefined : await entry.metadata;
 
     // Put the new entry into the metadata store, atomically fetching the old
     // entry's blob ID (if any) for garbage collection.
     const maybeOldBlobId = this.#storage.transactionSync(() => {
       const previous = this.#sql
-        .exec<Pick<Row, "blob_id">>(
-          "SELECT blob_id FROM _mf_entries WHERE key = ?1",
-          entry.key,
-        )
+        .exec<Pick<Row, "blob_id">>("SELECT blob_id FROM _mf_entries WHERE key = ?1", entry.key)
         .toArray()
         .at(0);
       this.#sql.exec(
@@ -628,8 +595,7 @@ export class KeyValueStorage<Metadata = unknown> {
     const now = this.#timers.now();
     const prefix = opts.prefix ?? "";
     // Note the "" default here prohibits empty string keys.
-    const startAfter =
-      opts.cursor === undefined ? "" : base64Decode(opts.cursor);
+    const startAfter = opts.cursor === undefined ? "" : base64Decode(opts.cursor);
     // Query one extra row: if it's returned, there are more results and we
     // should return a cursor. Truncated to the requested limit below.
     const rows = this.#sql
@@ -664,9 +630,7 @@ export class KeyValueStorage<Metadata = unknown> {
 
     // The cursor encodes a key to start after rather than the key to start at
     // to ensure keys added between `list()` calls are returned.
-    const nextCursor = hasMoreRows
-      ? base64Encode(rows[opts.limit - 1].key)
-      : undefined;
+    const nextCursor = hasMoreRows ? base64Encode(rows[opts.limit - 1].key) : undefined;
 
     return { keys, cursor: nextCursor };
   }

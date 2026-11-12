@@ -1,3 +1,4 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
 import { useGlyphs } from "./Environment.tsx";
 import { Stack } from "./Layout.tsx";
@@ -9,11 +10,7 @@ type AnsweredPromptProps = {
   readonly below?: boolean;
 };
 
-export function AnsweredPrompt({
-  message,
-  answer,
-  below = false,
-}: AnsweredPromptProps) {
+export function AnsweredPrompt({ message, answer, below = false }: AnsweredPromptProps) {
   const glyphs = useGlyphs();
   return below ? (
     <Stack>
@@ -24,8 +21,7 @@ export function AnsweredPrompt({
     </Stack>
   ) : (
     <Text>
-      <Text tone="success">{glyphs.success}</Text> {message}{" "}
-      <Text tone="muted">· {answer}</Text>
+      <Text tone="success">{glyphs.success}</Text> {message} <Text tone="muted">· {answer}</Text>
     </Text>
   );
 }
