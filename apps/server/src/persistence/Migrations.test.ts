@@ -103,7 +103,6 @@ describe("runMigrations", () => {
       assert.notInclude(indexNames, "idx_orch_events_correlation_id");
       for (const kept of [
         "idx_orch_events_stream_version",
-        "idx_orch_events_stream_sequence",
         "idx_orch_events_command_id",
         "idx_orchestration_events_agent_stream_sequence",
       ]) {
@@ -113,6 +112,50 @@ describe("runMigrations", () => {
         SELECT correlation_id FROM orchestration_events WHERE event_id = 'event-1'
       `;
       assert.deepStrictEqual(events, [{ correlation_id: "correlation-1" }]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("drops the stream sequence index and keeps the indexes event reads use", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 82 });
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json,
+          application_event_version
+        )
+        VALUES (
+          'event-1', 'thread', 'thread-1', 0, 'thread.created', '2026-01-01T00:00:00.000Z',
+          'command-1', NULL, 'command-1', 'server', '{}', '{}', 2
+        )
+      `;
+
+      assert.deepStrictEqual(yield* runMigrations(), [
+        [83, "DropOrchestrationEventStreamSequenceIndex"],
+      ]);
+
+      const indexes = yield* sql<{ readonly name: string }>`
+        SELECT name FROM sqlite_master
+        WHERE type = 'index' AND tbl_name = 'orchestration_events'
+        ORDER BY name
+      `;
+      assert.deepStrictEqual(
+        indexes.map((row) => row.name),
+        [
+          "idx_orch_events_command_id",
+          "idx_orch_events_stream_version",
+          "idx_orchestration_events_agent_stream_sequence",
+          "idx_orchestration_events_application_high_water",
+          "idx_orchestration_events_application_sequence",
+          "orchestration_events_v2_created_threads_idx",
+          "sqlite_autoindex_orchestration_events_1",
+        ],
+      );
+      const events = yield* sql<{ readonly event_id: string; readonly stream_id: string }>`
+        SELECT event_id, stream_id FROM orchestration_events
+      `;
+      assert.deepStrictEqual(events, [{ event_id: "event-1", stream_id: "thread-1" }]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

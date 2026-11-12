@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -28,6 +30,13 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+
+declare module "node:sqlite" {
+  interface StatementSync {
+    // Node 26 has this; @types/node 24 does not declare it yet.
+    stat(counter: "vmStep"): number;
+  }
+}
 
 const database = SqlitePersistence.layerMemory;
 const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(database));
@@ -382,4 +391,114 @@ it.effect("keeps an anchor that a row appended during the pass borrows from", ()
       );
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "finds each stream's newest event in steps that do not grow with retained V1 history",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const sink = yield* EventSink.EventSinkV2;
+      const events = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const now = yield* DateTime.now;
+      const occurredAt = DateTime.formatIso(now);
+      const projectId = ProjectId.make("project:prune-legacy-history");
+      const threadId = ThreadId.make("thread:prune-legacy-history");
+      // Pruning keeps V1 rows, so a stream written before V2 keeps its whole V1 history.
+      const v1History = 1000;
+      for (const [kind, streamId] of [
+        ["project", projectId],
+        ["thread", threadId],
+      ] as const) {
+        yield* sql`
+        WITH RECURSIVE version(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM version WHERE n + 1 < ${v1History})
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json
+        )
+        SELECT 'event:v1:' || ${kind} || ':' || n, ${kind}, ${streamId}, n, 'legacy.updated',
+          ${occurredAt}, 'server', '{}', '{}'
+        FROM version
+      `;
+      }
+      const [v1Head] = yield* sql<{
+        readonly sequence: number;
+      }>`SELECT MAX(sequence) AS sequence FROM orchestration_events`;
+      const v1Through = v1Head!.sequence;
+      const updates = 25;
+      for (let index = 0; index < updates; index++) {
+        yield* events.appendProjectEvent({
+          type: "project.meta-updated",
+          eventId: EventId.make(`event:prune-legacy-history:project:${index}`),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: { projectId, title: `Project ${index}`, updatedAt: occurredAt },
+        });
+      }
+      yield* sink.write({ events: [threadCreated(makeThread(threadId, now), now)] });
+      for (let revision = 0; revision < updates - 1; revision++) {
+        yield* sink.write({ events: [itemEvent(threadId, now, itemSpecs[0], revision)] });
+      }
+      yield* maintenance.pruneEventStore();
+      yield* TestClock.adjust("1 day");
+
+      // One copy per planner statistics mode; the server deletes sqlite_stat1 at startup.
+      using none = new NodeSqlite.DatabaseSync("file:/prune-head-steps-none?vfs=memdb");
+      using analyzed = new NodeSqlite.DatabaseSync("file:/prune-head-steps-analyze?vfs=memdb");
+      using optimized = new NodeSqlite.DatabaseSync("file:/prune-head-steps-optimize?vfs=memdb");
+      const copies = [
+        ["none", none, ""],
+        ["analyze", analyzed, "ANALYZE"],
+        ["optimize", optimized, "PRAGMA optimize = 0x10002"],
+      ] as const;
+      for (const [mode] of copies)
+        yield* sql`VACUUM INTO ${`file:/prune-head-steps-${mode}?vfs=memdb`}`;
+      const pages: Array<ReturnType<Statement.Statement<unknown>["compile"]>> = [];
+      const observe: Statement.Transformer = (statement) => {
+        const compiled = statement.compile();
+        if (compiled[0].includes("END AS prunable")) pages.push(compiled);
+        return Effect.succeed(statement);
+      };
+      // Each stream keeps its newest row, and the thread also keeps thread.created.
+      assert.equal(
+        (yield* maintenance
+          .pruneEventStore()
+          .pipe(Effect.provideService(Statement.CurrentTransformer, observe))).deletedEventCount,
+        2 * updates - 3,
+      );
+      const [query, [, throughSequence, pageSize]] = pages[0]!;
+
+      // VM steps are deterministic; looking up the head by MAX(sequence) through the stream_version
+      // index read the whole stream for each V2 row: 7.5 times the steps of 100 V1 rows here.
+      for (const [mode, copy, analyze] of copies) {
+        if (analyze !== "") copy.exec(analyze);
+        const page = () => {
+          const statement = copy.prepare(query);
+          const rows = statement.all(
+            v1Through,
+            throughSequence as NodeSqlite.SQLInputValue,
+            pageSize as NodeSqlite.SQLInputValue,
+          );
+          return { rows, steps: statement.stat("vmStep") };
+        };
+        const full = page();
+        assert.lengthOf(full.rows, 2 * updates);
+        assert.deepEqual(
+          full.rows.flatMap((row, position) => (row.prunable === 0 ? [position] : [])),
+          [updates - 1, updates, 2 * updates - 1],
+        );
+        copy.exec(
+          `DELETE FROM orchestration_events WHERE stream_version BETWEEN 100 AND ${v1History - 1}`,
+        );
+        const trimmed = page();
+        assert.deepEqual(trimmed.rows, full.rows);
+        assert.isAtMost(full.steps, trimmed.steps * 1.1, mode);
+      }
+    }).pipe(Effect.provide(layerTest)),
 );

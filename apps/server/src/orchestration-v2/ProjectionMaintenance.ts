@@ -129,8 +129,10 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
               WHEN event.event_type = 'run.updated'
                 AND json_extract(event.payload_json, '$.status') = 'running' THEN 0
               -- The newest row keeps each stream's high water, stream_version, and snapshot sequence.
-              WHEN event.sequence = (
-                SELECT MAX(newer.sequence) FROM orchestration_events AS newer
+              -- Appends take the stream's highest stream_version plus one, so it marks the newest
+              -- row, and the stream_version index seeks it where MAX(sequence) reads the stream.
+              WHEN event.stream_version = (
+                SELECT MAX(newer.stream_version) FROM orchestration_events AS newer
                 WHERE newer.aggregate_kind = event.aggregate_kind
                   AND newer.stream_id = event.stream_id
               ) THEN 0
