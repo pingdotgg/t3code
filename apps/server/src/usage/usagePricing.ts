@@ -304,6 +304,11 @@ export type PricedRecord = Pick<
   "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
 >;
 
+function recordRate(table: RateTable, record: PricedRecord): ModelRate | null {
+  const rate = record.rateModel === undefined ? null : lookupRate(table, record.rateModel);
+  return rate ?? lookupRate(table, record.model);
+}
+
 export interface PricedUsage {
   readonly costUsd: number;
   readonly costSource: UsageCostSource;
@@ -342,7 +347,7 @@ export function priceUsage(
     categoryCostUsd: null,
     speedPremiumUsd: 0,
   });
-  const rate = override ?? lookupRate(table, record.rateModel ?? model);
+  const rate = override ?? recordRate(table, record);
   if (rate === null) {
     return reported === null ? unsplit(0, "unpriced") : unsplit(reported, "providerReported");
   }
@@ -373,8 +378,7 @@ export function cacheSavingsUsd(
   record: PricedRecord,
   overrides?: RateTable,
 ): number {
-  const rate =
-    overrides?.get(record.model.trim()) ?? lookupRate(table, record.rateModel ?? record.model);
+  const rate = overrides?.get(record.model.trim()) ?? recordRate(table, record);
   if (rate === null) return 0;
   const rates = ratesAt(rate, record.speed, record.totals);
   return record.totals.cachedInputTokens * (rates.inputCostPerToken - rates.cacheReadCostPerToken);
