@@ -1,7 +1,9 @@
+import { isListedThreadLineage } from "@t3tools/contracts";
+
 import type { EnvironmentProject, EnvironmentThreadShell } from "./models.ts";
 
 export function planProjectRemoval<
-  Thread extends Pick<EnvironmentThreadShell, "environmentId" | "projectId">,
+  Thread extends Pick<EnvironmentThreadShell, "environmentId" | "projectId" | "lineage">,
 >(options: {
   readonly members: ReadonlyArray<
     Pick<EnvironmentProject, "id" | "environmentId" | "title" | "workspaceRoot"> & {
@@ -12,19 +14,25 @@ export function planProjectRemoval<
   readonly hasOtherMembers: boolean;
   readonly displayName: string;
   readonly threads: ReadonlyArray<Thread>;
+  /** The members' threads this client does not hold: older settled threads its shell left out. */
+  readonly unloadedThreadCount?: number;
 }) {
   const { members, groupMemberCount, hasOtherMembers, displayName, threads } = options;
   const memberKeys = new Set(members.map((member) => `${member.environmentId}:${member.id}`));
   const projectThreads = threads.filter((thread) =>
     memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
   );
+  // Side chats and subagents go with their parent but never show in thread lists.
+  const threadCount =
+    projectThreads.filter((thread) => isListedThreadLineage(thread.lineage)).length +
+    (options.unloadedThreadCount ?? 0);
   const isWholeGroup = members.length === groupMemberCount;
   const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
   const singleMember = members.length === 1 ? members[0]! : null;
   const targetLabel = singleMember?.title ?? displayName;
   const confirmationMessage = [
-    projectThreads.length > 0
-      ? `Remove ${targetKind} "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
+    threadCount > 0
+      ? `Remove ${targetKind} "${targetLabel}" and delete its ${threadCount} thread${threadCount === 1 ? "" : "s"}?`
       : `Remove ${targetKind} "${targetLabel}"?`,
     ...(singleMember
       ? [
@@ -34,9 +42,11 @@ export function planProjectRemoval<
             : []),
         ]
       : [`This removes ${members.length} grouped project entries.`]),
-    ...(projectThreads.length > 0
-      ? ["This permanently clears conversation history for those threads and any archived threads."]
-      : ["This permanently clears any archived conversation history."]),
+    ...(threadCount > 0
+      ? [
+          "Those threads and any archived threads are deleted from T3 Code. Provider sessions are kept.",
+        ]
+      : ["Any archived threads are deleted from T3 Code. Provider sessions are kept."]),
     isWholeGroup && !hasOtherMembers
       ? "This removes only the project entries, not the files on disk."
       : "Other entries in this grouped project are unaffected.",

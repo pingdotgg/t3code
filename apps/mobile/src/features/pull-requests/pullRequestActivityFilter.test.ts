@@ -4,7 +4,7 @@ import { DEFAULT_ACTIVITY_FILTER, filterPullRequestActivity } from "./pullReques
 
 const date = IsoDateTime.make("2026-10-11T00:00:00.000Z");
 const human: PullRequestActor = { login: "reader", name: null, avatarUrl: null };
-const bot: PullRequestActor = { ...human, login: "reviewer[bot]" };
+const bot: PullRequestActor = { ...human, login: "reviewer[bot]", isBot: true };
 const comment = (id: string, author = human, reviewState: string | null = null) => ({
   id,
   author,
@@ -56,5 +56,20 @@ describe("mobile activity filters", () => {
       filterPullRequestActivity({ ...activity, reviewThreads: [thread] }, DEFAULT_ACTIVITY_FILTER)
         .activity.reviewThreads,
     ).toEqual([]);
+  });
+
+  it("keeps bot review verdicts when bot comments are hidden", () => {
+    const result = filterPullRequestActivity(
+      {
+        ...activity,
+        comments: [
+          comment("approved", bot, "APPROVED"),
+          comment("changes", bot, "CHANGES_REQUESTED"),
+          comment("commented", bot, "COMMENTED"),
+        ],
+      },
+      DEFAULT_ACTIVITY_FILTER,
+    );
+    expect(result.activity.comments.map((entry) => entry.id)).toEqual(["approved", "changes"]);
   });
 });

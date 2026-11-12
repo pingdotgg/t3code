@@ -13,6 +13,7 @@ export function SettingsGroup({
 }) {
   return (
     <div
+      data-slot="settings-group"
       {...props}
       className={cn(
         "relative overflow-visible text-foreground",
