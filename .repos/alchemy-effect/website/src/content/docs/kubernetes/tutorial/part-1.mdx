@@ -6,10 +6,9 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
-import { effectVersion } from "../../../../versions";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+export const pkgs = `alchemy@latest @alchemy.run/kubernetes@latest effect @effect/platform-bun @effect/platform-node`;
 
 In this first part you'll create a Stack, start a Kubernetes cluster
 on your machine, and deploy a replicated HTTP service. You won't
@@ -33,39 +32,13 @@ you, but it must be installed. On macOS, run `brew install kind`.
 
 Start with an empty directory and initialize a `package.json`:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="mkdir my-cluster && cd my-cluster && bun init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="mkdir my-cluster && cd my-cluster && npm init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="mkdir my-cluster && cd my-cluster && pnpm init" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="mkdir my-cluster && cd my-cluster && yarn init -y" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers init dir="my-cluster" />
 
 ## Install dependencies
 
-Install <code>alchemy@latest</code> and <code>effect@{effectVersion}</code>:
+Install `alchemy@latest`, `@alchemy.run/kubernetes`, and `effect`:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pkgs}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={pkgs} />
 
 ## Create the Stack
 
@@ -76,7 +49,7 @@ remembers what was deployed. Create `alchemy.run.ts`:
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -185,20 +158,7 @@ cluster, which you'll pass to `kubectl`.
 
 ## Deploy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 <Terminal content={`[u]Plan[/u]: [g]2 to create[/g]
 

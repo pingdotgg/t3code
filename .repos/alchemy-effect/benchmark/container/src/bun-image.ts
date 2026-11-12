@@ -1,4 +1,4 @@
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import { MicrovmBuildRole } from "./build-role.ts";
 
@@ -11,9 +11,7 @@ import { MicrovmBuildRole } from "./build-role.ts";
  * cold-start cost of alchemy's Effect abstraction with the runtime and CPU
  * architecture held constant.
  */
-export class BunMicrovm extends AWS.Lambda.MicrovmImage<BunMicrovm>()(
-  "MicrovmBenchBun",
-) {}
+export class BunMicrovm extends AWS.Lambda.MicrovmImage<BunMicrovm>()("MicrovmBenchBun") {}
 
 export default BunMicrovm.make(
   MicrovmBuildRole.pipe(

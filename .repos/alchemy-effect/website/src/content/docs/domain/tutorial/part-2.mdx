@@ -1,0 +1,218 @@
+---
+title: "Part 2: Read it with a view"
+description: Show each account's balance and a statement of every movement, kept up to date as events arrive.
+sidebar:
+  order: 2
+---
+
+The account decides, but it doesn't answer questions. Add two views: a summary with the balance, and a statement with one line per movement.
+
+## Show the balance
+
+```typescript
+// src/AccountSummary.view.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Schema from "effect/Schema";
+import { Account } from "./Account.aggregate.ts";
+
+export class AccountSummary extends Domain.View("AccountSummary", {
+  from: [Account],
+  key: Account,
+  state: Schema.Struct({ owner: Schema.NullOr(Schema.String), balance: Schema.Int }),
+  initial: { owner: null, balance: 0 },
+  evolve: {
+    AccountOpened: (v, e) => ({ ...v, owner: e.owner }),
+    MoneyDeposited: (v, e) => ({ ...v, balance: e.balanceAfter }),
+    MoneyWithdrawn: (v, e) => ({ ...v, balance: e.balanceAfter }),
+  },
+}) {}
+```
+
+A view folds events into state, one copy per key. `key: Account` gives every account its own summary.
+
+## Host the view
+
+```diff lang="typescript"
+// src/Bank.model.ts
+import * as Domain from "@alchemy.run/domain";
+import { Account } from "./Account.aggregate.ts";
++import { AccountSummary } from "./AccountSummary.view.ts";
+
+export class Bank extends Domain.Model("Bank", {
+  aggregates: [Account],
++  views: [AccountSummary],
+}) {}
+```
+
+## Check the balance
+
+```typescript
+// test/views.test.ts
+import { it } from "@effect/vitest";
+import { Story } from "@alchemy.run/domain/Story";
+import { Account } from "../src/Account.aggregate.ts";
+import { AccountSummary } from "../src/AccountSummary.view.ts";
+import { Bank } from "../src/Bank.model.ts";
+import { DepositMoney } from "../src/DepositMoney.command.ts";
+import { AccountOpened } from "../src/OpenAccount.command.ts";
+import { WithdrawMoney } from "../src/WithdrawMoney.command.ts";
+
+const story = Story.make(Bank);
+const account = Account.ref("a-1");
+
+it.effect("the summary follows the balance", () =>
+  story(
+    Story.given(account, new AccountOpened({ owner: "sam" })),
+    Story.when(account, new DepositMoney({ amount: 100 })),
+    Story.when(account, new WithdrawMoney({ amount: 30 })),
+    Story.view(AccountSummary, account, { owner: "sam", balance: 70 }),
+  ),
+);
+```
+
+`view` checks a key's state after everything before it has been applied. A partial object checks only the fields you give.
+
+## Run the story
+
+```sh
+bun vitest run
+```
+
+The view is right, but the story fails:
+
+```
+committed events no step asserts (assert them with then): Account/a-1: MoneyDeposited { amount: 100, balanceAfter: 100 }, MoneyWithdrawn { amount: 30,… (from step 2)
+
+  ✓ 1 Given      Account/a-1: AccountOpened { owner: "sam" }
+  ✓ 2 When       Account/a-1: DepositMoney { amount: 100 }
+  ✓ 3 When       Account/a-1: WithdrawMoney { amount: 30 }
+  ✓ 4 View       AccountSummary(a-1): { owner: "sam", balance: 70 }
+  ✗   end        Account/a-1: MoneyDeposited { amount: 100, balanceAfter: 100 }, MoneyWithdrawn { amount: 30,… (from step 2)
+  events so far
+    Account/a-1: AccountOpened → MoneyDeposited → MoneyWithdrawn
+```
+
+Every event a command records needs a `then`. The story checked the view, but nothing checked what the two commands recorded.
+
+## Assert the events
+
+```diff lang="typescript"
+// test/views.test.ts
+-import { DepositMoney } from "../src/DepositMoney.command.ts";
++import { DepositMoney, MoneyDeposited } from "../src/DepositMoney.command.ts";
+import { AccountOpened } from "../src/OpenAccount.command.ts";
+-import { WithdrawMoney } from "../src/WithdrawMoney.command.ts";
++import { MoneyWithdrawn, WithdrawMoney } from "../src/WithdrawMoney.command.ts";
+// ...
+    Story.when(account, new WithdrawMoney({ amount: 30 })),
++    Story.then(
++      account,
++      new MoneyDeposited({ amount: 100, balanceAfter: 100 }),
++      new MoneyWithdrawn({ amount: 30, balanceAfter: 70 }),
++    ),
+    Story.view(AccountSummary, account, { owner: "sam", balance: 70 }),
+```
+
+`then` takes several events in the order they were recorded. Run `bun vitest run` again and the story passes. A passing story has checked everything the model did.
+
+## Describe a statement line
+
+```typescript
+// src/Statement.view.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Schema from "effect/Schema";
+
+export class StatementLine extends Domain.Event("StatementLine", {
+  kind: Schema.Literals(["deposit", "withdrawal"]),
+  amount: Schema.Int,
+  balance: Schema.Int,
+}) {}
+```
+
+A view can record events of its own. One `StatementLine` describes any movement of money.
+
+## Emit a line for every movement
+
+```diff lang="typescript"
+// src/Statement.view.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Schema from "effect/Schema";
++import { Account } from "./Account.aggregate.ts";
+
+export class StatementLine extends Domain.Event("StatementLine", {
+  kind: Schema.Literals(["deposit", "withdrawal"]),
+  amount: Schema.Int,
+  balance: Schema.Int,
+}) {}
++
++export class Statement extends Domain.View("Statement", {
++  from: [Account],
++  key: Account,
++  events: [StatementLine],
++  emit: {
++    MoneyDeposited: (e) =>
++      new StatementLine({ kind: "deposit", amount: e.amount, balance: e.balanceAfter }),
++    MoneyWithdrawn: (e) =>
++      new StatementLine({ kind: "withdrawal", amount: e.amount, balance: e.balanceAfter }),
++  },
++}) {}
+```
+
+`emit` takes each account event and returns the line to record. The statement keeps no state of its own; its lines are its history.
+
+## Host the statement
+
+```diff lang="typescript"
+// src/Bank.model.ts
+import { Account } from "./Account.aggregate.ts";
+import { AccountSummary } from "./AccountSummary.view.ts";
++import { Statement } from "./Statement.view.ts";
+
+export class Bank extends Domain.Model("Bank", {
+  aggregates: [Account],
+-  views: [AccountSummary],
++  views: [AccountSummary, Statement],
+}) {}
+```
+
+## Check the statement
+
+```diff lang="typescript"
+// test/views.test.ts
+import { DepositMoney, MoneyDeposited } from "../src/DepositMoney.command.ts";
+import { AccountOpened } from "../src/OpenAccount.command.ts";
++import { Statement } from "../src/Statement.view.ts";
+import { MoneyWithdrawn, WithdrawMoney } from "../src/WithdrawMoney.command.ts";
+  // ...
+  ),
+);
++
++it.effect("the statement has one line per movement", () =>
++  story(
++    Story.given(account, new AccountOpened({ owner: "sam" })),
++    Story.when(account, new DepositMoney({ amount: 100 })),
++    Story.when(account, new WithdrawMoney({ amount: 30 })),
++    Story.then(
++      account,
++      new MoneyDeposited({ amount: 100, balanceAfter: 100 }),
++      new MoneyWithdrawn({ amount: 30, balanceAfter: 70 }),
++    ),
++    Story.emitted(Statement, account, [
++      { kind: "deposit", amount: 100, balance: 100 },
++      { kind: "withdrawal", amount: 30, balance: 70 },
++    ]),
++  ),
++);
+```
+
+`emitted` checks every event a view key has emitted, in order.
+
+```sh
+bun vitest run
+```
+
+The account decides, and two views answer: what the balance is, and how it got there.
+
+:::note
+Next, open an account for every new customer with a [policy](/domain/tutorial/part-3). Views can also emit events for other views, and route one event to several keys: see [View](/domain/view).
+:::

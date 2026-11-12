@@ -4,8 +4,16 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "exports": {
+    "./e2e/Framework": "./src/e2e/Framework.ts",
+    "./e2e/Options": "./src/e2e/Options.ts",
+    "./e2e/Playwright": "./src/e2e/Playwright.ts",
+    "./miniflare": "./src/miniflare/miniflare.ts",
+    "./miniflare-module": "./src/miniflare/miniflare-module.ts"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json && bun ../../scripts/copy-package-files.ts cloudflare-test-tools",
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
     "e2e": "bun run src/e2e/Cli.ts",
     "typecheck": "bun run build"
   },
@@ -22,12 +30,5 @@
     "rolldown": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
-  },
-  "exports": {
-    "./e2e/Framework": "./src/e2e/Framework.ts",
-    "./e2e/Options": "./src/e2e/Options.ts",
-    "./e2e/Playwright": "./src/e2e/Playwright.ts",
-    "./miniflare": "./src/miniflare/miniflare.ts",
-    "./miniflare-module": "./src/miniflare/miniflare-module.ts"
   }
 }

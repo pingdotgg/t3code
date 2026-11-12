@@ -8,7 +8,7 @@ const trimNonEmptyOption = (value: string): Option.Option<string> => {
   return trimmed.length > 0 ? Option.some(trimmed) : Option.none();
 };
 
-const trimmedString = (name: string) =>
+export const trimmedString = (name: string) =>
   Config.String(name).pipe(Config.option, Config.map(Option.flatMap(trimNonEmptyOption)));
 
 const optionalBoolean = (name: string) =>

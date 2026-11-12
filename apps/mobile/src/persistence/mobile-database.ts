@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -115,7 +116,7 @@ export class MobileDatabase extends Context.Service<
       updatedAt: number,
     ) => Effect.Effect<void, MobileDatabaseError>;
   }
->()("@t3tools/mobile/persistence/MobileDatabase") {}
+>()("@t3tools/mobile/persistence/mobile-database/MobileDatabase") {}
 
 const makeAvailable = Effect.gen(function* () {
   const database = yield* Effect.acquireRelease(
@@ -165,8 +166,9 @@ const makeAvailable = Effect.gen(function* () {
   });
 
   return MobileDatabase.of({
-    loadCache: Effect.fn("MobileDatabase.loadCache")((environmentId, kind, cacheKey) =>
-      Effect.tryPromise({
+    loadCache: Effect.fn("MobileDatabase.loadCache")(function* (environmentId, kind, cacheKey) {
+      const now = yield* Clock.currentTimeMillis;
+      const row = yield* Effect.tryPromise({
         try: () =>
           database.getFirstAsync<{ readonly payload: string }>(
             `SELECT payload
@@ -176,11 +178,12 @@ const makeAvailable = Effect.gen(function* () {
             environmentId,
             kind,
             cacheKey,
-            Date.now() - 30 * 24 * 60 * 60_000,
+            now - 30 * 24 * 60 * 60_000,
           ),
         catch: databaseError("load-cache"),
-      }).pipe(Effect.map((row) => Option.fromNullishOr(row?.payload))),
-    ),
+      });
+      return Option.fromNullishOr(row?.payload);
+    }),
     listCache: Effect.fn("MobileDatabase.listCache")((kind) =>
       Effect.tryPromise({
         try: () =>
@@ -331,16 +334,16 @@ const makeAvailable = Effect.gen(function* () {
 function makeUnavailable(error: MobileDatabaseError): MobileDatabase["Service"] {
   const fail = Effect.fail(error);
   return MobileDatabase.of({
-    loadCache: () => fail,
-    listCache: () => fail,
-    saveCache: () => fail,
-    removeCache: () => fail,
-    clearCacheKind: () => fail,
-    clearEnvironmentCache: () => fail,
+    loadCache: Effect.fn("MobileDatabase.loadCache")(() => fail),
+    listCache: Effect.fn("MobileDatabase.listCache")(() => fail),
+    saveCache: Effect.fn("MobileDatabase.saveCache")(() => fail),
+    removeCache: Effect.fn("MobileDatabase.removeCache")(() => fail),
+    clearCacheKind: Effect.fn("MobileDatabase.clearCacheKind")(() => fail),
+    clearEnvironmentCache: Effect.fn("MobileDatabase.clearEnvironmentCache")(() => fail),
     clearAllCaches: fail,
     inspectCaches: fail,
     loadPreferencesJson: fail,
-    savePreferencesJson: () => fail,
+    savePreferencesJson: Effect.fn("MobileDatabase.savePreferencesJson")(() => fail),
   });
 }
 
