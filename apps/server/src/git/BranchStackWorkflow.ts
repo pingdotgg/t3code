@@ -256,12 +256,15 @@ export const make = Effect.gen(function* () {
     if (!branch || branch === base) return { base, branches: [] };
     const refs = (yield* text(cwd, [
       "for-each-ref",
-      "--format=%(refname:short) %(objectname)",
+      "--format=%(refname) %(objectname)",
       "refs/heads",
     ]))
       .split("\n")
       .filter(Boolean)
-      .map((line) => line.split(" "));
+      .map((line) => {
+        const [name, sha] = line.split(" ");
+        return [name!.slice("refs/heads/".length), sha!] as const;
+      });
     const branches = refs.map(([name]) => name!).filter((name) => name !== base);
     const namesByHead = new Map<string, string[]>();
     for (const [name, sha] of refs) {
@@ -279,6 +282,9 @@ export const make = Effect.gen(function* () {
       if (match && (match[2] === "t3-merge-base" || !parents.has(match[1]!)))
         parents.set(match[1]!, match[3]!.replace(/^refs\/heads\//, ""));
     }
+    const remoteBase = `refs/remotes/${baseRemote}/${base}`;
+    const remoteBaseExists =
+      (yield* git(cwd, ["rev-parse", "--verify", remoteBase], true)).exitCode === 0;
     const history = yield* git(
       cwd,
       [
@@ -287,7 +293,7 @@ export const make = Effect.gen(function* () {
         "--parents",
         "--branches",
         "--not",
-        refs.some(([name]) => name === base) ? base : `${baseRemote}/${base}`,
+        remoteBaseExists ? remoteBase : base,
       ],
       true,
     );
@@ -311,6 +317,7 @@ export const make = Effect.gen(function* () {
           continue;
         let ancestor = previous.get(sha!);
         while (ancestor) {
+          if (!previous.has(ancestor)) break;
           const candidates = namesByHead.get(ancestor);
           if (candidates) {
             if (candidates.length === 1) parents.set(name!, candidates[0]!);

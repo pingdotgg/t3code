@@ -6018,9 +6018,9 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
 
   it.effect.each([
     { name: "nearest open review", second: "open", first: "open", base: "stack/second" },
-    { name: "older open review", second: "closed", first: "open", base: "stack/first" },
+    { name: "older open review", second: "closed", first: "open", base: "stack/second" },
     { name: "merged reviews", second: "merged", first: "merged", base: "main" },
-    { name: "no reviews", second: null, first: null, base: "main" },
+    { name: "no reviews", second: null, first: null, base: "stack/second" },
     {
       name: "explicit target",
       second: "open",
@@ -6033,6 +6033,10 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
       const cwd = yield* createStackedBranches();
       if (scenario.explicit) {
         yield* runGit(cwd, ["config", "branch.stack/feature.gh-merge-base", "main"]);
+      }
+      if (scenario.name === "merged reviews") {
+        yield* runGit(cwd, ["branch", "-f", "main", "stack/second"]);
+        yield* runGit(cwd, ["push", "origin", "main"]);
       }
       const prListByHeadSelector: Record<string, ReadonlyArray<FakeChangeRequest>> = {};
       for (const [head, state] of [
@@ -6074,7 +6078,9 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
         expect(generated?.commitSummary.trim().split("\n")).toHaveLength(2);
         expect(generated?.diffSummary).not.toContain("first.txt");
         expect(generated?.diffPatch).not.toContain("second.txt");
-        expect(listedSelectors(providerCalls).includes("stack/first")).toBe(false);
+        expect(created(providerCalls).some((call) => call.headSelector === "stack/first")).toBe(
+          scenario.first === null,
+        );
       }
       expect(
         created(providerCalls).some(
@@ -6248,6 +6254,12 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
         },
       });
 
+      yield* manager.manageStack({
+        cwd,
+        action: "adopt",
+        base: "main",
+        branches: ["stack/second", "stack/feature"],
+      });
       const result = yield* runStackedAction(manager, { cwd, action: "create_pr" });
 
       expect(result.pr).toMatchObject({ status: "created", baseBranch: "stack/second", number: 3 });
@@ -6272,7 +6284,7 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
     }),
   );
 
-  it.effect("requires an explicit target when equally close ancestors have open reviews", () =>
+  it.effect("uses the local hierarchy when a remote review alias shares the parent commit", () =>
     Effect.gen(function* () {
       const cwd = yield* createStackedBranches();
       yield* runGit(cwd, ["push", "origin", "stack/second:stack/alias"]);
@@ -6292,12 +6304,13 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
         providerScenario: { prListByHeadSelector },
       });
 
-      const error = yield* runStackedAction(manager, { cwd, action: "create_pr" }).pipe(
-        Effect.flip,
-      );
-
-      expect(error).toMatchObject({ operation: "resolveStackedBaseBranch" });
-      expect(created(providerCalls).length > 0).toBe(false);
+      const result = yield* runStackedAction(manager, { cwd, action: "create_pr" });
+      expect(result.pr).toMatchObject({ status: "created", baseBranch: "stack/second" });
+      expect(
+        created(providerCalls).some(
+          (call) => call.headSelector === "stack/feature" && call.baseRefName === "stack/second",
+        ),
+      ).toBe(true);
     }),
   );
 
@@ -6332,7 +6345,7 @@ console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env
 
         const result = yield* runStackedAction(manager, { cwd, action: "create_pr" });
 
-        expect(result.pr).toMatchObject({ status: "created", baseBranch: "main" });
+        expect(result.pr).toMatchObject({ status: "created", baseBranch: "stack/second" });
         expect(listedSelectors(providerCalls).includes("unrelated")).toBe(false);
         expect(listedSelectors(providerCalls).includes("stack/first")).toBe(false);
       }),
