@@ -24,7 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
@@ -63,6 +63,21 @@ function AccountChip({ email }: { readonly email: string }) {
         {emailInitials(email)}
       </Text>
     </View>
+  );
+}
+
+// Same mark as the web Limits bar: the instance glyph and badge, or the chip for an email-only account.
+function AccountAvatar({ account }: { readonly account: LimitAccount }) {
+  if (account.email && !account.redeem) return <AccountChip email={account.email} />;
+  return (
+    <ProviderInstanceIcon
+      provider={account.driver}
+      size={20}
+      displayName={accountName(account)}
+      accentColor={account.accentColor}
+      showBadge={Boolean(account.displayName)}
+      surfaceColor="transparent"
+    />
   );
 }
 
@@ -225,7 +240,7 @@ function PoolWindowCard({
       className="flex-row gap-1"
       onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
     >
-      {pool.columns.map((member, index) => {
+      {pool.columns.map((member) => {
         if (!member.window)
           return (
             <View
@@ -241,7 +256,7 @@ function PoolWindowCard({
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
+            accessibilityLabel={`${accountName(account)}, ${remainingPercent(window)}% left${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className={wide ? "h-9 min-w-0 flex-1 rounded-md" : "h-7 min-w-0 flex-1 rounded-md"}
@@ -262,7 +277,7 @@ function PoolWindowCard({
                 className="absolute inset-0 flex-row items-center justify-between gap-2 overflow-hidden rounded-md px-2"
               >
                 <View className="min-w-0 shrink flex-row items-center gap-1.5">
-                  {account.email ? <AccountChip email={account.email} /> : null}
+                  <AccountAvatar account={account} />
                   {account.email && !(account.displayName && inlineName) ? null : (
                     <Text
                       numberOfLines={1}
@@ -305,12 +320,7 @@ function PoolWindowCard({
                 pointerEvents="none"
                 className="absolute inset-0 items-center justify-center overflow-hidden rounded-md"
               >
-                <Text
-                  numberOfLines={1}
-                  className="max-w-full shrink text-xs font-t3-medium tabular-nums text-foreground"
-                >
-                  {index + 1}
-                </Text>
+                <AccountAvatar account={account} />
               </View>
             )}
           </Pressable>
@@ -320,30 +330,20 @@ function PoolWindowCard({
   );
   const legend = (
     <View>
-      {pool.columns.map(({ account, window }, index) => {
+      {pool.columns.map(({ account, window }) => {
         if (!window) return null;
-        const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now);
         return (
           <Pressable
             key={account.key}
             accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+            accessibilityLabel={`${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
           >
-            <View className="relative size-5 items-center justify-center overflow-hidden rounded-md bg-subtle-strong">
-              <View
-                pointerEvents="none"
-                className="absolute inset-0"
-                style={{ backgroundColor: segmentColor, opacity: 0.35 }}
-              />
-              <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                {index + 1}
-              </Text>
-            </View>
+            <AccountAvatar account={account} />
             <Text
               numberOfLines={1}
               className="min-w-0 flex-1 text-sm font-t3-medium text-foreground"
