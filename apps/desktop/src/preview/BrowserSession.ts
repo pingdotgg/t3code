@@ -333,15 +333,17 @@ export const make = Effect.gen(function* BrowserSessionMake() {
 
   const certificateTrust = new WeakMap<Session, CertificateTrust>();
   const writeCertificateApprovals = yield* Semaphore.make(1);
-  const loadCertificateTrust = (browserSession: Session) => {
+  const loadCertificateTrust = Effect.fn("BrowserSession.loadCertificateTrust")(function* (
+    browserSession: Session,
+  ) {
     const file =
       browserSession.storagePath == null
         ? null
         : path.join(browserSession.storagePath, CERTIFICATE_APPROVALS_FILE);
-    return (
+    const approvals: ReadonlyArray<CertificateApproval> =
       file === null
-        ? Effect.succeed([])
-        : fileSystem.readFileString(file).pipe(
+        ? []
+        : yield* fileSystem.readFileString(file).pipe(
             Effect.flatMap(decodeCertificateApprovals),
             Effect.catchTags({
               PlatformError: (error) =>
@@ -352,60 +354,54 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 Effect.as([]),
               ),
             ),
-          )
-    ).pipe(
-      Effect.map((approvals): CertificateTrust => ({
-        file,
-        approvals: new Map(
-          approvals.map((approval) => [certificateApprovalKey(approval), approval]),
-        ),
-        revocations: 0,
-      })),
-    );
-  };
-  const writeApprovalsFile = (file: string, approvals: ReadonlyMap<string, CertificateApproval>) =>
-    approvals.size === 0
-      ? fileSystem.remove(file, { force: true })
-      : Effect.gen(function* () {
-          yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
-          yield* fileSystem.writeFileString(
-            file,
-            yield* encodeCertificateApprovals([...approvals.values()]),
           );
-        });
+    const trust: CertificateTrust = {
+      file,
+      approvals: new Map(approvals.map((approval) => [certificateApprovalKey(approval), approval])),
+      revocations: 0,
+    };
+    return trust;
+  });
+  const writeApprovalsFile = Effect.fn("BrowserSession.writeApprovalsFile")(function* (
+    file: string,
+    approvals: ReadonlyMap<string, CertificateApproval>,
+  ) {
+    if (approvals.size === 0) return yield* fileSystem.remove(file, { force: true });
+    yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
+    yield* fileSystem.writeFileString(
+      file,
+      yield* encodeCertificateApprovals([...approvals.values()]),
+    );
+  });
   /**
    * Saved before it is trusted, so a failed write cannot leave an approval that
    * silently ends at restart. Writes share one lock, so a slower write cannot
    * restore stale data.
    */
-  const rememberCertificate = (
+  const rememberCertificate = Effect.fn("BrowserSession.rememberCertificate")(function* (
     trust: CertificateTrust,
     key: string,
     approval: CertificateApproval,
     revocations: number,
-  ) =>
-    writeCertificateApprovals.withPermits(1)(
-      Effect.gen(function* () {
-        if (trust.revocations !== revocations) return false;
-        if (trust.file !== null) {
-          yield* writeApprovalsFile(trust.file, new Map(trust.approvals).set(key, approval));
-          // A revocation during the write queues its own rewrite behind this one.
-          if (trust.revocations !== revocations) return false;
-        }
-        trust.approvals.set(key, approval);
-        return true;
-      }),
-    );
+  ) {
+    if (trust.revocations !== revocations) return false;
+    if (trust.file !== null) {
+      yield* writeApprovalsFile(trust.file, new Map(trust.approvals).set(key, approval));
+      // A revocation during the write queues its own rewrite behind this one.
+      if (trust.revocations !== revocations) return false;
+    }
+    trust.approvals.set(key, approval);
+    return true;
+  }, writeCertificateApprovals.withPermits(1));
   /**
    * Rewrites the file from memory. Clearing cookies runs this even when memory
    * is already empty, so retrying after a failed removal still deletes the file.
    */
-  const saveCertificateApprovals = (trust: CertificateTrust) =>
-    writeCertificateApprovals.withPermits(1)(
-      Effect.suspend(() =>
-        trust.file === null ? Effect.void : writeApprovalsFile(trust.file, trust.approvals),
-      ),
-    );
+  const saveCertificateApprovals = Effect.fn("BrowserSession.saveCertificateApprovals")(function* (
+    trust: CertificateTrust,
+  ) {
+    if (trust.file !== null) yield* writeApprovalsFile(trust.file, trust.approvals);
+  }, writeCertificateApprovals.withPermits(1));
 
   // One prompt at a time; tabs that hit the same certificate wait on it.
   let certificatePrompt: {
