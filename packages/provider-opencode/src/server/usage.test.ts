@@ -1,3 +1,4 @@
+import type * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -12,6 +13,27 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { vi } from "vite-plus/test";
 
 import { openCodeUsageReader, readOpenCodeUsage } from "./usage.ts";
+
+const readerWorkers = vi.hoisted(() => ({ started: 0, enabled: false }));
+
+// Statement spies only see the main thread, so reader workers fail to start unless a test enables them.
+vi.mock("node:worker_threads", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeWorkerThreads>();
+  class ReaderWorker extends actual.Worker {
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      super(
+        ...((readerWorkers.enabled
+          ? args
+          : [
+              "throw new Error('reader workers disabled');",
+              { eval: true },
+            ]) as ConstructorParameters<typeof actual.Worker>),
+      );
+      readerWorkers.started++;
+    }
+  }
+  return { ...actual, Worker: ReaderWorker };
+});
 
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
@@ -199,6 +221,27 @@ describe("readOpenCodeUsage", () => {
       const legacy = path.join(dir, "storage", "message", message.sessionID);
       yield* fileSystem.makeDirectory(legacy, { recursive: true });
       yield* fileSystem.writeFileString(path.join(legacy, "msg-1.json"), JSON.stringify(message));
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          readerWorkers.enabled = true;
+          readerWorkers.started = 0;
+        }),
+        () => Effect.sync(() => (readerWorkers.enabled = false)),
+      );
+      let mainThreadBodyReads = 0;
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            if (this.sourceSQL.includes("data ->")) mainThreadBodyReads++;
+            return originalAll.apply(this, params);
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
       const first = yield* readOpenCodeUsage(dir, 0);
       assert.isFalse(first.error);
       const records = first.files.flatMap((file) => file.records);
@@ -223,6 +266,9 @@ describe("readOpenCodeUsage", () => {
         ["opencode:msg-2"],
       );
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
+      // A large database must not be read on the server's event loop.
+      assert.isAbove(readerWorkers.started, 0);
+      assert.strictEqual(mainThreadBodyReads, 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
