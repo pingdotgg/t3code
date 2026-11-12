@@ -34,6 +34,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
+import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   EventId,
@@ -350,6 +351,7 @@ const cleanupFixture = (
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
     let fullStatusCalls = 0;
+    let gitInspections = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
@@ -359,6 +361,7 @@ const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
+            gitInspections++;
             // Before Git's own clean check: inside `git worktree remove`, or on
             // Windows the same status check the removal makes before deleting.
             if (
@@ -554,6 +557,7 @@ const cleanupFixture = (
             ...paths,
           },
         }) ?? Effect.void,
+      gitInspections: () => gitInspections,
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
       sessionLiveChecks: () => sessionLiveChecks,
@@ -2103,6 +2107,21 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("skips a stored worktree path whose parent is a regular file", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const legacyRoot = `${fixture.config.worktreesDir}/legacy-root`;
+        yield* fixture.fs.writeFileString(legacyRoot, "");
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: `${legacyRoot}/stored-workspace` }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([]);
+        expect(report.counts).toEqual({ removed: 0, kept: 0, failed: 0 });
+      }),
+    ),
+  );
   it.live.each(["before-check", "while-measuring"] as const)(
     "keeps a worktree protected by a missing project root (%s)",
     (timing) =>
@@ -2237,6 +2256,67 @@ describe("storage cleanup reports and local file policies", () => {
         );
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         expect(statted.filter((target) => target.includes("attacker.test"))).toEqual([]);
+      }),
+    ),
+  );
+  it.live.each([
+    { days: 8, reason: "Inactive for 1 of 8 days" },
+    { days: null, reason: "No rules apply" },
+  ])("keeps an ineligible age/delete-only worktree without Git ($days)", ({ days, reason }) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: days,
+          worktreeOnDelete: true,
+        });
+        fixture.setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: fixture.worktree,
+            latestUserMessageAt: DateTime.makeUnsafe(
+              DateTime.toEpochMillis(yield* DateTime.now) - DAY_MS,
+            ),
+          }),
+        ]);
+        yield* fixture.fs.writeFileString(`${fixture.worktree}/tracked.txt`, "local edit\n");
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason,
+          bytes: null,
+        });
+        expect(fixture.gitInspections()).toBe(0);
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live("lets a turn acquire the checkout during accounting and protects its new activity", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* pausedMeasurementFixture();
+        const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        yield* withWorkspaceLease(
+          fixture.worktree,
+          Effect.sync(() => {
+            fixture.setThreads([
+              shell({
+                branch: "feature",
+                worktreePath: fixture.worktree,
+                status: "running",
+              }),
+            ]);
+          }),
+        );
+        yield* Deferred.succeed(fixture.resume, undefined);
+        const report = yield* Fiber.join(cleanup);
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Thread activity or shared worktree changed since check",
+          bytes: null,
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
       }),
     ),
   );
@@ -2597,6 +2677,120 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* fs.exists(worktree)).toBe(true);
       }),
     ),
+  );
+  it.live.each(["--assume-unchanged", "--skip-worktree"] as const)(
+    "keeps tracked edits that git status hides (%s)",
+    (flag) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          yield* command(worktree, ["update-index", flag, "tracked.txt"]);
+          yield* fs.writeFileString(`${worktree}/tracked.txt`, "hidden edit\n");
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("hidden edit\n");
+        }),
+      ),
+  );
+  // macOS and Windows file systems reject names that are not valid UTF-8.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "keeps hidden edits to files whose names are not valid UTF-8",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          const git = yield* GitVcsDriver.GitVcsDriver;
+          // Git unquotes C-quoted paths on stdin, which reaches a name a JS string cannot.
+          const quoted = '"bad-\\377.txt"';
+          const stdin = (args: string[], input: string) =>
+            git.execute({ operation: "cleanup-test", cwd: worktree, args, stdin: input });
+          const blob = (content: string) =>
+            stdin(["hash-object", "-w", "--stdin"], content).pipe(
+              Effect.map((result) => result.stdout.trim()),
+            );
+          const original = yield* blob("original\n");
+          yield* stdin(["update-index", "--index-info"], `100644 ${original}\t${quoted}\n`);
+          yield* stdin(["checkout-index", "--stdin"], `${quoted}\n`);
+          yield* command(worktree, ["commit", "-m", "bad name"]);
+          // The committed content moves on while the file on disk keeps the other version.
+          const edited = yield* blob("edited\n");
+          yield* stdin(["update-index", "--index-info"], `100644 ${edited}\t${quoted}\n`);
+          yield* command(worktree, ["commit", "-m", "edit"]);
+          yield* stdin(["update-index", "--assume-unchanged", "--stdin"], `${quoted}\n`);
+          expect((yield* command(worktree, ["status", "--porcelain"])).stdout).toBe("");
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+          expect((yield* fs.readDirectory(worktree)).some((name) => name.startsWith("bad-"))).toBe(
+            true,
+          );
+        }),
+      ),
+  );
+  it.live("removes worktrees whose flagged files are unchanged or outside a sparse checkout", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
+        yield* fs.remove(`${worktree}/tracked.txt`);
+        yield* command(worktree, ["update-index", "--assume-unchanged", ".gitignore"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+      }),
+    ),
+  );
+  it.live.each([
+    ["missing", "symlink"],
+    ["tracked.txt", "symlink"],
+    ["missing", "file"],
+    ["tracked.txt", "file"],
+  ] as const)("compares flagged tracked symlinks by target (%s as a %s)", ([target, kind]) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* fs.symlink("tracked.txt", `${worktree}/link`);
+        yield* command(worktree, ["add", "link"]);
+        yield* command(worktree, ["commit", "-m", "link"]);
+        yield* command(worktree, ["update-index", "--assume-unchanged", "link"]);
+        yield* fs.remove(`${worktree}/link`);
+        // Without core.symlinks, Git checks a link out as a regular file holding its target.
+        if (kind === "file") {
+          yield* command(worktree, ["config", "core.symlinks", "false"]);
+          yield* fs.writeFileString(`${worktree}/link`, target);
+        } else yield* fs.symlink(target, `${worktree}/link`);
+        expect((yield* service.runNow).entries[0]).toMatchObject(
+          target === "missing"
+            ? { outcome: "kept", reason: expect.stringContaining("(link)") }
+            : { outcome: "removed" },
+        );
+      }),
+    ),
+  );
+  it.live.each([
+    ["uncommitted-changes", "untracked", "Local changes exceed the inspection limit"],
+    ["any-local-files", "ignored", "Ignored files exceed the inspection limit"],
+  ] as const)(
+    "keeps a worktree under %s when its %s file listing exceeds the inspection limit",
+    ([policy, kind, reason]) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, setPolicy } = yield* cleanupFixture();
+          setPolicy(policy);
+          const files = Array.from({ length: 3000 }, (_, i) =>
+            kind === "untracked"
+              ? `${worktree}/many/untracked-file-with-a-long-name-${i}.txt`
+              : `${worktree}/many/ignored-directory-with-a-long-name-${i}/.env`,
+          );
+          yield* fs.makeDirectory(`${worktree}/many`);
+          yield* Effect.forEach(
+            files,
+            (file) =>
+              Effect.gen(function* () {
+                if (kind === "ignored") yield* fs.makeDirectory(file.slice(0, -"/.env".length));
+                yield* fs.writeFileString(file, "local\n");
+              }),
+            { concurrency: 64, discard: true },
+          );
+          expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept", reason });
+          expect(yield* fs.exists(files[0]!)).toBe(true);
+        }),
+      ),
   );
   it.live("serializes concurrent requests and returns each run's report", () =>
     runCleanupTest(
