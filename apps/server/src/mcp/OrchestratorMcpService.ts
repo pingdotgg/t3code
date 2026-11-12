@@ -86,6 +86,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Struct from "effect/Struct";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -910,6 +911,8 @@ function threadDetail(
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     ...threadSnooze(shell, nowMs),
+    lastErrorClass: shell.lastErrorClass ?? null,
+    usageLimitResetAt: shell.usageLimitResetAt ?? null,
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
   };
@@ -1062,6 +1065,9 @@ function timelineItem(input: {
     text: text === null ? null : text.slice(offset, end),
     textTruncated,
     nextTextOffset: textTruncated ? end : null,
+    ...(input.row.item.type === "error"
+      ? { failure: Struct.omit(input.row.item.failure, ["message"]) }
+      : {}),
     updatedAt: DateTime.formatIso(input.row.item.updatedAt),
   };
 }

@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
@@ -38,6 +39,8 @@ import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2ProviderFailure,
+  OrchestrationV2ProviderFailureClass,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -465,6 +468,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
+  usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -500,6 +505,8 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   text: Schema.NullOr(Schema.String),
   textTruncated: Schema.Boolean,
   nextTextOffset: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  /** An error item's failure; its message is the item's text. */
+  failure: Schema.optional(OrchestrationV2ProviderFailure.mapFields(Struct.omit(["message"]))),
   updatedAt: IsoDateTime,
 });
 export type OrchestratorMcpThreadTimelineItem = typeof OrchestratorMcpThreadTimelineItem.Type;

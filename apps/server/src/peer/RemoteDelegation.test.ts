@@ -454,7 +454,15 @@ const boxToolkitLayer = (thread: BoxThread) => {
               completedAt: DateTime.makeUnsafe(0),
               updatedAt: DateTime.makeUnsafe(0),
               ...(type === "error"
-                ? { type, failure: { message: text } }
+                ? {
+                    type,
+                    failure: {
+                      class: "provider_error",
+                      message: text,
+                      code: null,
+                      retryable: null,
+                    },
+                  }
                 : {
                     type: "assistant_message" as const,
                     messageId: MessageId.make(`message:${id}`),
