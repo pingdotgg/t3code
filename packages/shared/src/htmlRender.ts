@@ -222,11 +222,11 @@ export function htmlRenderTheme(
 }
 
 export const HTML_RENDER_THEME_GUIDE = [
-  "Use theme CSS variables on :root, not fixed colors:",
-  "--background, --foreground, --muted, --card, --popover, --secondary, --border, --ring, --primary, --accent, --destructive, --warning, --success, --info, --code-background",
-  "(most have a matching -foreground; accent, destructive, and warning also have -surface),",
-  "--chart-1 to --chart-6, --radius, --font-sans, --font-mono.",
-  "The base sheet sets background, text, and font.",
+  "Use theme CSS variables on :root, not fixed colors.",
+  "Text: --foreground, --muted-foreground, or a fill's -foreground.",
+  "Surfaces, never text: --background, --muted, --card, --popover, --secondary, --code-background.",
+  "Fills: --primary, --accent, --destructive, --warning, --success, --info (accent, destructive, warning have -surface).",
+  "Also --border, --ring, --chart-1 to --chart-6, --radius, --font-sans, --font-mono.",
 ].join(" ");
 
 export const HTML_RENDER_LAYOUT_GUIDE = [
