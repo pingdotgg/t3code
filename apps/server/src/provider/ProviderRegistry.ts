@@ -48,6 +48,7 @@ import {
   latestProviderVersionCacheKeys,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import type { ProviderSnapshotSource } from "./builtInProviderCatalog.ts";
+import { isCodexLaunchFailure } from "./CodexProvider.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -69,6 +70,13 @@ export class ProviderRegistry extends Context.Service<
     readonly reloadSecretsAndRefresh: (
       instanceId?: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /**
+     * Rebuilds and re-checks enabled instances not yet found installed, plus Codex CLIs that cannot run,
+     * after the host environment changed. Drivers copy the environment when built, so only a rebuild
+     * sees a later PATH.
+     */
+    readonly rebuildMissingAndRefresh: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Only refreshed instances can verify an update; the published list still includes every row. */
     readonly refreshAfterUpdate: (
@@ -739,6 +747,41 @@ export const layer = Layer.effect(
       return yield* instanceId === undefined ? refresh() : refreshInstance(instanceId);
     });
 
+    // Instances whose check passed keep running; restarting them could end live sessions. A Codex
+    // CLI that spawns but cannot run (its npm launcher lacks node) is rebuilt too. Auth, network,
+    // and timeout errors are not, since a rebuild would close their sessions.
+    const rebuildMissingAndRefresh = Effect.fn("rebuildMissingAndRefresh")(function* () {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* refresh().pipe(Effect.catchCause(recoverRefreshFailure));
+      const missing = yield* Effect.filter(instances, (instance) =>
+        Effect.gen(function* () {
+          // ACP also reports installed:false for setup states unrelated to executable discovery.
+          if (
+            !instance.enabled ||
+            instance.driverKind === "acpRegistry" ||
+            !(yield* isCurrentInstance(instance))
+          )
+            return false;
+          const snapshot = yield* instance.snapshot.getSnapshot;
+          return (
+            !snapshot.installed ||
+            (instance.driverKind === ProviderDriverKind.make("codex") &&
+              isCodexLaunchFailure(snapshot))
+          );
+        }),
+      );
+      if (missing.length === 0) return yield* Ref.get(providersRef);
+      yield* instanceRegistryMutator.rebuild(missing);
+      // A shared pass already in flight may hold the retired instances, so probe each rebuilt one.
+      yield* Effect.forEach(
+        missing,
+        (instance) =>
+          refreshInstance(instance.instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
     const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
       provider: ProviderDriverKind,
       selectedInstanceId: ProviderInstanceId,
@@ -1176,6 +1219,9 @@ export const layer = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      rebuildMissingAndRefresh: rebuildMissingAndRefresh().pipe(
+        Effect.catchCause(recoverRefreshFailure),
+      ),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,

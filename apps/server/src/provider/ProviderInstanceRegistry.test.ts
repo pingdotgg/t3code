@@ -1051,6 +1051,23 @@ describe("ProviderInstanceRegistry secret environment", () => {
     }).pipe(Effect.scoped);
   });
 
+  it.effect("does not rebuild an instance replaced after selection", () => {
+    const fixture = setup({ [secret.reference]: "sk-live" });
+    return Effect.gen(function* () {
+      const { registry, mutator } = yield* fixture.make;
+      const selected = yield* registry.listInstances;
+      fixture.vault.set(secret.reference, "sk-rotated");
+      yield* mutator.reloadSecrets();
+      const replacement = yield* registry.getInstance(instanceId);
+      expect(replacement).not.toBe(selected[0]);
+      yield* mutator.rebuild(selected);
+      expect(yield* registry.getInstance(instanceId)).toBe(replacement);
+      expect(fixture.created).toHaveLength(2);
+      yield* mutator.rebuild([replacement!]);
+      expect(fixture.created).toHaveLength(3);
+    }).pipe(Effect.scoped);
+  });
+
   it.effect("reads a config field typed SettingsSecretValue and rebuilds when it rotates", () => {
     const apiKey: SecretReference = { ...secret, reference: "op://Private/Gateway/key" };
     const fixture = setup(
