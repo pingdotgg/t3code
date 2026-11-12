@@ -140,6 +140,7 @@ export interface ThreadFeedMessage {
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly linkedSender?: import("@t3tools/contracts").OrchestrationV2LinkedSender;
   readonly idleCompaction?: import("@t3tools/contracts").OrchestrationV2IdleCompaction;
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
   readonly sourceThreadId: ThreadId;
@@ -248,6 +249,8 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly label?: string;
+      /** Shown instead of "Thinking" while the provider has not started a turn. */
+      readonly providerStartingLabel?: string;
     };
 
 export interface ThreadFeedLatestRun {
@@ -256,6 +259,7 @@ export interface ThreadFeedLatestRun {
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly turnEnded?: boolean;
+  readonly providerStartingLabel?: string;
 }
 
 /** Long Android headers can ANR despite one-line display; cap labels only, preserving expanded and copied text. */
@@ -1073,6 +1077,25 @@ export function messageFoldRunId(
   return null;
 }
 
+function answersBeforeSteers(feed: ReadonlyArray<ThreadFeedEntry>): ReadonlySet<MessageId> {
+  const ids = new Set<MessageId>();
+  let previous: ThreadFeedEntry | undefined;
+  for (const entry of feed) {
+    if (
+      entry.type === "message" &&
+      isSteerMessage(entry.message) &&
+      previous?.type === "message" &&
+      previous.message.role === "assistant" &&
+      previous.message.projectedItem?.item.type === "assistant_message" &&
+      previous.message.projectedItem.item.phase === "final_answer"
+    ) {
+      ids.add(previous.message.id);
+    }
+    previous = entry;
+  }
+  return ids;
+}
+
 function deriveThreadFeedRunFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -1080,6 +1103,7 @@ function deriveThreadFeedRunFolds(
   feedFailedRunIds: ReadonlySet<RunId>,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
+  const retainedAnswerIds = answersBeforeSteers(feed);
   const interruptedRunIds = new Set<RunId>();
   const failedRunIds = new Set(feedFailedRunIds);
   const promptIndexByRunId = new Map<RunId, number>();
@@ -1170,6 +1194,7 @@ function deriveThreadFeedRunFolds(
         .filter(
           (entry) =>
             entry.id !== terminalAssistantId &&
+            !(entry.type === "message" && retainedAnswerIds.has(entry.message.id)) &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             entry.id !== visibleCompactionId &&
@@ -1318,7 +1343,8 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
       left.status === right.status &&
       left.startedAt === right.startedAt &&
       left.completedAt === right.completedAt &&
-      left.turnEnded === right.turnEnded)
+      left.turnEnded === right.turnEnded &&
+      left.providerStartingLabel === right.providerStartingLabel)
   );
 }
 
@@ -1432,7 +1458,7 @@ function zenAnswerMessageIds(
 ): ReadonlySet<MessageId> {
   const replies: Array<{ readonly message: ThreadFeedMessage; readonly index: number }> = [];
   const lastReplyByResponse = new Map<string, MessageId>();
-  const steerAnswers = new Set<MessageId>();
+  const steerAnswers = new Set(answersBeforeSteers(feed));
   let userMessages = 0;
   let awaitingReply = false;
   let candidate: MessageId | null = null;
@@ -1719,7 +1745,12 @@ export function deriveThreadFeedPresentation(
     )
   ) {
     result.push(
-      thinkingRow(activeWorkStartedAt, activeRunId, zen ? liveAnswerPreview(feed) : null),
+      thinkingRow(
+        activeWorkStartedAt,
+        activeRunId,
+        zen ? liveAnswerPreview(feed) : null,
+        latestRun?.providerStartingLabel,
+      ),
     );
   }
   const checkpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
@@ -1824,11 +1855,17 @@ function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
-function thinkingRow(createdAt: string, runId: RunId | null, label: string | null) {
+function thinkingRow(
+  createdAt: string,
+  runId: RunId | null,
+  label: string | null,
+  providerStartingLabel: string | undefined,
+) {
   if (
     cachedThinkingRow?.createdAt !== createdAt ||
     cachedThinkingRow.runId !== runId ||
-    (cachedThinkingRow.label ?? null) !== label
+    (cachedThinkingRow.label ?? null) !== label ||
+    cachedThinkingRow.providerStartingLabel !== providerStartingLabel
   ) {
     cachedThinkingRow = {
       type: "thinking",
@@ -1836,6 +1873,7 @@ function thinkingRow(createdAt: string, runId: RunId | null, label: string | nul
       createdAt,
       runId,
       ...(label === null ? {} : { label }),
+      ...(providerStartingLabel === undefined ? {} : { providerStartingLabel }),
     };
   }
   return cachedThinkingRow;
@@ -2366,6 +2404,7 @@ export function buildThreadFeed(
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),
                 ...(item.senderThreadId ? { senderThreadId: item.senderThreadId } : {}),
+                ...(item.linkedSender ? { linkedSender: item.linkedSender } : {}),
                 ...(item.idleCompaction ? { idleCompaction: item.idleCompaction } : {}),
               }
             : {}),
