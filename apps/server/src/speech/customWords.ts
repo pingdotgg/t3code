@@ -75,9 +75,9 @@ export function makeSpeechTextCorrector(
       if (word.includes("&")) sources.push(word.replaceAll("&", " and "));
       const keys = sources.flatMap((source) => {
         const key = matchKey(source);
-        // Short keys match exactly, so one that dropped symbols (C# -> c) would claim a plain word.
+        // A term that loses its symbols to one letter (C# -> c) would claim every standalone letter.
         const lostSymbols = key !== source.replace(/\s+/gu, "").toLocaleLowerCase();
-        return key.length < 4 && lostSymbols ? [] : [key];
+        return key.length < 2 && lostSymbols ? [] : [key];
       });
       return [...new Set(keys)].filter(isAsciiKey).map((key) => ({ word, key }));
     });
