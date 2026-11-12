@@ -21,6 +21,7 @@ export interface CloudPublicConfig {
   };
   readonly relay: {
     readonly url: string | null;
+    readonly backgroundUrl: string | null;
   };
   readonly observability: {
     readonly tracesUrl: string | null;
@@ -57,6 +58,13 @@ function normalizeSecureUrl(value: unknown): string | null {
 }
 
 export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig?.extra) {
+  const rawBackgroundUrl = trimNonEmpty(extra?.relay?.backgroundUrl);
+  // Keep a malformed override for ManagedRelay to reject on background calls.
+  // Throwing here would also disable the independent primary relay and auth.
+  const backgroundUrl =
+    rawBackgroundUrl === null
+      ? null
+      : (normalizeSecureRelayUrl(rawBackgroundUrl) ?? rawBackgroundUrl);
   return {
     clerk: {
       publishableKey: trimNonEmpty(extra?.clerk?.publishableKey),
@@ -64,6 +72,7 @@ export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig
     },
     relay: {
       url: normalizeSecureRelayUrl(trimNonEmpty(extra?.relay?.url) ?? ""),
+      backgroundUrl,
     },
     observability: {
       tracesUrl: normalizeSecureUrl(extra?.observability?.tracesUrl),

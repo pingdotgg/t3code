@@ -34,6 +34,36 @@ Copy `infra/relay/.env.example` to `infra/relay/.env` for relay deployment setti
 Deploy `prod` before personal stages because it owns the retained database that their branches
 depend on. The stack's `PublishClientConfig` action writes the resulting relay URL back to the root `.env`.
 
+## Separate background delivery relay
+
+A custom mobile build can send device listing/registration, Live Activity registration, and agent activity
+snapshot requests to a different relay while keeping environment discovery, linking, and connections
+on `T3CODE_RELAY_URL`. Set `T3CODE_BACKGROUND_RELAY_URL` to the background relay's HTTPS origin
+before building the mobile app. Omit it to use the normal T3 Connect relay for everything.
+
+Configure each publishing server using the [background relay setup guide](../user/mobile-notifications.md#custom-background-relay).
+To restore the single-relay mobile build, remove the build override and rebuild the app.
+
+This only selects an already-provisioned relay. It must accept the mobile app's existing Clerk
+identity, link the environment's signing key to that account, and have push credentials for the app's
+bundle ID and signing environment. These options do not provision a deployment, migrate registrations,
+or grant access to another relay's accounts. Register the app again after switching relays. Never put
+the environment credential or APNs private key in the mobile build configuration.
+
+### Provision a background relay link
+
+Obtain the environment credential through your custom relay's authenticated linking flow:
+
+1. Sign in as the mobile app's Clerk user and request a challenge from the background relay's
+   `POST /v1/client/environment-link-challenges`, enabling notifications and Live Activities and
+   setting `managedTunnelsEnabled` to `false`.
+2. Send that challenge, the background relay issuer, and the environment's endpoint/origin to the
+   environment's authenticated `POST /api/connect/link-proof` endpoint to obtain its signed proof.
+3. Send the proof and the same capability flags to the background relay's
+   `POST /v1/client/environment-links`. The response's `environmentCredential` is the value to store
+   in the publishing server's secret configuration. Linking registers that environment's signing
+   key for the signed-in account; the primary relay's credential is not a substitute.
+
 ## CLI OAuth application
 
 In Clerk's OAuth applications settings:

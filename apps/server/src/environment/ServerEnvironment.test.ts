@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -297,42 +298,58 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
     }),
   );
 
-  it.effect("reports agent activity publishing from the current secret state", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-server-environment-publish-test-",
-      });
-      const layerTest = Layer.mergeAll(
-        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
-        ServerSecretStore.layer,
-      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
+  it.effect.each([false, true])(
+    "reports agent activity publishing from the current secret state (background relay: %s)",
+    (backgroundRelayConfigured) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-server-environment-publish-test-",
+        });
+        const layerTest = Layer.mergeAll(
+          ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+          ServerSecretStore.layer,
+        ).pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: backgroundRelayConfigured
+                  ? {
+                      T3CODE_BACKGROUND_RELAY_URL: "https://background.example.test",
+                      T3CODE_BACKGROUND_RELAY_ENVIRONMENT_CREDENTIAL: "background-credential",
+                    }
+                  : {},
+              }),
+            ),
+          ),
+        );
 
-      yield* Effect.gen(function* () {
-        const secrets = yield* ServerSecretStore.ServerSecretStore;
-        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-        const encode = (value: string) => new TextEncoder().encode(value);
+        yield* Effect.gen(function* () {
+          const secrets = yield* ServerSecretStore.ServerSecretStore;
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          const encode = (value: string) => new TextEncoder().encode(value);
 
-        const unlinked = yield* serverEnvironment.getDescriptor;
-        expect(unlinked.capabilities.agentActivityPublishing).toBe(false);
+          const unlinked = yield* serverEnvironment.getDescriptor;
+          expect(unlinked.capabilities.agentActivityPublishing).toBe(false);
 
-        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("true"));
-        const withoutLink = yield* serverEnvironment.getDescriptor;
-        expect(withoutLink.capabilities.agentActivityPublishing).toBe(false);
+          yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("true"));
+          const withoutLink = yield* serverEnvironment.getDescriptor;
+          expect(withoutLink.capabilities.agentActivityPublishing).toBe(backgroundRelayConfigured);
 
-        yield* secrets.set(RELAY_URL_SECRET, encode(""));
-        yield* secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential"));
-        const emptyUrl = yield* serverEnvironment.getDescriptor;
-        expect(emptyUrl.capabilities.agentActivityPublishing).toBe(false);
+          yield* secrets.set(RELAY_URL_SECRET, encode(""));
+          yield* secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential"));
+          const emptyUrl = yield* serverEnvironment.getDescriptor;
+          expect(emptyUrl.capabilities.agentActivityPublishing).toBe(backgroundRelayConfigured);
 
-        yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
-        const linked = yield* serverEnvironment.getDescriptor;
-        expect(linked.capabilities.agentActivityPublishing).toBe(true);
+          yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
+          const linked = yield* serverEnvironment.getDescriptor;
+          expect(linked.capabilities.agentActivityPublishing).toBe(true);
 
-        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
-        const disabled = yield* serverEnvironment.getDescriptor;
-        expect(disabled.capabilities.agentActivityPublishing).toBe(false);
-      }).pipe(Effect.provide(layerTest));
-    }),
+          yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
+          const disabled = yield* serverEnvironment.getDescriptor;
+          expect(disabled.capabilities.agentActivityPublishing).toBe(false);
+        }).pipe(Effect.provide(layerTest));
+      }),
   );
 });

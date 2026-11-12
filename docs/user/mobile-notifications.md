@@ -13,3 +13,27 @@ Ordinary alerts stay quiet while the mobile app is in the foreground. Ongoing ac
 Android notifications require Android 7.0 or newer and Google Play services. Android 16 and newer can promote ongoing activity to a Live Update, subject to system settings and device support. Other devices show a regular ongoing notification. If Live Updates don't appear on Android 16 or newer, check **Live Update Settings** in T3 Code's **Settings → Notifications**. Android 7's battery-saving modes can delay removal of expired cards.
 
 Notification permission and Android notification channels are controlled in system Settings. Background delivery requires T3 Connect; a direct or Tailscale connection alone does not enable push notifications. The mobile app does not need to maintain a connection to your environment. Force-stopping the Android app in system Settings prevents push delivery until you open it again.
+
+## Custom background relay
+
+If your custom mobile build uses a separate background relay, configure its publishing servers to
+use the same destination. The relay must already accept your mobile sign-in and have push credentials
+for that build; see the [custom build setup](../operations/connect-setup.md#separate-background-delivery-relay).
+
+Use the credential issued by your background relay when linking this environment to your account.
+Custom relay operators can follow the [link provisioning procedure](../operations/connect-setup.md#provision-a-background-relay-link)
+to obtain it.
+
+On each publishing server, supply these runtime environment variables through its service's secret
+configuration, then restart the server:
+
+- `T3CODE_BACKGROUND_RELAY_URL`: the same background relay origin.
+- `T3CODE_BACKGROUND_RELAY_ENVIRONMENT_CREDENTIAL`: that relay's environment credential.
+- `T3CODE_BACKGROUND_RELAY_ISSUER`: optional relay issuer origin used as the publish proof’s `aud`
+  claim; defaults to the background URL. The proof’s `iss` remains `t3-env:<environmentId>`.
+
+The environment's existing agent activity publishing switch still controls sharing. A configured
+background relay replaces the activity destination; it does not publish a second copy to T3 Connect.
+To restore the single-relay server configuration, remove these runtime overrides and restart the
+server. Use a mobile build without the background relay override. Existing T3 Connect credentials
+are not replaced.

@@ -16,6 +16,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import * as BackgroundRelayConfig from "./BackgroundRelayConfig.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -437,6 +439,30 @@ describe("AgentAwarenessRelay", () => {
       );
       assert.equal(publications[2]?.state?.updatedAt, publications[0]?.state?.updatedAt);
     }),
+  );
+
+  it.effect("publishes only to the background relay and still honors the sharing switch", () =>
+    Effect.gen(function* () {
+      const { relay, secrets, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.isTrue(publications[0]?.url.startsWith("https://background.example.test/") ?? false);
+      assert.equal(publications[0]?.authorization, "Bearer background-credential");
+      const publicCredential = yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
+      assert.equal(
+        Option.getOrNull(Option.map(publicCredential, (bytes) => new TextDecoder().decode(bytes))),
+        "credential-1",
+      );
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+    }).pipe(
+      Effect.provideService(BackgroundRelayConfig.BackgroundRelayConfig, {
+        url: "https://background.example.test",
+        issuer: "https://background.example.test",
+        environmentCredential: Redacted.make("background-credential"),
+      }),
+    ),
   );
 
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
@@ -974,47 +1000,69 @@ describe("AgentAwarenessRelay", () => {
   );
 });
 
-it.effect("catches up after startup without polling after success", () =>
-  Effect.gen(function* () {
-    const { relay, secrets, secretReads, catchUp, publications } = yield* makeTestRelay({
-      catchUpThreads: [shell()],
-    });
-    yield* relay.start();
-    yield* TestClock.adjust("1 second");
-    yield* relay.drain;
-    assert.equal(catchUp.activitySnapshotReads, 1);
-    assert.equal(publications.length, 1);
-    assert.include(publications[0]?.state, {
-      threadId: THREAD_ID,
-      projectTitle: "Project",
-      threadTitle: "Thread",
-      phase: "running",
-    });
+it.effect.each([false, true])(
+  "catches up after startup without polling after success (background relay: %s)",
+  (backgroundRelayConfigured) =>
+    Effect.gen(function* () {
+      const { relay, secrets, secretReads, catchUp, publications } = yield* makeTestRelay({
+        catchUpThreads: [shell()],
+        linked: !backgroundRelayConfigured,
+      });
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+      yield* relay.start();
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.equal(catchUp.activitySnapshotReads, 1);
+      assert.equal(
+        new URL(publications[0]?.url ?? "").origin,
+        backgroundRelayConfigured
+          ? "https://background.example.test"
+          : "https://relay.example.test",
+      );
+      assert.equal(publications.length, 1);
+      assert.include(publications[0]?.state, {
+        threadId: THREAD_ID,
+        projectTitle: "Project",
+        threadTitle: "Thread",
+        phase: "running",
+      });
 
-    yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
-    yield* relay.requestCatchUp();
-    yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.activitySnapshotReads, 1);
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.activitySnapshotReads, 1);
 
-    yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
-    yield* relay.requestCatchUp();
-    yield* TestClock.adjust("1 second");
-    assert.equal(catchUp.activitySnapshotReads, 2);
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      assert.equal(catchUp.activitySnapshotReads, 2);
 
-    const readsBeforeIdle = secretReads.length;
-    yield* TestClock.adjust("10 minutes");
-    assert.equal(catchUp.activitySnapshotReads, 2);
-    assert.equal(secretReads.length, readsBeforeIdle);
+      const readsBeforeIdle = secretReads.length;
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(catchUp.activitySnapshotReads, 2);
+      assert.equal(secretReads.length, readsBeforeIdle);
 
-    yield* secrets.set(
-      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-      new TextEncoder().encode("credential-2"),
-    );
-    yield* relay.requestCatchUp();
-    yield* TestClock.adjust("1 second");
-    yield* relay.drain;
-    assert.equal(catchUp.activitySnapshotReads, 3);
-    assert.equal(publications.length, 2);
-    assert.equal(publications[1]?.state?.threadId, THREAD_ID);
-  }).pipe(Effect.scoped),
+      yield* secrets.set(
+        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+        new TextEncoder().encode("credential-2"),
+      );
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.equal(catchUp.activitySnapshotReads, 3);
+      assert.equal(publications.length, backgroundRelayConfigured ? 1 : 2);
+      assert.equal(publications.at(-1)?.state?.threadId, THREAD_ID);
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(
+        BackgroundRelayConfig.BackgroundRelayConfig,
+        backgroundRelayConfigured
+          ? {
+              url: "https://background.example.test",
+              issuer: "https://background.example.test",
+              environmentCredential: Redacted.make("background-credential"),
+            }
+          : null,
+      ),
+    ),
 );
