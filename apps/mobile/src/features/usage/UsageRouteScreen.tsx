@@ -910,8 +910,6 @@ function projectDetail(
   if (row.kind === "project") {
     if (showEnvironment) qualifiers.push(row.environmentLabel);
     if (row.duplicateTitleId !== null) qualifiers.push(`ID ${row.duplicateTitleId}`);
-  } else {
-    qualifiers.push("Not tied to one T3 project");
   }
   const partial = !unknown && row.unpricedRecords > 0 ? " · some unpriced" : "";
   const figure =

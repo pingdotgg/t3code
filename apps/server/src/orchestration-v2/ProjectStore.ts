@@ -1,7 +1,6 @@
 import {
   type ApplicationProjectEvent,
   IsoDateTime,
-  type UsageProject,
   ModelSelection,
   type OrchestrationProjectShell,
   StoredProjectIcon,
@@ -56,16 +55,14 @@ const ProjectDbRow = Schema.Struct({
   scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
 });
 
-const UsageProjectAttributionRow = Schema.Struct({
+const ProviderSessionProjectRow = Schema.Struct({
   driver: Schema.String,
   nativeId: Schema.String,
   projectId: ProjectId,
   title: Schema.String,
   workspaceRoot: Schema.String,
 });
-
-export const usageProjectSessionKey = (driver: string, nativeId: string) =>
-  `${driver}\u0000${nativeId}`;
+export type ProviderSessionProjectRow = typeof ProviderSessionProjectRow.Type;
 
 function toShell(row: ProjectRow): OrchestrationProjectShell {
   return {
@@ -99,9 +96,9 @@ export class ProjectStoreV2 extends Context.Service<
       readonly projectIds?: ReadonlyArray<ProjectId>;
       readonly includeDeleted?: boolean;
     }) => Effect.Effect<ReadonlyArray<ProjectRow>, ProjectStoreV2Error>;
-    /** Keyed by `usageProjectSessionKey`; deleted projects keep their past usage. */
-    readonly listUsageProjectAttributions: () => Effect.Effect<
-      ReadonlyMap<string, UsageProject>,
+    /** One row per provider session a thread ran, with that thread's project, deleted or not. */
+    readonly listProviderSessionProjects: () => Effect.Effect<
+      ReadonlyArray<ProviderSessionProjectRow>,
       ProjectStoreV2Error
     >;
     /** Workspace roots match by exact string; callers normalize before asking. */
@@ -159,9 +156,10 @@ export const make = Effect.gen(function* () {
     `,
   });
 
-  const selectUsageProjectAttributionRows = SqlSchema.findAll({
+  // Worktree threads keep their project's id, so their sessions land on the project.
+  const selectProviderSessionProjects = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: UsageProjectAttributionRow,
+    Result: ProviderSessionProjectRow,
     execute: () => sql`
       SELECT
         provider_thread.driver AS "driver",
@@ -252,32 +250,11 @@ export const make = Effect.gen(function* () {
       includeDeleted: options?.includeDeleted === true,
     }).pipe(NodeSqliteClient.readOnly, mapError("list"));
 
-  const listUsageProjectAttributions: ProjectStoreV2["Service"]["listUsageProjectAttributions"] =
+  const listProviderSessionProjects: ProjectStoreV2["Service"]["listProviderSessionProjects"] =
     () =>
-      selectUsageProjectAttributionRows(undefined).pipe(
+      selectProviderSessionProjects(undefined).pipe(
         NodeSqliteClient.readOnly,
-        Effect.map((rows) => {
-          const projects = new Map<string, UsageProject | null>();
-          for (const row of rows) {
-            const key = usageProjectSessionKey(row.driver, row.nativeId);
-            const existing = projects.get(key);
-            if (existing !== undefined) {
-              if (existing?.projectId !== row.projectId) projects.set(key, null);
-              continue;
-            }
-            const title =
-              row.title.trim() ||
-              row.workspaceRoot.split(/[\\/]/).findLast((part) => part.length > 0) ||
-              "Untitled project";
-            projects.set(key, { projectId: row.projectId, title });
-          }
-          const resolved = new Map<string, UsageProject>();
-          for (const [key, project] of projects) {
-            if (project !== null) resolved.set(key, project);
-          }
-          return resolved;
-        }),
-        mapError("listUsageProjectAttributions"),
+        mapError("listProviderSessionProjects"),
       );
 
   const findActiveByWorkspaceRoot: ProjectStoreV2["Service"]["findActiveByWorkspaceRoot"] = (
@@ -346,7 +323,7 @@ export const make = Effect.gen(function* () {
     apply,
     get,
     list,
-    listUsageProjectAttributions,
+    listProviderSessionProjects,
     findActiveByWorkspaceRoot,
     getShell: Effect.fn("ProjectStoreV2.getShell")(function (projectId) {
       return get(projectId).pipe(Effect.map(Option.map(toShell)));

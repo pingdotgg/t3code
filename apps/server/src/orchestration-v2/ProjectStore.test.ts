@@ -97,7 +97,7 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
       }),
     );
 
-    it.effect("attributes provider sessions to one project", () =>
+    it.effect("lists each provider session with its thread's project", () =>
       Effect.gen(function* () {
         const projects = yield* ProjectStore.ProjectStoreV2;
         const sql = yield* SqlClient.SqlClient;
@@ -123,17 +123,15 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
         yield* binding("pt-ambiguous-app", "t-main", "ambiguous");
         yield* binding("pt-ambiguous-other", "t-other", "ambiguous");
 
-        const attributions = yield* projects.listUsageProjectAttributions();
+        const rows = yield* projects.listProviderSessionProjects();
         assert.deepStrictEqual(
-          attributions.get(ProjectStore.usageProjectSessionKey("claudeAgent", "bound")),
-          { projectId: ProjectId.make("p-app"), title: "App" },
-        );
-        assert.deepStrictEqual(
-          attributions.get(ProjectStore.usageProjectSessionKey("claudeAgent", "worktree")),
-          { projectId: ProjectId.make("p-app"), title: "App" },
-        );
-        assert.isFalse(
-          attributions.has(ProjectStore.usageProjectSessionKey("claudeAgent", "ambiguous")),
+          rows.map((row) => `${row.nativeId} ${row.projectId} ${row.title}`).sort(),
+          [
+            "ambiguous p-app App",
+            "ambiguous p-other Other",
+            "bound p-app App",
+            "worktree p-app App",
+          ],
         );
       }),
     );
