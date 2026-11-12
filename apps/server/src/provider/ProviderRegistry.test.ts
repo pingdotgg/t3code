@@ -3746,5 +3746,42 @@ it.layer(
         ),
       ),
     );
+
+    it.effect("advertises 1M and 200K on custom models tagged [1m]", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          {
+            ...defaultClaudeSettings,
+            customModels: [
+              { slug: "gateway-route[1m]", name: "Gateway route" },
+              { slug: "gateway-route", name: "Gateway route 200K" },
+            ],
+          },
+          claudeCapabilities(),
+        );
+        const tagged = status.models.find((model) => model.slug === "gateway-route[1m]");
+        assert.deepStrictEqual(tagged?.capabilities?.optionDescriptors, [
+          {
+            id: "contextWindow",
+            label: "Context Window",
+            type: "select",
+            options: [
+              { id: "1m", label: "1M", isDefault: true },
+              { id: "200k", label: "200k" },
+            ],
+          },
+        ]);
+        const plain = status.models.find((model) => model.slug === "gateway-route");
+        assert.deepStrictEqual(plain?.capabilities?.optionDescriptors, []);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
   });
 });

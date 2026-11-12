@@ -97,6 +97,21 @@ describe("compileClaudeModelSelection", () => {
     }
   });
 
+  it("sends the untagged id for a custom [1m] model at 200K", () => {
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, [
+      { slug: "gateway-route[1m]", name: "Gateway route" },
+    ]);
+    expect(
+      compileClaudeModelSelection(selection("gateway-route[1m]", []), catalog).apiModelId,
+    ).toBe("gateway-route[1m]");
+    expect(
+      compileClaudeModelSelection(
+        selection("gateway-route[1m]", [{ id: "contextWindow", value: "200k" }]),
+        catalog,
+      ).apiModelId,
+    ).toBe("gateway-route");
+  });
+
   it("uses the model default SDK effort alongside prompt-injected effort", () => {
     expect(
       compileClaudeModelSelection(
