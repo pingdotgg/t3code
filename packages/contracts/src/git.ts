@@ -242,6 +242,7 @@ export type VcsCreateRefResult = typeof VcsCreateRefResult.Type;
 export const VcsSwitchRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
+  requireClean: Schema.optional(Schema.Boolean),
 });
 export type VcsSwitchRefInput = typeof VcsSwitchRefInput.Type;
 

@@ -4288,6 +4288,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("refName operations", () => {
+    it.effect.each([undefined, "HEAD", "master", "refs/heads/master"])(
+      "creates and switches an unborn branch from %s without changing staged or untracked files",
+      (baseRefName) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["init", "--initial-branch=master"]);
+          yield* writeTextFile(cwd, "staged.txt", "staged\n");
+          yield* git(cwd, ["add", "staged.txt"]);
+          yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+          const before = yield* git(cwd, ["status", "--porcelain"]);
+
+          yield* driver
+            .createRef({ cwd, refName: "feature/invalid", baseRefName: "missing", switchRef: true })
+            .pipe(Effect.flip);
+          yield* driver.createRef({ cwd, refName: "feature/no-switch" }).pipe(Effect.flip);
+          assert.equal(yield* git(cwd, ["symbolic-ref", "--short", "HEAD"]), "master");
+          const created = yield* driver.createRef({
+            cwd,
+            refName: "feature/first",
+            baseRefName,
+            switchRef: true,
+          });
+
+          assert.equal(created.refName, "feature/first");
+          assert.equal(yield* git(cwd, ["symbolic-ref", "--short", "HEAD"]), "feature/first");
+          assert.equal(yield* git(cwd, ["status", "--porcelain"]), before);
+          assert.equal(yield* git(cwd, ["rev-list", "--all", "--count"]), "0");
+        }),
+    );
+
     it.effect("creates refs from the selected local or remote base instead of HEAD", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -4501,6 +4532,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(renamed.branch, "t3-fix-login-1");
         assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3-fix-login-1");
       }),
+    );
+
+    it.effect(
+      "requires a clean checkout for guarded branch switches and refuses branches owned by another worktree",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["branch", "target"]);
+          const attempt = driver.switchRef({ cwd, refName: "target", requireClean: true });
+          yield* writeTextFile(cwd, "local.txt", "untracked\n");
+          assert.equal((yield* attempt.pipe(Effect.result))._tag, "Failure");
+          yield* git(cwd, ["add", "local.txt"]);
+          assert.equal((yield* attempt.pipe(Effect.result))._tag, "Failure");
+          yield* git(cwd, ["commit", "-m", "local file"]);
+          yield* writeTextFile(cwd, "local.txt", "modified\n");
+          assert.equal((yield* attempt.pipe(Effect.result))._tag, "Failure");
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+          yield* git(cwd, ["restore", "local.txt"]);
+          assert.equal((yield* attempt).refName, "target");
+          const other = yield* makeTmpDir("stack-switch-worktree-");
+          yield* git(cwd, ["worktree", "add", other, initialBranch]);
+          const blocked = yield* driver
+            .switchRef({ cwd, refName: initialBranch, requireClean: true })
+            .pipe(Effect.result);
+          assert.equal(blocked._tag, "Failure");
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), "target");
+          yield* git(cwd, ["worktree", "remove", other]);
+        }),
     );
 
     it.effect("rejects a missing branch without restoring a matching dirty file", () =>

@@ -5105,6 +5105,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
     function* (input) {
+      if (input.requireClean) {
+        const changes = yield* runGitStdout("GitVcsDriver.switchRef.cleanCheckout", input.cwd, [
+          "status",
+          "--porcelain",
+          "--untracked-files=normal",
+        ]);
+        if (changes.trim())
+          return yield* new GitCommandError({
+            operation: "GitVcsDriver.switchRef",
+            command: "git",
+            cwd: input.cwd,
+            detail: "Commit or stash your changes before switching branches.",
+          });
+      }
       const [localInputExists, remoteExists] = yield* Effect.all(
         [
           executeGit(
@@ -5198,7 +5212,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const createRef: GitVcsDriver.GitVcsDriver["Service"]["createRef"] = Effect.fn("createRef")(
     function* (input) {
-      yield* executeGit(
+      const created = yield* executeGit(
         "GitVcsDriver.createRef",
         input.cwd,
         ["branch", "--", input.refName, ...(input.baseRefName ? [input.baseRefName] : [])],
@@ -5208,7 +5222,46 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           // `branch.autoSetupMerge=always` records HEAD's branch as the upstream.
           writesSharedConfig: true,
         },
-      );
+      ).pipe(Effect.result);
+      if (Result.isFailure(created)) {
+        if (!input.switchRef || created.failure.reason !== "ref_not_found") {
+          return yield* created.failure;
+        }
+        const head = yield* executeGit(
+          "GitVcsDriver.createRef.head",
+          input.cwd,
+          ["rev-parse", "--verify", "HEAD"],
+          { allowNonZeroExit: true },
+        );
+        if (head.exitCode === 0) return yield* created.failure;
+        const symbolicHead = yield* executeGit(
+          "GitVcsDriver.createRef.symbolicHead",
+          input.cwd,
+          ["symbolic-ref", "--quiet", "HEAD"],
+          { allowNonZeroExit: true },
+        );
+        const headRef = symbolicHead.stdout.trim();
+        if (
+          symbolicHead.exitCode !== 0 ||
+          (input.baseRefName &&
+            !["HEAD", headRef, headRef.replace(/^refs\/heads\//, "")].includes(input.baseRefName))
+        ) {
+          return yield* created.failure;
+        }
+        // Before the first commit, only checkout can select a new unborn branch.
+        yield* refuseOptionLikeRefName("GitVcsDriver.createRef", input.cwd, input.refName);
+        yield* executeGit(
+          "GitVcsDriver.createRef",
+          input.cwd,
+          ["checkout", "-b", input.refName, "--"],
+          {
+            timeoutMs: 10_000,
+            fallbackErrorDetail: "git branch create failed",
+            writesSharedConfig: true,
+          },
+        );
+        return { refName: input.refName };
+      }
       if (input.switchRef) {
         yield* switchRef({ cwd: input.cwd, refName: input.refName });
       }

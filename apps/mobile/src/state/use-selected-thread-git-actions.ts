@@ -245,14 +245,14 @@ export function useSelectedThreadGitActions() {
       : AsyncResult.success(undefined);
   };
 
-  const onCheckoutSelectedThreadBranch = async (branch: string) => {
+  const onCheckoutSelectedThreadBranch = async (branch: string, requireClean = false) => {
     return runSelectedThreadGitMutation(
       "switch_ref",
       "Switching branch",
       async ({ thread, cwd }) => {
         const result = await switchRef({
           environmentId: thread.environmentId,
-          input: { cwd, refName: branch },
+          input: { cwd, refName: branch, ...(requireClean ? { requireClean: true } : {}) },
         });
         if (AsyncResult.isFailure(result)) {
           return result;
