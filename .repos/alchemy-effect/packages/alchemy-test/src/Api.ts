@@ -10,10 +10,9 @@ import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
-
-import type { Hook, Mode, TestBody } from "./Model.ts";
+import type { Exclusive, Hook, Mode, TestBody } from "./Model.ts";
 import { makeSuite } from "./Model.ts";
-import { currentSuite, withSuite } from "./Registry.ts";
+import { currentFileSuite, currentSuite, withSuite } from "./Registry.ts";
 import { mergeTags, type Tags } from "./Tags.ts";
 
 // ---------------------------------------------------------------------------
@@ -31,13 +30,17 @@ export type TestOptions =
       readonly retry?: number;
       readonly repeats?: number;
       /**
-       * Run this test with the whole-process write lock — no other test in
-       * the run executes concurrently with it. Use for tests that mutate
-       * process-global state (e.g. `process.env.PATH`): the runner executes
-       * everything in ONE bun process, so such mutations are visible to every
-       * other running test.
+       * `true` runs this test with the whole-process write lock — no other
+       * test in the run executes concurrently with it. Use for tests that
+       * mutate process-global state (e.g. `process.env.PATH`): the runner
+       * executes everything in ONE bun process, so such mutations are
+       * visible to every other running test.
+       *
+       * A label (e.g. `"hetzner"`) only serializes the test with others
+       * holding the same label, so unrelated tests keep running. Use it for
+       * a shared cloud quota.
        */
-      readonly exclusive?: boolean;
+      readonly exclusive?: Exclusive;
     };
 
 export const timeoutOf = (options?: TestOptions): number | undefined =>
@@ -46,8 +49,8 @@ export const timeoutOf = (options?: TestOptions): number | undefined =>
 export const retryOf = (options?: TestOptions): number | undefined =>
   typeof options === "object" && options !== null ? options.retry : undefined;
 
-export const exclusiveOf = (options?: TestOptions): boolean =>
-  typeof options === "object" && options !== null && options.exclusive === true;
+export const exclusiveOf = (options?: TestOptions): Exclusive =>
+  typeof options === "object" && options !== null ? (options.exclusive ?? false) : false;
 
 export const tagsOf = (options?: TestOptions): Tags | undefined =>
   typeof options === "object" ? options?.tags : undefined;
@@ -152,10 +155,8 @@ const makeDescribe = (config: DescribeConfig): DescribeFn => {
           );
         });
       },
-    skipIf: (condition: unknown) =>
-      makeDescribe(condition ? { ...config, mode: "skip" } : config),
-    runIf: (condition: unknown) =>
-      makeDescribe(condition ? config : { ...config, mode: "skip" }),
+    skipIf: (condition: unknown) => makeDescribe(condition ? { ...config, mode: "skip" } : config),
+    runIf: (condition: unknown) => makeDescribe(condition ? config : { ...config, mode: "skip" }),
   });
   // Lazy getters — Object.assign would evaluate them eagerly and recurse
   // forever (each modifier constructs another DescribeFn).
@@ -185,7 +186,7 @@ export interface RegisterTestOptions {
   readonly name: string;
   readonly mode: Mode;
   readonly fails?: boolean;
-  readonly exclusive?: boolean;
+  readonly exclusive?: Exclusive;
   readonly retry?: number | undefined;
   readonly timeout?: number | undefined;
   readonly body: TestBody | undefined;
@@ -234,9 +235,7 @@ const emptyContext: TestContext = {};
  */
 const TestEnv = Layer.mergeAll(TestConsole.layer, TestClock.layer());
 
-export type EffectTestFunction<R> = (
-  ctx: TestContext,
-) => Effect.Effect<unknown, unknown, R>;
+export type EffectTestFunction<R> = (ctx: TestContext) => Effect.Effect<unknown, unknown, R>;
 
 export interface Tester<R> {
   (name: string, self: EffectTestFunction<R>, options?: TestOptions): void;
@@ -259,9 +258,7 @@ export interface Tester<R> {
 }
 
 export const makeTester = <R>(
-  mapEffect: (
-    self: Effect.Effect<unknown, unknown, R>,
-  ) => Effect.Effect<unknown, unknown, never>,
+  mapEffect: (self: Effect.Effect<unknown, unknown, R>) => Effect.Effect<unknown, unknown, never>,
 ): Tester<R> => {
   const register = (
     name: string,
@@ -281,18 +278,15 @@ export const makeTester = <R>(
       ...overrides,
     });
 
-  const fn = ((name, self, options) =>
-    register(name, self, options)) as Tester<R>;
+  const fn = ((name, self, options) => register(name, self, options)) as Tester<R>;
   return Object.assign(fn, {
     skip: (name: string, self: EffectTestFunction<R>, options?: TestOptions) =>
       register(name, self, options, { mode: "skip" }),
     skipIf:
-      (condition: unknown) =>
-      (name: string, self: EffectTestFunction<R>, options?: TestOptions) =>
+      (condition: unknown) => (name: string, self: EffectTestFunction<R>, options?: TestOptions) =>
         register(name, self, options, { mode: condition ? "skip" : "run" }),
     runIf:
-      (condition: unknown) =>
-      (name: string, self: EffectTestFunction<R>, options?: TestOptions) =>
+      (condition: unknown) => (name: string, self: EffectTestFunction<R>, options?: TestOptions) =>
         register(name, self, options, { mode: condition ? "run" : "skip" }),
     only: (name: string, self: EffectTestFunction<R>, options?: TestOptions) =>
       register(name, self, options, { mode: "only" }),
@@ -306,11 +300,7 @@ export const makeTester = <R>(
         options?: TestOptions,
       ) => {
         cases.forEach((args, index) => {
-          register(
-            formatEachName(name, args, index),
-            () => self(args),
-            options,
-          );
+          register(formatEachName(name, args, index), () => self(args), options);
         });
       },
   });
@@ -347,52 +337,22 @@ const formatEachName = (name: string, args: unknown, index: number): string => {
 // ---------------------------------------------------------------------------
 
 export interface TestFn {
-  (
-    name: string,
-    fn?: (ctx: TestContext) => unknown,
-    options?: TestOptions,
-  ): void;
-  skip(
-    name: string,
-    fn?: (ctx: TestContext) => unknown,
-    options?: TestOptions,
-  ): void;
-  only(
-    name: string,
-    fn?: (ctx: TestContext) => unknown,
-    options?: TestOptions,
-  ): void;
-  todo(
-    name: string,
-    fn?: (ctx: TestContext) => unknown,
-    options?: TestOptions,
-  ): void;
-  fails(
-    name: string,
-    fn?: (ctx: TestContext) => unknown,
-    options?: TestOptions,
-  ): void;
+  (name: string, fn?: (ctx: TestContext) => unknown, options?: TestOptions): void;
+  skip(name: string, fn?: (ctx: TestContext) => unknown, options?: TestOptions): void;
+  only(name: string, fn?: (ctx: TestContext) => unknown, options?: TestOptions): void;
+  todo(name: string, fn?: (ctx: TestContext) => unknown, options?: TestOptions): void;
+  fails(name: string, fn?: (ctx: TestContext) => unknown, options?: TestOptions): void;
   skipIf(
     condition: unknown,
-  ): (
-    name: string,
-    fn?: (ctx: TestContext) => unknown,
-    options?: TestOptions,
-  ) => void;
+  ): (name: string, fn?: (ctx: TestContext) => unknown, options?: TestOptions) => void;
   runIf(
     condition: unknown,
-  ): (
-    name: string,
-    fn?: (ctx: TestContext) => unknown,
-    options?: TestOptions,
-  ) => void;
+  ): (name: string, fn?: (ctx: TestContext) => unknown, options?: TestOptions) => void;
   each<T>(
     cases: ReadonlyArray<T>,
   ): (name: string, fn: (args: T) => unknown, options?: TestOptions) => void;
   /** Effect tester with TestClock + TestConsole (matches @effect/vitest). */
-  readonly effect: Tester<
-    Scope.Scope | TestClock.TestClock | TestConsole.TestConsole
-  >;
+  readonly effect: Tester<Scope.Scope | TestClock.TestClock | TestConsole.TestConsole>;
   /** Effect tester against the live environment (scope only). */
   readonly live: Tester<Scope.Scope>;
 }
@@ -417,66 +377,34 @@ const registerFnTest = (
   });
 
 const makeTestFn = (): TestFn => {
-  const fn = ((name, body, options) =>
-    registerFnTest(name, body, options, "run")) as TestFn;
+  const fn = ((name, body, options) => registerFnTest(name, body, options, "run")) as TestFn;
   return Object.assign(fn, {
-    skip: (
-      name: string,
-      body?: (ctx: TestContext) => unknown,
-      options?: TestOptions,
-    ) => registerFnTest(name, body, options, "skip"),
-    only: (
-      name: string,
-      body?: (ctx: TestContext) => unknown,
-      options?: TestOptions,
-    ) => registerFnTest(name, body, options, "only"),
-    todo: (
-      name: string,
-      body?: (ctx: TestContext) => unknown,
-      options?: TestOptions,
-    ) => registerFnTest(name, body, options, "todo"),
-    fails: (
-      name: string,
-      body?: (ctx: TestContext) => unknown,
-      options?: TestOptions,
-    ) => registerFnTest(name, body, options, "run", true),
+    skip: (name: string, body?: (ctx: TestContext) => unknown, options?: TestOptions) =>
+      registerFnTest(name, body, options, "skip"),
+    only: (name: string, body?: (ctx: TestContext) => unknown, options?: TestOptions) =>
+      registerFnTest(name, body, options, "only"),
+    todo: (name: string, body?: (ctx: TestContext) => unknown, options?: TestOptions) =>
+      registerFnTest(name, body, options, "todo"),
+    fails: (name: string, body?: (ctx: TestContext) => unknown, options?: TestOptions) =>
+      registerFnTest(name, body, options, "run", true),
     skipIf:
       (condition: unknown) =>
-      (
-        name: string,
-        body?: (ctx: TestContext) => unknown,
-        options?: TestOptions,
-      ) =>
+      (name: string, body?: (ctx: TestContext) => unknown, options?: TestOptions) =>
         registerFnTest(name, body, options, condition ? "skip" : "run"),
     runIf:
       (condition: unknown) =>
-      (
-        name: string,
-        body?: (ctx: TestContext) => unknown,
-        options?: TestOptions,
-      ) =>
+      (name: string, body?: (ctx: TestContext) => unknown, options?: TestOptions) =>
         registerFnTest(name, body, options, condition ? "run" : "skip"),
     each:
       <T>(cases: ReadonlyArray<T>) =>
       (name: string, body: (args: T) => unknown, options?: TestOptions) => {
         cases.forEach((args, index) => {
-          registerFnTest(
-            formatEachName(name, args, index),
-            () => body(args),
-            options,
-            "run",
-          );
+          registerFnTest(formatEachName(name, args, index), () => body(args), options, "run");
         });
       },
-    effect: makeTester<
-      Scope.Scope | TestClock.TestClock | TestConsole.TestConsole
-    >(
+    effect: makeTester<Scope.Scope | TestClock.TestClock | TestConsole.TestConsole>(
       (self) =>
-        self.pipe(Effect.scoped, Effect.provide(TestEnv)) as Effect.Effect<
-          unknown,
-          unknown,
-          never
-        >,
+        self.pipe(Effect.scoped, Effect.provide(TestEnv)) as Effect.Effect<unknown, unknown, never>,
     ),
     live: makeTester<Scope.Scope>((self) => Effect.scoped(self)),
   });
@@ -490,6 +418,11 @@ export const test: TestFn = it;
 // ---------------------------------------------------------------------------
 
 export type HookKind = "beforeAll" | "afterAll" | "beforeEach" | "afterEach";
+
+/** Framework cleanup after user teardown, including files with no runnable tests. */
+export const registerFileCleanup = (hook: Hook): void => {
+  currentFileSuite().cleanups.push(hook);
+};
 
 /** Low-level hook registration with an Effect body — used by adapters. */
 export const registerHook = (kind: HookKind, hook: Hook): void => {
@@ -517,9 +450,7 @@ export const afterEach = (fn: () => unknown, timeout?: number): void =>
 // ---------------------------------------------------------------------------
 
 export interface LayerMethods<R> {
-  effect: Tester<
-    R | Scope.Scope | TestClock.TestClock | TestConsole.TestConsole
-  >;
+  effect: Tester<R | Scope.Scope | TestClock.TestClock | TestConsole.TestConsole>;
   layer<R2, E2>(
     nested: Layer.Layer<R2, E2, R>,
     options?: { readonly timeout?: number },
@@ -542,9 +473,7 @@ export const layer =
     (name: string, f: (it: LayerMethods<R>) => void): void;
   } =>
   (
-    ...args:
-      | [name: string, f: (it: LayerMethods<R>) => void]
-      | [f: (it: LayerMethods<R>) => void]
+    ...args: [name: string, f: (it: LayerMethods<R>) => void] | [f: (it: LayerMethods<R>) => void]
   ): void => {
     const excludeTestServices = options?.excludeTestServices ?? false;
     const withTestEnv = excludeTestServices
@@ -552,40 +481,35 @@ export const layer =
       : Layer.provideMerge(layer_, TestEnv);
     const memoMap = options?.memoMap ?? Effect.runSync(Layer.makeMemoMap);
     const scope = Scope.makeUnsafe();
-    const contextEffect = Layer.buildWithMemoMap(
-      withTestEnv,
-      memoMap,
-      scope,
-    ).pipe(Effect.orDie, Effect.cached, Effect.runSync);
+    const contextEffect = Layer.buildWithMemoMap(withTestEnv, memoMap, scope).pipe(
+      Effect.orDie,
+      Effect.cached,
+      Effect.runSync,
+    );
 
     const makeMethods = (): LayerMethods<R> => ({
-      effect: makeTester<
-        R | Scope.Scope | TestClock.TestClock | TestConsole.TestConsole
-      >(
+      effect: makeTester<R | Scope.Scope | TestClock.TestClock | TestConsole.TestConsole>(
         (self) =>
           Effect.flatMap(contextEffect, (context) =>
             self.pipe(Effect.scoped, Effect.provide(context)),
           ) as Effect.Effect<unknown, unknown, never>,
       ),
       layer: (nested, nestedOptions) =>
-        layer(
-          Layer.provideMerge(nested, withTestEnv) as Layer.Layer<any, any>,
-          {
-            ...nestedOptions,
-            memoMap: Layer.forkMemoMapUnsafe(memoMap),
-            excludeTestServices,
-          },
-        ) as any,
+        layer(Layer.provideMerge(nested, withTestEnv) as Layer.Layer<any, any>, {
+          ...nestedOptions,
+          memoMap: Layer.forkMemoMapUnsafe(memoMap),
+          excludeTestServices,
+        }) as any,
     });
 
     const register = (): void => {
-      registerHook("afterAll", {
+      const cleanup: Hook = {
         body: () => Scope.close(scope, Exit.void),
         timeout: options?.timeout,
-      });
-      const f = (args.length === 1 ? args[0] : args[1]) as (
-        it: LayerMethods<R>,
-      ) => void;
+      };
+      registerHook("afterAll", cleanup);
+      registerFileCleanup(cleanup);
+      const f = (args.length === 1 ? args[0] : args[1]) as (it: LayerMethods<R>) => void;
       f(makeMethods());
     };
 

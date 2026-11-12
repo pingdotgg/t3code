@@ -8,6 +8,7 @@ import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AntigravitySettings,
   EnvironmentId,
   type ClaudeSettings,
   type CodexSettings,
@@ -20,6 +21,7 @@ import {
   type SecretReference,
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -46,6 +48,7 @@ import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 import { ProviderDriverError } from "./Errors.ts";
+import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
@@ -123,8 +126,12 @@ const makeTildeProviderFixtures = Effect.fn(
     directory: homePath,
     prefix: ".t3-provider-path-test-",
   });
+  yield* fileSystem.writeFileString(
+    path.join(fixtureDir, "package.json"),
+    JSON.stringify({ type: "commonjs" }),
+  );
   const codexPath = path.join(fixtureDir, "codex");
-  const claudePath = path.join(fixtureDir, "claude");
+  const claudePath = path.join(fixtureDir, "claude.mjs");
   const claudeHomePath = path.join(fixtureDir, "claude-home");
   const codexScriptPath = path.join(fixtureDir, "codex-script.json");
   const codexFixtureDir = path.join(import.meta.dirname, "testFixtures");
@@ -198,6 +205,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     ),
     Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(McpProviderSessions.layer),
+    Layer.provideMerge(ProviderInstallationGate.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
@@ -466,6 +474,93 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("applies the lowest maxEffortLevel across Claude's settings sources", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const claudeId = ProviderInstanceId.make("claude_source_effort_cap");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [
+              {
+                name: "T3_CLAUDE_SETTINGS_SOURCES",
+                // The merged `effective` settings read as exempting Opus 5; the flag tier's
+                // top-level cap still applies to it.
+                value: JSON.stringify([
+                  {
+                    source: "userSettings",
+                    settings: { modelSettings: { "claude-opus-5": { maxEffortLevel: "max" } } },
+                  },
+                  { source: "flagSettings", settings: { maxEffortLevel: "high" } },
+                ]),
+                sensitive: false,
+              },
+            ],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+
+      const snapshot = yield* claude!.snapshot.refresh;
+      const maxLabel = snapshot.models
+        .find((model) => model.slug === "claude-opus-5")
+        ?.capabilities?.optionDescriptors?.flatMap((descriptor) =>
+          descriptor.id === "effort" && descriptor.type === "select"
+            ? descriptor.options.filter((option) => option.id === "max")
+            : [],
+        )[0]?.label;
+      expect(maxLabel).toBe("Max (capped to High)");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("keeps usage and uncapped efforts when the CLI rejects get_settings", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const claudeId = ProviderInstanceId.make("claude_settings_unsupported");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [{ name: "T3_CLAUDE_SETTINGS_UNSUPPORTED", value: "1", sensitive: false }],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+
+      const snapshot = yield* claude!.snapshot.refresh;
+      const effortLabels = snapshot.models.flatMap((model) =>
+        (model.capabilities?.optionDescriptors ?? []).flatMap((descriptor) =>
+          descriptor.id === "effort" && descriptor.type === "select"
+            ? descriptor.options.map((option) => option.label)
+            : [],
+        ),
+      );
+      expect(effortLabels).toContain("Max");
+      expect(effortLabels.some((label) => label.includes("capped"))).toBe(false);
+      expect(snapshot.auth).toMatchObject({ status: "authenticated", email: "test@example.com" });
+      expect(snapshot.usageLimits?.windows[0]?.usedPercent).toBe(100);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
     Effect.gen(function* () {
       if (yield* HostProcess.isWindows) return;
@@ -662,7 +757,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const before = yield* instance!.snapshot.refresh;
       expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
       expect(before.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
-      const outcome = yield* instance!.consumeResetCredit!().pipe(Effect.result);
+      const outcome = yield* instance!.consumeResetCredit!(undefined).pipe(Effect.result);
       return { outcome, after: yield* instance!.snapshot.getSnapshot };
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
@@ -843,6 +938,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
     };
     const gate = Deferred.makeUnsafe<void>();
     const resolver = Layer.succeed(SecretResolver.SecretResolver, {
+      label: (provider) => Effect.succeed(provider),
       read: (references) =>
         Deferred.await(gate).pipe(
           Effect.andThen(
@@ -878,7 +974,7 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* PubSub.take(changes);
       return built;
     });
-    return { vault, reads, invalidated, created, configs, make, makeGated, gate };
+    return { vault, reads, invalidated, created, configs, configMap, make, makeGated, gate };
   }
 
   it.effect("starts an instance with the secret its environment points at", () => {
@@ -896,16 +992,26 @@ describe("ProviderInstanceRegistry secret environment", () => {
     }).pipe(Effect.scoped);
   });
 
-  it.effect("marks an instance unavailable and names the variable it could not read", () => {
-    const fixture = setup({});
+  // An empty secret must not let a driver fall back to a credential the server inherited.
+  it.effect.each([
+    ["missing", {}],
+    ["empty", { [secret.reference]: " " }],
+  ] as const)("marks an instance unavailable when its secret is %s", ([, initial]) => {
+    const fixture = setup(initial);
     return Effect.gen(function* () {
-      const { registry } = yield* fixture.make;
+      const { registry, mutator } = yield* fixture.make;
+      const readsAtStartup = fixture.reads.length;
 
       expect(yield* registry.getInstance(instanceId)).toBeUndefined();
       expect(fixture.created).toEqual([]);
       const [unavailable] = yield* registry.listUnavailable;
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.unavailableReason).toContain("OPENAI_API_KEY");
+
+      // A settings save that leaves it alone does not read the vault again.
+      yield* mutator.reconcile({ ...fixture.configMap });
+      expect(fixture.reads).toHaveLength(readsAtStartup);
+      expect(yield* registry.listUnavailable).toHaveLength(1);
     }).pipe(Effect.scoped);
   });
 
@@ -961,6 +1067,22 @@ describe("ProviderInstanceRegistry secret environment", () => {
         { apiKey: "gw-live", model: "m" },
         { apiKey: "gw-rotated", model: "m" },
       ]);
+    }).pipe(Effect.scoped);
+  });
+
+  it.effect.each([
+    { name: "Antigravity apiKey", schema: AntigravitySettings, field: "apiKey" },
+    { name: "OpenCode serverPassword", schema: OpenCodeSettings, field: "serverPassword" },
+  ])("hands the driver the secret its $name names", ({ schema, field }) => {
+    const reference: SecretReference = { ...secret, reference: "op://Private/Provider/key" };
+    const fixture = setup(
+      { [secret.reference]: "sk-live", [reference.reference]: "provider-live" },
+      schema,
+      { enabled: true, [field]: reference },
+    );
+    return Effect.gen(function* () {
+      yield* fixture.make;
+      expect(fixture.configs).toEqual([expect.objectContaining({ [field]: "provider-live" })]);
     }).pipe(Effect.scoped);
   });
 

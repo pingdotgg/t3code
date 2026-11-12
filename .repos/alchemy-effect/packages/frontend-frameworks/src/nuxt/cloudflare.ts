@@ -50,8 +50,7 @@ export const NITRO_PRESET = "cloudflare_module";
  * export default nitroHandler;
  * ```
  */
-export const NITRO_HANDLER_SPECIFIER =
-  "nitropack/presets/cloudflare/runtime/cloudflare-module";
+export const NITRO_HANDLER_SPECIFIER = "nitropack/presets/cloudflare/runtime/cloudflare-module";
 
 /**
  * Create the Cloudflare Workers {@link NuxtTarget}. See the module doc for
@@ -59,9 +58,7 @@ export const NITRO_HANDLER_SPECIFIER =
  * carried for serve/deploy consumers; the build itself only needs
  * `nodeCompat` (default `true`) and the optional user `main`.
  */
-export const makeCloudflareTarget = (
-  config: NuxtTargetConfig = {},
-): NuxtTarget =>
+export const makeCloudflareTarget = (config: NuxtTargetConfig = {}): NuxtTarget =>
   makeDeployTarget({
     platform: "cloudflare",
     config,
@@ -73,8 +70,7 @@ export const makeCloudflareTarget = (
     nitroPreset: NITRO_PRESET,
     configureNitro: (nitroConfig, _context) => {
       const cloudflare =
-        nitroConfig.cloudflare !== null &&
-        typeof nitroConfig.cloudflare === "object"
+        nitroConfig.cloudflare !== null && typeof nitroConfig.cloudflare === "object"
           ? nitroConfig.cloudflare
           : {};
       nitroConfig.cloudflare = {

@@ -6,10 +6,7 @@ import { optionsPlugin } from "../plugins/options.ts";
 describe("vite worker entry resolution", () => {
   const callConfig = async (userConfig: vite.UserConfig) => {
     const plugin = optionsPlugin.vite({ compatibilityDate: "2025-07-01" });
-    assert(
-      typeof plugin.config === "function",
-      "plugin.config is not a function",
-    );
+    assert(typeof plugin.config === "function", "plugin.config is not a function");
     return (await plugin.config.call({ meta: {} } as never, userConfig, {
       command: "build",
       mode: "production",
@@ -43,8 +40,7 @@ describe("vite worker entry resolution", () => {
       },
     });
     expect(config.environments?.ssr?.build?.rollupOptions?.input).toEqual({
-      "server-build":
-        "\0distilled:worker-entry:virtual:react-router/server-build",
+      "server-build": "\0distilled:worker-entry:virtual:react-router/server-build",
     });
   });
 });

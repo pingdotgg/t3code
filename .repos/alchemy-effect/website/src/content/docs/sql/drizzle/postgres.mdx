@@ -3,29 +3,16 @@ title: Postgres
 description: Provider-neutral Postgres schemas, Effect-native Drizzle queries, and connections for Workers, Lambda, and servers.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const deps = `drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-pg pg`;
-export const devDeps = `drizzle-kit@1.0.0-rc.5-ab785fc`;
+export const deps = `@alchemy.run/drizzle drizzle-orm@1.0.0-rc.5 @effect/sql-pg`;
+export const devDeps = `drizzle-kit@1.0.0-rc.5`;
 
 `Drizzle.Postgres` provides typed, Effect-native queries for any compatible Postgres connection, whether your application runs on Workers, Lambda, or a server. Choose a database in [SQL databases](/sql/databases) and supply its connection through your runtime's binding or configuration.
 
 Install the optional dependencies:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} dev={devDeps} />
 
 ## Define the schema
 
@@ -63,7 +50,7 @@ export const relations = defineRelations({ Users, Posts }, (t) => ({
 
 ```typescript
 // src/queries.ts
-import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import { relations, Users } from "./schema.ts";
