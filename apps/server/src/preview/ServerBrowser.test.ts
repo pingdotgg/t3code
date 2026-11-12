@@ -1305,6 +1305,34 @@ it.live("closing a desktop tab waits for its page to unload before the desktop r
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("closing a desktop tab from the client runs its unload handlers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      const page = desktopConnections[0]!.context.page;
+      // The desktop removes the webview once the session closes, dropping an unload in progress.
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.gen(function* () {
+        while ((yield* PubSub.take(events)).type !== "closed");
+        page.removed = true;
+      }).pipe(Effect.forkScoped);
+      page.beforeUnload = "listen";
+      // The `previewClose` RPC a client's tab close sends.
+      yield* manager.close({ threadId: scope.thread.threadId, tabId });
+      yield* Effect.promise(() => desktopReleased.promise);
+      expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("closing a tab with an unsaved-changes guard still closes it", () =>
   Effect.scoped(
     Effect.gen(function* () {
