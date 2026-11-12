@@ -1186,17 +1186,67 @@ it.effect("ProviderSessionManagerV2 reopens a live session after its instance is
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread-provider-session-manager-rebuilt-instance");
+      const siblingId = ThreadId.make("thread-provider-session-manager-rebuilt-sibling");
       const providerSessionId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
         threadId,
       });
+      const projectId = yield* idAllocator.allocate.project({ fixtureName: "rebuilt-instance" });
       yield* eventSink.write({
-        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now, projectId }),
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: siblingId, now, projectId }),
+        ],
       });
       const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const runId = idAllocator.derive.run({ threadId: siblingId, ordinal: 1 });
+      const siblingRun = (status: "starting" | "completed") =>
+        Effect.gen(function* () {
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: siblingId }),
+                type: "run.updated",
+                threadId: siblingId,
+                occurredAt: now,
+                payload: {
+                  id: runId,
+                  threadId: siblingId,
+                  ordinal: 1,
+                  providerInstanceId: modelSelection.instanceId,
+                  modelSelection,
+                  providerThreadId: null,
+                  userMessageId: yield* idAllocator.allocate.message({
+                    threadId: siblingId,
+                    ordinal: 1,
+                  }),
+                  rootNodeId: null,
+                  activeAttemptId: null,
+                  status,
+                  requestedAt: now,
+                  startedAt: now,
+                  completedAt: status === "completed" ? now : null,
+                  checkpointId: null,
+                  contextHandoffId: null,
+                },
+              },
+            ],
+          });
+        });
 
-      yield* open;
+      yield* manager.open({
+        threadId: siblingId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      // The sibling has opened but not yet reached startTurn.
+      yield* siblingRun("starting");
       yield* yield* Deferred.await(rebuildInstance);
+      yield* open;
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+      yield* siblingRun("completed");
       yield* open;
 
       assert.equal((yield* Ref.get(state)).openCount, 2);

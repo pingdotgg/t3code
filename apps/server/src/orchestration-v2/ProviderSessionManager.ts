@@ -1839,12 +1839,39 @@ export const layerWithOptions = (
         );
       });
 
+      const otherWorkingThreads = Effect.fn("ProviderSessionManager.otherWorkingThreads")(
+        function* (input: {
+          readonly providerSessionId: ProviderSessionId;
+          readonly threadId: ThreadId;
+        }) {
+          const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+          if (entry === undefined || !entry.supportsMultipleProviderThreads) return [];
+          return yield* Effect.filter(
+            [...entry.attachedThreadIds].filter((threadId) => threadId !== input.threadId),
+            (threadId) =>
+              // Runs, not the shell's activeRunId: the shell omits silent runs such as idle
+              // compaction. Background work outlives its run and still needs the process.
+              Effect.zipWith(
+                projectionStore.getThreadRecords(threadId, ["runs"]),
+                projectionStore.getThreadShell(threadId),
+                ({ runs }, shell) =>
+                  runs.some((run) => WORKING_RUN_STATUSES.has(run.status)) ||
+                  (shell?.pendingBackgroundTasks?.length ?? 0) > 0,
+              ).pipe(
+                // An unreadable thread may still be working; never kill it unseen.
+                Effect.orElseSucceed(() => true),
+              ),
+          );
+        },
+      );
+
       /**
        * A runtime started from an instance's old settings, or an exclusive one whose MCP
        * tools predate a Linked environments change, reopens once nothing would be lost.
        */
       const releaseIfStale = Effect.fn("ProviderSessionManager.releaseIfStale")(function* (
         entry: LiveSessionEntry,
+        threadId: ThreadId,
       ) {
         if (entry.runtime.canResumeAfterRestart === false || entry.busyTurns.size > 0) return;
         const current = yield* registry
@@ -1906,7 +1933,12 @@ export const layerWithOptions = (
             ? "Provider settings changed; reopening the provider session."
             : "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
-          keepIf: hasUnfinishedRecords,
+          // A sibling's run can be starting before its turn marks the runtime busy.
+          keepIf: Effect.zipWith(
+            hasUnfinishedRecords,
+            otherWorkingThreads({ providerSessionId, threadId }),
+            (unfinished, working) => unfinished || working.length > 0,
+          ),
         }).pipe(logReleaseFailure(providerSessionId));
       });
 
@@ -2637,7 +2669,7 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
-              if (live !== undefined) yield* releaseIfStale(live);
+              if (live !== undefined) yield* releaseIfStale(live, input.threadId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -2882,28 +2914,7 @@ export const layerWithOptions = (
           // Identity, not presence: open can install a replacement under the same id meanwhile.
           return before !== undefined && (yield* Ref.get(sessions)).get(key) !== before;
         }),
-        otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
-          function* (input) {
-            const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
-            if (entry === undefined || !entry.supportsMultipleProviderThreads) return [];
-            return yield* Effect.filter(
-              [...entry.attachedThreadIds].filter((threadId) => threadId !== input.threadId),
-              (threadId) =>
-                // Runs, not the shell's activeRunId: the shell omits silent runs such as idle
-                // compaction. Background work outlives its run and still needs the process.
-                Effect.zipWith(
-                  projectionStore.getThreadRecords(threadId, ["runs"]),
-                  projectionStore.getThreadShell(threadId),
-                  ({ runs }, shell) =>
-                    runs.some((run) => WORKING_RUN_STATUSES.has(run.status)) ||
-                    (shell?.pendingBackgroundTasks?.length ?? 0) > 0,
-                ).pipe(
-                  // An unreadable thread may still be working; never kill it unseen.
-                  Effect.orElseSucceed(() => true),
-                ),
-            );
-          },
-        ),
+        otherWorkingThreads,
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
             const key = sessionKey(input.providerSessionId);
