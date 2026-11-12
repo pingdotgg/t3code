@@ -467,6 +467,24 @@ describe("mobile model options", () => {
       ).toBeUndefined();
     });
 
+    it.each([
+      [
+        "an unchecked startup snapshot",
+        { status: "warning", auth: { status: "unknown" }, models: [] },
+      ],
+      [
+        "a non-ready catalog without the saved model",
+        { status: "warning", models: [{ ...model, slug: "gemini-3.1-pro-low" }] },
+      ],
+    ] as const)("lets a saved selection send against %s, as web does", (_state, update) => {
+      const uncheckedConfig = {
+        ...config,
+        providers: config.providers.map((provider) => ({ ...provider, ...update })),
+      };
+
+      expect(isModelSelectionUnavailable(uncheckedConfig, selection, null)).toBe(false);
+    });
+
     it("uses configured instance metadata when provider status is missing", () => {
       const missingStatusConfig = {
         providers: [],
