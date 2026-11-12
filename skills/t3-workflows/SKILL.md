@@ -111,15 +111,15 @@ Every call takes a name first. Names are how results are stored, so each must be
 workflow, across all kinds: an `ask("fix", …)` and an `agent("fix", …)` in one workflow collide and
 pause the run. Name the question `approve-fix` and the agent `fix`.
 
-| Call                                                           | Does                                                                                                                                                         | Gives back                                                                                             |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `step(name, { returns, retry? }, effect)`                      | Runs code once per run. `returns` is the Schema of the result.                                                                                               | The result                                                                                             |
-| `agent(name, { brief, project? \| thread?, output?, model? })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `output`, or the agent's last message without it. |
-| `ask(name, { title, choices, data?, timeout? })`               | Puts a question to a person.                                                                                                                                 | `Option` of `{ choice, reason? }`; none after the timeout                                              |
-| `wait(name, { returns, timeout?, key? })`                      | Sleeps until a signal arrives.                                                                                                                               | `Option` of the signal's value; none after the timeout                                                 |
-| `sleep(name, duration)`                                        | Sleeps, across restarts.                                                                                                                                     | Nothing                                                                                                |
-| `title(name, text)`                                            | Names the run in lists.                                                                                                                                      | Nothing                                                                                                |
-| `stop(reason)`                                                 | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                       | Never returns                                                                                          |
+| Call                                                                         | Does                                                                                                                                                                                                      | Gives back                                                                                             |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `step(name, { returns, retry? }, effect)`                                    | Runs code once per run. `returns` is the Schema of the result.                                                                                                                                            | The result                                                                                             |
+| `agent(name, { brief, project? \| thread?, environment?, output?, model? })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id, or the project's folder as an absolute path) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `output`, or the agent's last message without it. |
+| `ask(name, { title, choices, data?, timeout? })`                             | Puts a question to a person.                                                                                                                                                                              | `Option` of `{ choice, reason? }`; none after the timeout                                              |
+| `wait(name, { returns, timeout?, key? })`                                    | Sleeps until a signal arrives.                                                                                                                                                                            | `Option` of the signal's value; none after the timeout                                                 |
+| `sleep(name, duration)`                                                      | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                |
+| `title(name, text)`                                                          | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                |
+| `stop(reason)`                                                               | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                          |
 
 `step` retries three times with a growing delay, then pauses the run. Pass
 `retry: { times: 0 }` for something that must not be repeated blindly. A step whose failure the
@@ -129,6 +129,30 @@ workflow should handle returns the failure as data instead of failing.
 ends. Write the brief as the whole job: the agent sees only the brief and its project.
 Find a project's id with the `t3_project_list` tool.
 `model` is `{ instanceId, model }`; leave it out for the project's default.
+
+### Agents on other machines
+
+`environment` runs the agent's thread in a linked environment; `project` is then a project there.
+A folder there that is not a project yet is registered as one.
+The run stays on this server. A continued `thread` stays in the environment it started in, so
+only the first step names it.
+
+```ts
+const fix =
+  yield *
+  agent("fix", {
+    environment: "environment-id",
+    project: "/home/user/app",
+    brief: "…",
+  });
+```
+
+`t3 environment list` prints the linked environments and their ids. Linked environments must be on
+in Settings → Labs. What the agent may do there is set by the access the link was paired with.
+
+To use a machine per run, make and link it in a `step` with your own script and return its id:
+`t3 auth pairing create --json` on the new machine gives a code, and
+`t3 environment link <url> --pairing-code <code> --access <access>` here links it.
 
 ## Triggers
 

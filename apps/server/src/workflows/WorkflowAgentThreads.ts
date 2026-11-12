@@ -25,7 +25,9 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as WorkflowAgentLinks from "./WorkflowAgentLinks.ts";
+import { isProjectPath, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 
 // A turn can run for hours. Each look is bounded so a wait that lost its event is asked again.
 const WAIT_SLICE = Duration.minutes(10);
@@ -42,6 +44,13 @@ const make = Effect.gen(function* () {
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
   const digest = yield* Digest.Digest;
+  const linked = yield* WorkflowAgentLinks.make;
+  const here = yield* ServerEnvironment.ServerEnvironment.pipe(
+    Effect.flatMap((environment) => environment.getEnvironmentId),
+  );
+  /** The linked environment a step names, or nothing when it names this one. */
+  const elsewhere = (environment: string | undefined) =>
+    environment === here ? undefined : environment;
 
   // Thread, message and command ids all derive from the step's key, so a start that is asked for
   // again after a crash finds the turn it already started.
@@ -67,9 +76,24 @@ const make = Effect.gen(function* () {
     return resolveProjectSettings(current, projectId, project.value).settings;
   });
 
+  const projectIdOf = Effect.fn("WorkflowAgentThreads.projectIdOf")(function* (project: string) {
+    if (!isProjectPath(project)) return ProjectId.make(project);
+    const found = yield* projects
+      .getByWorkspaceRoot(project)
+      .pipe(Effect.mapError(failed("Could not read the project")));
+    if (Option.isNone(found)) {
+      return yield* new WorkflowAgentError({
+        reason: `No project is registered at ${project}.`,
+      });
+    }
+    return found.value.id;
+  });
+
   return WorkflowAgents.of({
     start: Effect.fn("WorkflowAgentThreads.start")(function* (input) {
       const id = yield* idOf(input.key);
+      const environment = elsewhere(input.environment);
+      if (environment !== undefined) return yield* linked.start(input, environment, id);
       const commandId = CommandId.make(id);
       const messageId = MessageId.make(id);
       const outputSchema =
@@ -107,7 +131,7 @@ const make = Effect.gen(function* () {
           reason: "An agent step needs a `project` to start in, or a `thread` to continue.",
         });
       }
-      const projectId = ProjectId.make(input.project);
+      const projectId = yield* projectIdOf(input.project);
       const defaults = yield* projectDefaults(projectId);
       const modelSelection: ModelSelection | undefined =
         input.model === undefined
@@ -154,6 +178,8 @@ const make = Effect.gen(function* () {
       return { threadId: launched.threadId, turnId: run.id };
     }),
     result: Effect.fn("WorkflowAgentThreads.result")(function* (turn) {
+      const environment = elsewhere(turn.environment);
+      if (environment !== undefined) return yield* linked.result(turn, environment);
       const threadId = ThreadId.make(turn.threadId);
       const shell = yield* threads
         .getThreadShell(threadId)
@@ -190,7 +216,10 @@ const make = Effect.gen(function* () {
         };
       }
     }),
-    interrupt: Effect.fn("WorkflowAgentThreads.interrupt")(function* (thread) {
+    interrupt: Effect.fn("WorkflowAgentThreads.interrupt")(function* (target) {
+      const environment = elsewhere(target.environment);
+      if (environment !== undefined) return yield* linked.interrupt(target.threadId, environment);
+      const thread = target.threadId;
       const threadId = ThreadId.make(thread);
       const shell = yield* threads
         .getThreadShell(threadId)

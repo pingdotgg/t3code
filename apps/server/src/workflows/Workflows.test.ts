@@ -19,6 +19,7 @@ import { sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0092 from "../persistence/Migrations/092_Workflows.ts";
 import Migration0093 from "../persistence/Migrations/093_WorkflowTriggers.ts";
+import Migration0094 from "../persistence/Migrations/094_WorkflowStepEnvironment.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
@@ -105,12 +106,17 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
 /** Write a change, ask a person whether to merge it, then land it in the writer's own thread. */
 const fix = workflow(
   "fix",
-  { version: 1, payload: Schema.Struct({ project: Schema.String }), returns: Schema.String },
+  {
+    version: 1,
+    payload: Schema.Struct({ project: Schema.String, environment: Schema.optional(Schema.String) }),
+    returns: Schema.String,
+  },
   (payload) =>
     Effect.gen(function* () {
       const written = yield* agent("write", {
         brief: "Write the fix.",
         project: payload.project,
+        ...(payload.environment === undefined ? {} : { environment: payload.environment }),
         output: Schema.Struct({ branch: Schema.String }),
       });
       const answer = yield* ask("merge", {
@@ -132,7 +138,10 @@ const fakeAgents = () => {
     string,
     { started: Deferred.Deferred<Started>; ended: Deferred.Deferred<AgentResult> }
   >();
-  const interrupted: Array<string> = [];
+  const interrupted: Array<{
+    readonly threadId: string;
+    readonly environment?: string | undefined;
+  }> = [];
   let threads = 0;
   const turn = (key: string) => {
     const known = turns.get(key);
@@ -153,7 +162,11 @@ const fakeAgents = () => {
             return yield* new WorkflowAgentError({ reason: "SafeIntegers leaked into a step" });
           }
           yield* Deferred.succeed(turn(input.key).started, input);
-          return { threadId: input.thread ?? `thread-${++threads}`, turnId: input.key };
+          return {
+            threadId: input.thread ?? `thread-${++threads}`,
+            turnId: input.key,
+            ...(input.environment === undefined ? {} : { environment: input.environment }),
+          };
         }),
       result: (started) => Deferred.await(turn(started.turnId).ended),
       interrupt: (thread) => Effect.sync(() => void interrupted.push(thread)),
@@ -198,7 +211,10 @@ const harness = Effect.gen(function* () {
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(Effect.andThen(Migration0092, Migration0093), database);
+  yield* Effect.provide(
+    Effect.andThen(Migration0092, Effect.andThen(Migration0093, Migration0094)),
+    database,
+  );
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
   // One database file, so a second engine built from it is the server after a restart.
@@ -547,6 +563,46 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("an agent step in a linked environment keeps its thread there", () =>
+  Effect.gen(function* () {
+    const { boot, agents } = yield* harness;
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const run = yield* workflows.start(
+          "fix",
+          { project: "/work/app", environment: "env-b" },
+          { idempotencyKey: "e1" },
+        );
+        const write = yield* agents.started(run.runId, "write/0");
+        assert.equal(write.environment, "env-b");
+        yield* agents.end(run.runId, "write/0", { output: { branch: "fix/1" } });
+        yield* workflows.waitFor(run.runId, status("waiting"));
+        yield* workflows.signal(
+          { runId: run.runId, wait: "merge" },
+          { choice: "Merge" },
+          { id: "m1" },
+        );
+
+        // The step that continues the thread names no environment: the thread carries it.
+        const land = yield* agents.started(run.runId, "land/0");
+        assert.equal(land.environment, "env-b");
+        assert.equal(land.thread, "thread-1");
+        yield* workflows.waitFor(run.runId, (current) => current.detail === "agent land");
+        const { steps } = yield* workflows.get(run.runId);
+        assert.deepStrictEqual(
+          steps.filter((step) => step.kind === "agent").map((step) => step.environmentId),
+          ["env-b", "env-b"],
+        );
+        yield* workflows.cancel(run.runId, "not needed");
+        assert.deepStrictEqual(agents.interrupted, [
+          { threadId: "thread-1", environment: "env-b" },
+        ]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("cancelling a run stops its agent, and a turn a person stopped is not tried again", () =>
   Effect.gen(function* () {
     const { boot, agents } = yield* harness;
@@ -562,7 +618,10 @@ it.effect("cancelling a run stops its agent, and a turn a person stopped is not 
         yield* workflows.waitFor(cancelled.runId, (run) => run.detail === "agent write");
         const { steps } = yield* workflows.get(cancelled.runId);
         yield* workflows.cancel(cancelled.runId, "not needed");
-        assert.deepStrictEqual(agents.interrupted, [steps[0]?.threadId]);
+        assert.deepStrictEqual(
+          agents.interrupted.map((thread) => thread.threadId),
+          [steps[0]?.threadId],
+        );
 
         const stopped = yield* workflows.start("fix", { project: "p1" }, { idempotencyKey: "x2" });
         yield* agents.started(stopped.runId, "write/0");

@@ -73,6 +73,7 @@ describe("V2 preview upgrade", () => {
         [91, "AuthConnectDeniedRequests"],
         [92, "Workflows"],
         [93, "WorkflowTriggers"],
+        [94, "WorkflowStepEnvironment"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -189,6 +190,7 @@ describe("V2 preview upgrade", () => {
         [91, "AuthConnectDeniedRequests"],
         [92, "Workflows"],
         [93, "WorkflowTriggers"],
+        [94, "WorkflowStepEnvironment"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
