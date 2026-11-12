@@ -415,6 +415,8 @@ describe("remote thread lifecycle commands", () => {
       });
       const request = yield* Queue.take(h.requests);
       expect(h.registry.get(h.commands.snapshotAtom(otherEnvironment))).toBe(SNAPSHOT);
+      expect(h.registry.get(h.commands.rowActionsAtom(ENVIRONMENT_ID))).toBe(1);
+      expect(h.registry.get(h.commands.rowActionsAtom(otherEnvironment))).toBe(0);
       const removed = { ...SNAPSHOT, snapshotSequence: 2, threads: [] };
       h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), removed);
       expect(h.registry.get(h.visibleAtom)?.threads).toEqual([]);
