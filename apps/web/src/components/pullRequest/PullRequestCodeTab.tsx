@@ -1,3 +1,4 @@
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import { ReviewIcon as MorphIcon } from "~/components/ReviewIcon";
 import { FlaskConicalOffIcon } from "lucide-react";
 import {
@@ -598,10 +599,8 @@ function PullRequestCodeTab({
       input: { ...reference, ...(commit === null ? {} : { commit }) },
     }),
   );
-  const pendingComments = usePendingReviewComments(
-    pullRequestReviewKey(reference, { environmentId, viewer: detail.viewer }),
-    detail.reviewThreads,
-  );
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const pendingComments = usePendingReviewComments(reviewKey, detail.reviewThreads);
   const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
   const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
     reportFailure: false,

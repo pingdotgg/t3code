@@ -1,3 +1,4 @@
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import { Button } from "../ui/button";
 import { CircleCheckIcon } from "lucide-react";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
@@ -14,11 +15,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
 import { useReviewThreadActions } from "./useReviewThreadActions";
-import {
-  pullRequestReviewKey,
-  usePendingReviewComments,
-  type PendingReviewComment,
-} from "./pullRequestReviewStore";
+import { usePendingReviewComments, type PendingReviewComment } from "./pullRequestReviewStore";
 import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
@@ -777,10 +774,8 @@ export function PullRequestTimelineTab({
     comment: PullRequestThreadComment,
   ) => void;
 }) {
-  const pending = usePendingReviewComments(
-    pullRequestReviewKey(reference, { environmentId, viewer: detail.viewer }),
-    detail.reviewThreads,
-  );
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const pending = usePendingReviewComments(reviewKey, detail.reviewThreads);
   const { threads: conversations, pendingComments } = groupPendingReviewComments(
     detail.reviewThreads,
     pending,
