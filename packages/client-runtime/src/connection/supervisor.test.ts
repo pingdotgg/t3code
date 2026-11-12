@@ -1218,6 +1218,33 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps a socket whose frame lands just before its replacement connects", () =>
+    Effect.gen(function* () {
+      const frames = yield* Ref.make(0);
+      const harness = yield* makeSilentSocketHarness({
+        prepare: (attempt, target) =>
+          Effect.sleep(attempt === 1 ? "0 millis" : "950 millis").pipe(
+            Effect.as(preparedFor(target)),
+          ),
+        probe: (attempt) => (attempt === 1 ? Effect.sleep("3 seconds") : Effect.void),
+        inboundFrames: Ref.get(frames),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+      // The frame lands between two 100 ms frame checks, and the replacement
+      // connects at 1450 ms, before the next one.
+      yield* TestClock.adjust("1420 millis");
+      yield* Ref.update(frames, (count) => count + 1);
+      yield* TestClock.adjust("5 seconds");
+
+      expect((yield* SubscriptionRef.get(supervisor.state)).generation).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("waits out a LAN resume probe when the host does not answer a fresh request", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

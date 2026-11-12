@@ -118,6 +118,8 @@ interface Replacement {
   readonly startedAt: bigint;
   readonly synchronizedRoutes: Ref.Ref<number>;
   readonly upgradeTo: Option.Option<string>;
+  // The live socket's frame count when a suspect replacement started.
+  readonly liveFrames: Option.Option<number>;
   readonly reveal: Effect.Effect<void>;
 }
 
@@ -710,7 +712,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // `generation` is the live session's; the replacement reports progress as
   // the first attempt of the next one, which it becomes if the session ends.
   const startReplacement = Effect.fn("EnvironmentSupervisor.startReplacement")(
-    function* (generation: number, upgradeTo: Option.Option<string>) {
+    function* (generation: number, upgradeTo: Option.Option<string>, live?: ConnectedLease) {
       const pending = yield* Ref.get(pendingReplacement);
       if (Option.isSome(pending)) {
         if (!(yield* replacementExpired(pending.value))) return;
@@ -757,6 +759,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         startedAt,
         synchronizedRoutes,
         upgradeTo,
+        liveFrames:
+          live === undefined || Option.isSome(upgradeTo)
+            ? Option.none()
+            : Option.some(yield* live.session.inboundFrames),
         reveal,
       };
       yield* Ref.set(pendingReplacement, Option.some(replacement));
@@ -835,6 +841,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     if (next._tag === "ReplacementReady") {
       const pending = yield* Ref.get(pendingReplacement);
       if (Option.isNone(pending) || pending.value !== next.replacement) return undefined;
+      // A frame since it started shows the socket alive, even between frame checks.
+      const liveFrames = next.replacement.liveFrames;
+      if (Option.isSome(liveFrames) && (yield* lease.session.inboundFrames) !== liveFrames.value) {
+        yield* discardSuspectReplacement;
+        return undefined;
+      }
       // One on a worse route waits as the fallback in case the socket is dead.
       const exit = next.replacement.fiber.pollUnsafe();
       if (Option.isNone(next.replacement.upgradeTo) && exit !== undefined && Exit.isSuccess(exit)) {
@@ -1015,7 +1027,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             lease,
             routeKind,
             longResume,
-            startReplacement(generation, Option.none()),
+            startReplacement(generation, Option.none(), lease),
           ),
         );
         recheck = false;
@@ -1036,6 +1048,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
               ? startReplacement(
                   generation,
                   Option.flatMap(taken, (replacement) => replacement.upgradeTo),
+                  lease,
                 )
               : Effect.void,
           ),
