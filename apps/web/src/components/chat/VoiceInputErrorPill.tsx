@@ -34,6 +34,7 @@ export function VoiceInputErrorPill(props: {
   error: string | null;
   errorAction: "retry" | "settings" | null;
   disabled?: boolean;
+  compact?: boolean;
   cancelShortcutLabel?: string | null;
   onRetry(): void;
   onDismiss(): void;
@@ -47,7 +48,7 @@ export function VoiceInputErrorPill(props: {
       ? "Retry transcription"
       : "Record again";
   return (
-    <VoiceInputPill>
+    <VoiceInputPill compact={props.compact ?? false}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -64,25 +65,32 @@ export function VoiceInputErrorPill(props: {
           }
         />
         <TooltipPopup side="top">
+          {props.compact ? `${props.error ?? "Voice input failed"}. ` : ""}
           Dismiss voice input error
           {props.cancelShortcutLabel ? ` (${props.cancelShortcutLabel})` : ""}
         </TooltipPopup>
       </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              tabIndex={0}
-              role="status"
-              aria-label={props.error ?? "Voice input failed"}
-              className="min-w-0 flex-1 truncate text-body text-destructive-foreground"
-            />
-          }
-        >
-          {voiceErrorLabel(props.error)}
-        </TooltipTrigger>
-        <TooltipPopup side="top">{props.error ?? "Voice input failed"}</TooltipPopup>
-      </Tooltip>
+      {props.compact ? (
+        <span role="status" className="sr-only">
+          {props.error ?? "Voice input failed"}
+        </span>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                tabIndex={0}
+                role="status"
+                aria-label={props.error ?? "Voice input failed"}
+                className="min-w-0 flex-1 truncate text-body text-destructive-foreground"
+              />
+            }
+          >
+            {voiceErrorLabel(props.error)}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{props.error ?? "Voice input failed"}</TooltipPopup>
+        </Tooltip>
+      )}
       {props.errorAction ? (
         <Tooltip>
           <TooltipTrigger
@@ -107,7 +115,10 @@ export function VoiceInputErrorPill(props: {
               </Button>
             }
           />
-          <TooltipPopup side="top">{actionLabel}</TooltipPopup>
+          <TooltipPopup side="top">
+            {props.compact ? `${props.error ?? "Voice input failed"}. ` : ""}
+            {actionLabel}
+          </TooltipPopup>
         </Tooltip>
       ) : null}
     </VoiceInputPill>

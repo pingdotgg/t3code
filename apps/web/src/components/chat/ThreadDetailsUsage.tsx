@@ -34,7 +34,7 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 // The canvas reserves the same icon, label, meter, percent and trailing columns in every row.
 // The trailing column is only as wide as the section's longest reset label, so meters fill the row.
 const USAGE_ROW_CLASS =
-  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_2.25rem_var(--usage-trailing,1.5rem)] items-center gap-x-2 ps-3 pe-2 text-meta";
+  "grid grid-cols-[1rem_3.625rem_minmax(0,1fr)_var(--usage-value,2.25rem)_var(--usage-trailing,1.5rem)] items-center gap-x-2 ps-3 pe-2 text-meta";
 
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: "Ahead of pace",
@@ -98,11 +98,12 @@ export function ThreadDetailsUsage({
 export function ThreadDetailsContext({
   usage,
   onCompact,
-  compactDisabled,
+  compactUnavailableReason,
 }: {
   readonly usage: ContextWindowSnapshot | null;
   readonly onCompact?: (() => void) | undefined;
-  readonly compactDisabled?: boolean | undefined;
+  /** Why compacting cannot start now; the button stays hoverable to say so. */
+  readonly compactUnavailableReason?: string | null | undefined;
 }) {
   const [collapsed, setCollapsed] = useLocalStorage(
     "thread-details:collapsed:Context breakdown",
@@ -132,8 +133,8 @@ export function ThreadDetailsContext({
   return (
     <ThreadDetailsSection title="Context window" variant="usage">
       <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
-        {/* The trailing column shrinks to the compact button so it sits flush right. */}
-        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
+        {/* One row, so the percentage hugs its text and the bar takes the rest. */}
+        <div className={cn(USAGE_ROW_CLASS, "h-8 [--usage-value:max-content]")}>
           <CollapsibleTrigger
             render={<ThreadDetailsControl part="usage" />}
             aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
@@ -147,15 +148,24 @@ export function ThreadDetailsContext({
           </CollapsibleTrigger>
           <span className="flex">
             {onCompact ? (
-              <Button
-                size="icon-xs"
-                variant="secondary"
-                aria-label="Compact context"
-                disabled={compactDisabled}
-                onClick={onCompact}
-              >
-                <Minimize2Icon className="size-[13px]" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="secondary"
+                      aria-label="Compact context"
+                      aria-disabled={compactUnavailableReason ? true : undefined}
+                      onClick={compactUnavailableReason ? undefined : onCompact}
+                    />
+                  }
+                >
+                  <Minimize2Icon className="size-[13px]" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  {compactUnavailableReason ?? "Compact context"}
+                </TooltipPopup>
+              </Tooltip>
             ) : null}
           </span>
         </div>
