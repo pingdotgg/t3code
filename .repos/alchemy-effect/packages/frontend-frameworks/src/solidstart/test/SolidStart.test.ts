@@ -18,9 +18,7 @@ const runWithNode = <A, E>(
   effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(effect).pipe(
-      Effect.provide(NodeServices.layer),
-    ) as Effect.Effect<A, E>,
+    Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer)) as Effect.Effect<A, E>,
   );
 
 describe("readNitroOutput", () => {
@@ -39,18 +37,12 @@ describe("readNitroOutput", () => {
         });
         yield* fs.makeDirectory(publicDir, { recursive: true });
         // alphabetically before index.mjs, to prove entry-first sorting
-        yield* fs.writeFileString(
-          path.join(serverDir, "chunks", "a.mjs"),
-          "export const a = 1;",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "chunks", "a.mjs"), "export const a = 1;");
         yield* fs.writeFileString(
           path.join(serverDir, "index.mjs"),
           "export const handler = () => {};",
         );
-        yield* fs.writeFileString(
-          path.join(publicDir, "robots.txt"),
-          "User-agent: *\n",
-        );
+        yield* fs.writeFileString(path.join(publicDir, "robots.txt"), "User-agent: *\n");
         return yield* readNitroOutput({ dir, serverDir, publicDir });
       }),
     );
@@ -74,10 +66,7 @@ describe("readNitroOutput", () => {
         });
         const serverDir = path.join(dir, "server");
         yield* fs.makeDirectory(serverDir, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(serverDir, "other.mjs"),
-          "export const x = 1;",
-        );
+        yield* fs.writeFileString(path.join(serverDir, "other.mjs"), "export const x = 1;");
         return yield* Effect.result(
           readNitroOutput({
             dir,
@@ -96,9 +85,7 @@ describe("readNitroOutput", () => {
 
 describe("make", () => {
   it("defaults to this package's AWS deploy target", () => {
-    expect(DEFAULT_TARGET_SPECIFIER).toBe(
-      "@alchemy.run/frontend-frameworks/solidstart/aws",
-    );
+    expect(DEFAULT_TARGET_SPECIFIER).toBe("@alchemy.run/frontend-frameworks/solidstart/aws");
   });
 
   it("rejects a caller-supplied nitro preset that fights the deploy target", async () => {
@@ -111,9 +98,7 @@ describe("make", () => {
           target: adapterOnly(makeAwsTarget()),
           nitro: { preset: "netlify" },
         });
-        return yield* Effect.result(
-          framework.build({ root: "/tmp/does-not-matter" }),
-        );
+        return yield* Effect.result(framework.build({ root: "/tmp/does-not-matter" }));
       }),
     );
     expect(result._tag).toBe("Failure");
@@ -133,9 +118,7 @@ describe("make", () => {
           root: "/tmp/does-not-matter",
           target: adapterOnly(makeAwsTarget()),
         });
-        return yield* Effect.result(
-          framework.build({ root: "/tmp/does-not-matter" }),
-        );
+        return yield* Effect.result(framework.build({ root: "/tmp/does-not-matter" }));
       }),
     );
     expect(result._tag).toBe("Failure");
@@ -154,9 +137,9 @@ describe("make", () => {
 
 describe("fromHarnessOptions", () => {
   it("forwards the harness's nitro overrides", () => {
-    expect(
-      fromHarnessOptions({ solidstart: { nitro: { prerender: {} } } }).nitro,
-    ).toEqual({ prerender: {} });
+    expect(fromHarnessOptions({ solidstart: { nitro: { prerender: {} } } }).nitro).toEqual({
+      prerender: {},
+    });
     expect(fromHarnessOptions({}).nitro).toBeUndefined();
   });
 });

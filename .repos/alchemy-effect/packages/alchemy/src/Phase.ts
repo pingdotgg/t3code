@@ -15,6 +15,16 @@ declare global {
    * property access on `globalThis`.
    */
   var __ALCHEMY_RUNTIME__: boolean | undefined;
+  /**
+   * Build-time constant naming the cloud identity a bundle's host runs as,
+   * defined by the bundler of a host that has one: `"AWS.IAM.Role"` for a
+   * Lambda, ECS task or EC2 instance, `"GCP.IAM.ServiceAccount"` for Cloud Run,
+   * Cloud Functions or GKE. `undefined` everywhere else.
+   *
+   * A provider's bindings compare it against their own identity type to drop
+   * the code that host never runs (signing with a key Alchemy created).
+   */
+  var __ALCHEMY_HOST_IDENTITY__: string | undefined;
 }
 
 export type AlchemyPhase = "plan" | "runtime";
@@ -51,6 +61,4 @@ export const ALCHEMY_PHASE = Config.String("ALCHEMY_PHASE").pipe(
  * });
  * ```
  */
-export const ALCHEMY_DEV = Config.Boolean("ALCHEMY_DEV").pipe(
-  Config.withDefault(false),
-);
+export const ALCHEMY_DEV = Config.Boolean("ALCHEMY_DEV").pipe(Config.withDefault(false));
