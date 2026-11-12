@@ -6,8 +6,10 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { resolveBranchToolbarPullRequest } from "./BranchToolbar.logic";
 
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
@@ -114,6 +116,52 @@ export function useLinkedThreadPullRequest(
           baseUrl: "",
         },
       };
+}
+
+/** The pull request a thread shows: its current link, else the one found for its branch. */
+export function useThreadDisplayedPullRequest(
+  environmentId: EnvironmentId,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "pullRequests" | "linkedPullRequest" | "branchPullRequest"
+  > | null,
+  branchPr: ThreadPr = null,
+  branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"],
+  // Given, the shown pull request must belong to this branch; other links stay listed.
+  branch?: string | null,
+) {
+  const supportsLinks = useSupportsMultiplePullRequests(environmentId);
+  const linkedStatus = useLinkedThreadPullRequest(
+    environmentId,
+    thread?.linkedPullRequest,
+    true,
+    thread?.pullRequests,
+    thread?.branchPullRequest,
+  );
+  const threadLink = supportsLinks
+    ? resolveThreadCurrentPullRequestLink(thread?.pullRequests ?? [])
+    : null;
+  const pr =
+    branch === undefined
+      ? (linkedStatus?.pr ?? (threadLink === null ? branchPr : null))
+      : resolveBranchToolbarPullRequest(branch, linkedStatus?.pr ?? null, branchPr);
+  const currentLink =
+    branch === undefined || !supportsLinks
+      ? threadLink
+      : ((thread?.pullRequests ?? []).find((link) => link.url === pr?.url) ?? null);
+  return {
+    currentLink,
+    badge: supportsLinks ? resolveThreadPullRequestBadge(thread?.pullRequests) : null,
+    pr,
+    status: prStatusIndicator(
+      pr,
+      linkedStatus !== null && pr === linkedStatus.pr
+        ? linkedStatus.sourceControlProvider
+        : branchSourceControlProvider,
+    ),
+    number: currentLink?.number ?? pr?.number,
+    url: currentLink?.url ?? pr?.url,
+  };
 }
 
 function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {

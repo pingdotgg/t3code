@@ -1,7 +1,5 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
-import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRightPanelStore } from "../rightPanelStore";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -40,7 +38,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
-import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
+import { ThreadDetailsThreadPrRows } from "./chat/ThreadDetailsPrRows";
 import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -49,7 +47,6 @@ import {
   isWorktreeChangeBlocked,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
-  resolveBranchToolbarPullRequest,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
@@ -59,10 +56,8 @@ import {
 } from "./BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
-  prStatusIndicator,
   resolveDisplayedThreadPr,
-  resolveThreadPullRequestBadge,
-  useLinkedThreadPullRequest,
+  useThreadDisplayedPullRequest,
 } from "./ThreadStatusIndicators";
 
 import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
@@ -601,41 +596,18 @@ export function BranchToolbarBranchSelector({
     threadBranch: branchPrBranch,
     gitStatus: branchStatusQuery.data,
   });
-  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(environmentId);
-  const linkedStatus = useLinkedThreadPullRequest(
+  const {
+    badge: prBadge,
+    number: prNumber,
+    url: prUrl,
+    status: prStatus,
+  } = useThreadDisplayedPullRequest(
     environmentId,
-    serverThread?.linkedPullRequest,
-    true,
-    serverThread?.pullRequests,
-    serverThread?.branchPullRequest,
+    serverThread,
+    branchPr,
+    branchStatusQuery.data?.sourceControlProvider,
   );
-  const threadLinkedPr = supportsMultiplePullRequests
-    ? resolveThreadCurrentPullRequestLink(serverThread?.pullRequests ?? [])
-    : null;
-  const prBadge = supportsMultiplePullRequests
-    ? resolveThreadPullRequestBadge(serverThread?.pullRequests)
-    : null;
-  const displayedPr =
-    displayMode === "panel"
-      ? resolveBranchToolbarPullRequest(branchPrBranch, linkedStatus?.pr ?? null, branchPr)
-      : (linkedStatus?.pr ?? (threadLinkedPr === null ? branchPr : null));
-  const currentLinkedPr =
-    displayMode === "panel"
-      ? (serverThread?.pullRequests?.find((link) => link.url === displayedPr?.url) ?? null)
-      : threadLinkedPr;
-  const displayedPrStatus = prStatusIndicator(
-    displayedPr,
-    displayedPr === linkedStatus?.pr
-      ? linkedStatus.sourceControlProvider
-      : branchStatusQuery.data?.sourceControlProvider,
-  );
-  const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
-  const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
-  const panelPrLabel =
-    prNumber === undefined
-      ? ""
-      : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
 
   function selectPickerItem(itemValue: string) {
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
@@ -767,7 +739,7 @@ export function BranchToolbarBranchSelector({
             pullRequests={serverThread?.pullRequests ?? []}
             number={prNumber}
             url={prUrl}
-            status={displayedPrStatus}
+            status={prStatus}
             onOpenList={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
             onOpenPullRequest={(event, targetUrl = prUrl) => {
               if (targetUrl) openPrLink(event, targetUrl);
@@ -806,28 +778,13 @@ export function BranchToolbarBranchSelector({
           </ComboboxTrigger>
         </span>
         {displayMode === "panel" ? (
-          <ThreadDetailsPrRows
+          <ThreadDetailsThreadPrRows
             threadRef={threadRef}
-            links={serverThread?.pullRequests ?? []}
-            currentLink={currentLinkedPr}
-            onOpenLink={openPrLink}
-            environmentId={environmentId}
-            row={
-              prNumber !== undefined && prUrl !== undefined
-                ? {
-                    environmentId,
-                    pr: displayedPr,
-                    number: prNumber,
-                    reference: currentLinkedPr,
-                    status: displayedPrStatus,
-                    project: activeProject,
-                    label: panelPrLabel,
-                    openAriaLabel: prUrl,
-                    onOpen: (event) => openPrLink(event, prUrl),
-                    onActed: () => branchStatusQuery.refresh(),
-                  }
-                : null
-            }
+            project={activeProject}
+            branchPr={branchPr}
+            branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
+            branch={branchPrBranch}
+            onActed={() => branchStatusQuery.refresh()}
           />
         ) : null}
       </div>
