@@ -2207,6 +2207,18 @@ code {
   }
 }
 
+/* Sent messages color prose with the message foreground, which is not chosen
+   for the code surface, so their plain-text fences keep the global foreground. */
+.chat-markdown.user-message-markdown
+  .chat-markdown-codeblock:is(
+    [data-language="text" i],
+    [data-language="txt" i],
+    [data-language="plain" i],
+    [data-language="plaintext" i]
+  ) {
+  color: var(--contrast-foreground) !important;
+}
+
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
    each new block in so the chunk does not pop. @starting-style only applies
    when an element is first inserted, and the rule is gated on data-streaming,
