@@ -5230,13 +5230,6 @@ body {
 }
 
 /* redesign: timeline */
-@media (min-width: 640px) {
-  .timeline-work-row {
-    --type-body: 0.8125rem;
-    --type-label: 0.8125rem;
-  }
-}
-
 @keyframes timeline-fold-reveal {
   from {
     opacity: 0;
