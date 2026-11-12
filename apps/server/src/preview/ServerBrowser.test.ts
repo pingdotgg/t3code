@@ -819,16 +819,12 @@ it.effect("a viewer still that never answers does not block the agent's snapshot
       yield* browser.attachViewer(viewerInput(tabId, false)).pipe(Effect.forkScoped);
       yield* Effect.promise(() => stalled.promise);
 
-      const snapshotting = yield* broker
+      const snapshot = yield* broker
         .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
-        .pipe(Effect.result, Effect.forkScoped);
-      yield* TestClock.adjust("20 seconds");
-      const snapshot = yield* Fiber.join(snapshotting);
-      const evaluating = yield* broker
+        .pipe(Effect.result);
+      const evaluated = yield* broker
         .invoke({ scope, tabId, operation: "evaluate", input: { expression: "document.title" } })
-        .pipe(Effect.result, Effect.forkScoped);
-      yield* TestClock.adjust("20 seconds");
-      const evaluated = yield* Fiber.join(evaluating);
+        .pipe(Effect.result);
       expect({ snapshot: snapshot._tag, evaluated: evaluated._tag }).toEqual({
         snapshot: "Success",
         evaluated: "Success",

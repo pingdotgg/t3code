@@ -2776,9 +2776,15 @@ const make = Effect.gen(function* () {
     broadcastControl(tab);
     pushFileChooser(tab);
     const pushStill = async () => {
-      const data = await withCaptureLock(tab, () =>
-        ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
-      ).catch(() => null);
+      // Waits out queued captures without joining the queue: a webview that cannot
+      // paint never answers, and the agent's next capture must not wait on it.
+      const data = await tab.captureLock
+        .then(() =>
+          tab.closing
+            ? null
+            : ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+        )
+        .catch(() => null);
       if (data) viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
     };
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
