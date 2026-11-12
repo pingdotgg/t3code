@@ -106,6 +106,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-threads",
       "delete-thread",
       "dispatch-project-command",
+      "update-settings",
     ]),
     projectId: Schema.optional(ProjectId),
     workspaceRoot: Schema.optional(Schema.String),
@@ -391,9 +392,45 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
+      yield* writeProjectSettingsOverrides(input.projectId, input);
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
+  );
+
+  // Launch and clients read these from settings overrides once legacy project fields are folded.
+  const writeProjectSettingsOverrides = Effect.fn("ProjectService.writeProjectSettingsOverrides")(
+    function* (
+      projectId: ProjectId,
+      input: Pick<
+        ProjectUpdateInput,
+        "defaultModelSelection" | "defaultThreadEnvMode" | "autoPull" | "scripts"
+      >,
+    ) {
+      const changes = {
+        defaultModelSelection: input.defaultModelSelection,
+        defaultThreadEnvMode: input.defaultThreadEnvMode,
+        defaultAutoPull: input.autoPull,
+        defaultProjectScripts: input.scripts,
+      };
+      if (Object.values(changes).every((value) => value === undefined)) return;
+      const settings = yield* serverSettings.getSettings;
+      const entry: Record<string, unknown> = { ...settings.projectSettingsOverrides[projectId] };
+      for (const [key, value] of Object.entries(changes)) {
+        if (value === null) delete entry[key];
+        else if (value !== undefined) entry[key] = value;
+      }
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: Object.keys(entry).length === 0 ? null : entry,
+        },
+      });
+    },
+    (effect, projectId) =>
+      Effect.mapError(
+        effect,
+        (cause) => new ProjectOperationError({ operation: "update-settings", projectId, cause }),
+      ),
   );
 
   const update: ProjectService["Service"]["update"] = Effect.fn("ProjectService.update")(
@@ -429,6 +466,7 @@ export const make = Effect.gen(function* () {
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
       });
+      yield* writeProjectSettingsOverrides(input.projectId, input);
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
