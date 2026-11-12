@@ -73,12 +73,17 @@ export async function prepareVoiceStreaming(
       message: "Live voice transcription is unavailable.",
     });
   }
+  const cancelled = Promise.withResolvers<null>();
+  const cancel = () => cancelled.resolve(null);
+  signal.addEventListener("abort", cancel, { once: true });
   let supportedLocale: string | null;
   try {
-    supportedLocale = await native.prepare(locale);
+    supportedLocale = await Promise.race([native.prepare(locale), cancelled.promise]);
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
     throw mapNativeVoiceError(error, "preparation");
+  } finally {
+    signal.removeEventListener("abort", cancel);
   }
   throwIfVoiceTranscriptionAborted(signal);
   if (!supportedLocale) {

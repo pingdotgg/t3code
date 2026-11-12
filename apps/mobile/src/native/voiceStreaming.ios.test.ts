@@ -18,10 +18,12 @@ import { prepareVoiceStreaming, startVoiceStreaming } from "./voiceStreaming.ios
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function options(signal = new AbortController().signal): LiveVoiceOptions {
@@ -145,4 +147,21 @@ it("prepares the language and reports unsupported or unavailable engines", async
   await expect(prepareVoiceStreaming("en-AU", options())).rejects.toMatchObject({
     code: "unavailable",
   });
+});
+
+it("stops waiting for a model on abort, and a late native failure does not reach the retry", async () => {
+  const abandoned = deferred<string | null>();
+  native.prepare.mockReturnValueOnce(abandoned.promise);
+  const abort = new AbortController();
+  const result = prepareVoiceStreaming("en-AU", options(abort.signal));
+
+  abort.abort();
+  await expect(result).rejects.toMatchObject({ code: "cancelled" });
+
+  const next = deferred<string | null>();
+  native.prepare.mockReturnValueOnce(next.promise);
+  const retry = prepareVoiceStreaming("en-AU", options());
+  abandoned.reject({ code: "ERR_VOICE_UNAVAILABLE" });
+  next.resolve("en-AU");
+  await expect(retry).resolves.toBe("en-AU");
 });
