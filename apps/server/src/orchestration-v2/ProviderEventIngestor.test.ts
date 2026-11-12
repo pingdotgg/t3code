@@ -2420,6 +2420,7 @@ layer("ProviderEventIngestorV2", (it) => {
           ...rootEvent.payload,
           id: childThreadId,
           title: "review design",
+          modelUnreported: true,
           modelSelection: {
             ...modelSelection,
             options: [{ id: "reasoningEffort", value: "xhigh" }],
@@ -2432,6 +2433,7 @@ layer("ProviderEventIngestorV2", (it) => {
           },
         },
       });
+      assert.isTrue((yield* projectionStore.getThreadShell(childThreadId))?.modelUnreported);
       const subagentUpdated = {
         type: "subagent.updated",
         driver: CODEX_DRIVER,
@@ -2458,6 +2460,17 @@ layer("ProviderEventIngestorV2", (it) => {
         },
       } satisfies ProviderEventIngestor.ProviderEventIngestInput["event"];
 
+      const sameModel = yield* ingest({
+        ...subagentUpdated,
+        subagent: { ...subagentUpdated.subagent, model: modelSelection.model },
+      });
+      assert.deepEqual(
+        sameModel.map((stored) => stored.event.type),
+        ["subagent.updated", "thread.model-selection-updated"],
+      );
+      assert.isFalse((yield* projectionStore.getThread(childThreadId)).modelUnreported);
+
+      assert.isFalse((yield* projectionStore.getThreadShell(childThreadId))?.modelUnreported);
       const first = yield* ingest(subagentUpdated);
       const repeated = yield* ingest(subagentUpdated);
       const childThread = yield* projectionStore.getThread(childThreadId);
