@@ -350,26 +350,47 @@ export const make = Effect.gen(function* () {
       readonly body?: string;
     }) {
       const base = new URL(`${input.baseUrl}/api/v1/`);
-      const url = new URL(input.path, base);
-      if (
-        url.origin !== base.origin ||
-        !url.pathname.startsWith(base.pathname) ||
-        url.username ||
-        url.password
-      )
+      const apiUrl = (path: string, from: string) => {
+        const url = URL.parse(path, from);
+        return url &&
+          url.origin === base.origin &&
+          url.pathname.startsWith(base.pathname) &&
+          !url.username &&
+          !url.password
+          ? url
+          : undefined;
+      };
+      const requested = apiUrl(input.path, base.href);
+      if (!requested)
         return yield* new ForgejoCliError({
           command: "fj",
           cwd: input.cwd,
           detail: "Invalid Forgejo API path.",
         });
-      let request = HttpClientRequest.make(input.method ?? "GET")(url.toString()).pipe(
-        HttpClientRequest.setHeader("Authorization", `token ${input.token}`),
-      );
-      if (input.body !== undefined)
-        request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
-      const response = yield* httpClient
-        .execute(request)
-        .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      let url = requested;
+      const send = (target: URL) => {
+        let request = HttpClientRequest.make(input.method ?? "GET")(target.toString()).pipe(
+          HttpClientRequest.setHeader("Authorization", `token ${input.token}`),
+        );
+        if (input.body !== undefined)
+          request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
+        return httpClient
+          .execute(request)
+          .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+      };
+      let response = yield* send(url);
+      // Forgejo redirects a renamed repository's API paths before running the handler,
+      // so the same method and body are re-sent. The token never leaves the API base.
+      for (let hops = 0; hops < 5; hops++) {
+        const location = response.headers.location;
+        const next =
+          location && [301, 302, 307, 308].includes(response.status)
+            ? apiUrl(location, url.href)
+            : undefined;
+        if (!next) break;
+        url = next;
+        response = yield* send(url);
+      }
       const status = response.status;
       const body =
         status === 204 || status === 205
