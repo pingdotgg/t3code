@@ -69,6 +69,58 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
+  it("prices thread usage separately across models and deduplicates native session links", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      threadIdsBySession: new Map([
+        ["claude:session-a", ["thread-a"]],
+        ["claude:session-b", ["thread-b"]],
+      ]),
+    });
+    aggregator.add(record({ dedupeKey: "a" }));
+    aggregator.add(record({ dedupeKey: "a" }));
+    aggregator.add(record({ sessionId: "session-b", model: "unknown" }));
+    const usage = aggregator.finish().threadUsage;
+    expect(usage?.find((entry) => entry.threadId === "thread-a")).toMatchObject({
+      totals: {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 10,
+        outputTokens: 50,
+      },
+      unpricedRecords: 0,
+    });
+    expect(usage?.find((entry) => entry.threadId === "thread-a")?.costUsd).toBeCloseTo(0.004625, 8);
+    expect(usage?.find((entry) => entry.threadId === "thread-b")).toMatchObject({
+      unpricedRecords: 1,
+    });
+  });
+  it("attributes a copied inference when its linked session is scanned second", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      threadIdsBySession: new Map([["claude:session-linked", ["thread-a"]]]),
+    });
+    aggregator.add(record({ sessionId: "session-unlinked", dedupeKey: "copied-inference" }));
+    aggregator.add(record({ sessionId: "session-linked", dedupeKey: "copied-inference" }));
+    aggregator.add(record({ sessionId: "session-linked", dedupeKey: "copied-inference" }));
+    const result = aggregator.finish();
+
+    expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0]?.records).toBe(1);
+    expect(result.duplicatesDropped).toBe(2);
+    expect(result.threadUsage).toEqual([
+      expect.objectContaining({
+        threadId: "thread-a",
+        totals: expect.objectContaining({ outputTokens: 50 }),
+      }),
+    ]);
+  });
   it("splits a bucket's cost by category and speed", () => {
     const [bucket] = aggregate([record(), record({ speed: "fast" })]).buckets;
 

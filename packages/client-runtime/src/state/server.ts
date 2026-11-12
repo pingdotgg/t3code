@@ -1498,6 +1498,30 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
+    threadUsageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:thread-usage",
+      tag: WS_METHODS.serverGetUsageSummary,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
+      execute: (input, emit) =>
+        request(WS_METHODS.serverGetUsageSummary, input).pipe(
+          Effect.filterOrElse(
+            (summary) => !summary.sources.some((source) => source.refreshing === true),
+            (summary) =>
+              emit(summary).pipe(
+                Effect.andThen(
+                  request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not refresh slow thread usage sources.").pipe(
+                    Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                    Effect.as(summary),
+                  ),
+                ),
+              ),
+          ),
+        ),
+    }),
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,

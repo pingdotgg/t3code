@@ -7,6 +7,7 @@ import type {
   UsageModelSelector,
   UsageResolution,
   UsageTokenTotals,
+  UsageThreadTotals,
 } from "@t3tools/contracts";
 
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
@@ -64,6 +65,7 @@ interface MutableBucket {
 }
 
 export interface AggregateOptions {
+  readonly threadIdsBySession?: ReadonlyMap<string, readonly string[]>;
   readonly timeZone: string;
   readonly sinceDay: string;
   readonly untilDay: string;
@@ -125,6 +127,7 @@ export function canonicalModelFilter(
 }
 
 export interface AggregateResult {
+  readonly threadUsage?: readonly UsageThreadTotals[];
   readonly buckets: readonly UsageBucket[];
   readonly duplicatesDropped: number;
   readonly outOfWindow: number;
@@ -172,8 +175,10 @@ interface Contribution {
 
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
+  readonly #threadUsage = new Map<string, UsageThreadTotals>();
   readonly #buckets = new Map<string, MutableBucket>();
   readonly #seen = new Map<string, Contribution>();
+  readonly #threadSeen = new Map<string, Set<string>>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -207,6 +212,8 @@ export class UsageAggregator {
   add(input: UsageRecord, sourcePath?: string): boolean {
     if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
+    // Counted before the scan-wide dedupe: a copy in another thread's transcript still belongs to it.
+    this.#addThreadUsage(record);
     if (record.dedupeKey !== null) {
       const held = this.#seen.get(record.dedupeKey);
       if (held !== undefined) {
@@ -228,7 +235,46 @@ export class UsageAggregator {
     return true;
   }
 
-  #placeInWindow(record: UsageRecord, source: string): MutableBucket | null {
+  #addThreadUsage(record: UsageRecord): void {
+    const threadIds =
+      this.#options.threadIdsBySession?.get(`${record.provider}:${record.sessionId}`) ?? [];
+    if (threadIds.length === 0 || this.#dayInWindow(record) === null) return;
+    const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
+    const costs = priced.categoryCostUsd;
+    for (const threadId of threadIds) {
+      if (record.dedupeKey !== null) {
+        const seen = this.#threadSeen.get(threadId);
+        if (seen?.has(record.dedupeKey)) continue;
+        if (seen) seen.add(record.dedupeKey);
+        else this.#threadSeen.set(threadId, new Set([record.dedupeKey]));
+      }
+      const previous = this.#threadUsage.get(threadId);
+      const add = <K extends keyof UsageTokenTotals>(key: K) =>
+        (previous?.totals[key] ?? 0) + record.totals[key];
+      this.#threadUsage.set(threadId, {
+        threadId,
+        totals: {
+          uncachedInputTokens: add("uncachedInputTokens"),
+          cachedInputTokens: add("cachedInputTokens"),
+          cacheCreationTokens: add("cacheCreationTokens"),
+          outputTokens: add("outputTokens"),
+          reasoningTokens: add("reasoningTokens"),
+        },
+        costUsd: (previous?.costUsd ?? 0) + priced.costUsd,
+        categoryCostUsd: {
+          input: (previous?.categoryCostUsd.input ?? 0) + (costs?.input ?? 0),
+          cacheRead: (previous?.categoryCostUsd.cacheRead ?? 0) + (costs?.cacheRead ?? 0),
+          cacheWrite: (previous?.categoryCostUsd.cacheWrite ?? 0) + (costs?.cacheWrite ?? 0),
+          output: (previous?.categoryCostUsd.output ?? 0) + (costs?.output ?? 0),
+        },
+        unsplitCostUsd: (previous?.unsplitCostUsd ?? 0) + (costs === null ? priced.costUsd : 0),
+        unpricedRecords:
+          (previous?.unpricedRecords ?? 0) + (priced.costSource === "unpriced" ? 1 : 0),
+      });
+    }
+  }
+
+  #dayInWindow(record: UsageRecord): string | null {
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
@@ -244,6 +290,12 @@ export class UsageAggregator {
     ) {
       return null;
     }
+    return day;
+  }
+
+  #placeInWindow(record: UsageRecord, source: string): MutableBucket | null {
+    const day = this.#dayInWindow(record);
+    if (day === null) return null;
 
     const hourIndex =
       this.#hourlyWindow === null
@@ -400,6 +452,9 @@ export class UsageAggregator {
 
     return {
       buckets,
+      ...(this.#options.threadIdsBySession === undefined
+        ? {}
+        : { threadUsage: [...this.#threadUsage.values()] }),
       duplicatesDropped: this.#duplicatesDropped,
       outOfWindow: this.#outOfWindow,
     };

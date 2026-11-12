@@ -520,6 +520,61 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.live("matches priced native session records to their T3 thread", () =>
+    Effect.gen(function* () {
+      const { transcript, home, settings } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 25)));
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_provider_threads ${sql.insert({
+          provider_thread_id: "provider-thread-usage",
+          thread_id: "thread-usage",
+          provider: "claudeAgent",
+          driver: "claudeAgent",
+          status: "ready",
+          updated_at: "2026-08-01T10:00:00Z",
+          payload_json: encodeUnknownJsonString({
+            nativeThreadRef: { driver: "claudeAgent", nativeId: "session-1", strength: "strong" },
+          }),
+        })}`;
+        yield* sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({
+          thread_id: "thread-usage",
+          project_id: "project-usage",
+          title: "Usage",
+          default_provider: "claudeAgent",
+          provider_instance_id: "claudeAgent",
+          runtime_mode: "full-access",
+          interaction_mode: "default",
+          active_provider_thread_id: "provider-thread-usage",
+          created_at: "2026-08-01T10:00:00Z",
+          updated_at: "2026-08-01T10:00:00Z",
+          payload_json: "{}",
+        })}`;
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary({ ...WINDOW, includeThreadUsage: true });
+        assert.deepEqual(
+          summary.threadUsage?.map((usage) => ({
+            threadId: usage.threadId,
+            input: usage.totals.uncachedInputTokens,
+            output: usage.totals.outputTokens,
+          })),
+          [{ threadId: "thread-usage", input: 10, output: 25 }],
+        );
+        assert.isAbove(summary.threadUsage?.[0]?.costUsd ?? 0, 0);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "thread-usage",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 0.000003, output_cost_per_token: 0.000015 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
   it.live("counts compressed Codex rollouts across refresh, rewrites, and cache restarts", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
