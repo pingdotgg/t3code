@@ -537,6 +537,75 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect.each([false, true])(
+    "waits for OpenCode 2.2.7 plugin activation before caching skills (commands loaded: %s)",
+    (commandsLoaded) =>
+      Effect.gen(function* () {
+        const activationRequested = yield* Deferred.make<void>();
+        const activated = yield* Deferred.make<void>();
+        let skillReads = 0;
+        let activationComplete = false;
+        const replay = replayOpenCodeServer(
+          { ...OPENCODE_2_RESPONSES, ...OPENCODE_2_WORKSPACE_RESPONSES },
+          "secret",
+        );
+        const http = HttpClient.make((request) => {
+          const path = new URL(request.url).pathname;
+          const directory = Option.getOrUndefined(
+            UrlParams.getFirst(request.urlParams, "location[directory]"),
+          );
+          const json = (data: unknown) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(data)));
+          if (path === "/api/info")
+            return json({
+              ...JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body),
+              version: "2.2.7",
+            });
+          if (path === "/api/provider")
+            return directory === "/work"
+              ? Deferred.succeed(activationRequested, undefined).pipe(
+                  Effect.andThen(Deferred.await(activated)),
+                  Effect.andThen(json({ location: { directory }, data: [] })),
+                )
+              : json({ location: { directory }, data: [] });
+          if (path === "/api/model") return json({ location: { directory }, data: [] });
+          if (path === "/api/debug/location") return json([{ directory: "/work" }]);
+          if (path === "/api/event")
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(new ReadableStream(), {
+                  headers: { "content-type": "text/event-stream" },
+                }),
+              ),
+            );
+          if (path === "/api/skill") skillReads++;
+          if (
+            (path === "/api/skill" || (path === "/api/command" && !commandsLoaded)) &&
+            !activationComplete
+          )
+            return json({ location: { directory }, data: [] });
+          return replay.execute(request);
+        });
+        const instance = yield* create(
+          { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+          http,
+        );
+        const snapshot = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+        yield* Deferred.await(activationRequested);
+        yield* TestClock.adjust("1 second");
+        activationComplete = true;
+        yield* Deferred.succeed(activated, undefined);
+        yield* TestClock.adjust("30 seconds");
+        const { skills } = yield* Fiber.join(snapshot);
+        assert.include(
+          skills.map((skill) => skill.name),
+          "plum",
+        );
+        assert.equal(skillReads, 1);
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect.each(["probe", "error", "empty"] as const)(
     "recovers discovery without a manual refresh after %s",
     (initialCatalog) =>

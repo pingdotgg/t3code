@@ -399,11 +399,23 @@ export const OpenCodeDriver: ProviderDriver<
       openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
     );
     const listOpenCode2Workspace = (cwd: string) =>
-      openCode2Server.withConnection(({ client, events }) =>
+      openCode2Server.withConnection(({ client, events, version }) =>
         Effect.gen(function* () {
           // OpenCode names a location by its resolved path (no trailing slash or `..`).
           const directory = pathService.resolve(cwd);
           const location = { directory };
+          const read = Effect.all(
+            {
+              skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
+              commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
+            },
+            { concurrency: "unbounded" },
+          );
+          if (compareSemverVersions(version, "2.2.7") >= 0) {
+            // provider.list awaits plugin activation; loaded locations and update events do not.
+            yield* client.provider.list({ location }).pipe(Effect.timeout("10 seconds"));
+            return yield* read;
+          }
           const scanned = yield* Deferred.make<void>();
           const pending = new Set(["command.updated", "skill.updated"]);
           const stream = yield* events.pipe(Effect.option);
@@ -422,13 +434,7 @@ export const OpenCodeDriver: ProviderDriver<
             );
           }
           return yield* loadOpenCode2Workspace(
-            Effect.all(
-              {
-                skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
-                commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
-              },
-              { concurrency: "unbounded" },
-            ),
+            read,
             Deferred.await(scanned),
             // Without events no scan can be awaited, so trust the first read as before.
             stream._tag === "None"
