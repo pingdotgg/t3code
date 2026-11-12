@@ -908,7 +908,7 @@ function TaskForm({
                 baseRef: draft.baseRef.trim() || "main",
                 startFromOrigin: draft.startFromOrigin,
               },
-      runtimeMode,
+      runtimeMode: boundToThread ? draft.runtimeMode : runtimeMode,
       interactionMode: boundToThread ? draft.interactionMode : interactionMode,
       creationSource: draft.task?.creationSource ?? "mobile",
     };
