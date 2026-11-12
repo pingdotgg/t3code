@@ -751,7 +751,7 @@ describe("ssh tunnel scripts", () => {
         const ownerPid = Number(
           yield* fs.readFileString(path.join(home, ".t3", "userdata", "server.lock")),
         );
-        // The later launch takes over the record, so both report managed.
+        // The later launch shares the record, so both own the server.
         assert.deepEqual(
           launches.map((launch) => launch.remoteServerKind),
           ["managed", "managed"],
@@ -772,9 +772,9 @@ describe("ssh tunnel scripts", () => {
             };
           }),
         );
-        assert.sameDeepMembers(records, [
+        assert.deepEqual(records, [
           { kind: "managed", pid: ownerPid },
-          { kind: "external", pid: null },
+          { kind: "managed", pid: ownerPid },
         ]);
         assert.isFalse(yield* fs.exists(launchLock));
       }).pipe(Effect.scoped),
@@ -955,19 +955,34 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.live("another connection on a different runner reuses the server without restarting it", () =>
+  // Each step connects an alias with runner X or Y; "a" and "b" name distinct server PIDs.
+  it.live.each([
+    {
+      name: "another connection on a different runner reuses the server",
+      steps: [
+        ["devbox", "X"],
+        ["devbox-tailnet", "Y"],
+        ["devbox", "X"],
+      ],
+      kinds: ["managed", "external", "managed"],
+      servers: ["a", "a", "a"],
+    },
+    {
+      name: "an update replaces a server another connection shares",
+      steps: [
+        ["devbox", "X"],
+        ["devbox-tailnet", "X"],
+        ["devbox", "Y"],
+        ["devbox-tailnet", "X"],
+      ],
+      kinds: ["managed", "managed", "managed", "external"],
+      servers: ["a", "a", "b", "b"],
+    },
+  ] as const)("$name", ({ steps, kinds, servers }) =>
     Effect.gen(function* () {
       const { fs, home, fakeServer, sshAsLocalShell } = yield* prepare("an unrelated process");
       const otherServer = `${home}/fake-t3-other.cjs`;
       yield* fs.writeFileString(otherServer, FAKE_SERVER);
-      const other = { ...target, alias: "devbox-tailnet", hostname: "devbox-tailnet" };
-      const launch = (
-        launchTarget: Parameters<typeof SshTunnel.launchOrReuseRemoteServer>[0],
-        nodeScriptPath: string,
-      ) =>
-        SshTunnel.launchOrReuseRemoteServer(launchTarget, undefined, { nodeScriptPath }).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
-        );
       const runtimePid = fs
         .readFileString(`${home}/.t3/userdata/server-runtime.json`)
         .pipe(Effect.map((runtime) => Number(JSON.parse(runtime).pid)));
@@ -982,20 +997,74 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         ),
       );
 
-      const kinds: Array<string | null> = [];
+      const seenKinds: Array<string | null> = [];
       const pids: Array<number> = [];
-      for (const [launchTarget, script] of [
-        [target, fakeServer],
-        [other, otherServer],
-        [target, fakeServer],
-      ] as const) {
-        kinds.push((yield* launch(launchTarget, script)).remoteServerKind);
+      for (const [alias, runner] of steps) {
+        const launched = yield* SshTunnel.launchOrReuseRemoteServer(
+          { ...target, alias, hostname: alias },
+          undefined,
+          { nodeScriptPath: runner === "X" ? fakeServer : otherServer },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+        seenKinds.push(launched.remoteServerKind);
         const pid = yield* runtimePid;
         launchedPids.push(pid);
         pids.push(pid);
       }
-      assert.deepEqual(kinds, ["managed", "external", "managed"]);
-      assert.deepEqual(pids, [pids[0], pids[0], pids[0]]);
+      assert.deepEqual(seenKinds, [...kinds]);
+      const names = new Map<number, string>();
+      assert.deepEqual(
+        pids.map((pid) => {
+          if (!names.has(pid)) names.set(pid, "ab"[names.size]!);
+          return names.get(pid);
+        }),
+        [...servers],
+      );
+      for (const pid of names.keys()) {
+        assert.equal(yield* isRunning(pid), pid === pids.at(-1), `server ${pid}`);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("a server two connections share stops when the last one disconnects", () =>
+    Effect.gen(function* () {
+      const { fs, home, fakeServer, sshAsLocalShell } = yield* prepare("an unrelated process");
+      const other = { ...target, alias: "devbox-tailnet", hostname: "devbox-tailnet" };
+      for (const launchTarget of [target, other]) {
+        assert.equal(
+          (yield* SshTunnel.launchOrReuseRemoteServer(launchTarget, undefined, {
+            nodeScriptPath: fakeServer,
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell)))
+            .remoteServerKind,
+          "managed",
+        );
+      }
+      const pid = Number(
+        JSON.parse(yield* fs.readFileString(`${home}/.t3/userdata/server-runtime.json`)).pid,
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      const disconnect = (disconnectTarget: typeof other) =>
+        Effect.flatMap(SshTunnel.SshEnvironmentManager, (manager) =>
+          manager.disconnectEnvironment(disconnectTarget),
+        ).pipe(Effect.provide(layer));
+
+      yield* disconnect(target);
+      assert.isTrue(yield* isRunning(pid), "the first disconnect stopped a shared server");
+      yield* disconnect(other);
+      assert.isFalse(yield* isRunning(pid), "the last disconnect left the server running");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

@@ -714,8 +714,8 @@ if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
   DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
 fi
 # Editing a connection changes its state key. When another key's record owns
-# the live server and launched it with this same runner, it is this
-# connection's server: move ownership here so a later update replaces it.
+# the live server and launched it with this same runner, share that ownership
+# so a later update through this key still replaces it.
 if [ "$REMOTE_MANAGED" != "managed" ] || ! managed_server_running "$REMOTE_PID"; then
   for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
     SIBLING_PID="$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)"
@@ -731,8 +731,6 @@ if [ "$REMOTE_MANAGED" != "managed" ] || ! managed_server_running "$REMOTE_PID";
     printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
     printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
     printf 'managed\\n' >"$MANAGED_FILE"
-    rm -f "$SIBLING_DIR/pid"
-    printf 'external\\n' >"$SIBLING_DIR/managed"
     break
   done
 fi
@@ -876,7 +874,13 @@ MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 @@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
-if [ "$REMOTE_MANAGED" != "external" ] && managed_server_running "$REMOTE_PID"; then
+# Another key may share ownership of this server; the last one to stop kills it.
+SHARED=0
+for SIBLING_DIR in "$HOME"/.t3/ssh-launch/*; do
+  [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] && [ "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" = "$REMOTE_PID" ] || continue
+  SHARED=1
+done
+if [ "$SHARED" -eq 0 ] && [ "$REMOTE_MANAGED" != "external" ] && managed_server_running "$REMOTE_PID"; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
