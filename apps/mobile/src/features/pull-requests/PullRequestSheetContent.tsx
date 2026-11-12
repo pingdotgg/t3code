@@ -26,19 +26,15 @@ export function PullRequestSheetContent(props: {
     </View>
   ) : null;
   return (
+    // Material sheet drags follow the first nested-scrolling native view, and the inline
+    // header's Compose button is one, so Android renders content first and reverses the column.
     <KeyboardAvoidingView
       automaticOffset
       behavior="padding"
       collapsable={false}
-      className="bg-sheet ios:flex-1"
+      className="bg-sheet ios:flex-1 android:flex-col-reverse"
       style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
-      <SheetHeader
-        title={props.title}
-        subtitle={props.subtitle}
-        onCancel={() => navigation.goBack()}
-        dismissDisabled={props.busy}
-      />
       <ScreenContent fitToContents={android}>
         <ScrollView
           nestedScrollEnabled
@@ -55,6 +51,12 @@ export function PullRequestSheetContent(props: {
         </ScrollView>
         {android ? null : footer}
       </ScreenContent>
+      <SheetHeader
+        title={props.title}
+        subtitle={props.subtitle}
+        onCancel={() => navigation.goBack()}
+        dismissDisabled={props.busy}
+      />
     </KeyboardAvoidingView>
   );
 }
