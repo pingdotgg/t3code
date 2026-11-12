@@ -197,6 +197,33 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
+  it.effect("allows slow SDK discovery with a configured readiness timeout", () =>
+    Effect.gen(function* () {
+      const fiber = yield* checkCursorProviderStatus(baseCursorSettings, {
+        CURSOR_API_KEY: "test-key",
+        T3CODE_CURSOR_PROBE_TIMEOUT_MS: "30000",
+      }).pipe(
+        Effect.provide(
+          CursorSdkCatalog.layerTest(() =>
+            Effect.sleep("20 seconds").pipe(
+              Effect.as({
+                user: {
+                  apiKeyName: "test",
+                  userEmail: "cursor@example.com",
+                  createdAt: "2026-01-01",
+                },
+                models: [sdkParameterizedModel],
+              }),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* Fiber.join(fiber)).status).toBe("ready");
+    }),
+  );
+
   it.effect("surfaces SDK authentication failures", () =>
     Effect.gen(function* () {
       const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
