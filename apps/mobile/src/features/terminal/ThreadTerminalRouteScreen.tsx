@@ -27,7 +27,9 @@ import {
   KeyboardController,
   KeyboardStickyView,
   useKeyboardState,
+  useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 
 import {
   ComposerToolbarButton,
@@ -585,6 +587,14 @@ function ThreadTerminal(props: {
       : !SHOWCASE_ENABLED;
   const terminalBottomInset =
     (isKeyboardVisible ? keyboardHeight : 0) + (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
+  // Android's keyboard state lands after the IME starts moving, so the inset follows the
+  // keyboard's UI-thread animation instead of stepping to its final height.
+  const keyboardAnimation = useReanimatedKeyboardAnimation();
+  const accessoryInset = isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0;
+  const androidTerminalInsetStyle = useAnimatedStyle(() => ({
+    paddingBottom:
+      -keyboardAnimation.height.value + keyboardAnimation.progress.value * accessoryInset,
+  }));
 
   const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
     knownSessions: knownSessions ?? [],
@@ -897,11 +907,13 @@ function ThreadTerminal(props: {
             <EmptyState title="Terminal unavailable" detail={terminal.error} />
           ) : (
             <>
-              <View
-                style={{
-                  flex: 1,
-                  paddingBottom: terminalBottomInset,
-                }}
+              <Animated.View
+                style={[
+                  { flex: 1 },
+                  Platform.OS === "android"
+                    ? androidTerminalInsetStyle
+                    : { paddingBottom: terminalBottomInset },
+                ]}
               >
                 <View
                   pointerEvents="none"
@@ -935,7 +947,7 @@ function ThreadTerminal(props: {
                   terminalKey={terminalKey}
                   theme={terminalTheme}
                 />
-              </View>
+              </Animated.View>
 
               {Platform.OS === "android" && !isKeyboardVisible ? (
                 <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
