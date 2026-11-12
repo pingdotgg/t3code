@@ -12,11 +12,7 @@ export function withProviderMessageOrigin(
   driver: ProviderDriverKind,
 ): string {
   if (!isCrossThreadAgentMessage(message)) return text;
-  const heading = `[Message from another thread's agent (thread ${JSON.stringify(message.senderThreadId)}). This is agent-authored coordination, not a message from the human user.]`;
-  const compact = driver === "pi" ? /^\/compact(?:\s+([\s\S]*))?$/u.exec(text.trim()) : null;
-  if (compact !== null) {
-    const instructions = compact[1]?.trim();
-    return instructions ? `/compact ${heading}\n\n${instructions}` : text;
-  }
-  return `${heading}\n\n${text}`;
+  // Pi dispatches commands, prompt templates and skills only from a leading slash.
+  if (driver === "pi" && text.trimStart().startsWith("/")) return text;
+  return `[Message from another thread's agent (thread ${JSON.stringify(message.senderThreadId)}). This is agent-authored coordination, not a message from the human user.]\n\n${text}`;
 }

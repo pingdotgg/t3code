@@ -1074,8 +1074,8 @@ it.effect("routes compaction and goal commands and marks cross-thread agent mess
       {
         ...agent,
         driver: ProviderDriverKind.make("pi"),
-        text: "/compact keep the tests",
-        expected: `/compact ${origin}\n\nkeep the tests`,
+        text: "/review the diff",
+        expected: "/review the diff",
       },
       { ...agent, text: "/goal finish", expected: "/goal finish" },
       {
