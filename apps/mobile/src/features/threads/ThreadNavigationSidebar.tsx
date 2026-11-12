@@ -74,6 +74,7 @@ import {
 } from "./threadListV2";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { ThreadListProjectFolderHeader } from "./ThreadListProjectFolderHeader";
 
 type SidebarListItem =
   | ThreadListV2ListItem
@@ -244,6 +245,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    projectFoldersEnabled,
+    collapsedProjectKeys,
+    activeReorderEnabled,
+    toggleProjectFolder,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
@@ -290,6 +295,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
+    projectFoldersEnabled,
+    projectScopes,
+    projectSortOrder: options.projectSortOrder,
+    collapsedProjectKeys,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
@@ -372,6 +381,15 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   };
   const renderListItem = ({ item }: { readonly item: SidebarListItem }) => {
     switch (item.type) {
+      case "v2-project-folder":
+        return (
+          <ThreadListProjectFolderHeader
+            item={item}
+            pane="sidebar"
+            onToggle={toggleProjectFolder}
+            onNewThread={props.onNewThreadInProject}
+          />
+        );
       case "v2-pending": {
         const pendingScopeKey = scopedProjectKey(
           item.pendingTask.environmentId,
@@ -467,7 +485,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+                : activeReorderEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}

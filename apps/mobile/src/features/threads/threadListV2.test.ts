@@ -14,6 +14,7 @@ import {
   type ThreadMoveAvailability,
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { HomeProjectScope } from "../home/homeThreadList";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
@@ -319,6 +320,53 @@ describe("getThreadListV2OrderedSection", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("keeps working threads in project order without changing their saved active order", () => {
+    const earlier = makeThread({
+      id: ThreadId.make("earlier"),
+      title: "Earlier",
+      activeOrderKey: "b",
+      latestUserAuthoredMessageAt: "2026-06-01T09:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("background-wake"),
+        status: "running",
+        requestedAt: "2026-06-01T12:00:00.000Z",
+        startedAt: null,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const later = makeThread({
+      id: ThreadId.make("later"),
+      title: "Later",
+      activeOrderKey: "z",
+      latestUserAuthoredMessageAt: "2026-06-01T10:00:00.000Z",
+      runtime: {
+        status: "running",
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+    const input = {
+      threads: [earlier, later],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    };
+    const grouped = buildThreadListV2Items({
+      ...input,
+      projectFoldersEnabled: true,
+      workingShelfEnabled: true,
+    });
+    expect(grouped.workingCount).toBe(0);
+    expect(grouped.items.map((item) => item.thread.id)).toEqual(["later", "earlier"]);
+    expect(grouped.items.map((item) => item.thread.activeOrderKey)).toEqual(["z", "b"]);
+    const flat = buildThreadListV2Items({ ...input, workingShelfEnabled: false });
+    expect(flat.items.map((item) => item.thread.id)).toEqual(["earlier", "later"]);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [
@@ -767,6 +815,148 @@ function makePendingTask(id: string): PendingNewTask {
 }
 
 describe("buildThreadListV2ListItems", () => {
+  it("groups active rows by project while retaining selected rows and global shelves", () => {
+    const remoteEnvironmentId = EnvironmentId.make("remote");
+    const scope = (
+      key: string,
+      projectRefs: HomeProjectScope["projectRefs"],
+      pinned = false,
+      archived = false,
+    ): HomeProjectScope => {
+      const projects = projectRefs.map((ref) => ({
+        environmentId: ref.environmentId,
+        id: ref.projectId,
+        title: "Same project name",
+        workspaceRoot: `/workspace/${ref.projectId}`,
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+      }));
+      return {
+        key,
+        title: "Same project name",
+        representative: projects[0]!,
+        projects,
+        projectRefs,
+        pinned,
+        archived,
+      };
+    };
+    const first = scope("first", [
+      { environmentId, projectId: ProjectId.make("first") },
+      { environmentId: remoteEnvironmentId, projectId: ProjectId.make("first-remote") },
+    ]);
+    const second = scope("second", [{ environmentId, projectId: ProjectId.make("second") }]);
+    const emptyPinned = scope(
+      "empty-pinned",
+      [{ environmentId, projectId: ProjectId.make("empty-pinned") }],
+      true,
+    );
+    const empty = scope("empty", [{ environmentId, projectId: ProjectId.make("empty") }]);
+    const archived = scope(
+      "archived",
+      [{ environmentId, projectId: ProjectId.make("archived") }],
+      false,
+      true,
+    );
+    const threads = [
+      makeThread({ id: ThreadId.make("pinned"), title: "Pinned", pinnedAt: NOW }),
+      makeThread({
+        id: ThreadId.make("selected"),
+        title: "Selected",
+        projectId: ProjectId.make("first"),
+      }),
+      makeThread({
+        id: ThreadId.make("hidden"),
+        title: "Hidden",
+        environmentId: remoteEnvironmentId,
+        projectId: ProjectId.make("first-remote"),
+        hasPendingApprovals: true,
+      }),
+      makeThread({
+        id: ThreadId.make("second"),
+        title: "Second",
+        projectId: ProjectId.make("second"),
+      }),
+      makeThread({
+        id: ThreadId.make("archived-project"),
+        title: "Archived project",
+        projectId: ProjectId.make("archived"),
+      }),
+      makeThread({
+        id: ThreadId.make("snoozed"),
+        title: "Snoozed",
+        snoozedAt: NOW,
+        snoozedUntil: "2026-06-03T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("settled"),
+        title: "Settled",
+        settledOverride: "settled",
+        settledAt: NOW,
+      }),
+    ];
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      projectFoldersEnabled: true,
+      snoozedShelfExpanded: true,
+      settledShelfExpanded: true,
+    });
+    const input = {
+      items: layout.items,
+      pendingTasks: [makePendingTask("queued")],
+      projectFolders: [first, second, emptyPinned, empty, archived],
+      collapsedProjectKeys: ["first"],
+      selectedThreadKey: `${environmentId}:selected`,
+      snoozedCount: layout.snoozedCount,
+      snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
+      settledCount: layout.settledCount,
+      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
+    };
+    const items = buildThreadListV2ListItems(input);
+    expect(
+      items.map((item) => (item.type === "v2-thread" ? item.item.thread.id : item.key)),
+    ).toEqual([
+      "v2-pending-task:queued",
+      "pinned",
+      "v2-project-folder:first",
+      "selected",
+      "v2-project-folder:second",
+      "second",
+      "v2-project-folder:empty-pinned",
+      "v2-project-folder:archived",
+      "archived-project",
+      "v2-snoozed-shelf",
+      "snoozed",
+      "v2-settled-shelf",
+      "settled",
+    ]);
+    expect(items.find((item) => item.type === "v2-project-folder")).toMatchObject({
+      hiddenCount: 1,
+      expanded: false,
+      status: "attention",
+    });
+    expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("selected");
+    const expanded = buildThreadListV2ListItems({ ...input, collapsedProjectKeys: [] });
+    expect(expanded.filter((item) => item.type === "v2-thread")).toHaveLength(threads.length);
+    const emptyScope = buildThreadListV2ListItems({
+      items: [],
+      pendingTasks: [],
+      projectFolders: [empty],
+      keepEmptyProjectFolders: true,
+    });
+    expect(emptyScope.map((item) => item.key)).toEqual(["v2-project-folder:empty"]);
+    const unknownProjects = buildThreadListV2ListItems({ ...input, projectFolders: [] });
+    expect(unknownProjects.filter((item) => item.type === "v2-thread")).toHaveLength(
+      threads.length,
+    );
+  });
+
   const layout = buildThreadListV2Items({
     threads: [
       makeThread({ id: ThreadId.make("active"), title: "active" }),
