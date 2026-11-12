@@ -63,13 +63,14 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
-      return makeEncoderPage() as unknown as Page;
+      return encoderPageOverride ?? (makeEncoderPage() as unknown as Page);
     }
     async connectDesktopPage(endpoint: string) {
       const context = makeContext(undefined, desktopPageUrl);
       context.page.viewportSize.mockReturnValue(null);
-      desktopConnections.push({ endpoint, context });
-      return { browser: { close: async () => {} }, page: context.page as unknown as Page };
+      const browser = { close: vi.fn(async () => {}) };
+      desktopConnections.push({ endpoint, context, browser });
+      return { browser, page: context.page as unknown as Page };
     }
     async close() {
       for (const context of contexts) await context.close();
@@ -228,11 +229,50 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       throw new Error("Unexpected locator action");
     }),
     isClosed: () => closed,
-    close: vi.fn(async () => {
-      if (!closed) {
+    // Models Playwright: unload handlers always run, but `beforeunload` only with
+    // `runBeforeUnload`, and a guarding page stays open behind a `beforeunload` dialog.
+    beforeUnload: "none" as "none" | "listen" | "guard",
+    unloadEvents: [] as string[],
+    beforeUnloadDialog: null as null | {
+      accept: ReturnType<typeof vi.fn>;
+      dismiss: ReturnType<typeof vi.fn>;
+    },
+    // Set to hold the page open after `beforeunload` until resolved, as Playwright's
+    // `runBeforeUnload` close resolves before the page actually closes.
+    unloadGate: null as PromiseWithResolvers<void> | null,
+    removed: false,
+    pagehideBinding: null as (() => void) | null,
+    pagehideWatched: Promise.withResolvers<void>(),
+    exposeFunction: vi.fn(async (_name: string, callback: () => void) => {
+      page.pagehideBinding = callback;
+      page.pagehideWatched.resolve();
+    }),
+    close: vi.fn(async (options?: { runBeforeUnload?: boolean }) => {
+      if (closed) return;
+      const finish = () => {
+        if (closed || page.removed) return;
+        page.unloadEvents.push("pagehide");
+        page.pagehideBinding?.();
+        page.unloadEvents.push("visibilitychange");
         closed = true;
         events.emit("close");
+      };
+      if (!options?.runBeforeUnload || page.beforeUnload === "none") return finish();
+      page.unloadEvents.push("beforeunload");
+      if (page.beforeUnload === "listen" && page.unloadGate) {
+        void page.unloadGate.promise.then(finish);
+        return;
       }
+      if (page.beforeUnload === "listen") return finish();
+      const dialog = {
+        type: () => "beforeunload",
+        message: () => "",
+        defaultValue: () => "",
+        accept: vi.fn(async () => finish()),
+        dismiss: vi.fn(async () => {}),
+      };
+      page.beforeUnloadDialog = dialog;
+      events.emit("dialog", dialog);
     }),
   };
   const context = {
@@ -249,9 +289,11 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       sessions.push(session);
       return session;
     },
+    closing: Promise.withResolvers<void>(),
     close: vi.fn(async () => {
       if (contextClosed) return;
       contextClosed = true;
+      context.closing.resolve();
       await page.close();
       onClose?.(context as unknown as BrowserContext);
     }),
@@ -261,31 +303,64 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
 
 // Runs the real encoder script against fake canvas and MediaRecorder globals.
 function makeEncoderPage() {
+  let paintedFrame = "";
   const canvas = {
     width: 0,
     height: 0,
-    getContext: () => ({ drawImage() {}, fillRect() {} }),
-    captureStream: (frameRate?: number) => ({ frameRate, getTracks: () => [] }),
+    getContext: () => ({
+      drawImage(bitmap: { pixels: string }) {
+        paintedFrame = bitmap.pixels;
+      },
+      fillRect() {},
+    }),
+    captureStream: (frameRate?: number) => ({
+      frameRate,
+      getTracks: () => [],
+      getVideoTracks: () => [{ requestFrame() {} }],
+    }),
+  };
+  const video = {
+    play: async () => {},
+    pause() {},
+    requestVideoFrameCallback: (callback: () => void) => queueMicrotask(callback),
   };
   class FakeMediaRecorder {
     static isTypeSupported = (type: string) => type === "video/webm";
+    mimeType = "video/webm";
+    state = "inactive";
     onstart: (() => void) | null = null;
+    onstop: (() => void) | null = null;
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
+    readonly stream: { frameRate?: number };
     constructor(stream: { frameRate?: number }, options: { videoBitsPerSecond: number }) {
+      this.stream = stream;
       encoderStreams.push({
         frameRate: stream.frameRate,
         bitsPerSecond: options.videoBitsPerSecond,
       });
     }
     start() {
+      this.state = "recording";
       this.onstart?.();
+    }
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob([paintedFrame]) });
+      this.onstop?.();
     }
   }
   const sandbox: Record<string, unknown> = {
-    document: { createElement: () => canvas },
+    document: { createElement: (tag: string) => (tag === "video" ? video : canvas) },
     Path2D: function Path2D() {},
     MediaRecorder: FakeMediaRecorder,
-    createImageBitmap: async () => ({ width: 1280, height: 800, close() {} }),
+    createImageBitmap: async (blob: Blob) => ({
+      width: 1280,
+      height: 800,
+      pixels: await blob.text(),
+      close() {},
+    }),
     atob,
+    btoa,
     Blob,
     performance,
   };
@@ -302,6 +377,7 @@ function makeEncoderPage() {
 }
 
 const contexts: ReturnType<typeof makeContext>[] = [];
+let encoderPageOverride: Page | undefined;
 const encoderStreams: Array<{ frameRate: number | undefined; bitsPerSecond: number }> = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
@@ -333,7 +409,11 @@ const shownDesktopTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopLoadFailures = new Map<string, PreviewAutomationLoadError>();
 const desktopTurns = new NodeEvents.EventEmitter();
-const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
+const desktopConnections: Array<{
+  endpoint: string;
+  context: ReturnType<typeof makeContext>;
+  browser: { close: ReturnType<typeof vi.fn> };
+}> = [];
 const testThread = {
   threadId: ThreadId.make("browser-test-thread"),
   providerSessionId: "agent-a",
@@ -481,6 +561,7 @@ const openDesktopViewer = Effect.gen(function* () {
 
 beforeEach(() => {
   contexts.length = 0;
+  encoderPageOverride = undefined;
   encoderStreams.length = 0;
   contextRequests.length = 0;
   contextGate = null;
@@ -663,6 +744,26 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a server started without the desktop browser channel marks its tabs headless", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
+    }),
+  ).pipe(
+    // A WSL-only desktop starts its backend without the browser fds.
+    Effect.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provide(DesktopChannel.layer),
+        Layer.provideMerge(dependencies),
+      ),
+    ),
+  ),
+);
+
 it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -716,6 +817,17 @@ it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop"
 
       expect(sessions.find((session) => session.tabId === tabId)?.headless).toBeUndefined();
       expect(desktopConnections).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+// Playwright emulates a light color scheme on every page it attaches to.
+it.effect("a desktop tab left on the system appearance clears Playwright's light emulation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { context } = yield* openDesktopViewer;
+
+      expect(context.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: null });
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -822,6 +934,95 @@ it.live.each([
         }
         yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
         expect(encoderStreams).toEqual([{ frameRate, bitsPerSecond }]);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([{ truncated: false }, { truncated: true }])(
+  "saves a large recording as a binary download and removes its staged file (truncated: $truncated)",
+  ({ truncated }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const fs = yield* FileSystem.FileSystem;
+        const bytes = 8 * 1024 * 1024;
+        const payload = Buffer.alloc(bytes, 0x5a);
+        let stagedPath: string | undefined;
+        const download = Promise.withResolvers<{ saveAs: (path: string) => Promise<void> }>();
+        const sandbox = NodeVM.createContext({
+          __t3Recorder: {
+            frame: async () => true,
+            stop: async () => ({ mimeType: "video/webm", count: 1, bytes }),
+            chunk: async () => {
+              throw new Error("Large recording used Base64 export");
+            },
+            download: () =>
+              download.resolve({
+                saveAs: async (path) => {
+                  stagedPath = path;
+                  await NodeFSP.writeFile(path, truncated ? payload.subarray(1) : payload);
+                },
+              }),
+          },
+        });
+        encoderPageOverride = {
+          ...makeContext().page,
+          evaluate: async (script: string | ((arg: unknown) => unknown), arg?: unknown) =>
+            typeof script === "function"
+              ? NodeVM.runInContext(`(${script.toString()})`, sandbox)(arg)
+              : undefined,
+          waitForEvent: () => download.promise,
+        } as unknown as Page;
+
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+        const stop = broker.invoke<{ path: string; sizeBytes: number }>({
+          scope,
+          tabId,
+          operation: "recordingStop",
+          input: {},
+        });
+        if (truncated) {
+          expect(yield* stop.pipe(Effect.flip)).toMatchObject({
+            _tag: "PreviewAutomationExecutionError",
+          });
+        } else {
+          const artifact = yield* stop;
+          expect(artifact.sizeBytes).toBe(bytes);
+          expect(Buffer.from(yield* fs.readFile(artifact.path)).equals(payload)).toBe(true);
+        }
+        expect(stagedPath).toBeDefined();
+        expect(yield* fs.exists(stagedPath!)).toBe(false);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([
+  { refreshFails: false, expected: "final frame" },
+  { refreshFails: true, expected: "frame" },
+])(
+  "saves the last page state when stopping a recording ($refreshFails)",
+  ({ refreshFails, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const fs = yield* FileSystem.FileSystem;
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+
+        const cdp = contexts[0]!.sessions[0]!;
+        const send = cdp.send.getMockImplementation()!;
+        cdp.send.mockImplementation((method, input) => {
+          if (method !== "Page.captureScreenshot") return send(method, input);
+          return refreshFails
+            ? Promise.reject(new Error("Page cannot capture a frame"))
+            : Promise.resolve({ data: Buffer.from("final frame").toString("base64") });
+        });
+        const artifact = yield* broker.invoke<{ path: string }>({
+          scope,
+          tabId,
+          operation: "recordingStop",
+          input: {},
+        });
+        expect(yield* fs.readFileString(artifact.path)).toBe(expected);
       }),
     ).pipe(Effect.provide(layer)),
 );
@@ -1111,6 +1312,117 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
         input: {},
       });
       expect(resolved.dialog).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("closing an isolated tab closes its context only after the page closes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const page = context.page;
+      page.beforeUnload = "listen";
+      page.unloadGate = Promise.withResolvers<void>();
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      expect(context.close).not.toHaveBeenCalled();
+      expect(page.isClosed()).toBe(false);
+      page.unloadGate.resolve();
+      yield* Effect.promise(() => context.closing.promise);
+      expect(page.isClosed()).toBe(true);
+      expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("closing a tab force-closes a page that never finishes unloading", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const page = context.page;
+      page.beforeUnload = "listen";
+      page.unloadGate = Promise.withResolvers<void>();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      vi.advanceTimersByTime(4_999);
+      expect(page.isClosed()).toBe(false);
+      expect(context.close).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(page.isClosed()).toBe(true);
+      yield* Effect.promise(() => context.closing.promise);
+      expect(vi.getTimerCount()).toBe(0);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers()))),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("closing a desktop tab waits for its page to unload before the desktop removes it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      const { context, browser } = desktopConnections[0]!;
+      const page = context.page;
+      // The desktop removes the webview once the session closes, dropping an unload in progress.
+      const events = yield* manager.subscribeEvents;
+      const sessionClosed = Promise.withResolvers<void>();
+      yield* Effect.gen(function* () {
+        while ((yield* PubSub.take(events)).type !== "closed");
+        page.removed = true;
+        sessionClosed.resolve();
+      }).pipe(Effect.forkScoped);
+      page.beforeUnload = "listen";
+      page.unloadGate = Promise.withResolvers<void>();
+      const closing = yield* broker
+        .invoke({ scope, tabId, operation: "close", input: {} })
+        .pipe(Effect.forkScoped);
+      // The page finishes unloading once the server listens for it, or too late if it never does.
+      yield* Effect.promise(() =>
+        Promise.race([page.pagehideWatched.promise, sessionClosed.promise]),
+      );
+      expect(browser.close).not.toHaveBeenCalled();
+      page.unloadGate.resolve();
+      yield* Fiber.join(closing);
+      expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
+      expect(browser.close).toHaveBeenCalledTimes(1);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("closing a tab with an unsaved-changes guard still closes it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* Effect.yieldNow;
+      // A profile context is shared, so closing the tab cannot fall back to closing its context.
+      const reportProfiles = yield* browser.profileReporter;
+      yield* reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "profile-work" },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      expect(contextRequests).toEqual([{ profileId: "profile-work", isolated: false }]);
+      const page = contexts[0]!.page;
+      page.beforeUnload = "guard";
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      // The mock raises the dialog inside `close`, so an unanswered guard leaves the page open here.
+      expect(page.beforeUnloadDialog).not.toBeNull();
+      expect(page.beforeUnloadDialog!.accept).toHaveBeenCalledTimes(1);
+      expect(page.isClosed()).toBe(true);
+      expect(page.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -2255,6 +2567,33 @@ it.live("agents read a human's tab with no arguments and act on it only while no
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("preview_open reports a tab it shows as visible once the client attaches", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.yieldNow;
+      // Like a real client, the stream attaches asynchronously after the reveal request arrives.
+      yield* Effect.gen(function* () {
+        let event;
+        do event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || !event.snapshot.revealRequest);
+        yield* browser.attachViewer(viewerInput(event.tabId, false)).pipe(Effect.forkScoped);
+      }).pipe(Effect.forkScoped);
+
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, open: true },
+      });
+
+      expect(opened.visible).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a session's own tab stays its default while other sessions' tabs are listed", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2649,8 +2988,14 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       page.emit("request", request);
       page.emit("requestfailed", request);
       page.url = () => "chrome-error://chromewebdata/";
-      expect((yield* status()).loadError).toEqual(certificateError);
-      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
+      expect(yield* snapshot()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
 
       const subframeRequest = {
         ...request,
@@ -2659,7 +3004,10 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       };
       page.emit("request", subframeRequest);
       page.emit("requestfailed", subframeRequest);
-      expect((yield* status()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
 
       // Clearing must happen before the next navigation replaces the error page.
       page.emit("request", { ...request, url: () => "https://device.local/login" });
@@ -2670,6 +3018,53 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       page.emit("request", dataRequest);
       page.emit("requestfailed", dataRequest);
       expect((yield* status()).loadError?.url).toBe("data:text/html,…");
+      initialNavigation = async () => {
+        page.emit("request", request);
+        page.emit("requestfailed", request);
+      };
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "navigate",
+          input: { url: certificateError.url },
+        })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        reason: `Navigation to ${certificateError.url} failed: ${certificateError.description}`,
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("preview_open rejects a desktop navigation that failed before automation attached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const channel = yield* DesktopChannel.DesktopBrowserChannel;
+      desktopRendersNext = true;
+      desktopPageUrl = "chrome-error://chromewebdata/";
+      const failure = {
+        ...certificateError,
+        url: "https://user:secret@device.local/?token=private#fragment",
+      };
+      using _failure = vi.spyOn(channel, "loadFailure").mockReturnValue(failure);
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: failure.url, reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+        reason: `Navigation to ${certificateError.url} failed: ${certificateError.description}`,
+      });
+      expect(JSON.stringify(error)).not.toMatch(/secret|private|fragment/);
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.map((session) => session.tabId)).toEqual([tabId]);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -2701,8 +3096,14 @@ it.live("reports a desktop tab's load failure from before the server connected",
           input: {},
           tabId: PreviewTabId.make(opened.tabId),
         });
-      expect((yield* status()).loadError).toEqual(certificateError);
-      expect((yield* snapshot()).loadError).toEqual(certificateError);
+      expect(yield* status()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
+      expect(yield* snapshot()).toMatchObject({
+        url: certificateError.url,
+        loadError: certificateError,
+      });
       desktopLoadFailures.set(opened.tabId, { ...certificateError, url: dataUrl });
       expect((yield* status()).loadError?.url).toBe("data:text/html,…");
       // A navigation the server sees supersedes it, even before the error page goes.
