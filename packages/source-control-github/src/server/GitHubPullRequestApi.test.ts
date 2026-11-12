@@ -4192,7 +4192,17 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       route(
         ["ReviewerCandidates", reviewerPeople(["octocat"], ["octocat", "unrelated"])],
-        ["ReviewerTeams", reviewerTeams([reviewerTeam])],
+        [
+          "ReviewerTeams",
+          reviewerTeams([
+            {
+              ...reviewerTeam,
+              slug: "octonauts",
+              combinedSlug: "acme/octonauts",
+              name: "Octonauts",
+            },
+          ]),
+        ],
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -4212,7 +4222,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       ]);
       expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
         ["octocat", true],
-        ["acme/web", false],
+        ["acme/octonauts", false],
       ]);
     }),
   );
