@@ -9676,6 +9676,144 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
+  it.effect("starts the queue after a scheduled continuation that follows a restart", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("recovery:restart-during-limit-wait");
+      const projectId = ProjectId.make("recovery:project:restart-during-limit-wait");
+      yield* seedProject({
+        projectId,
+        title: "Recovery project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId,
+        title: "Limited thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      for (const [name, type] of [
+        ["work", "defer_start"],
+        ["follow-up", "queue_after_active"],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${name}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${name}`),
+          text: name,
+          attachments: [],
+          dispatchMode: { type },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const [run, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs as [
+        OrchestrationV2Run,
+        OrchestrationV2Run,
+      ];
+      const now = yield* DateTime.now;
+      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...run, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit reached",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Plan limit reached.",
+                code: "usageLimitExceeded",
+                retryable: null,
+                resetAt,
+              },
+            },
+          },
+        ],
+      });
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
+      const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now));
+      assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
+      yield* orchestrator.autoArmLimitRecovery({
+        commandId: arm.commandId,
+        threadId,
+        limitRecovery: arm.limitRecovery,
+      });
+
+      // The server restarts while the thread waits for the reset.
+      yield* recovery.reconcile("startup");
+
+      yield* TestClock.adjust("1 minute");
+      const armed = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      )!;
+      const resume = limitRecoveryCommand(armed, true, DateTime.toEpochMillis(yield* DateTime.now));
+      assert.isNotNull(resume);
+      yield* orchestrator.dispatch(resume!);
+      const continuation = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (candidate) => candidate.usageLimitContinuationOfRunId === run.id,
+      )!;
+      assert.equal(continuation.status, "starting");
+      const completedAt = yield* DateTime.now;
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:continuation-completed`),
+            type: "run.updated",
+            threadId,
+            runId: continuation.id,
+            occurredAt: completedAt,
+            payload: { ...continuation, status: "completed", completedAt },
+          },
+        ],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const followUp = after.runs.find((candidate) => candidate.id === queued.id);
+      assert.notEqual(followUp?.queueHeld, true);
+      assert.equal(followUp?.status, "starting");
+    }),
+  );
+
   it.effect.each([
     "resume",
     "resume-started",
