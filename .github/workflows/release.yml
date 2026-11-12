@@ -1046,6 +1046,59 @@ jobs:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: gh release edit "$RELEASE_TAG" --draft=false
 
+  # A nightly install finds updates in releases.atom, which holds the 10 newest git tags of any
+  # kind, so a burst of other tags hides every nightly. The `update-feed` release is the fixed URL
+  # newer installs read first. Every scheduled tick and every nightly repairs it, then fails when
+  # the feed no longer lists the newest nightly. See docs/operations/release.md#update-feed.
+  update_feed:
+    name: Check the update feed
+    needs: [preflight, release]
+    if: ${{ !cancelled() && github.repository == 'pingdotgg/t3code' && (github.event_name == 'schedule' || needs.preflight.outputs.release_channel == 'nightly') }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+
+      - id: feed
+        name: Read the update feed
+        uses: actions/github-script@v8
+        with:
+          retries: 3
+          script: |
+            const { readNightlyUpdateFeed } = require('./.github/scripts/check-nightly-release.cjs');
+            const { tag, feedTags, pointerTag } = await readNightlyUpdateFeed({ github, context });
+            if (!tag) return;
+            core.info(`Newest nightly: ${tag}. Pointer: ${pointerTag}. Feed: ${feedTags.join(', ')}.`);
+            core.setOutput('tag', tag);
+            core.setOutput('pointer_stale', pointerTag !== tag);
+            core.setOutput('in_feed', feedTags.includes(tag));
+
+      - name: Point the update feed at the newest nightly
+        if: steps.feed.outputs.pointer_stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.feed.outputs.tag }}
+        run: |
+          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq '{tag_name, name, body}' > nightly.json
+          gh release view update-feed > /dev/null 2>&1 ||
+            gh release create update-feed --prerelease --latest=false --title "Update feed" \
+              --notes "The desktop updater reads this release to find the newest nightly. Do not delete it. See docs/operations/release.md."
+          gh release upload update-feed nightly.json --clobber
+
+      - name: Fail when the feed hides the newest nightly
+        if: steps.feed.outputs.in_feed == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.feed.outputs.tag }}
+        run: |
+          echo "::error::releases.atom does not list $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot update. See docs/operations/release.md#update-feed."
+          exit 1
+
   # The `t3` npm package is a launcher that downloads this version's CLI
   # archive from the GitHub Release, so it publishes only once that release
   # exists. Preview publishes too, under the `preview` dist-tag, which

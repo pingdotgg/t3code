@@ -237,3 +237,42 @@ test("stable releases fail when no nightly is published", async () => {
   const { options } = nightlyCommitFixture({ releases: [nightly(1, { tagName: "v1.0.0" })] });
   await assert.rejects(resolveLatestNightlyCommit(options), /No published nightly found/);
 });
+
+const { readNightlyUpdateFeed } = require("./check-nightly-release.cjs");
+
+// GitHub percent-encodes tag names in the feed, and any tag in the repository takes a slot.
+const atomEntry = (tag) =>
+  `<entry><link rel="alternate" type="text/html" href="https://github.com/example/app/releases/tag/${encodeURIComponent(tag)}"/></entry>`;
+
+function updateFeedFixture({ feedTags, pointer }) {
+  const { options } = fixture({
+    releases: [nightly(1), nightly(0, { tagName: "v1.0.2-preview.1" })],
+  });
+  options.fetch = async (url) =>
+    url === "https://github.com/example/app/releases.atom"
+      ? new Response(`<feed>${feedTags.map(atomEntry).join("")}</feed>`)
+      : url === "https://github.com/example/app/releases/download/update-feed/nightly.json"
+        ? pointer
+        : assert.fail(`unexpected fetch ${url}`);
+  return options;
+}
+
+test("update feed check reports a nightly crowded out of the feed and a missing pointer", async () => {
+  const feedTags = ["v1.0.2-preview.1", "mobile-android-build/2.3.0/abc"];
+  assert.deepEqual(
+    await readNightlyUpdateFeed(
+      updateFeedFixture({ feedTags, pointer: new Response("Not Found", { status: 404 }) }),
+    ),
+    { tag: "v1.0.1-nightly.20260905.123", feedTags, pointerTag: undefined },
+  );
+});
+
+test("update feed check reads the tag the pointer names", async () => {
+  const feedTags = ["v1.0.1-nightly.20260905.123"];
+  const pointer = Response.json({ tag_name: "v1.0.1-nightly.20260905.100" });
+  assert.deepEqual(await readNightlyUpdateFeed(updateFeedFixture({ feedTags, pointer })), {
+    tag: "v1.0.1-nightly.20260905.123",
+    feedTags,
+    pointerTag: "v1.0.1-nightly.20260905.100",
+  });
+});

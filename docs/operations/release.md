@@ -19,7 +19,7 @@ the version.
   - push tag matching `v*.*.*` for a stable release of an explicit commit
   - scheduled nightly check every 30 minutes
   - manual `workflow_dispatch` with `channel=nightly`
-  - manual `workflow_dispatch` with `channel=preview`, the maintainers' test train. It exercises the whole release flow (build, sign, notarize, smoke, publish) for a commit that end users must never receive, which is how an unmerged branch or a risky change gets a real release run before it lands. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`) and leaves its GitHub prerelease as a draft, plus the npm packages under the `preview` dist-tag. It stays a draft because a draft has no git tag. `releases.atom` lists the 10 newest tags in the repository, same-day `preview` tags sort above `nightly` ones, and nightly updaters older than 0.1.10-nightly.20261112.4603 find updates only in that feed, so ten published previews hide every nightly from them. Do not publish a preview draft by hand; converting it back to a draft afterwards leaves the tag in the feed until the tag is deleted. Preview is not on the schedule, no default npm dist-tag points at it, its desktop builds carry no update feed, and no updater manifest (`latest*.yml`, `nightly*.yml`, blockmaps) is attached, so a stable or nightly install cannot be offered one. The only way onto it is downloading the draft by hand as a maintainer; `npx t3@preview`, `T3CODE_CHANNEL=preview`, and `t3 update --channel preview` cannot reach a draft's assets. Each of those paths prints a warning, and the CLI asks for confirmation when the running build is not itself a preview. The release itself is named as a maintainer test build and its body is a warning rather than generated notes: a changelog of unmerged branch history is not a changelog, and nightly and stable notes are unaffected because each series resolves its previous tag within its own channel. The hosted web app, AUR, and Discord announcements are skipped. Keep it; it costs nothing when idle.
+  - manual `workflow_dispatch` with `channel=preview`, the maintainers' test train. It exercises the whole release flow (build, sign, notarize, smoke, publish) for a commit that end users must never receive, which is how an unmerged branch or a risky change gets a real release run before it lands. It builds the triggering commit with nightly's versioning under the `preview` prerelease identifier (`0.0.41-preview.<date>.<run>`) and leaves its GitHub prerelease as a draft, plus the npm packages under the `preview` dist-tag. It stays a draft because a draft has no git tag, and published preview tags hide nightlies from the updater (see [Update feed](#update-feed)). Do not publish a preview draft by hand. Preview is not on the schedule, no default npm dist-tag points at it, its desktop builds carry no update feed, and no updater manifest (`latest*.yml`, `nightly*.yml`, blockmaps) is attached, so a stable or nightly install cannot be offered one. The only way onto it is downloading the draft by hand as a maintainer; `npx t3@preview`, `T3CODE_CHANNEL=preview`, and `t3 update --channel preview` cannot reach a draft's assets. Each of those paths prints a warning, and the CLI asks for confirmation when the running build is not itself a preview. The release itself is named as a maintainer test build and its body is a warning rather than generated notes: a changelog of unmerged branch history is not a changelog, and nightly and stable notes are unaffected because each series resolves its previous tag within its own channel. The hosted web app, AUR, and Discord announcements are skipped. Keep it; it costs nothing when idle.
 - A manual stable release builds the commit of the latest published nightly, not `main` HEAD.
   Nightly is the release candidate: verify the nightly, then promote it. Merges to `main` keep
   landing while you verify and never leak into the stable build.
@@ -464,6 +464,26 @@ restart the previous server. If the installed launcher does not support the targ
 verify that the update stops before restart and run `npx t3@<version> service update` once on the
 server machine. Also test the manual or desktop-managed guidance when those environments are
 available.
+
+## Update feed
+
+A nightly install finds the newest nightly in two places.
+
+- `releases.atom` lists the 10 newest git tags in the repository, of any kind, and same-day
+  `preview` tags sort above `nightly` ones. Installs built before the pointer existed read nothing
+  else: nightlies before `0.1.10-nightly.20261112.4603`, and stable `0.1.9` and older switched to
+  the nightly channel. Ten other tags in a row hide every nightly from them.
+- `releases/download/update-feed/nightly.json` names the newest nightly. Newer installs read it
+  first and take the newer of it and the feed, so their updates do not depend on tag order. The
+  `update-feed` release holds that file. Never delete it.
+
+The release workflow's `Check the update feed` job runs on every scheduled tick and after every
+nightly. It rewrites a stale pointer, then fails when the feed does not list the newest nightly.
+
+When it fails, old installs cannot update. The job log lists the tags that fill the feed. Delete
+the ones nothing needs with `git push origin :refs/tags/<tag>`. Converting a release to a draft
+keeps its tag, so it does not help. To keep this from happening, anything users should not be
+offered stays a draft or uses one rolling tag, like `desktop-preview`.
 
 ## Desktop auto-update notes
 

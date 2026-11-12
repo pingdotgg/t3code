@@ -121,9 +121,32 @@ async function resolveLatestNightlyCommit({ github, context, core }) {
   return { tag, sha: commit.sha, version };
 }
 
+// The two places a nightly install looks for an update: releases.atom, which holds the 10 newest
+// git tags of any kind, and the `update-feed` pointer. Reports what each names beside the newest
+// published nightly, so the caller can repair the pointer and fail when the feed hides the nightly.
+async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch }) {
+  const latest = await findLatestNightly({ github, context });
+  if (!latest) return {};
+
+  const base = `https://github.com/${context.repo.owner}/${context.repo.repo}`;
+  const feed = await fetch(`${base}/releases.atom`);
+  if (!feed.ok) throw new Error(`releases.atom answered HTTP ${feed.status}.`);
+  const feedTags = Array.from(
+    (await feed.text()).matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g),
+    (match) => decodeURIComponent(match[1]),
+  );
+
+  // A missing or unreadable pointer is a stale one; the caller rewrites it.
+  const pointer = await fetch(`${base}/releases/download/update-feed/nightly.json`);
+  const pointerTag = pointer.ok ? (await pointer.json().catch(() => ({}))).tag_name : undefined;
+
+  return { tag: latest.tagName, feedTags, pointerTag };
+}
+
 module.exports = {
   assertCommitOnDefaultBranch,
   assertReleaseSource,
   shouldReleaseNightly,
   resolveLatestNightlyCommit,
+  readNightlyUpdateFeed,
 };
