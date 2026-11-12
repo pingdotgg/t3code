@@ -383,6 +383,33 @@ describe("tailscale", () => {
     }),
   );
 
+  // regression: #15919 - the macOS app binary prints a GUI error and exits 0
+  // unless its env marks a CLI call, which a Dock-launched app's env does not.
+  it.effect("reads status from the macOS app binary when launched from the Dock", () => {
+    const layer = Layer.merge(
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const env = command._tag === "StandardCommand" ? (command.options.env ?? {}) : {};
+          const cliMode = ["TAILSCALE_BE_CLI", "SHLVL", "TERM"].some((key) => key in env);
+          return Effect.succeed(
+            mockHandle({
+              stdout: cliMode
+                ? tailscaleStatusJson
+                : "The Tailscale GUI failed to start: (Tailscale.CLIError error 3.)\n",
+            }),
+          );
+        }),
+      ),
+      Layer.succeed(HostProcess.Platform, "darwin"),
+    );
+
+    return Effect.gen(function* () {
+      const status = yield* readTailscaleStatus.pipe(Effect.provide(layer));
+      assert.strictEqual(status.magicDnsName, "desktop.tail.ts.net");
+    });
+  });
+
   // regression: #21609 - without forceKillAfter a timed-out probe only gets
   // SIGTERM, so a group member that ignores it outlives the call.
   it.effect("escalates timed-out probes to SIGKILL", () => {
