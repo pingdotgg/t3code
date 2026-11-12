@@ -381,6 +381,13 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT thread_id FROM kept_threads))
            OR (aggregate_kind = 'project'
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.pullRequests', (
+          SELECT json_group_array(json_remove(link.value, '$.watch') ORDER BY link.key)
+          FROM json_each(payload_json, '$.pullRequests') AS link))
+        WHERE EXISTS (
+          SELECT 1 FROM json_each(payload_json, '$.pullRequests') AS link
+          WHERE json_extract(link.value, '$.watch') IS NOT NULL)`;
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }
@@ -401,6 +408,33 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     projects: keptProjects as ReadonlyArray<KeptProject>,
     eventCount: events?.count ?? 0,
   };
+});
+
+// Peer links preview builds recorded 68-70 before main took those slots for other migrations.
+// A snapshot with exactly that history drops the preview's schema so main's 68+ can run.
+const PEER_LINKS_PREVIEW_HISTORY = [
+  "68:PeerLinks",
+  "69:PeerLinkFence",
+  "70:WaitingLinkRequestIndex",
+];
+
+const forgetPeerLinksPreviewHistory = Effect.fn("forgetPeerLinksPreviewHistory")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+  if (tables.length === 0) return;
+  const tail = yield* sql<{ migration_id: number; name: string }>`
+    SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 68
+    ORDER BY migration_id`;
+  const history = tail.map((row) => `${row.migration_id}:${row.name}`);
+  if (history.join() !== PEER_LINKS_PREVIEW_HISTORY.join()) return;
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`DROP INDEX IF EXISTS orchestration_v2_projection_turn_items_waiting_link_idx`;
+      yield* sql`DROP TABLE IF EXISTS peer_environment_links`;
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= 68`;
+    }),
+  );
 });
 
 export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
@@ -478,6 +512,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     const executed = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
+      yield* forgetPeerLinksPreviewHistory();
       return yield* runMigrations();
     }).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),

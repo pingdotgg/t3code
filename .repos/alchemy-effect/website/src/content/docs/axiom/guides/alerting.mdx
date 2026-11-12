@@ -17,7 +17,7 @@ Everything below runs inside your Stack's `Effect.gen` — see
 ## Create a notifier
 
 ```typescript
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 
 const slack = yield* Axiom.Notifier("ops-slack", {
   name: "ops-channel",
