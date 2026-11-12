@@ -88,8 +88,6 @@ vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async ()
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
-// The test drives comparison controls, without mounting virtualized diff viewers or their workers.
-vi.mock("./diffs/AnnotatableCodeView", () => ({ AnnotatableCodeView: () => null }));
 vi.mock("./diffs/WorkingChangesReview", () => ({ WorkingChangesReview: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
