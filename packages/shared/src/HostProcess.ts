@@ -60,6 +60,13 @@ export const Environment = Context.Reference<NodeJS.ProcessEnv>(
   },
 );
 
+export const TempDirectory = Context.Reference<string>(
+  "@t3tools/shared/HostProcess/TempDirectory",
+  {
+    defaultValue: () => NodeOS.tmpdir(),
+  },
+);
+
 export const WorkingDirectory = Context.Reference<string>(
   "@t3tools/shared/HostProcess/WorkingDirectory",
   {

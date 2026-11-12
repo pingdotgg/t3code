@@ -23,7 +23,12 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
-import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+import * as MacAppVolume from "./MacAppVolume.ts";
+import { TEMP_DIRECTORY, flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+
+const DOWNLOADED_ZIP = "/Users/alice/Library/Caches/t3code-updater/pending/T3-Code-1.2.4-mac.zip";
+const REQUIREMENT =
+  'designated => identifier "com.t3tools.t3code" and anchor apple generic and certificate leaf[subject.OU] = TEAMID1234';
 
 type ReleaseFeed = Parameters<typeof computeReleaseNotes>[2];
 type RunningVersion = Parameters<typeof computeReleaseNotes>[0];
@@ -99,6 +104,240 @@ describe("DesktopUpdates", () => {
       const unmarked = yield* linuxState(undefined);
       assert.equal(unmarked.state.status, "disabled");
       assert.isFalse(unmarked.canInstallUpdates);
+    }),
+  );
+
+  it.effect("updates macOS apps on any writable volume and says why it cannot elsewhere", () =>
+    Effect.gen(function* () {
+      const startupDisk = 1n;
+      const checkFrom = (
+        bundlePath: string,
+        location: { readonly device?: bigint; readonly readOnly?: boolean } = {},
+      ) => {
+        const harness = makeHarness({
+          resourcesPath: `${bundlePath}/Contents/Resources`,
+          devices: { [TEMP_DIRECTORY]: startupDisk, [bundlePath]: location.device ?? startupDisk },
+          readOnlyPaths: location.readOnly
+            ? [bundlePath.slice(0, bundlePath.lastIndexOf("/"))]
+            : [],
+        });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            const { checked } = yield* updates.check("manual");
+            return { checked, state: yield* updates.getState, commands: harness.commands };
+          }),
+        ).pipe(Effect.provide(harness.layer));
+      };
+
+      assert.isTrue((yield* checkFrom("/Applications/T3 Code.app")).checked);
+      assert.isTrue((yield* checkFrom("/Volumes/Macintosh HD/Applications/T3 Code.app")).checked);
+      const externalDrive = yield* checkFrom("/Volumes/ExternalDrive/T3 Code.app", { device: 2n });
+      assert.isTrue(externalDrive.checked);
+
+      const diskImage = yield* checkFrom("/Volumes/T3 Code/T3 Code.app", {
+        device: 3n,
+        readOnly: true,
+      });
+      assert.isFalse(diskImage.checked);
+      assert.equal(diskImage.state.status, "disabled");
+      assert.match(diskImage.state.message ?? "", /cannot replace itself on "T3 Code"/);
+
+      const translocated = yield* checkFrom(
+        "/private/var/folders/xy/abc/T/AppTranslocation/0F3B9E2A/d/T3 Code.app",
+      );
+      assert.isFalse(translocated.checked);
+      assert.equal(translocated.state.status, "disabled");
+      assert.match(translocated.state.message ?? "", /temporary read-only copy/);
+
+      // macOS opened the app an interrupted swap moved aside. A helper moves it back once it quits.
+      const stage = "/Volumes/ExternalDrive/.T3 Code.update";
+      const movedAside = yield* checkFrom(`${stage}/previous.app`, { device: 2n });
+      assert.isFalse(movedAside.checked);
+      assert.match(movedAside.state.message ?? "", /an earlier update did not finish/);
+      assert.deepEqual(movedAside.commands, [
+        {
+          command: "/bin/sh",
+          args: [
+            "-c",
+            MacAppVolume.PUT_BACK_SCRIPT,
+            "t3code-update",
+            String(process.pid),
+            "/Volumes/ExternalDrive/T3 Code.app",
+            stage,
+          ],
+        },
+      ]);
+
+      const unreadable = makeHarness({
+        resourcesPath: "/Volumes/PortableSSD/T3 Code.app/Contents/Resources",
+      });
+      const unreadableCheck = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          const { checked } = yield* updates.check("manual");
+          return { checked, state: yield* updates.getState };
+        }),
+      ).pipe(Effect.provide(unreadable.layer));
+      assert.isFalse(unreadableCheck.checked);
+      assert.isFalse(unreadableCheck.state.enabled);
+      assert.equal(unreadableCheck.state.status, "disabled");
+      assert.equal(
+        unreadableCheck.state.message,
+        "Automatic updates are off because T3 Code could not check the disk it runs from.",
+      );
+    }),
+  );
+
+  it.effect(
+    "installs beside a macOS app on another volume and leaves ShipIt the startup disk",
+    () =>
+      Effect.gen(function* () {
+        const installFrom = (bundlePath: string, device: bigint) => {
+          const harness = makeHarness({
+            resourcesPath: `${bundlePath}/Contents/Resources`,
+            devices: { [TEMP_DIRECTORY]: 1n, [bundlePath]: device },
+            stopBackend: Effect.sync(() => {
+              harness.installSteps.push("stopBackend");
+            }),
+            runCommand: (_command, args) =>
+              args[0] === "-d"
+                ? { output: `Executable=${bundlePath}/Contents/MacOS/T3 Code\n${REQUIREMENT}\n` }
+                : undefined,
+          });
+          return Effect.scoped(
+            Effect.gen(function* () {
+              const desktopState = yield* DesktopState.DesktopState;
+              const updates = yield* DesktopUpdates.DesktopUpdates;
+              yield* updates.configure;
+              harness.emit("update-downloaded", {
+                version: "1.2.4",
+                downloadedFile: DOWNLOADED_ZIP,
+              });
+              yield* flushCallbacks;
+              const result = yield* updates.install;
+              return { harness, result, quitting: yield* Ref.get(desktopState.quitting) };
+            }),
+          ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+        };
+
+        for (const bundlePath of [
+          "/Applications/T3 Code.app",
+          "/Volumes/Macintosh HD/Applications/T3 Code.app",
+        ]) {
+          const { harness, result } = yield* installFrom(bundlePath, 1n);
+          assert.isTrue(result.accepted);
+          assert.deepEqual(harness.installSteps, ["stopBackend", "quitAndInstall"]);
+        }
+
+        const bundlePath = "/Volumes/ExternalDrive/T3 Code.app";
+        const stage = "/Volumes/ExternalDrive/.T3 Code.update";
+        const stagedBundle = `${stage}/extracted/T3 Code.app`;
+        const { harness, result, quitting } = yield* installFrom(bundlePath, 2n);
+        assert.isTrue(result.accepted);
+        assert.equal(result.state.message, null);
+        assert.isTrue(quitting);
+        // The update unpacks and verifies while the backends still serve; only then does it quit.
+        assert.deepEqual(harness.installSteps, [
+          "/usr/bin/ditto",
+          "/usr/bin/codesign",
+          "/usr/bin/codesign",
+          "stopBackend",
+          "/bin/sh",
+          "quit",
+        ]);
+        assert.deepEqual(harness.commands, [
+          {
+            command: "/usr/bin/ditto",
+            args: ["-x", "-k", DOWNLOADED_ZIP, `${stage}/extracted`],
+          },
+          { command: "/usr/bin/codesign", args: ["-d", "-r-", bundlePath] },
+          {
+            command: "/usr/bin/codesign",
+            args: [
+              "--verify",
+              "--deep",
+              "--strict",
+              "--test-requirement",
+              `=${REQUIREMENT.slice("designated => ".length)}`,
+              stagedBundle,
+            ],
+          },
+          {
+            command: "/bin/sh",
+            args: [
+              "-c",
+              MacAppVolume.SWAP_SCRIPT,
+              "t3code-update",
+              String(process.pid),
+              bundlePath,
+              stagedBundle,
+              stage,
+            ],
+          },
+        ]);
+      }),
+  );
+
+  it.effect("keeps a macOS app on another volume running when its update fails to stage", () =>
+    Effect.gen(function* () {
+      const bundlePath = "/Volumes/ExternalDrive/T3 Code.app";
+      const stage = "/Volumes/ExternalDrive/.T3 Code.update";
+      const cases = [
+        {
+          downloadedFile: DOWNLOADED_ZIP,
+          exitCodes: { "/usr/bin/ditto": 1 },
+          message: "Could not unpack the update next to T3 Code.",
+        },
+        {
+          downloadedFile: DOWNLOADED_ZIP,
+          exitCodes: { "/usr/bin/codesign": 1 },
+          message:
+            "The downloaded update is not signed like this copy of T3 Code, so it was not installed.",
+        },
+        {
+          downloadedFile: undefined,
+          exitCodes: {},
+          message: "Could not prepare the update next to T3 Code.",
+        },
+      ] as const;
+      for (const failure of cases) {
+        const exitCodes: Readonly<Record<string, number>> = failure.exitCodes;
+        const harness = makeHarness({
+          resourcesPath: `${bundlePath}/Contents/Resources`,
+          devices: { [TEMP_DIRECTORY]: 1n, [bundlePath]: 2n },
+          runCommand: (command, args) =>
+            args[0] === "-d" ? { output: REQUIREMENT } : { exitCode: exitCodes[command] ?? 0 },
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const desktopState = yield* DesktopState.DesktopState;
+            const pool = yield* DesktopBackendPool.DesktopBackendPool;
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-downloaded", {
+              version: "1.2.4",
+              downloadedFile: failure.downloadedFile,
+            });
+            yield* flushCallbacks;
+
+            const result = yield* updates.install;
+            assert.isTrue(result.accepted);
+            assert.equal(result.state.errorContext, "install");
+            assert.equal(result.state.message, failure.message);
+            assert.isFalse(yield* Ref.get(desktopState.quitting));
+            assert.notInclude(harness.installSteps, "/bin/sh");
+            assert.notInclude(harness.installSteps, "quit");
+            assert.notInclude(harness.installSteps, "quitAndInstall");
+            // Staging fails before the backends stop, so they never went down.
+            assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+            if (failure.downloadedFile !== undefined) assert.include(harness.removedPaths, stage);
+            assert.equal(harness.installRecords.size, 0);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }
     }),
   );
 

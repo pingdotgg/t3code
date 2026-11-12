@@ -105,6 +105,13 @@ The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
 
+On macOS, drag T3 Code to Applications, or to another drive you can write to,
+before opening it. Opened from the disk image, from a read-only drive, or from
+the temporary copy macOS makes when you open it straight from Downloads, T3 Code
+cannot replace itself. It turns automatic updates off there, and
+**Settings → About** says why. Move it with Finder and open it from its new
+place to turn updates back on.
+
 ### Nix (nixpkgs)
 
 T3 Code is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code).

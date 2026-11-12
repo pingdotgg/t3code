@@ -31,16 +31,19 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
+import * as MacAppVolume from "./MacAppVolume.ts";
 import {
   normalizeDesktopUpdateReleaseNotes,
   releaseNotesOfOfferedVersion,
 } from "./releaseNotes.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   createInitialDesktopUpdateState,
@@ -79,6 +82,12 @@ const UpdateInfo = Schema.Struct({
   releaseDate: Schema.optional(Schema.String),
 });
 
+const UpdateDownloadedInfo = Schema.Struct({
+  ...UpdateInfo.fields,
+  // The zip an install on the app's own volume unpacks itself.
+  downloadedFile: Schema.optional(Schema.String),
+});
+
 const DownloadProgressInfo = Schema.Struct({
   percent: Schema.Number,
 });
@@ -91,6 +100,7 @@ const encodeInstallRecord = Schema.encodeEffect(DesktopUpdateInstallRecord);
 
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
+const decodeUpdateDownloadedInfo = Schema.decodeUnknownEffect(UpdateDownloadedInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -340,6 +350,7 @@ function getAutoUpdateDisabledReason(args: {
   platform: NodeJS.Platform;
   appImage?: string | undefined;
   isDebPackage: boolean;
+  macAppLocation: MacAppVolume.MacAppLocation;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
@@ -358,7 +369,7 @@ function getAutoUpdateDisabledReason(args: {
   if (args.platform === "linux" && !args.appImage && !args.isDebPackage) {
     return "Automatic updates on Linux require the AppImage or the .deb package.";
   }
-  return null;
+  return args.macAppLocation._tag === "Blocked" ? args.macAppLocation.reason : null;
 }
 
 function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
@@ -370,12 +381,14 @@ export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const desktopState = yield* DesktopState.DesktopState;
+  const electronApp = yield* ElectronApp.ElectronApp;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const policy = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
+  const macAppVolume = yield* MacAppVolume.make;
   // Any user can set the mock flag, so it never replaces an administrator's update source.
   const mockUpdates = config.mockUpdates && policy.message === null;
 
@@ -388,6 +401,9 @@ export const make = Effect.gen(function* () {
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
+  const downloadedFileRef = yield* Ref.make(
+    Option.none<{ readonly version: string; readonly file: string }>(),
+  );
   // The release a track switch's database check cleared. A build crosses to another track only
   // through such a switch, and never below that release: version order alone cannot tell whether
   // a Stable knows a Nightly's migrations.
@@ -456,6 +472,21 @@ export const make = Effect.gen(function* () {
           )
       : false;
 
+  const macAppLocation =
+    environment.platform === "darwin" && environment.isPackaged
+      ? yield* macAppVolume
+          .resolveLocation(environment.resourcesPath, yield* HostProcess.TempDirectory)
+          .pipe(
+            // ShipIt onto a volume it cannot see may leave the app half-written, so updates stay off.
+            Effect.catch((error) =>
+              logUpdaterWarning("could not check where the app is installed", {
+                errorTag: error._tag,
+                reason: error.reason._tag,
+              }).pipe(Effect.as(MacAppVolume.UNCHECKED)),
+            ),
+          )
+      : MacAppVolume.SHIP_IT;
+
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
     Effect.map(
       (appUpdateYmlConfig) =>
@@ -473,6 +504,7 @@ export const make = Effect.gen(function* () {
         platform: environment.platform,
         appImage: Option.getOrUndefined(config.appImagePath),
         isDebPackage,
+        macAppLocation,
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
       }),
@@ -761,6 +793,20 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const stageOnAppVolume = Effect.fn("desktop.updates.stageOnAppVolume")(function* (
+    bundlePath: string,
+    downloadedVersion: string | null,
+  ) {
+    const downloaded = Option.filter(
+      yield* Ref.get(downloadedFileRef),
+      (download) => download.version === downloadedVersion,
+    );
+    if (Option.isNone(downloaded)) {
+      return yield* new MacAppVolume.MacAppVolumeInstallError({ step: "stage" });
+    }
+    return yield* macAppVolume.stage(bundlePath, downloaded.value.file);
+  });
+
   const installDownloadedUpdate = (expectedVersion?: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -816,6 +862,11 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
+          // Unpacking onto the app's own drive is slow, so backends keep serving until it is verified.
+          const staged =
+            macAppLocation._tag === "OwnVolume"
+              ? Option.some(yield* stageOnAppVolume(macAppLocation.bundlePath, downloadedVersion))
+              : Option.none<MacAppVolume.StagedMacUpdate>();
           // Stop pooled backends before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
           // stop clears desiredRunning, so retain the recovery set beforehand.
@@ -829,13 +880,30 @@ export const make = Effect.gen(function* () {
               instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
             { concurrency: "unbounded" },
           );
-          yield* electronUpdater.quitAndInstall({
-            isSilent: true,
-            isForceRunAfter: true,
-          });
+          if (Option.isSome(staged)) {
+            yield* macAppVolume.launchSwap(staged.value);
+            yield* electronApp.quit;
+          } else {
+            yield* electronUpdater.quitAndInstall({
+              isSilent: true,
+              isForceRunAfter: true,
+            });
+          }
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
+            MacAppVolumeInstallError: Effect.fn("desktop.updates.handleAppVolumeInstallFailure")(
+              function* (error) {
+                yield* recoverFailedInstall(error.message);
+                yield* logUpdaterError(error.message, {
+                  errorTag: error._tag,
+                  step: error.step,
+                  exitCode: error.exitCode,
+                  cause: describeUpdateErrorCause(error.cause),
+                });
+                return { accepted: true, completed: false, failed: true };
+              },
+            ),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);
@@ -1065,7 +1133,7 @@ export const make = Effect.gen(function* () {
   const handleUpdateDownloaded = Effect.fn("desktop.updates.handleUpdateDownloaded")(function* (
     raw: unknown,
   ) {
-    yield* decodeUpdateInfo(raw).pipe(
+    yield* decodeUpdateDownloadedInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
           const state = yield* Ref.get(updateStateRef);
@@ -1083,6 +1151,13 @@ export const make = Effect.gen(function* () {
             }
             return;
           }
+          yield* Ref.set(
+            downloadedFileRef,
+            Option.map(Option.fromNullishOr(info.downloadedFile), (file) => ({
+              version: info.version,
+              file,
+            })),
+          );
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),

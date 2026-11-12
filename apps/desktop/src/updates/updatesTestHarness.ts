@@ -1,15 +1,21 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -18,6 +24,8 @@ import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
 export const flushCallbacks = Effect.yieldNow;
+
+export const TEMP_DIRECTORY = "/var/folders/xy/abc/T";
 
 export interface UpdatesHarnessOptions {
   readonly checkForUpdates?: Effect.Effect<
@@ -35,6 +43,16 @@ export interface UpdatesHarnessOptions {
   readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
+  readonly resourcesPath?: string;
+  /** Device numbers `stat` reports; other paths are missing. */
+  readonly devices?: Readonly<Record<string, bigint>>;
+  /** Paths `access` refuses to write, as on a mounted disk image. */
+  readonly readOnlyPaths?: ReadonlyArray<string>;
+  /** Exit code and output of each helper command; unlisted ones succeed silently. */
+  readonly runCommand?: (
+    command: string,
+    args: ReadonlyArray<string>,
+  ) => { readonly exitCode?: number; readonly output?: string } | undefined;
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
   readonly policy?: DesktopUpdatePolicy.UpdatePolicy;
@@ -56,6 +74,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
   const installSteps: string[] = [];
+  const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+  const removedPaths: string[] = [];
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -117,6 +137,46 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       ).pipe(Effect.asVoid),
   } satisfies ElectronUpdater.ElectronUpdater["Service"]);
 
+  const layerApp = Layer.mock(ElectronApp.ElectronApp, {
+    quit: Effect.sync(() => {
+      installSteps.push("quit");
+    }),
+  });
+
+  const encoder = new TextEncoder();
+  const layerSpawner = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const { command: name, args } = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        commands.push({ command: name, args });
+        installSteps.push(name);
+        const result = options.runCommand?.(name, args);
+        const output = Stream.make(encoder.encode(result?.output ?? ""));
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          // The swap helper waits for the app to exit.
+          exitCode:
+            name === "/bin/sh"
+              ? Effect.never
+              : Effect.succeed(ChildProcessSpawner.ExitCode(result?.exitCode ?? 0)),
+          isRunning: Effect.succeed(name === "/bin/sh"),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: output,
+          stderr: Stream.empty,
+          all: output,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    ),
+  );
+
   const layerWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
     main: Effect.succeedNone,
@@ -172,6 +232,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         : [stubBackendInstance]),
   );
 
+  const resourcesPath = options.resourcesPath ?? "/missing/resources";
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
@@ -180,7 +241,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     appVersion: options.appVersion ?? "1.2.3",
     appPath: "/repo",
     isPackaged: true,
-    resourcesPath: "/missing/resources",
+    resourcesPath,
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
@@ -241,23 +302,56 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
+  const notFound = (method: string, path: string) =>
+    PlatformError.systemError({
+      module: "FileSystem",
+      method,
+      _tag: "NotFound",
+      pathOrDescriptor: path,
+    });
   const layerFileSystem = FileSystem.layerNoop({
     readFileString: (path) => {
       const installRecord = isInstallRecord(path)
         ? (installRecords.get(path) ?? previousInstallRecord)
         : undefined;
       if (installRecord !== undefined) return Effect.succeed(installRecord);
-      return path === "/missing/resources/package-type" && options.packageType !== undefined
+      return path === `${resourcesPath}/package-type` && options.packageType !== undefined
         ? Effect.succeed(options.packageType)
-        : Effect.fail(
+        : Effect.fail(notFound("readFileString", path));
+    },
+    stat: (path) => {
+      const dev = options.devices?.[path];
+      return dev === undefined
+        ? Effect.fail(notFound("stat", path))
+        : Effect.succeed({
+            type: "Directory",
+            mtime: Option.none(),
+            atime: Option.none(),
+            birthtime: Option.none(),
+            dev,
+            ino: Option.none(),
+            mode: 0o755,
+            nlink: Option.none(),
+            uid: Option.none(),
+            gid: Option.none(),
+            rdev: Option.none(),
+            size: ByteSize.bytes(0),
+            blksize: Option.none(),
+            blocks: Option.none(),
+          });
+    },
+    access: (path, accessOptions) =>
+      accessOptions?.writable === true && options.readOnlyPaths?.includes(path)
+        ? Effect.fail(
             PlatformError.systemError({
               module: "FileSystem",
-              method: "readFileString",
-              _tag: "NotFound",
+              method: "access",
+              _tag: "PermissionDenied",
               pathOrDescriptor: path,
             }),
-          );
-    },
+          )
+        : Effect.void,
+    readDirectory: () => Effect.succeed(["T3 Code.app"]),
     makeDirectory: () => Effect.void,
     writeFileString: (path, data) =>
       Effect.sync(() => {
@@ -266,6 +360,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
     remove: (path) =>
       Effect.sync(() => {
+        removedPaths.push(path);
         updateRestartMarkers.delete(path);
         installRecords.delete(path);
         if (isInstallRecord(path)) previousInstallRecord = undefined;
@@ -275,6 +370,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
     Layer.provide(DesktopUpdatePolicy.layerTest(options.policy)),
+    Layer.provide(layerSpawner),
+    Layer.provideMerge(layerApp),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
     Layer.provideMerge(layerBackend),
@@ -289,7 +386,13 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
     ),
     Layer.provideMerge(layerEnvironment),
-    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(HostProcess.TempDirectory, TEMP_DIRECTORY),
+      ),
+    ),
   );
 
   return {
@@ -297,6 +400,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
+    commands,
+    removedPaths,
     updateRestartMarkers,
     installRecords,
     previousInstallRecord: () => previousInstallRecord,
