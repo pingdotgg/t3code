@@ -37,6 +37,18 @@ const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_LINK_HOVER_DELAY_MS = 250;
+/**
+ * How long a paste shortcut owns the next native paste. Chromium sends it after the keydown, often after
+ * the clipboard read and after a dictation tool's synthetic Cmd+V let go of V, so no key-up ends the
+ * gesture. In a browser that sends no native paste, a menu paste inside the window counts as a duplicate.
+ */
+const PASTE_GESTURE_WINDOW_MS = 2_000;
+/** One paste-shortcut press: its clipboard read is out ("pending"), pasted ("sent"), or did not ("settled"). */
+type PasteGesture = {
+  readonly at: number;
+  read: "pending" | "sent" | "settled";
+  cancelled: boolean;
+};
 /** End an unterminated synchronized update instead of freezing the last frame. */
 const SYNCHRONIZED_OUTPUT_RENDER_TIMEOUT_MS = 500;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
@@ -621,9 +633,9 @@ export class GhosttyTerminalSurface {
   // App capture can hide keydowns, so only encoded presses qualify for Kitty releases.
   private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
-  // Chromium can deliver native paste after the clipboard read resolves.
-  // Suppress its duplicate only for the current shortcut gesture.
-  private pasteShortcutGesture: { code: string; readText: string } | null = null;
+  // A paste shortcut starts a clipboard read, and Chromium sends its own paste event, in either order.
+  // Open gestures, oldest first, pair the two: one paste per press, whatever text each path read.
+  private readonly pasteGestures: PasteGesture[] = [];
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -985,6 +997,19 @@ export class GhosttyTerminalSurface {
     if (encoded.length > 0) this.options.onData(encoded);
   }
 
+  /** The oldest open paste-shortcut gesture: the owner of the native paste arriving now. It closes. */
+  private takePasteGesture(): PasteGesture | undefined {
+    this.expirePasteGestures(performance.now());
+    return this.pasteGestures.shift();
+  }
+
+  private expirePasteGestures(now: number): void {
+    const firstOpen = this.pasteGestures.findIndex(
+      (gesture) => now - gesture.at <= PASTE_GESTURE_WINDOW_MS,
+    );
+    this.pasteGestures.splice(0, firstOpen === -1 ? this.pasteGestures.length : firstOpen);
+  }
+
   // The terminal selection is the only browser-readable PRIMARY-like buffer.
   private pasteTerminalSelection(): void {
     const selection = this.getSelection();
@@ -1192,22 +1217,25 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (isTerminalPasteShortcut(event)) {
-      const gesture = { code: event.code, readText: "" };
-      this.pasteShortcutGesture = gesture;
+      const now = performance.now();
+      this.expirePasteGestures(now);
+      const gesture: PasteGesture = { at: now, read: "settled", cancelled: false };
+      this.pasteGestures.push(gesture);
+      // A later shortcut supersedes a pending menu paste read.
+      this.pasteShortcutToken += 1;
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Keep native paste available if the read is denied. The token drops
-        // a late read; the gesture drops a native duplicate when the read wins.
-        const token = ++this.pasteShortcutToken;
+        // A denied or empty read leaves the native paste as the only path.
+        gesture.read = "pending";
         void clipboard.readText().then(
           (text) => {
-            if (this.disposed || this.pasteShortcutToken !== token) return;
-            this.pasteShortcutToken += 1;
-            if (text.length === 0) return;
-            if (this.pasteShortcutGesture === gesture) gesture.readText = text;
-            this.options.onData(this.core.encodePaste(text));
+            if (this.disposed || gesture.cancelled) return;
+            gesture.read = text.length === 0 ? "settled" : "sent";
+            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
           },
-          () => {},
+          () => {
+            gesture.read = "settled";
+          },
         );
       }
       return;
@@ -1222,15 +1250,6 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    // macOS can omit V keyup while Command is held.
-    if (
-      event.code === this.pasteShortcutGesture?.code ||
-      event.key === "Meta" ||
-      event.key === "Control" ||
-      event.key === "Shift"
-    ) {
-      this.pasteShortcutGesture = null;
-    }
     if (!this.encodedKeyCodes.delete(event.code)) return;
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
@@ -1262,7 +1281,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
-    this.pasteShortcutGesture = null;
+    this.pasteGestures.length = 0;
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
@@ -1310,14 +1329,13 @@ export class GhosttyTerminalSurface {
     // Default textarea insertion would bypass bracketed-paste encoding through onInput.
     event.preventDefault();
     const data = event.clipboardData?.getData("text/plain") ?? "";
+    const gesture = this.takePasteGesture();
+    // An empty native paste leaves a pending read as the only path.
     if (data.length === 0) return;
-    if (data === this.pasteShortcutGesture?.readText) {
-      // The shortcut's clipboard read already sent this paste.
-      this.pasteShortcutGesture = null;
-      return;
-    }
-    // The native paste won the race with actual text; a pending clipboard read
-    // must not double. An empty native paste leaves the read as the only path.
+    // Its gesture's read already pasted: this is the duplicate, whatever text Chromium read.
+    if (gesture?.read === "sent") return;
+    // The native paste won: neither its gesture's read nor a pending menu read may double it.
+    if (gesture) gesture.cancelled = true;
     this.pasteShortcutToken += 1;
     this.options.onData(this.core.encodePaste(data));
   };
