@@ -167,7 +167,7 @@ describe("fileDrainSink", () => {
 
 describe("fileDrainSink copy", () => {
   it.effect("promotes a previous generation's record with its attachment files", () =>
-    withSink((sink) =>
+    withSink((sink, stateDir) =>
       Effect.gen(function* () {
         const environmentId = EnvironmentId.make("environment:worker");
         yield* sink.write({
@@ -206,6 +206,28 @@ describe("fileDrainSink copy", () => {
           threadId: "thread:missing",
         });
         expect(missing).toBe(false);
+
+        // A manifest whose bytes are gone must not look like a promoted copy.
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = path.join(
+          stateDir,
+          "fleet-drain",
+          "environment%3Aworker",
+          "drain%3Aenvironment%3Aworker%3A1",
+        );
+        for (const file of yield* fs.readDirectory(dir)) {
+          if (file.endsWith(".bin")) yield* fs.remove(path.join(dir, file));
+        }
+        const broken = yield* refused(
+          sink.copy({
+            environmentId,
+            fromDrainId: "drain:environment:worker:1",
+            toDrainId: "drain:environment:worker:3",
+            threadId: "thread:a",
+          }),
+        );
+        expect(broken.step).toBe("write");
       }),
     ),
   );

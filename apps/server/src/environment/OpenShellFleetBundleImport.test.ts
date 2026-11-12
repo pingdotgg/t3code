@@ -279,7 +279,7 @@ describe("fleet bundle import", () => {
           "fleet-drain",
           encodeURIComponent(ENVIRONMENT),
           encodeURIComponent(DRAIN_ID),
-          `thread-${encodeURIComponent("worktree:/work/a")}.json`,
+          `thread-checkout.json`,
         ),
         JSON.stringify({ threadId: "worktree:/work/a", snapshotSequence: null, body: "QlVORExF" }),
       );

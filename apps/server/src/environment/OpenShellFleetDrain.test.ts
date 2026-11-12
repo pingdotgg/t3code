@@ -18,6 +18,7 @@ const deps = (input: {
   readonly failShell?: boolean;
   readonly bundleExitCode?: number;
   readonly bundleStdout?: string;
+  readonly failCopy?: boolean;
   readonly liveThread?: string;
   readonly sequences?: Readonly<Record<string, number>>;
   readonly attachmentFiles?: Readonly<Record<string, ReadonlyArray<string>>>;
@@ -153,6 +154,7 @@ const deps = (input: {
         ),
       copy: ({ fromDrainId, toDrainId, threadId }) =>
         Effect.sync(() => {
+          if (input.failCopy === true) return false;
           const raw = files.get(`${fromDrainId}/${threadId}`);
           if (raw === undefined) return false;
           files.set(`${toDrainId}/${threadId}`, raw);
@@ -226,6 +228,28 @@ describe("fleet drain", () => {
           threadId: "thread:a",
         },
       ]);
+    }),
+  );
+
+  it.effect("re-copies a current thread when the previous copy cannot be promoted", () =>
+    Effect.gen(function* () {
+      const retry = deps({
+        threads: ["thread:a"],
+        failCopy: true,
+        seeded: [
+          {
+            drainId: "drain:environment:worker:1",
+            threadId: "thread:a",
+            snapshotSequence: 1,
+            attachments: true,
+          },
+        ],
+      });
+      const outcome = yield* drain(retry, { drainId: "drain:environment:worker:2" });
+
+      expect(outcome.state).toBe("acked");
+      expect(retry.promoted).toEqual([]);
+      expect(retry.fetched).toEqual(["thread:a"]);
     }),
   );
 
@@ -409,7 +433,7 @@ describe("fleet drain", () => {
     }),
   );
 
-  it.effect("copies threads but skips pushes for a forced removal", () =>
+  it.effect("copies threads but skips checkout bundles for a forced removal", () =>
     Effect.gen(function* () {
       const dependencies = deps({ threads: ["thread:a"], projects: ["/work/a"] });
       const outcome = yield* drain(dependencies, { snapshotOnly: true });

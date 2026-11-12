@@ -211,21 +211,24 @@ export const fileDrainSink = Effect.fn("DrainSink.make")(function* (input: {
         // Attachment files are keyed by the manifest hash, so they travel with it.
         for (const entry of record.attachments ?? []) {
           const attachment = `thread-${thread}-att-${entry.hash.slice(0, 16)}.bin`;
-          const bytes = yield* fs
-            .readFile(path.join(fromDir, attachment))
-            .pipe(Effect.orElseSucceed(() => null));
-          if (bytes !== null)
-            yield* fs
-              .writeFile(path.join(toDir, attachment), bytes)
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new FleetDrainStepError({
-                      step: "write",
-                      message: `Attachment copy failed: ${cause}`,
-                    }),
-                ),
-              );
+          const bytes = yield* fs.readFile(path.join(fromDir, attachment)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new FleetDrainStepError({
+                  step: "write",
+                  message: `Attachment copy failed: ${cause}`,
+                }),
+            ),
+          );
+          yield* fs.writeFile(path.join(toDir, attachment), bytes).pipe(
+            Effect.mapError(
+              (cause) =>
+                new FleetDrainStepError({
+                  step: "write",
+                  message: `Attachment copy failed: ${cause}`,
+                }),
+            ),
+          );
         }
         yield* fs.writeFileString(`${path.join(toDir, name)}.partial`, raw);
         yield* fs.rename(`${path.join(toDir, name)}.partial`, path.join(toDir, name));
