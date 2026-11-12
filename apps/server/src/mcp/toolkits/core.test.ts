@@ -1108,7 +1108,21 @@ it.effect(
           ),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (projectId) =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "MCP test",
+                  workspaceRoot: "/repo",
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                }),
+            }),
+          ),
           Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
           Layer.provide(
             Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
