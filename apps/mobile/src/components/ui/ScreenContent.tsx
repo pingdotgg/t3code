@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { Platform, View, type LayoutChangeEvent } from "react-native";
 
+import { useAdaptiveWorkspaceLayout } from "../../features/layout/adaptive-workspace-context";
+
 const SURFACE_CLASS_NAMES = {
   sheet: "bg-sheet-solid",
   screen: "bg-screen",
@@ -15,16 +17,18 @@ const SURFACE_CLASS_NAMES = {
 export function ScreenContent({
   children,
   surface = "sheet",
-  insetHorizontal = false,
+  insetHorizontal,
   fitToContents = false,
   onLayout,
 }: {
   readonly children: ReactNode;
   readonly surface?: keyof typeof SURFACE_CLASS_NAMES;
+  /** Keeps the card off the window edge. Defaults to on wherever the workspace is split. */
   readonly insetHorizontal?: boolean;
   readonly fitToContents?: boolean;
   readonly onLayout?: (event: LayoutChangeEvent) => void;
 }) {
+  const { layout } = useAdaptiveWorkspaceLayout();
   if (Platform.OS !== "android") {
     return onLayout ? (
       <View className="flex-1" onLayout={onLayout}>
@@ -45,7 +49,7 @@ export function ScreenContent({
           flexShrink: 1,
           flexGrow: fitToContents ? 0 : 1,
           flexBasis: fitToContents ? "auto" : 0,
-          marginHorizontal: insetHorizontal ? 4 : 0,
+          marginHorizontal: (insetHorizontal ?? layout.usesSplitView) ? 4 : 0,
         }}
       >
         {children}

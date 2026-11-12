@@ -1,15 +1,20 @@
-import type { PreviewAutomationControlReason } from "@t3tools/contracts";
+import { PreviewAutomationControlReason } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
-export class BrowserControlInterrupted extends Error {
-  readonly reason: PreviewAutomationControlReason;
-  constructor(
-    message = "Browser control changed. Refresh the snapshot before trying again.",
-    reason: PreviewAutomationControlReason = "interrupted",
-  ) {
-    super(message);
-    this.reason = reason;
-  }
-}
+export class BrowserControlInterrupted extends Schema.TaggedError<BrowserControlInterrupted>()(
+  "BrowserControlInterrupted",
+  {
+    message: Schema.String.pipe(
+      Schema.withConstructorDefault(
+        Effect.succeed("Browser control changed. Refresh the snapshot before trying again."),
+      ),
+    ),
+    reason: PreviewAutomationControlReason.pipe(
+      Schema.withConstructorDefault(Effect.succeed("interrupted" as const)),
+    ),
+  },
+) {}
 
 const settle = (work: Promise<unknown>) =>
   work.then(
@@ -69,7 +74,11 @@ export class SessionControl {
   }
 
   private assertOpen() {
-    if (this.closed) throw new BrowserControlInterrupted("This browser tab is closed.", "closed");
+    if (this.closed)
+      throw new BrowserControlInterrupted({
+        message: "This browser tab is closed.",
+        reason: "closed",
+      });
   }
 
   private changeOwner(owner: string | null) {
@@ -81,7 +90,8 @@ export class SessionControl {
 
   private async action<A>(allowed: () => boolean, run: () => Promise<A>, deadlineMs?: number) {
     this.assertOpen();
-    if (!allowed()) throw new BrowserControlInterrupted("You do not control this browser tab.");
+    if (!allowed())
+      throw new BrowserControlInterrupted({ message: "You do not control this browser tab." });
     const epoch = this.epoch;
     return this.enqueue(async () => {
       this.assertOpen();
@@ -103,11 +113,17 @@ export class SessionControl {
   agent<A>(agentId: string, run: () => Promise<A>, deadlineMs?: number) {
     if (!this.agentMayAct(agentId))
       return Promise.reject(
-        new BrowserControlInterrupted("This tab belongs to another agent.", "agentMismatch"),
+        new BrowserControlInterrupted({
+          message: "This tab belongs to another agent.",
+          reason: "agentMismatch",
+        }),
       );
     if (this.owner !== null)
       return Promise.reject(
-        new BrowserControlInterrupted("A human controls this tab.", "humanControl"),
+        new BrowserControlInterrupted({
+          message: "A human controls this tab.",
+          reason: "humanControl",
+        }),
       );
     return this.action(() => this.agentMayAct(agentId) && this.owner === null, run, deadlineMs);
   }
@@ -164,7 +180,7 @@ export class SessionControl {
   async take(viewerId: string) {
     this.assertOpen();
     if (this.owner !== null && this.owner !== viewerId) {
-      throw new BrowserControlInterrupted("Another viewer controls this browser tab.");
+      throw new BrowserControlInterrupted({ message: "Another viewer controls this browser tab." });
     }
     if (this.owner !== viewerId) this.changeOwner(viewerId);
     return this.human(viewerId, async () => {});
@@ -173,9 +189,9 @@ export class SessionControl {
   async release(viewerId: string, afterDrain: () => Promise<void> = async () => {}) {
     this.assertOpen();
     if (this.owner !== viewerId) {
-      throw new BrowserControlInterrupted(
-        "Only the controlling viewer can release this browser tab.",
-      );
+      throw new BrowserControlInterrupted({
+        message: "Only the controlling viewer can release this browser tab.",
+      });
     }
     this.changeOwner(null);
     await this.enqueue(async () => {
