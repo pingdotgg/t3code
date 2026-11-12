@@ -1098,10 +1098,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       // Claude's own command list names this skill by its frontmatter.
       assert.deepEqual(
         nameClaudeSkillCommandsByFolder(
-          [{ name: "probe-alias-frontmatter" }, { name: "review" }],
+          [
+            { name: "probe-alias-frontmatter" },
+            { name: "probe-alias-frontmatter", builtin: true },
+            { name: "review" },
+          ],
           commandAliases,
         ),
-        [{ name: "probe-alias" }, { name: "review" }],
+        [{ name: "probe-alias" }, { name: "probe-alias-frontmatter" }, { name: "review" }],
       );
     }),
   );
@@ -1124,12 +1128,16 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         '{ "skillOverrides": { "probe-alias": "off" } }',
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+      const { skills, commandAliases } = yield* discoverClaudeSkillCatalog({
+        homePath: configDir,
+      });
 
       assert.deepEqual(
         skills.map((skill) => [skill.name, skill.enabled]),
         [["probe-alias", false]],
       );
+      // Another command of the frontmatter name is not this disabled skill.
+      assert.deepEqual([...commandAliases], []);
     }),
   );
 

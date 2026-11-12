@@ -264,6 +264,8 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
+type ClaudeProbeSlashCommand = ServerProviderSlashCommand & { readonly builtin?: true };
+
 export type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly workspaceId?: string | undefined;
@@ -272,7 +274,8 @@ export type ClaudeCapabilitiesProbe = {
   readonly apiKeySource: string | undefined;
   /** OAuth applies only to firstParty; Bedrock uses external AWS credentials and omits subscription/token fields. */
   readonly apiProvider: string | undefined;
-  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /** Not deduped: rows sharing a name differ by Claude Code's `builtin` marker. */
+  readonly slashCommands: ReadonlyArray<ClaudeProbeSlashCommand>;
   readonly models?: ReadonlyArray<ClaudeModelInfo>;
   /** Undefined means get_usage failed; absent windows on success mean no subscription windows, as with API keys. */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
@@ -346,26 +349,25 @@ function parseClaudeEffortCapSources(
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
-): ReadonlyArray<ServerProviderSlashCommand> {
-  return dedupeSlashCommands(
-    (commands ?? []).flatMap((command) => {
-      const name = nonEmptyProbeString(command.name);
-      if (!name) {
-        return [];
-      }
+): ReadonlyArray<ClaudeProbeSlashCommand> {
+  return (commands ?? []).flatMap((command) => {
+    const name = nonEmptyProbeString(command.name);
+    if (!name) {
+      return [];
+    }
 
-      const description = nonEmptyProbeString(command.description);
-      const argumentHint = nonEmptyProbeString(command.argumentHint);
+    const description = nonEmptyProbeString(command.description);
+    const argumentHint = nonEmptyProbeString(command.argumentHint);
 
-      return [
-        {
-          name,
-          ...(description ? { description } : {}),
-          ...(argumentHint ? { input: { hint: argumentHint } } : {}),
-        } satisfies ServerProviderSlashCommand,
-      ];
-    }),
-  );
+    return [
+      {
+        name,
+        ...(description ? { description } : {}),
+        ...(argumentHint ? { input: { hint: argumentHint } } : {}),
+        ...(command.builtin === true ? { builtin: true } : {}),
+      } satisfies ClaudeProbeSlashCommand,
+    ];
+  });
 }
 
 function dedupeSlashCommands(

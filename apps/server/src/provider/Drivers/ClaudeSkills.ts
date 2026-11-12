@@ -718,12 +718,11 @@ export const discoverClaudeSkillCatalog = Effect.fn("discoverClaudeSkillCatalog"
       if (skillsByName.has(name)) {
         continue;
       }
+      const override = root.prefix ? undefined : skillOverrides.get(name);
       const alias = !root.prefix && frontmatter.kind === "parsed" ? frontmatter.name : undefined;
-      if (alias && !commandAliases.has(alias.toLowerCase())) {
+      if (alias && override?.enabled !== false && !commandAliases.has(alias.toLowerCase())) {
         commandAliases.set(alias.toLowerCase(), name);
       }
-
-      const override = root.prefix ? undefined : skillOverrides.get(name);
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
@@ -758,13 +757,16 @@ export const discoverClaudeSkills = (
 ): Effect.Effect<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> =>
   discoverClaudeSkillCatalog(...args).pipe(Effect.map((catalog) => catalog.skills));
 
-/** Names Claude's command for a folder skill after the folder, so it dedupes against the skill. */
+/**
+ * Names Claude's command for a folder skill after the folder, so it dedupes against the skill.
+ * Claude Code's own commands keep their names and lose the `builtin` marker.
+ */
 export function nameClaudeSkillCommandsByFolder<C extends { readonly name: string }>(
-  commands: ReadonlyArray<C>,
+  commands: ReadonlyArray<C & { readonly builtin?: boolean }>,
   commandAliases: ReadonlyMap<string, string>,
 ): ReadonlyArray<C> {
-  return commands.map((command) => {
-    const folderName = commandAliases.get(command.name.trim().toLowerCase());
-    return folderName === undefined ? command : { ...command, name: folderName };
+  return commands.map(({ builtin, ...command }) => {
+    const folderName = builtin ? undefined : commandAliases.get(command.name.trim().toLowerCase());
+    return (folderName === undefined ? command : { ...command, name: folderName }) as C;
   });
 }
