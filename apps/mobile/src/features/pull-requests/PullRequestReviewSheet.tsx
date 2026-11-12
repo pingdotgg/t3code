@@ -125,7 +125,7 @@ export function PullRequestReviewSheet({
       : permissions.canComment && body.trim().length > 0);
   const perform = () =>
     submission.submit(async () => {
-      if (!canSubmit)
+      if (!canSubmit || !store.isReady())
         throw new Error("Add your feedback and check your permissions before submitting.");
       if (!setReviewDraftBusy(store.scope, true))
         throw new Error("Wait for the pending comment to finish saving.");
@@ -157,7 +157,7 @@ export function PullRequestReviewSheet({
             submittedComments,
             store.outdatedComments.map((comment) => comment.id),
           );
-        store.update((current) =>
+        store.complete((current) =>
           reviewing
             ? clearSubmittedReview(current, submitted)
             : { ...current, comment: current.comment === submitted.comment ? "" : current.comment },

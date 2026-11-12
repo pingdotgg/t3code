@@ -43,7 +43,7 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
     return await (async () => {
       const result = await save({ ...target, input: { ...target.input, comment } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      store.update((draft) => ({
+      store.complete((draft) => ({
         ...draft,
         comments: draft.comments.map((entry) =>
           entry.id === comment.id ? { ...entry, hostedComment: result.value } : entry,
@@ -77,12 +77,12 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
         });
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       }
-      store.update((draft) => ({
+      store.complete((draft) => ({
         ...draft,
         comments: draft.comments.filter((entry) => entry.id !== comment.id),
       }));
       if (!(await store.flush())) {
-        store.update((draft) =>
+        store.complete((draft) =>
           draft.comments.some((entry) => entry.id === comment.id)
             ? draft
             : { ...draft, comments: [...draft.comments, comment] },

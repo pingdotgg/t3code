@@ -77,8 +77,12 @@ vi.mock("../../state/query", () => ({
 }));
 
 import { appAtomRegistry } from "../../state/atom-registry";
-import { pullRequestReviewKey, type ReviewDraft } from "./pullRequestReviewDrafts";
-import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
+import {
+  clearSubmittedReview,
+  pullRequestReviewKey,
+  type ReviewDraft,
+} from "./pullRequestReviewDrafts";
+import { setReviewDraftBusy, usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 
 function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -209,4 +213,54 @@ it("requires explicit ownership recovery and preserves the original until a scop
   mocks.viewer = "bob";
   await screen.render();
   expect(screen.current.draft.summary).toBe("");
+  mocks.viewer = "alice";
+  await screen.render();
+  const comment = {
+    id: "operation-comment",
+    path: "file.ts",
+    body: "Before hosted edit",
+    code: "line",
+    headSha: "head",
+    position: { kind: "added" as const, newLine: 1 },
+  };
+  act(() =>
+    screen.current.update(() => ({ summary: "To submit", comment: "", comments: [comment] })),
+  );
+  const captured = screen.current;
+  act(() => {
+    expect(setReviewDraftBusy(captured.scope, true)).toBe(true);
+  });
+  mocks.detailPending = true;
+  await screen.render();
+  const hostedComment = { reviewId: "review", commentId: "hosted", url: "https://host/comment" };
+  await act(async () => {
+    captured.complete((draft) => ({
+      ...draft,
+      comments: draft.comments.map((entry) => ({ ...entry, body: "Hosted edit", hostedComment })),
+    }));
+    expect(await captured.flush()).toBe(true);
+  });
+  const submitted = JSON.parse(mocks.disk).drafts[
+    pullRequestReviewKey(screen.params, "alice")
+  ] as ReviewDraft;
+  expect(submitted.comments[0]).toMatchObject({ body: "Hosted edit", hostedComment });
+  expect(screen.current.draft.summary).toBe("");
+  act(() => captured.update(edit));
+  expect(edit).not.toHaveBeenCalled();
+  act(() => {
+    setReviewDraftBusy(captured.scope, false);
+    expect(setReviewDraftBusy(captured.scope, true)).toBe(true);
+  });
+  mocks.detailPending = false;
+  mocks.viewer = "bob";
+  await screen.render();
+  await act(async () => {
+    captured.complete((draft) => clearSubmittedReview(draft, submitted));
+    expect(await captured.flush()).toBe(true);
+  });
+  expect(
+    JSON.parse(mocks.disk).drafts[pullRequestReviewKey(screen.params, "alice")],
+  ).toBeUndefined();
+  expect(JSON.parse(mocks.disk).drafts[pullRequestReviewKey(screen.params, "bob")]).toBeUndefined();
+  act(() => setReviewDraftBusy(captured.scope, false));
 });

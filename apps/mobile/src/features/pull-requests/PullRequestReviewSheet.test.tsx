@@ -78,6 +78,7 @@ vi.mock("./usePullRequestReviewDraft", () => ({
     comments: [],
     outdatedComments: [],
     ready: true,
+    isReady: () => true,
     busy: false,
     error: null,
     activityLoaded: mocks.activityLoaded,
@@ -85,6 +86,7 @@ vi.mock("./usePullRequestReviewDraft", () => ({
     pendingReviewId: mocks.activityLoaded ? "private-review" : undefined,
     refreshActivity: mocks.refreshActivity,
     update: () => {},
+    complete: () => {},
     flush: async () => true,
   }),
 }));

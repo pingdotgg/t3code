@@ -37,8 +37,9 @@ vi.mock("./usePullRequestReviewDraft", () => ({
   setReviewDraftBusy: () => true,
   usePullRequestReviewDraftCommands: () => ({
     ready: true,
+    isReady: () => true,
     busy: false,
-    update: (transform: (draft: ReviewDraft) => ReviewDraft) => {
+    complete: (transform: (draft: ReviewDraft) => ReviewDraft) => {
       mocks.draft = transform(mocks.draft!);
     },
     flush: mocks.flush,
