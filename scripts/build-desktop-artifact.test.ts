@@ -563,6 +563,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  // Chromium picks its application locale from the shipped paks, so pages in the
+  // built-in browser only follow a French OS when a French pak ships.
+  it.effect("ships Chromium locale paks beyond en-US on every platform", () =>
+    Effect.gen(function* () {
+      for (const [platform, target] of [
+        ["mac", "dmg"],
+        ["linux", "AppImage"],
+        ["win", "nsis"],
+      ] as const) {
+        const config = yield* createBuildConfig(
+          platform,
+          target,
+          "0.0.33",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        const languages = config.electronLanguages as readonly string[] | undefined;
+        assert.isTrue(languages === undefined || languages.includes("fr"), platform);
+      }
+    }),
+  );
+
   it.effect("declares Calendar access for hosted commands in macOS builds", () =>
     Effect.gen(function* () {
       for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
