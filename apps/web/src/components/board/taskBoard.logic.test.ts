@@ -5,8 +5,11 @@ import {
   BOARD_PANELS,
   groupThreadsByPanel,
   moveBoardPanel,
+  resetBoardColumnWeights,
   resolveBoardDropEdge,
   resolveBoardLayout,
+  setBoardPanelWeights,
+  splitBoardPanelPair,
   toggleBoardPanelCollapsed,
   type BoardLayout,
   type BoardThread,
@@ -72,8 +75,11 @@ describe("groupThreadsByPanel", () => {
 });
 
 describe("board layout", () => {
-  const layout = (columns: string[][], collapsed: string[] = []) =>
-    ({ columns, collapsed }) as BoardLayout;
+  const layout = (
+    columns: string[][],
+    collapsed: string[] = [],
+    weights: Record<string, number> = {},
+  ) => ({ columns, collapsed, weights }) as BoardLayout;
 
   it("keeps a saved layout, ignoring unknown and repeated ids and appending new panels", () => {
     const resolved = resolveBoardLayout({
@@ -89,7 +95,17 @@ describe("board layout", () => {
       ["settled"],
     ]);
     expect(resolved.collapsed).toEqual(["failed"]);
+    expect(resolved.weights).toEqual({});
     expect(resolveBoardLayout(null).columns).toEqual(BOARD_PANELS.map((panel) => [panel.id]));
+  });
+
+  it("keeps valid saved weights and drops unknown or non-positive ones", () => {
+    const resolved = resolveBoardLayout({
+      columns: [["done", "working"]],
+      collapsed: [],
+      weights: { done: 1.5, working: 0, gone: 2, failed: Number.NaN },
+    });
+    expect(resolved.weights).toEqual({ done: 1.5 });
   });
 
   it.each([
@@ -140,11 +156,58 @@ describe("board layout", () => {
     expect(result.collapsed).toEqual(["b"]);
   });
 
-  it("toggles collapse without touching the order", () => {
-    const start = layout([["a"], ["b"]]);
+  it("toggles collapse without touching the order or weights", () => {
+    const start = layout([["a", "b"]], [], { a: 2 });
     const collapsed = toggleBoardPanelCollapsed(start, "a" as never);
-    expect(collapsed).toEqual(layout([["a"], ["b"]], ["a"]));
+    expect(collapsed).toEqual(layout([["a", "b"]], ["a"], { a: 2 }));
     expect(toggleBoardPanelCollapsed(collapsed, "a" as never)).toEqual(start);
+  });
+
+  it.each([
+    ["moves the boundary and keeps the combined weight", 50, [1.25, 0.75]],
+    ["clamps the upper panel to the minimum", -500, [0.5, 1.5]],
+    ["clamps the lower panel to the minimum", 500, [1.5, 0.5]],
+  ] as const)("resizing a pair %s", (_name, delta, expected) => {
+    const pair = { upperWeight: 1, lowerWeight: 1, upperHeight: 200, lowerHeight: 200 };
+    expect(splitBoardPanelPair(pair, delta, 100)).toEqual(expected);
+  });
+
+  it("leaves a pair too short for two minimum heights unchanged", () => {
+    const pair = { upperWeight: 2, lowerWeight: 1, upperHeight: 80, lowerHeight: 40 };
+    expect(splitBoardPanelPair(pair, 20, 100)).toEqual([2, 1]);
+  });
+
+  it("stacking gives the newcomer an average share of the expanded panels it joins", () => {
+    const start = layout([["a", "b", "c"], ["d"]], ["c"], { a: 3, b: 1, c: 5, d: 7 });
+    const stacked = moveBoardPanel(start, "d" as never, { panelId: "b" as never, edge: "bottom" });
+    expect(stacked.columns).toEqual([["a", "b", "d", "c"]]);
+    expect(stacked.weights).toEqual({ a: 3, b: 1, c: 5, d: 2 });
+
+    const unstacked = moveBoardPanel(stacked, "a" as never, {
+      panelId: "b" as never,
+      edge: "left",
+    });
+    expect(unstacked.columns).toEqual([["a"], ["b", "d", "c"]]);
+    expect(unstacked.weights).toEqual({ b: 1, c: 5, d: 2 });
+
+    const equal = moveBoardPanel(layout([["a", "b"], ["c"]], [], { c: 4 }), "c" as never, {
+      panelId: "a" as never,
+      edge: "top",
+    });
+    expect(equal.weights).toEqual({});
+  });
+
+  it("sets weights and resets only the column that holds a panel", () => {
+    const start = layout([
+      ["a", "b"],
+      ["c", "d"],
+    ]);
+    const resized = setBoardPanelWeights(setBoardPanelWeights(start, { a: 1.5, b: 0.5 } as never), {
+      c: 0.25,
+      d: 1.75,
+    } as never);
+    expect(resized.weights).toEqual({ a: 1.5, b: 0.5, c: 0.25, d: 1.75 });
+    expect(resetBoardColumnWeights(resized, "b" as never).weights).toEqual({ c: 0.25, d: 1.75 });
   });
 
   it.each([

@@ -71,6 +71,8 @@ function pointer(type: string, x: number, y: number) {
 }
 
 const panel = (label: string) => page.getByRole("region", { name: label }).element();
+const column = (label: string) => panel(label).closest("[data-board-column]");
+const grow = (label: string) => Number(panel(label).parentElement!.style.flexGrow);
 
 describe("TaskBoardPage", () => {
   it("opens the sidebar thread menu on right-click and renames in place", async () => {
@@ -120,17 +122,48 @@ describe("TaskBoardPage", () => {
         expect(panel("Needs you").querySelector(".bg-primary")).not.toBeNull(),
       );
       document.dispatchEvent(pointer("pointerup", drop.x, drop.y));
-      await vi.waitFor(() =>
-        expect(panel("Working").parentElement).toBe(panel("Needs you").parentElement),
-      );
+      await vi.waitFor(() => expect(column("Working")).toBe(column("Needs you")));
     }
 
     await using screen = await render(<TaskBoardPage />);
     await expect.element(screen.getByRole("button", { name: "Expand Failed" })).toBeVisible();
-    const column = panel("Needs you").parentElement!;
-    expect([...column.querySelectorAll("section")].map((section) => section.ariaLabel)).toEqual([
+    const stack = column("Needs you")!;
+    expect([...stack.querySelectorAll("section")].map((section) => section.ariaLabel)).toEqual([
       "Needs you",
       "Working",
     ]);
+  });
+
+  it("resizes stacked panels, keeps the split across remounts, and resets on double-click", async () => {
+    localStorage.clear();
+    // A layout saved before weights existed loads as equal shares.
+    localStorage.setItem(
+      "t3code:task-board:layout",
+      JSON.stringify({ columns: [["attention", "done"]], collapsed: [] }),
+    );
+    const separator = { name: "Resize Needs you and Done" };
+    {
+      await using screen = await render(<TaskBoardPage />);
+      const handle = screen.getByRole("separator", separator).element() as HTMLElement;
+      expect([grow("Needs you"), grow("Done")]).toEqual([1, 1]);
+      // Synthetic drag events have no active browser pointer to capture.
+      using _capture = vi.spyOn(handle, "setPointerCapture").mockImplementation(() => {});
+      const pointer = { bubbles: true, pointerId: 1, button: 0, clientX: 0 };
+      handle.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientY: 300 }));
+      handle.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientY: 360 }));
+      expect(panel("Needs you").className).not.toContain("opacity-50");
+      await vi.waitFor(() =>
+        expect(localStorage.getItem("t3code:task-board:layout")).toContain("weights"),
+      );
+      expect(grow("Needs you")).toBeGreaterThan(grow("Done"));
+      expect(grow("Needs you") + grow("Done")).toBeCloseTo(2);
+    }
+
+    await using screen = await render(<TaskBoardPage />);
+    expect(grow("Needs you")).toBeGreaterThan(grow("Done"));
+    // Unstyled in tests, the handle has no box for a real pointer to hit.
+    const handle = screen.getByRole("separator", separator).element();
+    handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await vi.waitFor(() => expect([grow("Needs you"), grow("Done")]).toEqual([1, 1]));
   });
 });

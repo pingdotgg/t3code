@@ -28,6 +28,7 @@ import {
 
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useResizeDrag } from "../../hooks/useResizeDrag";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import { useProjects, useVisibleThreadShells } from "../../state/entities";
@@ -48,11 +49,16 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
   BOARD_PANELS,
   BoardLayoutSchema,
+  boardPanelWeight,
   groupThreadsByPanel,
   moveBoardPanel,
+  resetBoardColumnWeights,
   resolveBoardDropEdge,
   resolveBoardLayout,
+  setBoardPanelWeights,
+  splitBoardPanelPair,
   toggleBoardPanelCollapsed,
+  type BoardPanelPair,
   type BoardDropEdge,
   type BoardLayout,
   type BoardPanelId,
@@ -62,6 +68,7 @@ const PAGE_SIZE = 50;
 const LAYOUT_STORAGE_KEY = "t3code:task-board:layout";
 const SavedLayoutSchema = Schema.NullOr(BoardLayoutSchema);
 const PANEL_LABELS = new Map(BOARD_PANELS.map((panel) => [panel.id, panel.label]));
+const RESIZE_KEY_STEP = 16;
 
 type DropTarget = { readonly panelId: BoardPanelId; readonly edge: BoardDropEdge };
 type PanelMode = "expanded" | "header" | "rail";
@@ -280,8 +287,7 @@ const BoardPanel = memo(function BoardPanel(
       aria-label={label}
       data-board-panel={panelId}
       className={cn(
-        "relative flex min-h-0 flex-col rounded-xl bg-muted/40",
-        mode === "header" ? "shrink-0" : "flex-1",
+        "relative flex min-h-0 flex-1 flex-col rounded-xl bg-muted/40",
         props.dragging && "opacity-50",
       )}
     >
@@ -328,6 +334,102 @@ const BoardPanel = memo(function BoardPanel(
     </section>
   );
 });
+
+type PanelWeights = Partial<Record<BoardPanelId, number>>;
+
+function BoardPanelResizeHandle(props: {
+  upperId: BoardPanelId;
+  lowerId: BoardPanelId;
+  upperWeight: number;
+  lowerWeight: number;
+  onResize: (weights: PanelWeights) => void;
+  onReset: (panelId: BoardPanelId) => void;
+}) {
+  const { upperId, lowerId, upperWeight, lowerWeight } = props;
+  // The handle sits in the upper panel's frame; the lower frame is found in the same column.
+  const measure = (handle: HTMLElement) => {
+    const upper = handle.parentElement;
+    const lower = handle
+      .closest("[data-board-column]")
+      ?.querySelector<HTMLElement>(`[data-board-frame="${lowerId}"]`);
+    if (!upper || !lower) return null;
+    const pair: BoardPanelPair = {
+      upperWeight,
+      lowerWeight,
+      upperHeight: upper.offsetHeight,
+      lowerHeight: lower.offsetHeight,
+    };
+    // The frame's `min-h-*` class keeps a header plus about one card visible.
+    const minHeight = Number.parseFloat(getComputedStyle(upper).minHeight) || 0;
+    return { upper, lower, pair, minHeight };
+  };
+  const commit = ([upper, lower]: readonly [number, number]) =>
+    props.onResize({ [upperId]: upper, [lowerId]: lower });
+  // Sizes go straight to the frames while dragging and reach state once, on release.
+  const drag = useResizeDrag<HTMLDivElement>((event) => {
+    const frames = measure(event.currentTarget);
+    if (!frames) return null;
+    const { upper, lower, pair, minHeight } = frames;
+    let split: readonly [number, number] = [upperWeight, lowerWeight];
+    const apply = (weights: readonly [number, number]) => {
+      upper.style.flexGrow = String(weights[0]);
+      lower.style.flexGrow = String(weights[1]);
+    };
+    return {
+      width: pair.upperHeight,
+      edge: "bottom",
+      bounds: { min: 0, max: pair.upperHeight + pair.lowerHeight },
+      resize: (height) => {
+        split = splitBoardPanelPair(pair, height - pair.upperHeight, minHeight);
+        apply(split);
+        return height;
+      },
+      cleanup: (committed) => {
+        if (!committed) apply([upperWeight, lowerWeight]);
+      },
+      finish: (_height, moved) => {
+        if (moved) commit(split);
+        else apply([upperWeight, lowerWeight]);
+      },
+    };
+  });
+  const handlers = {
+    ref: drag.ref,
+    onPointerDown: drag.onPointerDown,
+    onPointerMove: drag.onPointerMove,
+    onPointerUp: drag.onPointerUp,
+    onPointerCancel: drag.onPointerCancel,
+    onLostPointerCapture: drag.onLostPointerCapture,
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    const frames = measure(event.currentTarget);
+    if (!frames) return;
+    event.preventDefault();
+    const step = event.key === "ArrowUp" ? -RESIZE_KEY_STEP : RESIZE_KEY_STEP;
+    commit(splitBoardPanelPair(frames.pair, step, frames.minHeight));
+  };
+  return (
+    <div
+      {...handlers}
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label={`Resize ${PANEL_LABELS.get(upperId)} and ${PANEL_LABELS.get(lowerId)}`}
+      aria-valuenow={Math.round((upperWeight * 100) / (upperWeight + lowerWeight))}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      tabIndex={0}
+      onDoubleClick={() => props.onReset(upperId)}
+      onKeyDown={handleKeyDown}
+      className="group absolute inset-x-0 -bottom-3 z-10 h-3 cursor-row-resize touch-none select-none outline-none"
+    >
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-2 top-1/2 h-px -translate-y-1/2 bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60"
+      />
+    </div>
+  );
+}
 
 function findDropTarget(
   board: HTMLElement,
@@ -420,6 +522,10 @@ export function TaskBoardPage() {
   };
   const togglePanel = (panelId: BoardPanelId) =>
     updateLayout((current) => toggleBoardPanelCollapsed(current, panelId));
+  const resizePanels = (weights: PanelWeights) =>
+    updateLayout((current) => setBoardPanelWeights(current, weights));
+  const resetColumn = (panelId: BoardPanelId) =>
+    updateLayout((current) => resetBoardColumnWeights(current, panelId));
   const endDrag = () => {
     setActiveId(null);
     setDropTarget(null);
@@ -480,38 +586,71 @@ export function TaskBoardPage() {
                 return (
                   <div
                     key={column.join(":")}
+                    data-board-column
                     className={cn(
                       "flex min-h-0 shrink-0 flex-col gap-3",
                       allCollapsed ? "w-11" : "w-72",
                     )}
                   >
-                    {column.map((panelId) => (
-                      <BoardPanel
-                        key={panelId}
-                        panelId={panelId}
-                        label={PANEL_LABELS.get(panelId) ?? panelId}
-                        mode={
-                          !layout.collapsed.includes(panelId)
-                            ? "expanded"
-                            : allCollapsed
-                              ? "rail"
-                              : "header"
-                        }
-                        items={groups[panelId]}
-                        limit={shown[panelId] ?? PAGE_SIZE}
-                        dragging={activeId === panelId}
-                        dropEdge={dropTarget?.panelId === panelId ? dropTarget.edge : null}
-                        projectTitles={projectTitles}
-                        nowMs={nowMs}
-                        renamingKey={renamingKey}
-                        onOpen={openThread}
-                        onStartRename={setRenamingKey}
-                        onCommitRename={commitRename}
-                        onCancelRename={cancelRename}
-                        onShowMore={showMore}
-                        onToggle={togglePanel}
-                      />
-                    ))}
+                    {column.map((panelId, index) => {
+                      const expanded = !layout.collapsed.includes(panelId);
+                      const mode: PanelMode = expanded
+                        ? "expanded"
+                        : allCollapsed
+                          ? "rail"
+                          : "header";
+                      const lowerId = expanded
+                        ? column.slice(index + 1).find((id) => !layout.collapsed.includes(id))
+                        : undefined;
+                      return (
+                        <div
+                          key={panelId}
+                          data-board-frame={panelId}
+                          className={cn(
+                            "relative flex flex-col",
+                            mode === "expanded"
+                              ? "min-h-28 basis-0"
+                              : mode === "rail"
+                                ? "min-h-0 flex-1"
+                                : "shrink-0",
+                          )}
+                          style={
+                            mode === "expanded"
+                              ? { flexGrow: boardPanelWeight(layout, panelId) }
+                              : undefined
+                          }
+                        >
+                          <BoardPanel
+                            panelId={panelId}
+                            label={PANEL_LABELS.get(panelId) ?? panelId}
+                            mode={mode}
+                            items={groups[panelId]}
+                            limit={shown[panelId] ?? PAGE_SIZE}
+                            dragging={activeId === panelId}
+                            dropEdge={dropTarget?.panelId === panelId ? dropTarget.edge : null}
+                            projectTitles={projectTitles}
+                            nowMs={nowMs}
+                            renamingKey={renamingKey}
+                            onOpen={openThread}
+                            onStartRename={setRenamingKey}
+                            onCommitRename={commitRename}
+                            onCancelRename={cancelRename}
+                            onShowMore={showMore}
+                            onToggle={togglePanel}
+                          />
+                          {lowerId ? (
+                            <BoardPanelResizeHandle
+                              upperId={panelId}
+                              lowerId={lowerId}
+                              upperWeight={boardPanelWeight(layout, panelId)}
+                              lowerWeight={boardPanelWeight(layout, lowerId)}
+                              onResize={resizePanels}
+                              onReset={resetColumn}
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}

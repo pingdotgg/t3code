@@ -97,15 +97,20 @@ export function groupThreadsByPanel<T extends BoardThread>(
   return groups;
 }
 
-/** Columns left to right, each a stack of panels top to bottom. */
+/**
+ * Columns left to right, each a stack of panels top to bottom. Expanded panels in a column share
+ * its height in proportion to their weights; a panel without one weighs 1.
+ */
 export interface BoardLayout {
   readonly columns: ReadonlyArray<ReadonlyArray<BoardPanelId>>;
   readonly collapsed: ReadonlyArray<BoardPanelId>;
+  readonly weights: Readonly<Partial<Record<BoardPanelId, number>>>;
 }
 
 export const BoardLayoutSchema = Schema.Struct({
   columns: Schema.Array(Schema.Array(Schema.String)),
   collapsed: Schema.Array(Schema.String),
+  weights: Schema.optionalKey(Schema.Record(Schema.String, Schema.Number)),
 });
 export type SavedBoardLayout = typeof BoardLayoutSchema.Type;
 
@@ -131,12 +136,24 @@ export function resolveBoardLayout(saved: SavedBoardLayout | null): BoardLayout 
     if (!seen.has(panel.id)) columns.push([panel.id]);
   }
   const collapsed = (saved?.collapsed ?? []).filter(isBoardPanelId);
-  return { columns, collapsed: [...new Set(collapsed)] };
+  const weights: Partial<Record<BoardPanelId, number>> = {};
+  for (const [id, weight] of Object.entries(saved?.weights ?? {})) {
+    if (isBoardPanelId(id) && Number.isFinite(weight) && weight > 0) weights[id] = weight;
+  }
+  return { columns, collapsed: [...new Set(collapsed)], weights };
+}
+
+export const boardPanelWeight = (layout: BoardLayout, id: BoardPanelId) => layout.weights[id] ?? 1;
+
+function withoutWeights(layout: BoardLayout, ids: ReadonlyArray<BoardPanelId>) {
+  const weights = { ...layout.weights };
+  for (const id of ids) delete weights[id];
+  return weights;
 }
 
 export function toggleBoardPanelCollapsed(layout: BoardLayout, id: BoardPanelId): BoardLayout {
   return {
-    columns: layout.columns,
+    ...layout,
     collapsed: layout.collapsed.includes(id)
       ? layout.collapsed.filter((collapsedId) => collapsedId !== id)
       : [...layout.collapsed, id],
@@ -155,14 +172,58 @@ export function moveBoardPanel(
     .filter((column) => column.length > 0);
   const columnIndex = columns.findIndex((column) => column.includes(target.panelId));
   if (columnIndex < 0) return layout;
+  const weights = withoutWeights(layout, [id]);
   if (target.edge === "left" || target.edge === "right") {
     columns.splice(columnIndex + (target.edge === "right" ? 1 : 0), 0, [id]);
   } else {
     const column = [...columns[columnIndex]!];
+    // The newcomer takes an average share, so the others keep their split among themselves.
+    const expanded = column.filter((panelId) => !layout.collapsed.includes(panelId));
+    const share =
+      expanded.reduce((sum, panelId) => sum + boardPanelWeight(layout, panelId), 0) /
+      expanded.length;
+    if (expanded.length > 0 && share !== 1) weights[id] = share;
     column.splice(column.indexOf(target.panelId) + (target.edge === "bottom" ? 1 : 0), 0, id);
     columns[columnIndex] = column;
   }
-  return { columns, collapsed: layout.collapsed };
+  return { columns, collapsed: layout.collapsed, weights };
+}
+
+export interface BoardPanelPair {
+  readonly upperWeight: number;
+  readonly lowerWeight: number;
+  readonly upperHeight: number;
+  readonly lowerHeight: number;
+}
+
+/**
+ * Moves the boundary between two stacked panels by `delta` pixels, keeping both at least
+ * `minHeight` tall. Their combined weight is unchanged, so the rest of the column keeps its share.
+ */
+export function splitBoardPanelPair(
+  pair: BoardPanelPair,
+  delta: number,
+  minHeight: number,
+): readonly [upper: number, lower: number] {
+  const height = pair.upperHeight + pair.lowerHeight;
+  const weight = pair.upperWeight + pair.lowerWeight;
+  if (height < minHeight * 2) return [pair.upperWeight, pair.lowerWeight];
+  const upper = Math.min(height - minHeight, Math.max(minHeight, pair.upperHeight + delta));
+  const upperWeight = Math.round((weight * upper * 1e4) / height) / 1e4;
+  return [upperWeight, Math.round((weight - upperWeight) * 1e4) / 1e4];
+}
+
+export function setBoardPanelWeights(
+  layout: BoardLayout,
+  weights: Partial<Record<BoardPanelId, number>>,
+): BoardLayout {
+  return { ...layout, weights: { ...layout.weights, ...weights } };
+}
+
+/** Gives every panel in the column that holds `id` an equal share again. */
+export function resetBoardColumnWeights(layout: BoardLayout, id: BoardPanelId): BoardLayout {
+  const column = layout.columns.find((candidate) => candidate.includes(id)) ?? [];
+  return { ...layout, weights: withoutWeights(layout, column) };
 }
 
 /** Outer quarters of a panel open a column beside it; the middle stacks above or below. */
