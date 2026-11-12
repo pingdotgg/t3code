@@ -4,6 +4,7 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area
 import { FormSheet } from "react-native-screens";
 import { useResolveClassNames } from "uniwind";
 
+import { DialogSheetHost } from "../../components/ui/DialogHost";
 import { PaneContext } from "../../components/ui/Pane";
 import { RoutedFormSheetContext } from "../../components/ui/RoutedFormSheetContext";
 import { formSheetDetents } from "../../native/sheet-surface";
@@ -79,6 +80,7 @@ export function WorkspaceInspectorSheet(props: {
                 }
               >
                 <InspectorPanes content={props.content} onClose={() => close()} />
+                <DialogSheetHost />
                 {Platform.OS === "android" ? (
                   <View
                     pointerEvents="none"
