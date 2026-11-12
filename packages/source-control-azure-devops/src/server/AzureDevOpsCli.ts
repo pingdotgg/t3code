@@ -15,7 +15,7 @@ import {
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
-import { AzureCliInstallLocation, type AzureCliInstall } from "./azureCliLauncher.ts";
+import { AzureCliInstallLocation } from "./azureCliLauncher.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -384,8 +384,7 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
   }
   const resolveExecutable = yield* SpawnExecutableResolution;
   const launcher = resolveExecutable("az", "win32", yield* HostProcess.Environment);
-  const installFor: (launcherPath: string) => AzureCliInstall | undefined =
-    yield* AzureCliInstallLocation;
+  const installFor = yield* AzureCliInstallLocation;
   const install = launcher === undefined ? undefined : installFor(launcher);
   // Unrecognized installs (pipx's Scripts\az.exe) keep the launcher and today's decode.
   return install === undefined

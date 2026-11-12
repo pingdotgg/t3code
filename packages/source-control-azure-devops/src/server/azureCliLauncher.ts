@@ -3,15 +3,6 @@ import * as Context from "effect/Context";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-const exists = (filePath: string): boolean => {
-  try {
-    NodeFS.statSync(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 /** The `AZ_INSTALLER` value each launcher sets, which `az` only reads for its user agent. */
 export type AzureCliInstaller = "MSI" | "ZIP";
 
@@ -29,7 +20,7 @@ const INSTALLERS_BY_LAUNCHER_DIRECTORY: Readonly<Record<string, AzureCliInstalle
 /** The MSI and ZIP builds both launch the interpreter beside the install root, from `wbin` and `bin`. */
 export const azureCliInstall = (
   launcherPath: string,
-  pathExists: (filePath: string) => boolean = exists,
+  pathExists: (filePath: string) => boolean = NodeFS.existsSync,
 ): AzureCliInstall | undefined => {
   const path = NodePath.win32;
   const extension = path.extname(launcherPath).toLowerCase();
