@@ -16,6 +16,7 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  OctagonXIcon,
   UserCheckIcon,
   UserRoundIcon,
   UserRoundXIcon,
@@ -40,24 +41,35 @@ export function PullRequestLabelChip({
   label,
   size = "sm",
   className,
+  focusable = false,
   children,
 }: {
-  label: Pick<PullRequestLabel, "name" | "color">;
+  label: Pick<PullRequestLabel, "name" | "color" | "description">;
   size?: "sm" | "default";
   className?: string;
+  focusable?: boolean;
   children?: ReactNode;
 }) {
   const color = pullRequestLabelColor(label.color);
-  return (
+  const badge = (
     <Badge
       size={size}
       variant={color ? "label" : "secondary"}
       className={cn("min-w-0 max-w-40 shrink justify-start", className)}
+      {...(focusable && label.description ? { tabIndex: 0 } : {})}
       {...(color ? { style: { "--label": color } as CSSProperties } : {})}
     >
       <span className="truncate">{label.name}</span>
+      {label.description ? <span className="sr-only">: {label.description}</span> : null}
       {children}
     </Badge>
+  );
+  if (!label.description) return badge;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={badge} />
+      <TooltipPopup>{label.description}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -202,7 +214,11 @@ const CHECK_STATUS_PRESENTATION = {
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
   },
   failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive" },
-  cancelled: { label: "Cancelled", Icon: CircleXIcon, toneClassName: "text-destructive" },
+  cancelled: {
+    label: "Cancelled",
+    Icon: OctagonXIcon,
+    toneClassName: "text-muted-foreground/70",
+  },
   skipped: { label: "Skipped", Icon: CircleSlashIcon, toneClassName: "text-muted-foreground/70" },
   neutral: { label: "Neutral", Icon: CircleDashedIcon, toneClassName: "text-muted-foreground/70" },
 } as const satisfies Record<

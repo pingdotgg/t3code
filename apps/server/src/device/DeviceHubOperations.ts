@@ -19,6 +19,11 @@ const LIST_TIMEOUT_SECONDS = 40;
 // expo-device-hub 0.19.1 reports a failed simulator listing only as text; its error ids are hashes.
 const SIMULATOR_LIST_FAILED =
   /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
+// The hub passes numeric display IDs that Xcode 26 rejects; iOS 27 needs them for multiple displays.
+const runsOnXcode26Runtime = (version: string) => Number(/^iOS (\d+)/.exec(version)?.[1]) <= 26;
+const DEFAULT_DISPLAY_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
+trap 'rm -f "$f"' 0
+xcrun simctl io "$1" screenshot --type=png "$f" >/dev/null && base64 -i "$f"`;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -265,6 +270,24 @@ export const makeDeviceHubOperations = (options: {
     },
   );
 
+  const defaultDisplayScreenshot = Effect.fn("DeviceHubOperations.defaultDisplayScreenshot")(
+    function* (udid: string) {
+      const capture = yield* run("sh", ["-c", DEFAULT_DISPLAY_SCREENSHOT, "sh", udid], {
+        timeoutMs: Duration.toMillis(SCREENSHOT_TIMEOUT),
+        maxOutputBytes: 64 * 1024 * 1024,
+      });
+      if (capture.code !== 0) {
+        return yield* new DeviceOperationError({
+          operation: "screenshot",
+          reason: "command_failed",
+          exitCode: capture.code,
+          cause: capture.stderr.trim(),
+        });
+      }
+      return new Uint8Array(Buffer.from(capture.stdout, "base64"));
+    },
+  );
+
   const screenshot: DeviceOperations["screenshot"] = (device) =>
     httpClient
       .execute(
@@ -288,6 +311,13 @@ export const makeDeviceHubOperations = (options: {
                   : "request_failed",
               cause,
             }),
+        ),
+        Effect.catchIf(
+          (error) =>
+            device.platform === "ios" &&
+            runsOnXcode26Runtime(device.version) &&
+            error.reason === "hub_rejected",
+          () => defaultDisplayScreenshot(device.id),
         ),
         Effect.withSpan("DeviceHubOperations.screenshot"),
       );
