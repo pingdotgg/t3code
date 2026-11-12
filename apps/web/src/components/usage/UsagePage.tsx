@@ -10,7 +10,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
@@ -27,6 +27,7 @@ import {
   type DailyTotals,
   type HourlyTotals,
   type MergedUsage,
+  usageEmptyState,
 } from "@t3tools/shared/usageMerge";
 
 import { cn } from "../../lib/utils";
@@ -69,7 +70,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   WorkspaceBreadcrumb,
@@ -89,7 +89,6 @@ import {
   sortModelsByTokens,
   speedCostSegments,
   tokenTypeSegments,
-  usageEmptyState,
 } from "./usageBreakdown";
 import {
   METRIC_OPTIONS,
@@ -359,7 +358,7 @@ export function UsagePage() {
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12)}`
       : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-1 items-center gap-2 py-2 @4xl/usage-header:flex @4xl/usage-header:flex-wrap @4xl/usage-header:gap-x-3">
+    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>Usage</h1>
@@ -380,7 +379,7 @@ export function UsagePage() {
           />
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
-        <WorkspaceBreadcrumbItem current className="shrink-0">
+        <WorkspaceBreadcrumbItem current className="min-w-10">
           <UsageProviderFilter
             hiddenProviders={hiddenProviders}
             onChange={(next) => updatePreferences({ hiddenProviders: next })}
@@ -388,7 +387,7 @@ export function UsagePage() {
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
       {!showingLimits ? (
-        <span className="order-last min-w-0 text-xs text-muted-foreground @4xl/usage-header:order-none">
+        <span className="hidden min-w-0 truncate text-xs text-muted-foreground @7xl/usage-header:block">
           {windowLabel}
         </span>
       ) : null}
@@ -438,7 +437,7 @@ export function UsagePage() {
           <RefreshIcon size="sm" refreshing={isRefreshing} />
         </Button>
       </div>
-      <div className="flex shrink-0 items-center gap-2 @4xl/usage-header:hidden">
+      <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
         {showingLimits ? null : (
           <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
             <SelectTrigger
@@ -505,11 +504,9 @@ export function UsagePage() {
   return (
     <AppRouteModal label="Usage">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="@container/usage-header flex min-h-12 shrink-0 items-start gap-1 border-b ps-5 pe-2">
+        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
           {topbarContent}
-          <div className="mt-2 shrink-0">
-            <AppRouteModalClose />
-          </div>
+          <AppRouteModalClose />
         </header>
 
         <ScrollArea className="min-h-0 flex-1">
@@ -551,11 +548,6 @@ export function UsagePage() {
                 refreshingUsage={refreshingUsage}
                 showChatGptSharing={showChatGptSharing}
                 onSelectModel={selectUsageModel}
-                breakdown={preferences.breakdown ?? "model"}
-                onBreakdownChange={(breakdown) => updatePreferences({ breakdown })}
-                onShowAllProviders={() => updatePreferences({ hiddenProviders: [] })}
-                onRefresh={refreshWindow}
-                onOpenModelPrices={() => setPriceDialog({})}
               />
             )}
           </WorkspacePageContainer>
@@ -604,11 +596,6 @@ function UsageOverview({
   refreshingUsage,
   showChatGptSharing,
   onSelectModel,
-  breakdown,
-  onBreakdownChange,
-  onShowAllProviders,
-  onRefresh,
-  onOpenModelPrices,
 }: {
   readonly merged: MergedUsage;
   readonly shownWindow: UsageSummaryInput;
@@ -622,18 +609,30 @@ function UsageOverview({
   readonly refreshingUsage: boolean;
   readonly showChatGptSharing: boolean;
   readonly onSelectModel: (key: string) => void;
-  readonly breakdown: NonNullable<UsagePagePreferences["breakdown"]>;
-  readonly onBreakdownChange: (breakdown: NonNullable<UsagePagePreferences["breakdown"]>) => void;
-  readonly onShowAllProviders: () => void;
-  readonly onRefresh: () => void;
-  readonly onOpenModelPrices: () => void;
 }) {
-  const [showExactValues, setShowExactValues] = useState(false);
+  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
   // scope.
   const loadingPartial = loading.partial === true;
+  const emptyState = usageEmptyState({
+    environments: selectedEnvironments,
+    hasUsage: merged.models.length > 0,
+    loading: loadingPartial,
+    allProvidersHidden: PROVIDER_ORDER.every((provider) => hiddenProviders.has(provider)),
+  });
+  if (emptyState !== null && emptyState !== "empty") {
+    return (
+      <p className="py-12 text-center text-sm text-muted-foreground">
+        {emptyState === "hidden"
+          ? "All providers are hidden."
+          : emptyState === "pending"
+            ? "Waiting for usage."
+            : "Usage is unavailable."}
+      </p>
+    );
+  }
   const loadingProviders = new Set(
     PROVIDER_ORDER.filter((provider) => loading.everyProvider || loading.providers.has(provider)),
   );
@@ -661,111 +660,30 @@ function UsageOverview({
     breakdown === "model" && metric === "tokens"
       ? sortModelsByTokens(merged.models)
       : merged.models;
+  const breakdownPeak = breakdownModels.reduce(
+    (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
+    0,
+  );
   const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
-
-  const allProvidersHidden = PROVIDER_ORDER.every((provider) => hiddenProviders.has(provider));
-  const emptyState = usageEmptyState({
-    environments: selectedEnvironments,
-    hasUsage: merged.models.length > 0,
-    loading: loadingPartial,
-    allProvidersHidden,
-  });
-  if (emptyState !== null) {
-    return (
-      <div className="flex flex-col gap-4">
-        <UsageCoverageNotice
-          environments={selectedEnvironments}
-          duplicateSources={merged.duplicateSources}
-          contractMismatches={merged.contractMismatches}
-        />
-        <div className="flex flex-col items-start gap-3 py-8">
-          <h2 className="text-base font-medium text-foreground">
-            {emptyState === "hidden"
-              ? "All providers are hidden"
-              : emptyState === "pending"
-                ? "Waiting for usage"
-                : emptyState === "unavailable"
-                  ? "Usage is unavailable"
-                  : "No usage reported in this period"}
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {emptyState === "hidden"
-              ? "Show providers to see their cost and tokens."
-              : emptyState === "pending"
-                ? "Selected environments are still connecting or reporting. Totals are not complete yet."
-                : emptyState === "unavailable"
-                  ? "Check the selected environments, then refresh to try again."
-                  : "Try another period or provider. Only activity recorded in the selected environments is included."}
-          </p>
-          {sourceMessages.map((message) => (
-            <p key={message} className="text-sm text-muted-foreground">
-              {message}
-            </p>
-          ))}
-          {showChatGptSharing ? (
-            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span>ChatGPT shared usage</span>
-              <ChatGptUsageButton size="xs" />
-            </div>
-          ) : null}
-          {emptyState === "hidden" ? (
-            <Button variant="outline" size="sm" onClick={onShowAllProviders}>
-              Show all providers
-            </Button>
-          ) : emptyState === "unavailable" ? (
-            <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshingUsage}>
-              Refresh usage
-            </Button>
-          ) : emptyState === "empty" && hiddenProviders.size > 0 ? (
-            <Button variant="outline" size="sm" onClick={onShowAllProviders}>
-              Show all providers
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div aria-busy={loadingPartial} className="flex flex-col gap-6">
-      <UsageCoverageNotice
-        environments={selectedEnvironments}
-        duplicateSources={merged.duplicateSources}
-        contractMismatches={merged.contractMismatches}
-      />
       {sourceMessages.map((message) => (
         <p key={message} className="mb-4 text-sm text-muted-foreground">
           {message}
         </p>
       ))}
-      {merged.costQuality.unpricedShare > 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Cost excludes {formatPercent(merged.costQuality.unpricedShare)} of records with no price.
-          Tokens include them.{" "}
-          <InlineButton onClick={onOpenModelPrices}>Set model prices</InlineButton>
-        </p>
-      ) : null}
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <div
+            <span
               className={cn(
                 "text-4xl font-semibold text-foreground tabular-nums",
                 figureClass(loadingPartial),
               )}
             >
-              <UsageFigure
-                focusable
-                value={
-                  metric === "cost" ? formatUsd(merged.costUsd) : formatTokens(merged.totalTokens)
-                }
-                precise={
-                  metric === "cost"
-                    ? preciseUsd(merged.costUsd)
-                    : `${formatCount(merged.totalTokens)} tokens`
-                }
-              />
-            </div>
+              {metric === "cost" ? formatUsd(merged.costUsd) : formatTokens(merged.totalTokens)}
+            </span>
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
                 <span className={figureClass(loadingPartial)}>
@@ -773,6 +691,21 @@ function UsageOverview({
                 </span>
                 {metric === "cost" && " · API estimate"}
               </span>
+              {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
+                <Popover>
+                  <PopoverTrigger
+                    openOnHover
+                    render={<InlineButton tone="muted" />}
+                    aria-label="Unpriced usage details"
+                  >
+                    <InfoIcon className="size-3" aria-hidden />
+                  </PopoverTrigger>
+                  <PopoverPopup side="top" tooltipStyle>
+                    API estimate excludes {formatPercent(merged.costQuality.unpricedShare)} unpriced
+                    records.
+                  </PopoverPopup>
+                </Popover>
+              )}
             </span>
           </div>
 
@@ -866,288 +799,6 @@ function UsageOverview({
         </div>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-          <ToggleGroup
-            aria-label="Usage breakdown"
-            variant="segmented"
-            value={[breakdown]}
-            onValueChange={(next) => {
-              const value = next[0];
-              if (value === "model" || value === "time") {
-                onBreakdownChange(value);
-              }
-            }}
-          >
-            {(
-              [
-                { value: "model", label: "Model" },
-                { value: "time", label: shownHourly ? "Hour" : "Day" },
-              ] as const
-            ).map((option) => (
-              <Toggle key={option.value} value={option.value}>
-                {option.label}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-        </div>
-
-        {breakdown === "model" ? (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <p className="text-xs text-muted-foreground">
-                Highest {metric === "cost" ? "estimated cost" : "token use"} first. Bars and
-                percentages show share of displayed {metric}.
-              </p>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => setShowExactValues(!showExactValues)}
-              >
-                {showExactValues ? "Show rounded values" : "Show exact values"}
-              </Button>
-            </div>
-            {showExactValues ? (
-              <p className="text-xs text-muted-foreground">
-                Exact cost and tokens are shown. If needed, scroll the table horizontally for more
-                columns.
-              </p>
-            ) : null}
-            <div
-              className="overflow-x-auto rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              role={showExactValues ? "region" : undefined}
-              aria-label={
-                showExactValues
-                  ? "Exact usage figures. Scroll horizontally for more columns."
-                  : undefined
-              }
-              tabIndex={showExactValues ? 0 : undefined}
-            >
-              <table
-                className={cn("w-full text-sm", showExactValues ? "table-auto" : "table-fixed")}
-              >
-                <caption className="sr-only">
-                  Usage by model, sorted by {metric === "cost" ? "estimated cost" : "tokens"},
-                  highest first
-                </caption>
-                <colgroup>
-                  <col className="hidden w-8 sm:table-column" />
-                  <col />
-                  <col className="w-20 sm:w-24" />
-                  <col className="hidden w-24 sm:table-column" />
-                  <col className="w-20 sm:w-24" />
-                </colgroup>
-                <thead>
-                  <tr className="border-b border-border text-right text-xs text-muted-foreground">
-                    <th
-                      scope="col"
-                      className="hidden py-2 pr-3 pl-2 text-left font-normal sm:table-cell"
-                    >
-                      #
-                    </th>
-                    <th scope="col" className="py-2 text-left font-normal">
-                      Model
-                    </th>
-                    <th
-                      scope="col"
-                      aria-sort={metric === "cost" ? "descending" : undefined}
-                      className={cn(
-                        "py-2 pl-3 font-normal",
-                        metric === "cost" && "text-foreground",
-                      )}
-                    >
-                      Cost{metric === "cost" ? <span aria-hidden> ↓</span> : null}
-                    </th>
-                    <th scope="col" className="hidden py-2 pl-3 font-normal sm:table-cell">
-                      % of {metric}
-                    </th>
-                    <th
-                      scope="col"
-                      aria-sort={metric === "tokens" ? "descending" : undefined}
-                      className={cn(
-                        "py-2 pr-2 pl-3 font-normal",
-                        metric === "tokens" && "text-foreground",
-                      )}
-                    >
-                      Tokens{metric === "tokens" ? <span aria-hidden> ↓</span> : null}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {breakdownModels.map((model, index) => {
-                    const key = `${model.provider}:${model.model}`;
-                    const share = modelShare(model, metric);
-                    return (
-                      <tr
-                        key={key}
-                        className={cn(
-                          "border-b border-border/50 text-right align-top text-muted-foreground tabular-nums",
-                          "has-focus-visible:bg-muted/50",
-                          figureClass(loadingProviders.has(model.provider)),
-                        )}
-                      >
-                        <td className="hidden py-2.5 pr-3 pl-2 text-left text-xs sm:table-cell">
-                          {index + 1}
-                        </td>
-                        <th scope="row" className="py-2.5 text-left font-normal wrap-anywhere">
-                          <button
-                            type="button"
-                            onClick={() => onSelectModel(key)}
-                            className="flex items-baseline gap-2 text-left text-foreground rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                          >
-                            <span className="shrink-0 self-center">
-                              <ProviderMark provider={model.provider} className="size-3.5" />
-                            </span>
-                            {model.model}
-                          </button>
-                          {share !== null && share > 0 ? (
-                            <div
-                              aria-hidden
-                              className="mt-1.5 h-0.5 max-w-48 rounded-full bg-muted"
-                            >
-                              <div
-                                className="h-full rounded-full bg-foreground/60"
-                                style={{ width: `${share * 100}%` }}
-                              />
-                            </div>
-                          ) : null}
-                        </th>
-                        <td
-                          className={cn(
-                            "py-2.5 pl-3 whitespace-nowrap",
-                            metric === "cost" && "font-medium text-foreground",
-                          )}
-                        >
-                          <UsageCost exact={showExactValues} model={model} />
-                          {metric === "cost" && share !== null ? (
-                            <span className="block text-xs font-normal text-muted-foreground sm:hidden">
-                              <span className="sr-only">Share of cost: </span>
-                              {formatPercent(share)}
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="hidden py-2.5 pl-3 sm:table-cell">
-                          {share === null ? "n/a" : formatPercent(share)}
-                        </td>
-                        <td
-                          className={cn(
-                            "py-2.5 pr-2 pl-3 whitespace-nowrap",
-                            metric === "tokens" && "font-medium text-foreground",
-                          )}
-                        >
-                          <UsageFigure
-                            value={formatTokens(model.totalTokens)}
-                            precise={formatCount(model.totalTokens)}
-                            exact={showExactValues}
-                          />
-                          {metric === "tokens" && share !== null ? (
-                            <span className="block text-xs font-normal text-muted-foreground sm:hidden">
-                              <span className="sr-only">Share of tokens: </span>
-                              {formatPercent(share)}
-                            </span>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Costs are API estimates, not your subscription bill. Rounded rows may differ from the
-              total.
-            </p>
-          </>
-        ) : (
-          <div
-            className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            role="region"
-            aria-label="Usage breakdown by time"
-            tabIndex={0}
-          >
-            <table className="w-full text-sm whitespace-nowrap">
-              <caption className="sr-only">
-                Usage by {shownHourly ? "hour" : "day"}, newest first
-              </caption>
-              <colgroup>
-                <col className="w-2/5" />
-              </colgroup>
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" className="py-2 pl-2 font-normal">
-                    {shownHourly ? "Hour" : "Day"}
-                  </th>
-                  {activeProviders.map((provider) => (
-                    <th scope="col" key={provider} className="py-2 pl-4 text-right font-normal">
-                      {PROVIDER_PRESENTATION[provider].label}
-                    </th>
-                  ))}
-                  <th scope="col" className="py-2 pl-4 text-right font-normal">
-                    Total
-                  </th>
-                  <th scope="col" className="py-2 pr-2 pl-4 text-right font-normal">
-                    Tokens
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {breakdownPeriods.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={activeProviders.length + 3}
-                      className="py-6 text-center text-muted-foreground"
-                    >
-                      No activity in this window.
-                    </td>
-                  </tr>
-                ) : (
-                  breakdownPeriods.map((period) => (
-                    <tr
-                      key={"hourStart" in period ? period.hourStart : period.day}
-                      className="border-b border-border/50 transition-colors hover:bg-muted/50"
-                    >
-                      <th scope="row" className="py-2 pl-2 text-left font-normal text-foreground">
-                        {"hourStart" in period
-                          ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
-                          : formatDayShort(period.day)}
-                      </th>
-                      {activeProviders.map((provider) => (
-                        <td
-                          key={provider}
-                          className={cn(
-                            "py-2 pl-4 text-right text-muted-foreground tabular-nums",
-                            figureClass(loadingProviders.has(provider)),
-                          )}
-                        >
-                          {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
-                        </td>
-                      ))}
-                      <td
-                        className={cn(
-                          "py-2 pl-4 text-right text-foreground tabular-nums",
-                          figureClass(loadingPartial),
-                        )}
-                      >
-                        {formatUsd(period.costUsd)}
-                      </td>
-                      <td
-                        className={cn(
-                          "py-2 pr-2 pl-4 text-right text-muted-foreground tabular-nums",
-                          figureClass(loadingPartial),
-                        )}
-                      >
-                        {formatTokens(period.totalTokens)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-foreground">Totals</h2>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
@@ -1208,91 +859,186 @@ function UsageOverview({
           )}
         </section>
       ) : null}
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
+          <ToggleGroup
+            aria-label="Usage breakdown"
+            variant="segmented"
+            value={[breakdown]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value === "model" || value === "time") setBreakdown(value);
+            }}
+          >
+            {(
+              [
+                { value: "model", label: "Model" },
+                { value: "time", label: shownHourly ? "Hour" : "Day" },
+              ] as const
+            ).map((option) => (
+              <Toggle key={option.value} value={option.value}>
+                {option.label}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        </div>
+
+        {breakdown === "model" ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-right text-xs text-muted-foreground">
+                <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
+                <th className="w-full py-2 text-left font-normal">Model</th>
+                <th className="py-2 pl-6 font-normal">Cost</th>
+                <th className="hidden py-2 pl-6 font-normal sm:table-cell">Share</th>
+                <th className="py-2 pr-2 pl-6 font-normal">Tokens</th>
+              </tr>
+            </thead>
+            <tbody>
+              {breakdownModels.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                    No activity in this window.
+                  </td>
+                </tr>
+              ) : (
+                breakdownModels.map((model, index) => {
+                  const key = `${model.provider}:${model.model}`;
+                  const value = metric === "tokens" ? model.totalTokens : model.costUsd;
+                  const hasBar = value > 0 && breakdownPeak > 0;
+                  const share = modelShare(model, metric === "tokens" ? "tokens" : "cost");
+                  const rowFigures = figureClass(loadingProviders.has(model.provider));
+                  return (
+                    <tr
+                      key={key}
+                      className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50"
+                    >
+                      <td className="py-2.5 pr-3 pl-2 text-left text-xs">{index + 1}</td>
+                      <td className="py-2.5 text-left whitespace-normal">
+                        <button
+                          type="button"
+                          onClick={() => onSelectModel(key)}
+                          className={cn(
+                            "flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0",
+                            !hasBar && "py-1",
+                          )}
+                        >
+                          <ProviderMark provider={model.provider} className="size-3.5" />
+                          {model.model}
+                        </button>
+                        {hasBar ? (
+                          <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `max(0.5rem, ${(value / breakdownPeak) * 100}%)`,
+                                backgroundColor: PROVIDER_PRESENTATION[model.provider].color,
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
+                        {isModelCostUnknown(model) ? (
+                          <span className="text-muted-foreground">Unpriced</span>
+                        ) : (
+                          formatUsd(model.costUsd)
+                        )}
+                      </td>
+                      <td className={cn("hidden py-2.5 pl-6 sm:table-cell", rowFigures)}>
+                        {share === null ? "" : formatPercent(share)}
+                      </td>
+                      <td className={cn("py-2.5 pr-2 pl-6", rowFigures)}>
+                        {formatTokens(model.totalTokens)}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        ) : (
+          <div
+            className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            role="region"
+            aria-label="Usage breakdown by time"
+            tabIndex={0}
+          >
+            <table className="w-full text-sm whitespace-nowrap">
+              <colgroup>
+                <col className="w-2/5" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th className="py-2 pl-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
+                  {activeProviders.map((provider) => (
+                    <th key={provider} className="py-2 pl-4 text-right font-normal">
+                      {PROVIDER_PRESENTATION[provider].label}
+                    </th>
+                  ))}
+                  <th className="py-2 pl-4 text-right font-normal">Total</th>
+                  <th className="py-2 pr-2 pl-4 text-right font-normal">Tokens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdownPeriods.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={activeProviders.length + 3}
+                      className="py-6 text-center text-muted-foreground"
+                    >
+                      No activity in this window.
+                    </td>
+                  </tr>
+                ) : (
+                  breakdownPeriods.map((period) => (
+                    <tr
+                      key={"hourStart" in period ? period.hourStart : period.day}
+                      className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                    >
+                      <td className="py-2 pl-2 text-foreground">
+                        {"hourStart" in period
+                          ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
+                          : formatDayShort(period.day)}
+                      </td>
+                      {activeProviders.map((provider) => (
+                        <td
+                          key={provider}
+                          className={cn(
+                            "py-2 pl-4 text-right text-muted-foreground tabular-nums",
+                            figureClass(loadingProviders.has(provider)),
+                          )}
+                        >
+                          {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
+                        </td>
+                      ))}
+                      <td
+                        className={cn(
+                          "py-2 pl-4 text-right text-foreground tabular-nums",
+                          figureClass(loadingPartial),
+                        )}
+                      >
+                        {formatUsd(period.costUsd)}
+                      </td>
+                      <td
+                        className={cn(
+                          "py-2 pr-2 pl-4 text-right text-muted-foreground tabular-nums",
+                          figureClass(loadingPartial),
+                        )}
+                      >
+                        {formatTokens(period.totalTokens)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
-  );
-}
-
-const PRECISE_USD = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 6,
-});
-const preciseUsd = (value: number) => PRECISE_USD.format(value);
-
-function UsageFigure({
-  value,
-  precise,
-  focusable = false,
-  exact = false,
-}: {
-  readonly value: string;
-  readonly precise: string;
-  readonly focusable?: boolean;
-  readonly exact?: boolean;
-}) {
-  const tooltipId = useId();
-  if (exact) return <span>{precise}</span>;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        aria-describedby={tooltipId}
-        render={
-          <span
-            tabIndex={focusable ? 0 : undefined}
-            className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          />
-        }
-      >
-        <span aria-hidden>{value}</span>
-        <span className="sr-only">{precise}</span>
-      </TooltipTrigger>
-      <TooltipPopup id={tooltipId} role="tooltip">
-        {precise}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function UsageInfo({ label, children }: { readonly label: string; readonly children: string }) {
-  return (
-    <Popover>
-      <PopoverTrigger render={<Button size="icon-sm" variant="ghost-muted" />} aria-label={label}>
-        <InfoIcon className="size-3.5" aria-hidden />
-      </PopoverTrigger>
-      <PopoverPopup aria-label={label} side="top" width="md" tooltipStyle>
-        {children}
-      </PopoverPopup>
-    </Popover>
-  );
-}
-
-function UsageCost({
-  exact,
-  model,
-}: {
-  readonly exact: boolean;
-  readonly model: MergedUsage["models"][number];
-}) {
-  const unknown = isModelCostUnknown(model);
-  return (
-    <>
-      {unknown ? (
-        <span className="font-normal text-muted-foreground">Unpriced</span>
-      ) : (
-        <UsageFigure
-          value={formatUsd(model.costUsd)}
-          precise={preciseUsd(model.costUsd)}
-          exact={exact}
-        />
-      )}
-      {!unknown && model.unpricedRecords > 0 ? (
-        <span className="flex items-center justify-end gap-1 text-xs font-normal text-muted-foreground">
-          Partial
-          <UsageInfo label="About partially priced cost">{`Excludes ${formatCount(model.unpricedRecords)} of ${formatCount(model.records)} records with no price. Their tokens are included.`}</UsageInfo>
-        </span>
-      ) : null}
-    </>
   );
 }
 
@@ -1347,9 +1093,6 @@ function UsageCoverageNotice({
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
 }) {
-  const pending = environments.filter(
-    (environment) => environment.summary === null && environment.error === null,
-  );
   const failed = environments.filter((environment) => environment.error !== null);
   const mismatchByEnvironment = new Map(
     contractMismatches.map((mismatch) => [mismatch.environmentId, mismatch]),
@@ -1358,23 +1101,12 @@ function UsageCoverageNotice({
     const mismatch = mismatchByEnvironment.get(environment.environmentId);
     return mismatch === undefined ? [] : [{ environment, mismatch }];
   });
-  if (
-    pending.length === 0 &&
-    failed.length === 0 &&
-    incompatible.length === 0 &&
-    duplicateSources.length === 0
-  ) {
+  if (failed.length === 0 && incompatible.length === 0 && duplicateSources.length === 0) {
     return null;
   }
 
   return (
     <div className="flex flex-col gap-1 border-t border-border px-2 py-2 text-xs text-muted-foreground">
-      {pending.length > 0 ? (
-        <span role="status">
-          Waiting for {pending.map((environment) => environment.label).join(", ")}. Totals are
-          incomplete.
-        </span>
-      ) : null}
       {failed.map((environment) => (
         <span key={environment.label}>
           {environment.label}: {environment.error}
@@ -1623,14 +1355,6 @@ function UsageSkeleton() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-          <Skeleton shape="card" className="h-7 w-28" />
-        </div>
-        <Skeleton className="h-44" />
-      </section>
-
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-foreground">Totals</h2>
         <MetricSkeletons
@@ -1644,6 +1368,14 @@ function UsageSkeleton() {
           <Skeleton className="h-2" />
           <Skeleton className="h-4 w-72" />
         </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
+          <Skeleton shape="card" className="h-7 w-28" />
+        </div>
+        <Skeleton className="h-44" />
       </section>
     </>
   );

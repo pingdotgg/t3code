@@ -10,7 +10,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  isModelCostUnknown,
+  mergeUsage,
+  usageEmptyState,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 const decodeSummary = Schema.decodeUnknownSync(UsageSummary);
 
@@ -568,4 +573,18 @@ describe("mergeUsage", () => {
     expect(merged.sessions).toBe(1);
     expect(merged.providers[0]?.sessions).toBe(1);
   });
+});
+
+it("waits for selected environments before declaring usage empty", () => {
+  const answered = { summary: { contractVersion: USAGE_CONTRACT_VERSION }, error: null };
+  const reconnecting = { summary: null, error: null };
+  const failed = { summary: null, error: "Could not report usage" };
+  const selection = { hasUsage: false, loading: false, allProvidersHidden: false };
+
+  expect(usageEmptyState({ ...selection, environments: [answered, reconnecting] })).toBe("pending");
+  expect(usageEmptyState({ ...selection, environments: [answered] })).toBe("empty");
+  expect(usageEmptyState({ ...selection, environments: [failed] })).toBe("unavailable");
+  expect(usageEmptyState({ ...selection, environments: [failed], allProvidersHidden: true })).toBe(
+    "hidden",
+  );
 });

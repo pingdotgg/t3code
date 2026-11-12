@@ -1,7 +1,6 @@
-import { USAGE_CONTRACT_VERSION, type UsageTokenTotals } from "@t3tools/contracts";
+import type { UsageTokenTotals } from "@t3tools/contracts";
 import {
   isModelCostUnknown,
-  isCompatibleUsageContractVersion,
   type CategoryCost,
   type ModelTotals,
   type SpeedCost,
@@ -73,38 +72,4 @@ export function speedCostSegments(cost: SpeedCost): readonly ShareSegment[] {
     { label: "Fast", value: cost.fast, color: ink(66) },
     { label: "Ultrafast", value: cost.ultrafast, color: ink(100) },
   ];
-}
-
-export function usageEmptyState({
-  environments,
-  hasUsage,
-  loading,
-  allProvidersHidden,
-}: {
-  readonly environments: readonly {
-    readonly summary: { readonly contractVersion: number } | null;
-    readonly error: string | null;
-  }[];
-  readonly hasUsage: boolean;
-  readonly loading: boolean;
-  readonly allProvidersHidden: boolean;
-}): "hidden" | "pending" | "unavailable" | "empty" | null {
-  if (allProvidersHidden) return "hidden";
-  if (hasUsage) return null;
-  if (
-    loading ||
-    environments.some((environment) => environment.summary === null && environment.error === null)
-  )
-    return "pending";
-  return environments.every(
-    (environment) =>
-      environment.error !== null ||
-      (environment.summary !== null &&
-        !isCompatibleUsageContractVersion(
-          environment.summary.contractVersion,
-          USAGE_CONTRACT_VERSION,
-        )),
-  )
-    ? "unavailable"
-    : "empty";
 }

@@ -1,4 +1,5 @@
 import {
+  USAGE_CONTRACT_VERSION,
   USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
@@ -270,6 +271,41 @@ function bucketTokens(bucket: UsageBucket): number {
 
 export function isCompatibleUsageContractVersion(version: number, expected: number): boolean {
   return version >= USAGE_MERGE_COMPATIBLE_SINCE && version <= expected;
+}
+
+export function usageEmptyState({
+  environments,
+  hasUsage,
+  loading,
+  allProvidersHidden,
+}: {
+  readonly environments: readonly {
+    readonly summary: { readonly contractVersion: number } | null;
+    readonly error: string | null;
+  }[];
+  readonly hasUsage: boolean;
+  readonly loading: boolean;
+  readonly allProvidersHidden: boolean;
+}): "hidden" | "pending" | "unavailable" | "empty" | null {
+  if (allProvidersHidden) return "hidden";
+  if (hasUsage) return null;
+  if (
+    loading ||
+    environments.some((environment) => environment.summary === null && environment.error === null)
+  ) {
+    return "pending";
+  }
+  return environments.every(
+    (environment) =>
+      environment.error !== null ||
+      (environment.summary !== null &&
+        !isCompatibleUsageContractVersion(
+          environment.summary.contractVersion,
+          USAGE_CONTRACT_VERSION,
+        )),
+  )
+    ? "unavailable"
+    : "empty";
 }
 
 const EMPTY_MERGED: MergedUsage = {
