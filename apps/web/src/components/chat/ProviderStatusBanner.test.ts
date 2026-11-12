@@ -29,6 +29,23 @@ const provider: ServerProvider = {
 describe("compatibility banners", () => {
   it("shows and dismisses a warning on a healthy provider, then clears it after policy relaxation", () => {
     expect(shouldShowProviderStatusBanner(provider, null)).toBe(true);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...provider,
+          versionAdvisory: {
+            status: "behind_latest",
+            currentVersion: "1.0.0",
+            latestVersion: "2.0.0",
+            updateCommand: "npm i -g @openai/codex@latest",
+            canUpdate: true,
+            checkedAt: null,
+            message: null,
+          },
+        },
+        null,
+      ),
+    ).toBe(true);
     expect(shouldShowProviderStatusBanner(provider, getProviderStatusBannerKey(provider))).toBe(
       false,
     );
@@ -54,22 +71,6 @@ describe("compatibility banners", () => {
         compatibilityAdvisory: { ...provider.compatibilityAdvisory!, status: "graceful" },
       }),
     ).toBeNull();
-  });
-
-  it("shows an unsupported version warning when an update exists", () => {
-    const updatable: ServerProvider = {
-      ...provider,
-      versionAdvisory: {
-        status: "behind_latest",
-        currentVersion: "1.0.0",
-        latestVersion: "2.0.0",
-        updateCommand: "npm i -g @openai/codex@latest",
-        canUpdate: true,
-        checkedAt: null,
-        message: null,
-      },
-    };
-    expect(shouldShowProviderStatusBanner(updatable, null)).toBe(true);
   });
 
   it("shows downgrade guidance instead of a broken OpenCode inventory timeout", () => {
