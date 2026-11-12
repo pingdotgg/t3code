@@ -402,7 +402,10 @@ describe("DesktopUpdates", () => {
           ? Effect.void
           : Effect.die(new Error("download setup failed"));
       }),
+      installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
     });
+    harness.pendingRemoval.fails = true;
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -419,6 +422,7 @@ describe("DesktopUpdates", () => {
         assert.equal(failedState.status, "available");
         assert.equal(failedState.errorContext, "download");
         assert.equal(failedState.message, "Desktop update download action failed unexpectedly.");
+        assert.isDefined(harness.previousInstallRecord());
 
         const changedState = yield* updates.setChannel("nightly");
         assert.equal(changedState.channel, "nightly");
@@ -468,7 +472,10 @@ describe("DesktopUpdates", () => {
           }
           return Effect.void;
         }),
+        installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+        appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
       });
+      harness.pendingRemoval.fails = true;
 
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -484,10 +491,12 @@ describe("DesktopUpdates", () => {
           const interruptedState = yield* updates.getState;
           assert.equal(interruptedState.status, "available");
           assert.isNull(interruptedState.message);
+          assert.isDefined(harness.previousInstallRecord());
 
           const retry = yield* updates.download;
           assert.isTrue(retry.accepted);
           assert.isTrue(retry.completed);
+          assert.isUndefined(harness.previousInstallRecord());
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
@@ -573,6 +582,7 @@ describe("DesktopUpdates", () => {
   it.effect("flags an install that did not apply and keeps the flag through checks", () => {
     const harness = makeHarness({
       installRecord: JSON.stringify({ fromVersion: "1.2.3", targetVersion: "1.2.4" }),
+      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
     });
 
     return Effect.scoped(
@@ -581,20 +591,67 @@ describe("DesktopUpdates", () => {
         yield* updates.configure;
         assert.equal((yield* updates.getState).notAppliedVersion, "1.2.4");
         assert.isDefined(harness.previousInstallRecord());
+        assert.notInclude(
+          harness.removedPaths.map((removed) => removed.path),
+          `${harness.homeDirectory}/Library/Caches/t3code-updater/pending`,
+        );
 
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;
         const state = yield* updates.getState;
         assert.equal(state.status, "available");
         assert.equal(state.notAppliedVersion, "1.2.4");
+
+        yield* updates.download;
+        assert.isDefined(harness.previousInstallRecord());
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
   // regression: #19291 an install that did apply was still flagged as not applied
-  it.effect("does not flag an install that applied", () => {
+  // regression: #32554 the downloaded copy of the applied build stayed in the updater cache
+  it.effect.each([
+    {
+      name: "macOS",
+      platform: "darwin",
+      env: {},
+      updaterCacheDirName: "t3code-updater",
+      pending: (home: string) => `${home}/Library/Caches/t3code-updater/pending`,
+    },
+    {
+      name: "Windows",
+      platform: "win32",
+      env: { LOCALAPPDATA: "/win/AppData/Local" },
+      updaterCacheDirName: "t3code-updater",
+      pending: () => "/win/AppData/Local/t3code-updater/pending",
+    },
+    {
+      name: "Linux",
+      platform: "linux",
+      env: { XDG_CACHE_HOME: "/xdg/cache " },
+      updaterCacheDirName: "t3code-updater",
+      pending: () => "/xdg/cache /t3code-updater/pending",
+    },
+    {
+      name: "Linux without XDG_CACHE_HOME",
+      platform: "linux",
+      env: {},
+      updaterCacheDirName: "t3code-updater",
+      pending: (home: string) => `${home}/.cache/t3code-updater/pending`,
+    },
+    {
+      name: "a blank updaterCacheDirName",
+      platform: "darwin",
+      env: {},
+      updaterCacheDirName: "  ",
+      pending: undefined,
+    },
+  ] as const)("does not flag an install that applied ($name)", (row) => {
     const harness = makeHarness({
+      platform: row.platform,
+      env: row.env,
       installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+      appUpdateYml: `provider: github\nupdaterCacheDirName: ${row.updaterCacheDirName}\n`,
     });
 
     return Effect.scoped(
@@ -602,6 +659,60 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         assert.isUndefined((yield* updates.getState).notAppliedVersion);
+        assert.isUndefined(harness.previousInstallRecord());
+        const removedDownloads = harness.removedPaths.filter(
+          (removed) => removed.path.endsWith("/pending") || removed.path.endsWith("/update.zip"),
+        );
+        assert.deepEqual(
+          removedDownloads,
+          row.pending ? [{ path: row.pending(harness.homeDirectory), recursive: true }] : [],
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps an applied install's record until its download is removed", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+        appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
+      });
+      const pendingPath = `${harness.homeDirectory}/Library/Caches/t3code-updater/pending`;
+      const launch = Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          assert.isUndefined((yield* updates.getState).notAppliedVersion);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+
+      harness.pendingRemoval.fails = true;
+      yield* launch;
+      assert.isDefined(harness.previousInstallRecord());
+
+      harness.pendingRemoval.fails = false;
+      yield* launch;
+      assert.deepInclude(harness.removedPaths, { path: pendingPath, recursive: true });
+      assert.isUndefined(harness.previousInstallRecord());
+    }),
+  );
+
+  it.effect("drops a kept install record once a newer update downloads", () => {
+    const harness = makeHarness({
+      installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+      appUpdateYml: "provider: github\nupdaterCacheDirName: t3code-updater\n",
+    });
+    harness.pendingRemoval.fails = true;
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.isDefined(harness.previousInstallRecord());
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.isTrue((yield* updates.download).completed);
         assert.isUndefined(harness.previousInstallRecord());
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

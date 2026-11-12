@@ -287,8 +287,9 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
   const entries: Record<string, string> = {};
   for (const line of raw.split("\n")) {
     const match = line.match(/^(\w+):\s*(.+)$/);
-    if (match?.[1] && match[2]) {
-      entries[match[1]] = match[2].trim();
+    const value = match?.[2]?.trim();
+    if (match?.[1] && value) {
+      entries[match[1]] = value;
     }
   }
 
@@ -610,6 +611,8 @@ export const make = Effect.gen(function* () {
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
       yield* logUpdaterInfo("downloading update");
+      // A kept applied record would delete this download from pending/ on the next launch.
+      if (Option.isNone(yield* Ref.get(notAppliedVersionRef))) yield* removeInstallRecord;
       yield* electronUpdater.downloadUpdate;
       return { accepted: true, completed: true };
     }).pipe(
@@ -689,18 +692,45 @@ export const make = Effect.gen(function* () {
     .remove(installRecordPath, { force: true })
     .pipe(Effect.ignore);
 
-  const readNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
-    Effect.flatMap(decodeInstallRecord),
-    Effect.option,
-    Effect.map((record) =>
-      Option.flatMap(record, (value) =>
-        Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
-      ),
-    ),
-    Effect.tap((notAppliedVersion) =>
-      Option.isNone(notAppliedVersion) ? removeInstallRecord : Effect.void,
+  // update.zip stays: electron-updater diffs the next download against it.
+  const removeAppliedUpdateDownload = Ref.get(appUpdateYmlConfigRef).pipe(
+    Effect.map(Option.flatMap((config) => Option.fromNullishOr(config.updaterCacheDirName))),
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.succeed(true),
+        onSome: (updaterCacheDirName) =>
+          fileSystem
+            .remove(
+              environment.path.join(environment.appCacheDirectory, updaterCacheDirName, "pending"),
+              { recursive: true, force: true },
+            )
+            .pipe(
+              Effect.as(true),
+              Effect.catch((error) =>
+                logUpdaterWarning("Could not remove the applied update's download.", {
+                  errorTag: error._tag,
+                }).pipe(Effect.as(false)),
+              ),
+            ),
+      }),
     ),
   );
+
+  // Windows' installer can still hold pending/ at first launch; the kept record retries next launch.
+  const readNotAppliedInstallVersion = Effect.gen(function* () {
+    const record = yield* fileSystem
+      .readFileString(installRecordPath)
+      .pipe(Effect.flatMap(decodeInstallRecord), Effect.option);
+    const cleanedUp =
+      Option.isSome(record) && record.value.targetVersion === environment.appVersion
+        ? yield* removeAppliedUpdateDownload
+        : true;
+    const notAppliedVersion = Option.flatMap(record, (value) =>
+      Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
+    );
+    if (Option.isNone(notAppliedVersion) && cleanedUp) yield* removeInstallRecord;
+    return notAppliedVersion;
+  });
 
   const baseUpdateState = (channel: DesktopUpdateChannel, disabledReason: Option.Option<string>) =>
     Ref.get(notAppliedVersionRef).pipe(

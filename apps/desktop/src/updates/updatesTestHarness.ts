@@ -38,6 +38,7 @@ export interface UpdatesHarnessOptions {
   readonly platform?: NodeJS.Platform;
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
+  readonly appUpdateYml?: string;
   readonly policy?: DesktopUpdatePolicy.UpdatePolicy;
   readonly appVersion?: string;
   /** Starts from in-memory settings with this track saved, as after a restart. */
@@ -47,6 +48,7 @@ export interface UpdatesHarnessOptions {
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
+  const homeDirectory = `/tmp/t3-desktop-updates-home-${process.pid}`;
   let checkCount = 0;
   let quitAndInstallCount = 0;
   let downloadCount = 0;
@@ -181,7 +183,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
-    homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
+    homeDirectory,
     platform: options.platform ?? "darwin",
     processArch: "x64",
     appVersion: options.appVersion ?? "1.2.3",
@@ -244,7 +246,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       : DesktopAppSettings.layer;
 
   const updateRestartMarkers = new Set<string>();
+  const removedPaths: Array<{ readonly path: string; readonly recursive: boolean }> = [];
   const installRecords = new Map<string, string>();
+  const pendingRemoval = { fails: false };
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
@@ -254,6 +258,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         ? (installRecords.get(path) ?? previousInstallRecord)
         : undefined;
       if (installRecord !== undefined) return Effect.succeed(installRecord);
+      if (path === "/missing/resources/app-update.yml" && options.appUpdateYml !== undefined) {
+        return Effect.succeed(options.appUpdateYml);
+      }
       return path === "/missing/resources/package-type" && options.packageType !== undefined
         ? Effect.succeed(options.packageType)
         : Effect.fail(
@@ -271,12 +278,22 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         if (isInstallRecord(path)) installRecords.set(path, data);
         else updateRestartMarkers.add(path);
       }),
-    remove: (path) =>
-      Effect.sync(() => {
-        updateRestartMarkers.delete(path);
-        installRecords.delete(path);
-        if (isInstallRecord(path)) previousInstallRecord = undefined;
-      }),
+    remove: (path, removeOptions) =>
+      pendingRemoval.fails && path.endsWith("/pending")
+        ? Effect.fail(
+            PlatformError.systemError({
+              module: "FileSystem",
+              method: "remove",
+              _tag: "Busy",
+              pathOrDescriptor: path,
+            }),
+          )
+        : Effect.sync(() => {
+            removedPaths.push({ path, recursive: removeOptions?.recursive === true });
+            updateRestartMarkers.delete(path);
+            installRecords.delete(path);
+            if (isInstallRecord(path)) previousInstallRecord = undefined;
+          }),
   });
 
   const layer = DesktopUpdates.layer.pipe(
@@ -307,6 +324,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     installSteps,
     updateRestartMarkers,
     installRecords,
+    homeDirectory,
+    removedPaths,
+    pendingRemoval,
     previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
