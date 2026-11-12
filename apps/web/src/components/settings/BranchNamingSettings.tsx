@@ -5,6 +5,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingResetButton } from "./settingsLayout";
+import { BRANCH_NAMING_MODE_LABELS } from "./SettingsPanels.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
 import {
@@ -12,12 +13,6 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-
-const MODES = {
-  static: "Static prefix",
-  semantic: "Semantic prefix",
-  custom: "Custom instructions",
-} satisfies Record<BranchNamingMode, string>;
 
 export function BranchNamingSettings() {
   const settings = useScopedSettings();
@@ -63,13 +58,15 @@ export function BranchNamingSettings() {
           >
             <SelectTrigger size="sm" aria-label="Worktree branch naming">
               <SelectValue>
-                {(value: BranchNamingMode | null) => (value === null ? "Mixed" : MODES[value])}
+                {(value: BranchNamingMode | null) =>
+                  value === null ? "Mixed" : BRANCH_NAMING_MODE_LABELS[value]
+                }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {BranchNamingMode.literals.map((mode) => (
                 <SelectItem key={mode} value={mode}>
-                  {MODES[mode]}
+                  {BRANCH_NAMING_MODE_LABELS[mode]}
                 </SelectItem>
               ))}
             </SelectPopup>
