@@ -1086,20 +1086,23 @@ export const layer = Layer.effect(
                 if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
                   return currentProviders;
                 }
-                if (input.runHooks) hooklessSnapshots.delete(snapshotKey);
-                else hooklessSnapshots.add(snapshotKey);
-                return currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scanBase)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Without driver command discovery, retain previous commands after failed health checks and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                );
+                return currentProviders.map((candidate) => {
+                  if (
+                    candidate.instanceId !== input.instanceId ||
+                    !Equal.equals(workspaceSnapshotOf(candidate), scanBase)
+                  ) {
+                    return candidate;
+                  }
+                  if (input.runHooks) hooklessSnapshots.delete(snapshotKey);
+                  else hooklessSnapshots.add(snapshotKey);
+                  return upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                    ...scopedSnapshot,
+                    checkedAt: scannedAt,
+                    // Without driver command discovery, retain previous commands after failed health checks and retry.
+                    slashCommandsPending:
+                      scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                  });
+                });
               });
             }),
           ),
