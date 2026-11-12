@@ -3,7 +3,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
 export function formatProviderSkillDisplayName(
-  skill: Pick<ServerProviderSkill, "name" | "displayName">,
+  skill: Pick<ServerProviderSkill, "name"> & { readonly displayName?: string | null | undefined },
 ): string {
   return skill.displayName?.trim() || skill.name;
 }
@@ -15,9 +15,16 @@ export function* matchInlineSkills<Skill extends InlineSkill>(
   text: string,
   skills: readonly Skill[],
 ) {
+  const byName = new Map<string, Skill | undefined>();
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const name = match[2] ?? "";
-    const skill = skills.find((candidate) => candidate.name === name);
+    if (!byName.has(name)) {
+      byName.set(
+        name,
+        skills.find((candidate) => candidate.name === name),
+      );
+    }
+    const skill = byName.get(name);
     if (!skill) continue;
     const start = match.index + (match[1]?.length ?? 0);
     yield { start, end: match.index + match[0].length, skill, rawText: `$${name}` };

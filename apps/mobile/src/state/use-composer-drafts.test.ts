@@ -205,6 +205,7 @@ import {
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
+  retargetSavedNewTaskDraft,
   setComposerDraftText,
   insertComposerDraftContext,
   insertComposerDraftText,
@@ -310,9 +311,11 @@ function modelReconciliationHarness(
       ],
     ]),
   });
+  const noPendingThreadIdsAtom = Atom.make((): ReadonlySet<ThreadId> => new Set());
   const shells = createEnvironmentThreadShellAtoms({
     catalogValueAtom,
     snapshotAtom: () => snapshotAtom,
+    hiddenThreadTagsAtom: () => Atom.make(null),
   });
   const selectedShell = shells.threadShellAtom({ environmentId, threadId: selectedThreadId });
   onTestFinished(registry.mount(selectedShell));
@@ -322,6 +325,7 @@ function modelReconciliationHarness(
       threadShellAtom: shells.threadShellAtom,
       threadRefsAtom: shells.threadRefsAtom,
       shellStateAtom: () => shellResultAtom,
+      pendingThreadIdsAtom: () => noPendingThreadIdsAtom,
     }),
   );
   flush();
@@ -1280,7 +1284,10 @@ describe("mobile composer drafts", () => {
         "pending-task:queued-1": { text: "Edited queued task", attachments: [file] },
       });
       appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, { queued: [queued] });
-      await archiveCloudComposerDrafts("account-a", new Set([environmentId]));
+      await archiveCloudComposerDrafts("account-a", new Set([environmentId]), [
+        environmentId,
+        EnvironmentId.make("direct-environment"),
+      ]);
       expect(appAtomRegistry.get(composerDraftsAtom)).toEqual({
         "direct-environment:thread-1": DRAFT,
       });
@@ -1346,7 +1353,9 @@ describe("mobile composer drafts", () => {
     appAtomRegistry.set(composerDraftsAtom, { "environment-1:thread-1": DRAFT });
     composerDraftFileMocks.setWriteError(new Error("Storage is full"));
     await expect(
-      archiveCloudComposerDrafts("account-a", new Set([EnvironmentId.make("environment-1")])),
+      archiveCloudComposerDrafts("account-a", new Set([EnvironmentId.make("environment-1")]), [
+        EnvironmentId.make("environment-1"),
+      ]),
     ).rejects.toThrow();
     expect(
       appAtomRegistry.get(composerCloudDraftsAtom).signedOut["account-a"]?.drafts[
@@ -1355,7 +1364,9 @@ describe("mobile composer drafts", () => {
     ).toEqual(DRAFT);
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
     composerDraftFileMocks.setWriteError(null);
-    await archiveCloudComposerDrafts(null, new Set([EnvironmentId.make("environment-1")]));
+    await archiveCloudComposerDrafts(null, new Set([EnvironmentId.make("environment-1")]), [
+      EnvironmentId.make("environment-1"),
+    ]);
     expect(
       decodePersistedComposerState(JSON.parse(composerDraftFileMocks.getDocument())).cloudDrafts
         .signedOut["account-a"]?.drafts["environment-1:thread-1"],
@@ -1921,6 +1932,30 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+  });
+
+  it("retargets a saved new-task draft only after drafts load", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const to = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-2"),
+    };
+    const key = createNewTaskDraft(from);
+    setComposerDraftText(key, "kept through a cold start");
+    await flushComposerDrafts();
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+
+    await expect(retargetSavedNewTaskDraft(key, to)).resolves.toBe(true);
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      text: "kept through a cold start",
+      project: to,
+    });
+    await expect(retargetSavedNewTaskDraft(`${key}-gone`, to)).resolves.toBe(false);
+    expect(appAtomRegistry.get(composerDraftsAtom)[`${key}-gone`]).toBeUndefined();
   });
 
   it("merges persisted option memory without replacing newer choices", async () => {

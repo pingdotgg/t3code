@@ -1,10 +1,7 @@
-import * as NodeModule from "node:module";
-
 import type {
   DirItem,
   DirSearchResult,
   FileItem,
-  FileFinder as FileFinderType,
   GrepCursor,
   MixedItem,
   MixedSearchResult,
@@ -27,9 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
-// fff-node's native library stays external; single-executables require disk packages instead of importing them.
-const requireForFff = NodeModule.createRequire(import.meta.url);
-const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
+import { type ThreadedFinder, WorkspaceFinderOpener } from "./WorkspaceFinderThread.ts";
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -288,16 +283,15 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
 ) {
-  const result = yield* Effect.try({
+  const openFinder = yield* WorkspaceFinderOpener;
+  const result = yield* Effect.tryPromise({
     try: () =>
-      FileFinder.create({
+      openFinder({
         basePath: cwd,
         disableMmapCache: true,
         // Content indexing costs CPU/memory; path-only consumers use the lightweight index.
         disableContentIndexing: variant !== "content",
         aiMode: false,
-        enableFsRootScanning: true,
-        enableHomeDirScanning: true,
       }),
     catch: (cause) =>
       new WorkspaceSearchIndexCreateFailed({
@@ -315,11 +309,11 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
 
 const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(function* <E>(
   cwd: string,
-  finder: FileFinderType,
+  finder: ThreadedFinder,
   onFailure: (input: { readonly reason: string; readonly cause?: unknown }) => E,
 ): Effect.fn.Return<void, E | WorkspaceSearchIndexScanTimedOut> {
   const result = yield* Effect.tryPromise({
-    try: () => finder.waitForIndexReady(WORKSPACE_INDEX_SCAN_TIMEOUT_MS),
+    try: () => finder.call("waitForIndexReady", WORKSPACE_INDEX_SCAN_TIMEOUT_MS),
     catch: (cause) =>
       onFailure({
         reason: "FileFinder.waitForIndexReady rejected unexpectedly.",
@@ -342,8 +336,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
-    Effect.try({
-      try: () => finder.destroy(),
+    Effect.tryPromise({
+      try: () => finder.call("destroy").finally(finder.close),
       catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
     }).pipe(Effect.orDie),
   );
@@ -368,15 +362,28 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }),
   );
 
-  const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
+  const hasIncompleteInitialScan = () =>
+    initialScanTimedOut
+      ? Effect.tryPromise({
+          try: () => finder.call("isScanning"),
+          catch: (cause) =>
+            new WorkspaceSearchIndexSearchFailed({
+              cwd,
+              queryLength: 0,
+              pageSize: 0,
+              reason: "FileFinder.isScanning threw unexpectedly.",
+              cause,
+            }),
+        })
+      : Effect.succeed(false);
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
-    execute: () => Result<A>,
+    execute: () => Promise<Result<A>>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
-    const result = yield* Effect.try({
+    const result = yield* Effect.tryPromise({
       try: execute,
       catch: (cause) =>
         new WorkspaceSearchIndexSearchFailed({
@@ -401,8 +408,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
-    const result = yield* Effect.try({
-      try: () => finder.scanFiles(),
+    const result = yield* Effect.tryPromise({
+      try: () => finder.call("scanFiles"),
       catch: (cause) =>
         new WorkspaceSearchIndexRefreshFailed({
           cwd,
@@ -432,9 +439,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
-      const incompleteBeforeQuery = hasIncompleteInitialScan();
+      const incompleteBeforeQuery = yield* hasIncompleteInitialScan();
       const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
-        finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+        finder.call("mixedSearch", "", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
@@ -451,25 +458,28 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
     "WorkspaceSearchIndex.search",
-  )(function* (query, limit, kind, imageOnly) {
+  )(function* (rawQuery, limit, kind, imageOnly) {
+    // fff parses any word containing "[" as a glob and has no escape for it; fuzzy
+    // matching is subsequence-based, so dropping "[" still matches "[id]" folders.
+    const query = rawQuery.replaceAll("[", "");
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
-    const incompleteBeforeQuery = hasIncompleteInitialScan();
+    const incompleteBeforeQuery = yield* hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
-        finder.fileSearch(query, { pageSize }),
+        finder.call("fileSearch", query, { pageSize }),
       );
       const mapped = mapFileSearchResult(result, limit, imageOnly);
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
-        finder.directorySearch(query, { pageSize }),
+        finder.call("directorySearch", query, { pageSize }),
       );
       const mapped = mapDirectorySearchResult(result, limit);
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
-      finder.mixedSearch(query, { pageSize }),
+      finder.call("mixedSearch", query, { pageSize }),
     );
     const mapped = mapMixedSearchResult(result, limit);
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
@@ -478,7 +488,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
-    const { searchQuery, regexMode } = buildContentSearchQuery(input);
+    let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
@@ -487,11 +497,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     let nextCursor: GrepCursor | null = null;
     let regexFallbackError: string | undefined;
+    let retryLiterally = false;
 
     do {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
       const result = yield* runSearch(input.query, input.limit, "grep", () =>
-        finder.grep(searchQuery, {
+        finder.call("grep", searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
           maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
@@ -500,12 +511,20 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           timeBudgetMs: remainingTimeBudgetMs,
         }),
       );
+      // fff searches an invalid pattern as a literal, which would keep the `(?i)` prefix.
+      retryLiterally = regexMode && !input.caseSensitive && result.regexFallbackError !== undefined;
+      if (retryLiterally) {
+        regexFallbackError = result.regexFallbackError;
+        ({ searchQuery, regexMode } = buildContentSearchQuery({ ...input, useRegex: false }));
+        continue;
+      }
 
       for (const match of result.items) {
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
-        if (matchRanges.length === 0) continue;
+        // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
+        if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
           path: toPosixPath(match.relativePath),
           lineNumber: match.lineNumber,
@@ -515,7 +534,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
       nextCursor = result.nextCursor;
       regexFallbackError ??= result.regexFallbackError;
-    } while (matches.length < input.limit && nextCursor !== null && performance.now() < deadline);
+    } while (
+      retryLiterally ||
+      (matches.length < input.limit && nextCursor !== null && performance.now() < deadline)
+    );
 
     return {
       matches: matches.slice(0, input.limit),

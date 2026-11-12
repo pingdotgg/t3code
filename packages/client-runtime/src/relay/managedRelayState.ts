@@ -2,7 +2,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -50,10 +49,13 @@ export interface ManagedRelayQueryEvent {
   readonly traceId?: string | null;
 }
 
-export class ManagedRelaySessionError extends Data.TaggedError("ManagedRelaySessionError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class ManagedRelaySessionError extends Schema.TaggedError<ManagedRelaySessionError>()(
+  "ManagedRelaySessionError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
 
 export const managedRelaySessionAtom = Atom.make<ManagedRelaySession | null>(null).pipe(
   Atom.keepAlive,
@@ -85,15 +87,16 @@ export function createManagedRelaySession(input: ManagedRelaySessionInput): Mana
         cachedToken = null;
         return null;
       }
-      try {
-        const expiresAtSeconds = decodeRelayJwt(token).exp;
-        cachedToken =
-          typeof expiresAtSeconds === "number"
-            ? { token, expiresAtMillis: expiresAtSeconds * 1_000 }
-            : null;
-      } catch {
-        cachedToken = null;
-      }
+      const expiresAtSeconds = Effect.runSync(
+        decodeRelayJwt(token).pipe(
+          Effect.map((claims) => claims.exp),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      );
+      cachedToken =
+        typeof expiresAtSeconds === "number"
+          ? { token, expiresAtMillis: expiresAtSeconds * 1_000 }
+          : null;
       return token;
     });
     pendingToken = operation;

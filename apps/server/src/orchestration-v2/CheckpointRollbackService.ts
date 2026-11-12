@@ -33,7 +33,7 @@ import { GIT_INDEX_LOCKED_DETAIL } from "../vcs/VcsProcess.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { RuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 export const ROLLBACK_FAILED_MESSAGE =
@@ -74,6 +74,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
 const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
+const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
 
 /**
  * The message clients see when a rollback fails. Only a held Git index lock
@@ -81,6 +82,7 @@ const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
  * output, so they fall back to the generic message.
  */
 export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
+  if (isRuntimePolicyAboveCeilingError(error.cause)) return error.cause.message;
   const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
   return isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL
     ? GIT_INDEX_LOCKED_DETAIL
@@ -150,7 +152,9 @@ export const layer: Layer.Layer<
         checkpoint === undefined ||
         scope === undefined ||
         checkpoint.scopeId !== scope.id ||
-        checkpoint.status !== "ready"
+        // Missing snapshots support conversation rewind only.
+        (checkpoint.status !== "ready" &&
+          !(input.restoreFiles === false && checkpoint.status === "missing"))
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "rollback-target-invalid",
@@ -183,7 +187,11 @@ export const layer: Layer.Layer<
               const targetTurn =
                 latestProviderTurnForAttempt(context.providerTurns, targetAttempt?.id) ??
                 context.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
-              if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
+              if (
+                targetAttempt === undefined ||
+                targetTurn === undefined ||
+                targetTurn.providerThreadId !== providerThread.id
+              ) {
                 return yield* new CheckpointRollbackExecutionError({
                   reason: "provider-turn-unavailable",
                   threadId: input.threadId,
@@ -191,49 +199,68 @@ export const layer: Layer.Layer<
                   checkpointId: input.checkpointId,
                 });
               }
+              const { attempt } = yield* projections.getProviderControlContext(input.threadId, {
+                providerThreadId: providerThread.id,
+                providerTurnId: targetTurn.id,
+                attemptId: targetAttempt.id,
+              });
+              const message =
+                attempt === undefined
+                  ? undefined
+                  : yield* projections.getRunMessage(input.threadId, attempt.runId);
               return {
                 type: "provider_turn" as const,
                 checkpointId: checkpoint.id,
                 appRunOrdinal: targetOrdinal,
                 providerTurn: targetTurn,
+                ...(message === undefined ? {} : { message }),
               };
             });
 
-      const { worktreePath, branch } = context.thread;
-      // Recreated only where the server would have made it, as turn start does.
-      if (
-        worktreePath != null &&
-        branch != null &&
-        !(yield* fileSystem.exists(worktreePath)) &&
-        (yield* isManagedWorktreePath(worktreePath))
-      ) {
-        const project = yield* projects.get(context.thread.projectId);
-        if (Option.isSome(project)) {
-          yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
-          yield* gitWorkflow.createWorktree({
-            cwd: project.value.workspaceRoot,
-            refName: branch,
-            path: worktreePath,
-          });
-        }
-      }
-
-      if (
-        input.restoreFiles !== false &&
-        !(yield* isCheckpointRestoreIsolated(context.thread, scope, {
-          fileSystem,
-          projections,
-          projects,
-          path,
-        }))
-      ) {
-        return yield* new CheckpointRollbackExecutionError({
+      const restoreFiles = input.restoreFiles !== false;
+      const isolated = isCheckpointRestoreIsolated(context.thread, scope, {
+        fileSystem,
+        projections,
+        projects,
+        path,
+      });
+      const sharedWorkspace = () =>
+        new CheckpointRollbackExecutionError({
           reason: "shared-workspace",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
           checkpointId: input.checkpointId,
         });
+
+      const { worktreePath, branch } = context.thread;
+      // Recreated only where the server would have made it, as turn start does.
+      if (worktreePath != null && branch != null) {
+        // A failed removal can leave the folder without its checkout; only a file restore replaces it.
+        const leftover =
+          restoreFiles &&
+          (yield* fileSystem.exists(worktreePath)) &&
+          !(yield* fileSystem.exists(path.join(worktreePath, ".git")));
+        if (
+          (leftover || !(yield* fileSystem.exists(worktreePath))) &&
+          (yield* isManagedWorktreePath(worktreePath))
+        ) {
+          const project = yield* projects.get(context.thread.projectId);
+          if (Option.isSome(project)) {
+            if (leftover) {
+              if (!(yield* isolated)) return yield* sharedWorkspace();
+              yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
+            }
+            yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
+            yield* gitWorkflow.createWorktree({
+              cwd: project.value.workspaceRoot,
+              refName: branch,
+              path: worktreePath,
+            });
+          }
+        }
       }
+
+      if (restoreFiles && !(yield* isolated)) return yield* sharedWorkspace();
 
       const modelSelection = context.thread.modelSelection;
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({

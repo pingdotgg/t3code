@@ -11,7 +11,7 @@ import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
-import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
+import { getProviderClient, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
@@ -99,7 +99,8 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  const packageIcon = getProviderClient(props.provider)?.icon;
+  const packageIcon =
+    props.provider === "openrouter" ? openRouterIcon : getProviderClient(props.provider)?.icon;
   if (packageIcon) {
     const themeFill = (fill: { readonly light: string; readonly dark: string }) =>
       isDarkMode ? fill.dark : fill.light;
@@ -150,6 +151,20 @@ export function ProviderIcon(props: ProviderIconProps) {
       />
     </Svg>
   );
+}
+
+/** Local ACP agents share one fallback glyph, so a badge alone cannot tell instances apart. */
+export function providerInstanceNameLabel(props: {
+  readonly provider: string | null | undefined;
+  readonly iconUrl?: string | null | undefined;
+  readonly displayName: string;
+  readonly showBadge: boolean;
+}): string | null {
+  return props.showBadge &&
+    props.provider === "acpRegistry" &&
+    resolveOfficialAcpRegistryIconUrl(props.iconUrl) === null
+    ? props.displayName
+    : null;
 }
 
 export function ProviderInstanceIcon(props: {

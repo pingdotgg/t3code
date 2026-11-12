@@ -3,8 +3,8 @@
  * icons — shared by the plan tree, the live progress view, and the plain
  * logging CLI so an action never renders two different hues.
  */
-import type { ApplyStatus } from "../../../Report.ts";
-import { theme, type GlyphName } from "../../CliKit/index.ts";
+import type { ApplyStatus } from "../../../Events.ts";
+import { theme, type GlyphName } from "../../../Util/Theme.ts";
 
 /** Every verb a plan row can carry (resource CRUD + namespace/action rollups). */
 export type PlanAction =
@@ -18,24 +18,20 @@ export type PlanAction =
   | "mixed"
   | "run";
 
-export const actionStyle: Record<
-  PlanAction,
-  { readonly color: string; readonly icon: GlyphName }
-> = {
-  create: { color: theme.color.success, icon: "add" },
-  update: { color: theme.color.warning, icon: "edit" },
-  adopted: { color: theme.color.magenta, icon: "adopt" },
-  delete: { color: theme.color.danger, icon: "delete" },
-  orphaned: { color: theme.color.coral, icon: "orphan" },
-  replace: { color: theme.color.magenta, icon: "replace" },
-  noop: { color: theme.color.muted, icon: "bullet" },
-  mixed: { color: theme.color.info, icon: "info" },
-  run: { color: theme.color.info, icon: "run" },
-};
+export const actionStyle: Record<PlanAction, { readonly color: string; readonly icon: GlyphName }> =
+  {
+    create: { color: theme.color.success, icon: "add" },
+    update: { color: theme.color.warning, icon: "edit" },
+    adopted: { color: theme.color.magenta, icon: "adopt" },
+    delete: { color: theme.color.danger, icon: "delete" },
+    orphaned: { color: theme.color.coral, icon: "orphan" },
+    replace: { color: theme.color.magenta, icon: "replace" },
+    noop: { color: theme.color.muted, icon: "bullet" },
+    mixed: { color: theme.color.info, icon: "info" },
+    run: { color: theme.color.info, icon: "run" },
+  };
 
-export const applyStatusColor = (
-  status: ApplyStatus | "no change",
-): string | undefined => {
+export const applyStatusColor = (status: ApplyStatus | "no change"): string | undefined => {
   switch (status) {
     case "no change":
     case "pending":
