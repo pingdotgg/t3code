@@ -13,7 +13,7 @@ describe("KeepAwake.holdWhileWanted", () => {
       const transitions = yield* Queue.unbounded<"held" | "released">();
       const hold = Effect.acquireRelease(Queue.offer(transitions, "held"), () =>
         Queue.offer(transitions, "released"),
-      ).pipe(Effect.asVoid);
+      ).pipe(Effect.andThen(Effect.never), Effect.scoped);
       yield* KeepAwake.holdWhileWanted(Stream.fromQueue(wanted), hold, "60 seconds").pipe(
         Effect.forkScoped,
       );
