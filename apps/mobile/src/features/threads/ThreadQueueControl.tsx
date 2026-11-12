@@ -132,7 +132,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
-  // beginQueuedRunEdit reports a failed hold itself.
+  // An older server has no hold; the edit then opens unheld, as before.
   const holdEdit = useAtomCommand(threadEnvironment.holdQueuedRunEdit, { reportFailure: false });
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);

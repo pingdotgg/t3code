@@ -108,7 +108,7 @@ describe("makeQueuedRunEditStore", () => {
     ]);
   });
 
-  it("opens the edit only once the server holds its run", async () => {
+  it("opens the edit only once the server answers its hold", async () => {
     const { store } = setup();
     const replies: Array<(held: boolean) => void> = [];
     const released: Array<boolean> = [];
@@ -129,23 +129,25 @@ describe("makeQueuedRunEditStore", () => {
         },
       );
 
-    const refused = begin();
-    expect(store.get("env:thread")).toBeNull();
-    replies[0]!(false);
-    expect(await refused).toBe("failed");
-    expect(store.get("env:thread")).toBeNull();
-
     // Cancelled before the server answered: the late hold is released.
     const cancelled = begin();
     store.end("env:thread");
-    replies[1]!(true);
+    replies[0]!(true);
     expect(await cancelled).toBe("superseded");
     expect(store.get("env:thread")).toBeNull();
     expect(released).toEqual([false]);
 
     const accepted = begin();
-    replies[2]!(true);
+    expect(store.get("env:thread")).toBeNull();
+    replies[1]!(true);
     expect(await accepted).toBe("opened");
+    expect(store.get("env:thread")).toEqual({ runId: RUN, text: "draft" });
+    store.end("env:thread");
+
+    // An older server has no hold command: the edit still opens, as it did before holds.
+    const unsupported = begin();
+    replies[2]!(false);
+    expect(await unsupported).toBe("opened");
     expect(store.get("env:thread")).toEqual({ runId: RUN, text: "draft" });
   });
 

@@ -166,9 +166,9 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
     savingAtom,
     get,
     /**
-     * Starts an edit, replacing any open one. It opens only once the server holds
-     * the run, so the run never starts with its original text while the user types.
-     * When the run leaves the queue, `onRunLeftQueue` receives the edit.
+     * Starts an edit, replacing any open one. It opens once the server answers the
+     * hold, so the run cannot start with its original text while the user types. An
+     * older server has no hold; its edit opens unheld. `onRunLeftQueue` ends either.
      */
     async begin(
       threadKey: string,
@@ -178,7 +178,7 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
         readonly onRunLeftQueue: (threadKey: string, edit: E) => void;
         readonly hold: QueuedRunEditHold;
       },
-    ): Promise<"opened" | "failed" | "superseded"> {
+    ): Promise<"opened" | "superseded"> {
       const open = () => {
         write(threadKey, edit);
         const next: ExitWatch<E> = { ...watch, runId: edit.runId, cancel: null };
@@ -202,7 +202,7 @@ export function makeQueuedRunEditStore<E extends { readonly runId: RunId }>(opti
         return "superseded";
       }
       acquiring.delete(threadKey);
-      return held ? open() : "failed";
+      return open();
     },
     update(threadKey: string, f: (edit: E) => E) {
       const edit = get(threadKey);

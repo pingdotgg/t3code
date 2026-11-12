@@ -109,7 +109,7 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
 
 /**
  * `runs` is the thread's runs; the edit ends when its run leaves the queue.
- * The edit opens once `hold` has the server hold the run, and reports when it cannot.
+ * The edit opens once the server answers `hold`; an older server's edit opens unheld.
  */
 export function beginQueuedRunEdit(
   threadKey: string,
@@ -130,11 +130,7 @@ export function beginQueuedRunEdit(
   setComposerDraftContext(draftKey, edit.context);
   return queuedRunEdits
     .begin(threadKey, { ...edit, originalText }, { runs, onRunLeftQueue: exitQueuedRunEdit, hold })
-    .then((outcome) => {
-      if (outcome !== "failed") return;
-      clearComposerDraft(draftKey);
-      setThreadComposerError(threadKey, "Couldn't edit that message. It may have already started.");
-    });
+    .then(() => {});
 }
 
 export function removeQueuedRunEditAttachment(threadKey: string, attachmentId: string): void {

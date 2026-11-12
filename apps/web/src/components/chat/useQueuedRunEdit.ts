@@ -211,7 +211,7 @@ export function useQueuedRunEdit(input: {
     composerRef,
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
-  // A failed hold keeps the editor closed and says so below.
+  // An older server has no hold; the edit then opens unheld, as before.
   const holdQueuedRunEdit = useAtomCommand(threadEnvironment.holdQueuedRunEdit, {
     reportFailure: false,
   });
@@ -328,19 +328,7 @@ export function useQueuedRunEdit(input: {
         },
       )
       .then((outcome) => {
-        if (outcome === "opened") {
-          focusComposerSoon();
-          return;
-        }
-        if (outcome === "superseded") return;
-        clearEditDraft(request.runId);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Couldn't edit the queued message",
-            description: "It may have already started. Try again if it is still queued.",
-          }),
-        );
+        if (outcome === "opened") focusComposerSoon();
       });
   });
   const cancelEdit = useStableCallback(() => {
