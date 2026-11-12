@@ -279,6 +279,43 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   conflicting: "merge conflict",
 };
 
+const WATCHING_CLOSING =
+  "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.";
+const WATCHING_CLOSING_PLURAL =
+  "Look into each item and act on it as your task requires. Each PR T3 Code still watches stays linked and watched, so do not link, watch, or list them again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request for each first so the thread returns to their inbox.";
+
+export interface PullRequestWatchWake {
+  readonly text: string;
+  readonly notification: OrchestrationV2Notification;
+}
+
+/** One wake for news on several pull requests, with the closing instructions said once. */
+export function combinePullRequestWatchWakes(
+  wakes: readonly [PullRequestWatchWake, ...ReadonlyArray<PullRequestWatchWake>],
+): PullRequestWatchWake {
+  if (wakes.length === 1) return wakes[0];
+  const closing = `\n\n${WATCHING_CLOSING}`;
+  const watching = wakes.some((wake) => wake.text.endsWith(closing));
+  const outcomes = wakes.map((wake) => wake.notification.outcome);
+  return {
+    text: [
+      ...wakes.map((wake) =>
+        wake.text.endsWith(closing) ? wake.text.slice(0, -closing.length) : wake.text,
+      ),
+      ...(watching ? [WATCHING_CLOSING_PLURAL] : []),
+    ].join("\n\n"),
+    notification: {
+      source: { kind: "monitor" },
+      outcome: outcomes.includes("failed")
+        ? "failed"
+        : outcomes.every((outcome) => outcome === "completed")
+          ? "completed"
+          : "updated",
+      summary: wakes.map((wake) => wake.notification.summary).join("; "),
+    },
+  };
+}
+
 export function pullRequestWatchMessage(input: {
   readonly number: number;
   readonly url: string;
@@ -297,7 +334,7 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
+      : WATCHING_CLOSING,
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",
