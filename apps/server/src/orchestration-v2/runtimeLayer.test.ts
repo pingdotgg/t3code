@@ -3622,20 +3622,23 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect.each([
-    { reason: "failed", activityFails: false },
-    { reason: "not-found", activityFails: false },
-    { reason: "failed", activityFails: true },
-    { reason: "not-found", activityFails: true },
-    { reason: "forbidden", activityFails: true },
+    { reason: "failed", activityFails: false, activityFailure: "failed" },
+    { reason: "not-found", activityFails: false, activityFailure: "failed" },
+    { reason: "failed", activityFails: true, activityFailure: "failed" },
+    { reason: "not-found", activityFails: true, activityFailure: "failed" },
+    { reason: "forbidden", activityFails: false, activityFailure: "failed" },
+    { reason: "forbidden", activityFails: true, activityFailure: "failed" },
+    { reason: "unauthenticated", activityFails: false, activityFailure: "failed" },
+    { reason: "failed", activityFails: true, activityFailure: "forbidden" },
+    { reason: "failed", activityFails: true, activityFailure: "unauthenticated" },
   ] as const)(
-    "handles repeated host read failures: $reason (activity fails: $activityFails)",
-    ({ reason, activityFails }) =>
+    "handles repeated host read failures: $reason (activity fails: $activityFails, $activityFailure)",
+    ({ reason, activityFails, activityFailure }) =>
       Effect.gen(function* () {
+        const scenario = `${reason}-${activityFails}-${activityFailure}`;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threadId = ThreadId.make(
-          `runtime-pull-request-watch-unreadable-${reason}-${activityFails}`,
-        );
-        const projectId = ProjectId.make(`pr-watch-unreadable-project-${reason}-${activityFails}`);
+        const threadId = ThreadId.make(`runtime-pull-request-watch-unreadable-${scenario}`);
+        const projectId = ProjectId.make(`pr-watch-unreadable-project-${scenario}`);
         yield* seedProject({
           projectId,
           title: "Watch unreadable",
@@ -3647,7 +3650,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           type: "thread.create",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make(`pr-watch-unreadable-create-${reason}-${activityFails}`),
+          commandId: CommandId.make(`pr-watch-unreadable-create-${scenario}`),
           threadId,
           projectId,
           title: "Watch unreadable",
@@ -3659,7 +3662,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-unreadable-start-${reason}-${activityFails}`),
+          commandId: CommandId.make(`pr-watch-unreadable-start-${scenario}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
@@ -3670,19 +3673,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let disconnected = false;
         let passed = false;
         let genericFailure = false;
+        let accessChanged = false;
+        let remarksIncomplete = false;
         const activityFailures = yield* Queue.unbounded<void>();
-        const readFailure = (operation: string, failure: "failed" | "not-found" | "forbidden") =>
+        const readFailure = (
+          operation: string,
+          failure: "failed" | "not-found" | "forbidden" | "unauthenticated",
+        ) =>
           new PullRequestOperationError({
             operation,
             detail: "host read failed",
             cause: new PullRequestProviderError({
               provider: SourceControlProviderKind.make("github"),
               operation,
-              reason: failure,
+              reason: accessChanged
+                ? failure === "forbidden"
+                  ? "unauthenticated"
+                  : failure === "unauthenticated"
+                    ? "forbidden"
+                    : failure
+                : failure,
               detail: "host read failed",
             }),
           });
-        const reactor = yield* PullRequestWatchReactor.make.pipe(
+        const makeReactor = PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
               NodeServices.layer,
@@ -3716,12 +3730,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 activity: () =>
                   disconnected && activityFails
                     ? Queue.offer(activityFailures, undefined).pipe(
-                        Effect.andThen(Effect.fail(readFailure("activity", "failed"))),
+                        Effect.andThen(Effect.fail(readFailure("activity", activityFailure))),
                       )
                     : Effect.succeed({
                         comments: [],
                         commentCount: 0,
-                        commentsTruncated: false,
+                        commentsTruncated: remarksIncomplete,
+                        reviewThreadsTruncated: remarksIncomplete,
                         reviewThreads: [],
                         commits: [],
                       }),
@@ -3729,6 +3744,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             ),
           ),
         );
+        const reactor = yield* makeReactor;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
         const summaries = Effect.map(
@@ -3739,30 +3755,102 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.deepEqual(yield* summaries, []);
         disconnected = true;
         for (let pass = 0; pass < 15; pass += 1) {
-          genericFailure = reason === "failed" && (pass === 0 || (pass >= 2 && pass <= 8));
+          genericFailure =
+            reason === "failed" &&
+            activityFailure === "failed" &&
+            (pass === 0 || (pass >= 2 && pass <= 8));
           yield* TestClock.adjust("2 minutes");
           yield* sweep;
         }
 
         const thread = yield* orchestrator.getThreadShell(threadId);
-        if (reason !== "failed") {
+        if (reason === "not-found") {
           assert.isUndefined(thread?.pullRequests?.[0]?.watch);
           assert.deepEqual(yield* summaries, ["#8: stopped watching, could not read it"]);
           return;
         }
         assert.isDefined(thread?.pullRequests?.[0]?.watch);
-        assert.deepEqual(yield* summaries, []);
+        const blocked = [reason, activityFailure].some(
+          (failure) => failure === "forbidden" || failure === "unauthenticated",
+        );
+        const expected = blocked ? ["#8: host access blocked, watching for recovery"] : [];
+        assert.deepEqual(yield* summaries, expected);
+        if (blocked) {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-blocked-stop-${scenario}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 8,
+            watching: false,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`pr-watch-blocked-resume-${scenario}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 8,
+            watching: true,
+          });
+          const restarted = yield* makeReactor;
+          for (let pass = 0; pass < 10; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* restarted.sweep;
+            yield* worker.drain();
+          }
+          assert.deepEqual(yield* summaries, expected);
+          accessChanged = true;
+          for (let pass = 0; pass < 10; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* restarted.sweep;
+            yield* worker.drain();
+          }
+          assert.deepEqual(yield* summaries, expected);
+          const blocker = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch
+            ?.readBlocker;
+          disconnected = false;
+          passed = true;
+          remarksIncomplete = true;
+          yield* TestClock.adjust("2 minutes");
+          yield* sweep;
+          assert.equal(
+            (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.readBlocker,
+            blocker,
+          );
+          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+          disconnected = true;
+          for (let pass = 0; pass < 10; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* sweep;
+          }
+          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+        }
         disconnected = false;
         genericFailure = false;
         passed = true;
+        remarksIncomplete = false;
         yield* sweep;
-        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+        assert.isUndefined(
+          (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.readBlocker,
+        );
         yield* TestClock.adjust("10 minutes");
         yield* sweep;
-        assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+        assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+        if (blocked) {
+          disconnected = true;
+          accessChanged = false;
+          for (let pass = 0; pass < 15; pass += 1) {
+            yield* TestClock.adjust("2 minutes");
+            yield* sweep;
+          }
+          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed", ...expected]);
+        }
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-unreadable-stop-${reason}-${activityFails}`),
+          commandId: CommandId.make(`pr-watch-unreadable-stop-${scenario}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
@@ -4959,6 +5047,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   });
 
   it.effect.each([
+    "blocker still watching",
+    "blocker new watch",
+    "blocker recovered",
+    "blocker new outage",
+    "blocker unwatch",
+    "blocker newer head",
     "unwatch",
     "unlink",
     "new watch",
@@ -4979,9 +5073,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         `queued-${mode}`,
         mode === "reopened",
       );
+      const accessNotice = mode.startsWith("blocker ");
       const finalNotice =
         mode === "closed notice" || mode === "closed notice unlinked and relinked";
+      const wakeSummary = finalNotice
+        ? "#7: closed, stopped watching"
+        : accessNotice
+          ? "#7: host access blocked, watching for recovery"
+          : "#7: checks failed";
       const deliverable =
+        mode === "blocker still watching" ||
+        mode === "blocker new watch" ||
+        mode === "blocker newer head" ||
         mode === "still watching" ||
         mode === "closed notice" ||
         mode === "reopened" ||
@@ -5000,7 +5103,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         dispatchMode: { type: "start_immediately" },
       });
       const wakeMessageId = MessageId.make(`${threadId}-wake`);
-      const recordedWatch = { ...watch, headSha: "abc123", wakes: 1 };
+      const recordedWatch = {
+        ...watch,
+        headSha: "abc123",
+        wakes: 1,
+        ...(accessNotice ? { readBlocker: "detail:forbidden" } : {}),
+      };
       yield* orchestrator.dispatch({
         type: "thread.pull-request-watch.sync",
         commandId: CommandId.make(`${threadId}-wake`),
@@ -5010,11 +5118,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watch: finalNotice ? null : recordedWatch,
         wake: {
           messageId: wakeMessageId,
-          text: finalNotice ? "Closed, stopped watching" : "Checks failed",
+          text: wakeSummary,
           notification: {
             source: { kind: "monitor" },
             outcome: "updated",
-            summary: finalNotice ? "#7: closed, stopped watching" : "#7: checks failed",
+            summary: wakeSummary,
           },
           ...(mode === "comments then newer head" || mode === "comment limit"
             ? { includesRemarks: true }
@@ -5044,7 +5152,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(wakeRun.status, "queued");
       assert.equal(userRun.status, "queued");
 
-      if (mode === "unwatch" || mode === "new watch") {
+      if (
+        mode === "unwatch" ||
+        mode === "new watch" ||
+        mode === "blocker unwatch" ||
+        mode === "blocker new watch"
+      ) {
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
           commandId: CommandId.make(`${threadId}-unwatch`),
@@ -5052,7 +5165,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ...key,
           watching: false,
         });
-        if (mode === "new watch") {
+        if (mode === "new watch" || mode === "blocker new watch") {
           yield* TestClock.adjust("1 millis");
           yield* orchestrator.dispatch({
             type: "thread.pull-request.watch",
@@ -5134,7 +5247,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             includesRemarks: true,
           },
         });
-      } else if (mode === "newer head" || mode === "comments then newer head") {
+      } else if (mode === "blocker recovered" || mode === "blocker new outage") {
+        const { readBlocker: _blocker, ...recovered } = recordedWatch;
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`${threadId}-recovered`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch:
+            mode === "blocker new outage"
+              ? { ...recovered, readBlocker: "detail:forbidden:next" }
+              : recovered,
+        });
+      } else if (
+        mode === "newer head" ||
+        mode === "comments then newer head" ||
+        mode === "blocker newer head"
+      ) {
         yield* orchestrator.dispatch({
           type: "thread.pull-request-watch.sync",
           commandId: CommandId.make(`${threadId}-advance`),
@@ -5193,7 +5323,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         after.messages
           .filter((message) => message.id === wakeMessageId)
           .map((message) => message.notification?.summary),
-        [finalNotice ? "#7: closed, stopped watching" : "#7: checks failed"],
+        [wakeSummary],
       );
     }),
   );

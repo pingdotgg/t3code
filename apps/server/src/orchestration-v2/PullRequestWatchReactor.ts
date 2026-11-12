@@ -186,6 +186,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes &&
+    left.readBlocker === right.readBlocker &&
     left.checksAwaitedSince === right.checksAwaitedSince
   );
 }
@@ -501,14 +502,22 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
     // Activity failures must not cancel or hide a permanent detail failure.
+    const activityAccessFailure =
+      Exit.isFailure(activityRead) &&
+      ["forbidden", "unauthenticated"].includes(providerFailureReason(activityRead.cause) ?? "") &&
+      Exit.isFailure(detailRead) &&
+      providerFailureReason(detailRead.cause) === "failed";
     // Activity is irrelevant once the pull request is closed or merged, so it cannot block ending.
-    const read = Exit.isFailure(detailRead)
-      ? Exit.failCause(detailRead.cause)
-      : detailRead.value.state !== "open"
-        ? Exit.succeed([detailRead.value, Option.none<PullRequestActivity>()] as const)
-        : Exit.isFailure(activityRead)
-          ? Exit.failCause(activityRead.cause)
-          : Exit.succeed([detailRead.value, activityRead.value] as const);
+    const read =
+      activityAccessFailure && Exit.isFailure(activityRead)
+        ? Exit.failCause(activityRead.cause)
+        : Exit.isFailure(detailRead)
+          ? Exit.failCause(detailRead.cause)
+          : detailRead.value.state !== "open"
+            ? Exit.succeed([detailRead.value, Option.none<PullRequestActivity>()] as const)
+            : Exit.isFailure(activityRead)
+              ? Exit.failCause(activityRead.cause)
+              : Exit.succeed([detailRead.value, activityRead.value] as const);
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       lastReads.delete(group.key);
@@ -521,6 +530,30 @@ export const make = Effect.gen(function* () {
       }
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
+      if (reason === "forbidden" || reason === "unauthenticated") {
+        if (failures >= READ_FAILURE_LIMIT) {
+          const operation =
+            !activityAccessFailure && Exit.isFailure(detailRead) ? "detail" : "activity";
+          const readBlocker = `${operation}:${reason}:${yield* random.uuidV4()}`;
+          yield* eachTarget(group, (target) =>
+            target.watch.readBlocker !== undefined
+              ? Effect.void
+              : record(
+                  target,
+                  { ...target.watch, readBlocker },
+                  {
+                    text: `T3 Code cannot read pull request #${target.link.number} (${target.link.url}): host ${operation} access is ${reason}. The watch remains active and will resume after access recovers. Report this blocker once; do not restart the watch or merge without check and review evidence.`,
+                    notification: {
+                      source: { kind: "monitor" },
+                      outcome: "failed",
+                      summary: `#${target.link.number}: host access blocked, watching for recovery`,
+                    },
+                  },
+                ).pipe(Effect.tap(() => woke(target))),
+          );
+        }
+        return yield* Effect.failCause(read.cause);
+      }
       if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
         readFailures.delete(group.key);
       }
@@ -575,7 +608,11 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const evaluated = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const report =
+        remarks === null && target.watch.readBlocker !== undefined
+          ? { ...evaluated, next: { ...evaluated.next, readBlocker: target.watch.readBlocker } }
+          : evaluated;
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
