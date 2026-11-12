@@ -5649,6 +5649,141 @@ body {
   }
 }
 
+.surface-bubble .user-message-markdown {
+  --bubble-well-top: color-mix(in srgb, var(--message-surface) 94%, var(--background));
+  --bubble-well-bottom: var(--message-surface);
+  --bubble-well-fill: linear-gradient(
+    180deg in srgb,
+    var(--bubble-well-top),
+    var(--bubble-well-bottom)
+  );
+  --bubble-table-header: var(--table-header-fill);
+  --bubble-inline-code: var(--inline-code-fill);
+  --bubble-well-rim: var(--well-rim);
+  --bubble-markdown-foreground: light-dark(
+    var(--foreground),
+    color-mix(in srgb, var(--foreground) 35%, var(--appearance-contrast-target))
+  );
+  --bubble-markdown-muted: light-dark(
+    var(--contrast-muted-foreground),
+    color-mix(in srgb, var(--contrast-muted-foreground) 90%, var(--appearance-contrast-target))
+  );
+}
+
+:root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
+  .surface-bubble
+  .user-message-markdown {
+  --bubble-well-rim: light-dark(
+    var(--well-rim),
+    linear-gradient(
+      180deg,
+      oklch(from var(--bubble-well-top) max(calc(l - 0.052), 0) c h),
+      oklch(from var(--bubble-well-bottom) min(calc(l + 0.155), 1) c h)
+    )
+  );
+}
+
+:root[data-surface-style="flat"] .surface-bubble .user-message-markdown {
+  --bubble-well-rim: var(--flat-edge);
+  --bubble-well-top: light-dark(
+    oklch(from var(--flat-high) calc(l + 0.015) c h),
+    oklch(from var(--flat-high) calc(l + 0.026) c h)
+  );
+  --bubble-well-bottom: var(--bubble-well-top);
+  --bubble-table-header: light-dark(
+    oklch(from var(--flat-high) calc(l + 0.03) c h),
+    oklch(from var(--flat-high) calc(l + 0.073) c h)
+  );
+}
+
+:root[data-surface-style="soft-gradient"] .surface-bubble .user-message-markdown {
+  --bubble-markdown-foreground: light-dark(
+    var(--foreground),
+    color-mix(in srgb, var(--foreground) 10%, var(--appearance-contrast-target))
+  );
+  --bubble-well-top: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.045) c h),
+    oklch(from var(--ss-background) calc(l + 0.1835) c h)
+  );
+  --bubble-well-bottom: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.015) c h),
+    oklch(from var(--ss-background) calc(l + 0.1305) c h)
+  );
+  --bubble-table-header: var(--bubble-well-fill);
+  --bubble-inline-code: var(--bubble-well-fill);
+}
+
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  .surface-bubble
+  .user-message-markdown {
+  --bubble-well-top: light-dark(
+    oklch(from var(--ss-background) min(calc(l + 0.045), 1) c h),
+    oklch(from var(--ss-background) calc(l + 0.1175) c h)
+  );
+  --bubble-well-bottom: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.015) c h),
+    oklch(from var(--ss-background) calc(l + 0.0925) c h)
+  );
+  --bubble-table-header: var(--bubble-well-fill);
+  --bubble-inline-code: linear-gradient(
+    180deg in srgb,
+    light-dark(
+        oklch(from var(--ss-background) calc(l + 0.045) c h),
+        oklch(from var(--ss-background) calc(l + 0.2055) calc(c * 0.35) h)
+      )
+      0%,
+    light-dark(
+        oklch(from var(--ss-background) calc(l + 0.015) c h),
+        oklch(from var(--ss-background) calc(l + 0.1575) c h)
+      )
+      min(50%, 24px),
+    light-dark(
+        oklch(from var(--ss-background) calc(l - 0.027) c h),
+        oklch(from var(--ss-background) calc(l + 0.0835) c h)
+      )
+      min(50%, 24px),
+    light-dark(
+        oklch(from var(--ss-background) calc(l - 0.003) c h),
+        oklch(from var(--ss-background) calc(l + 0.1255) c h)
+      )
+      100%
+  );
+}
+
+:root[data-surface-style="gradient-rim-everywhere"] .surface-bubble .user-message-markdown {
+  --bubble-markdown-foreground: light-dark(
+    var(--foreground),
+    color-mix(in srgb, var(--foreground) 20%, var(--appearance-contrast-target))
+  );
+  --bubble-well-top: color-mix(in srgb, var(--popover) 88%, oklch(from var(--popover) 1 0 h));
+  --bubble-well-bottom: var(--bubble-well-top);
+  --bubble-table-header: var(--bubble-well-fill);
+  --bubble-inline-code: var(--bubble-well-fill);
+}
+
+:root
+  .surface-bubble
+  .user-message-markdown
+  :is(.chat-markdown-table-container, .chat-markdown-codeblock, pre) {
+  --well-fill: var(--bubble-well-fill);
+  --well-rim: var(--bubble-well-rim);
+  --style-code-fill: var(--bubble-well-fill);
+  --table-header-fill: var(--bubble-table-header);
+  --foreground: var(--bubble-markdown-foreground);
+  --contrast-foreground: var(--bubble-markdown-foreground);
+  --contrast-muted-foreground: var(--bubble-markdown-muted);
+}
+
+:root[data-surface-style="flat"] .surface-bubble .user-message-markdown .chat-markdown-codeblock {
+  --well-fill: linear-gradient(var(--bubble-table-header), var(--bubble-table-header));
+  --style-code-fill: var(--well-fill);
+}
+
+.surface-bubble .user-message-markdown :not(pre) > code {
+  --inline-code-fill: var(--bubble-inline-code);
+  --contrast-foreground: var(--bubble-markdown-foreground);
+}
+
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
