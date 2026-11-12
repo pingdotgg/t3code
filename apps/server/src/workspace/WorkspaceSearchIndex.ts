@@ -294,6 +294,7 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
 const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths")(function* (
   vcsProcess: VcsProcess.VcsProcess["Service"],
   cwd: string,
+  hostIsWindows: boolean,
 ) {
   const result = yield* vcsProcess
     .run({
@@ -320,7 +321,7 @@ const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths"
     result.stdout
       .split("\0")
       .filter((entry) => entry.length > 0)
-      .map((entry) => trimDirectorySeparator(toPosixPath(entry))),
+      .map((entry) => trimDirectorySeparator(toPosixPath(entry, hostIsWindows))),
   );
 });
 
@@ -328,9 +329,15 @@ function mixedItemPath(item: MixedItem): string {
   return item.item.relativePath;
 }
 
-function isIgnoredPath(ignoredPaths: ReadonlySet<string>, relativePath: string): boolean {
+function isIgnoredPath(
+  ignoredPaths: ReadonlySet<string>,
+  relativePath: string,
+  hostIsWindows: boolean,
+): boolean {
   if (ignoredPaths.size === 0) return false;
-  let candidate: string | undefined = trimDirectorySeparator(toPosixPath(relativePath));
+  let candidate: string | undefined = trimDirectorySeparator(
+    toPosixPath(relativePath, hostIsWindows),
+  );
   while (candidate) {
     if (ignoredPaths.has(candidate)) return true;
     candidate = parentPathOf(candidate);
@@ -402,7 +409,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   );
   let initialScanTimedOut = false;
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd);
+  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
   yield* waitForIndexReady(
     cwd,
     finder,
@@ -466,7 +473,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const fetchSize = size;
       const result = yield* runSearch(query, fetchSize, operation, () => execute(fetchSize));
       if (ignoredPaths.size === 0) return result;
-      const items = result.items.filter((item) => !isIgnoredPath(ignoredPaths, pathOf(item)));
+      const items = result.items.filter(
+        (item) => !isIgnoredPath(ignoredPaths, pathOf(item), hostIsWindows),
+      );
       if (
         items.length >= pageSize ||
         result.items.length >= result.totalMatched ||
@@ -512,7 +521,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd);
+    ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
@@ -625,7 +634,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
 
       for (const match of result.items) {
-        if (isIgnoredPath(ignoredPaths, match.relativePath)) continue;
+        if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
