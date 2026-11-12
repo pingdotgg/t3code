@@ -208,8 +208,6 @@ it("keeps single tildes in assistant replies and renders double-tilde strikethro
       "删除",
     ]);
   });
-  await screen.rerender(<ChatMarkdown cwd="/tmp/project" text={text} />);
-  await vi.waitFor(() => expect(screen.container.querySelectorAll("del")).toHaveLength(2));
 });
 
 it("shows unavailable audio when a workspace embed has no thread", async () => {

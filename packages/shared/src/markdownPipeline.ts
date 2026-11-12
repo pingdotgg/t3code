@@ -280,15 +280,17 @@ export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   [remarkGfm, { singleTilde: false }],
 ];
 
-export const ASSISTANT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
-  ...CHAT_MARKDOWN_REMARK_PLUGINS,
-  [remarkGfm, { singleTilde: false }],
-];
+// Agents write ranges like `1~3月`; only `~~text~~` strikes through in their replies.
+const withDoubleTildeStrikethrough = (plugins: PluggableList): PluggableList =>
+  plugins.map((plugin) => (plugin === remarkGfm ? [remarkGfm, { singleTilde: false }] : plugin));
 
-export const ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
-  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  [remarkGfm, { singleTilde: false }],
-];
+export const ASSISTANT_MARKDOWN_REMARK_PLUGINS = withDoubleTildeStrikethrough(
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+);
+
+export const ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = withDoubleTildeStrikethrough(
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+);
 
 // Start tags an HTML parser closes an open `<p>` for.
 const CLOSES_PARAGRAPH = new Set(
