@@ -387,6 +387,8 @@ let contextFailure: Error | null = null;
 let pageSetupFailure: Error | null = null;
 let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
+/** False for a server started without the desktop's browser channel, such as a WSL backend. */
+let desktopChannelAvailable = true;
 let desktopPageUrl = "about:blank";
 /** Replaces the answer to the desktop page's size reads. */
 let desktopSizeAnswer: (() => Promise<Record<string, unknown>>) | null = null;
@@ -442,7 +444,9 @@ const dependencies = Layer.mergeAll(
     installed: Effect.die("mock Chromium does not need an executable"),
   }),
   Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
-    available: true,
+    get available() {
+      return desktopChannelAvailable;
+    },
     awaitAttached: (key, timeout) =>
       !desktopAttachesLate || desktopRenders(key.tabId)
         ? Effect.sync(() => desktopRenders(key.tabId))
@@ -573,6 +577,7 @@ beforeEach(() => {
   shownDesktopTabs.clear();
   desktopLoadFailures.clear();
   desktopRendersNext = false;
+  desktopChannelAvailable = true;
   desktopAttachesLate = false;
   desktopAttachWaiting = Promise.withResolvers<void>();
   desktopPageUrl = "about:blank";
@@ -738,6 +743,19 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 
       expect(headlessOf(tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a server without a desktop channel marks its tabs headless", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopChannelAvailable = false;
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );
