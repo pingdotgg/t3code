@@ -70,6 +70,7 @@ import {
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   normalizeThreadPullRequestKey,
@@ -1326,9 +1327,40 @@ const make = Effect.gen(function* () {
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
-    const requestedInstanceId = input.target?.providerInstanceId;
-    const requestedDriver = input.target?.driverKind;
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+    let target = input.target;
+    if (
+      target?.providerInstanceId === undefined &&
+      target?.driverKind === undefined &&
+      target?.model === undefined &&
+      input.skipProjectEnablementFilter !== true
+    ) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const { selection, fallback } = resolveNewThreadModelSelection({
+        defaultSelection: input.parent.thread.modelSelection,
+        fallbackSelection: settings.fallbackModelSelection,
+        providers: input.providers,
+        settings,
+        projectId: input.parent.thread.projectId,
+        now: yield* Clock.currentTimeMillis,
+      });
+      if (
+        fallback !== null &&
+        selection !== null &&
+        orchestrationCapableInstanceIds.has(selection.instanceId)
+      ) {
+        target = {
+          ...target,
+          providerInstanceId: selection.instanceId,
+          model: selection.model,
+          options: target?.options ?? selection.options,
+        };
+      }
+    }
+    const requestedInstanceId = target?.providerInstanceId;
+    const requestedDriver = target?.driverKind;
     let instanceId = requestedInstanceId;
 
     if (instanceId === undefined && requestedDriver !== undefined) {
@@ -1401,7 +1433,7 @@ const make = Effect.gen(function* () {
     }
 
     const inheritedSelection = input.parent.thread.modelSelection;
-    const requestedModel = input.target?.model;
+    const requestedModel = target?.model;
     const model =
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
@@ -1416,7 +1448,7 @@ const make = Effect.gen(function* () {
     if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
-    const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
+    const requestedOptions = withLegacyUltracodeEffort(descriptors, target?.options);
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
       if (invalid.length > 0) {
