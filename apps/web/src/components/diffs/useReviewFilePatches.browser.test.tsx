@@ -89,10 +89,10 @@ it("retains automatic and explicitly opened files through metadata insertion, re
     diff: "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old\n+new\n",
     files: tracked.files!.filter((f) => f.path === "f.txt"),
   });
-  act(() => registry.set(atom, loaded));
+  await act(() => registry.set(atom, loaded));
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
   const automatic = [...state.patches].find(([key]) => JSON.parse(key)[1] === "e.txt")![1];
-  act(() =>
+  await act(() =>
     registry.set(
       automatic,
       AsyncResult.success({
@@ -108,14 +108,14 @@ it("retains automatic and explicitly opened files through metadata insertion, re
   );
   await expect.element(screen.getByText("e.txt:loaded")).toBeVisible();
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
-  act(() =>
+  await act(() =>
     registry.set(
       atom,
       AsyncResult.fail(new Error("refresh failed"), { previousSuccess: Option.some(loaded) }),
     ),
   );
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
-  act(() => registry.set(atom, loaded));
+  await act(() => registry.set(atom, loaded));
   await expect.element(screen.getByText("f.txt:loaded")).toBeVisible();
 });
 
@@ -130,7 +130,7 @@ it("preserves deletion and addition patches for a file replaced by a symlink", a
     </RegistryContext.Provider>,
   );
   const atom = [...state.patches.values()][0]!;
-  act(() =>
+  await act(() =>
     registry.set(
       atom,
       AsyncResult.success({
