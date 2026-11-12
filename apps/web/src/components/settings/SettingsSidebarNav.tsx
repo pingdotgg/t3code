@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { resolveEventKeys } from "@t3tools/shared/keybindings";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -120,7 +121,9 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
-  const navArea = workspaceAreaProps("settings-nav", 0, "Settings sections");
+  const gt = useGT();
+  const m = useMessages();
+  const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
@@ -130,7 +133,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems();
-  const results = searchSettings(query, searchableItems);
+  const results = searchSettings(query, searchableItems, m);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
   const maxResultIndex = Math.max(results.length - 1, 0);
@@ -270,7 +273,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   ref={searchInputRef}
                   nativeInput
                   size="compact"
-                  placeholder="Search settings"
+                  placeholder={gt("Search settings")}
                   // Native search inputs clear on Escape even during IME composition.
                   type="text"
                   value={query}
@@ -283,7 +286,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   onBlur={() => {
                     if (!isSearching) setCompactSearchOpen(false);
                   }}
-                  aria-label="Search settings"
+                  aria-label={gt("Search settings")}
                   role="combobox"
                   aria-autocomplete="list"
                   aria-expanded={isSearching && hasResults}
@@ -303,7 +306,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       size="icon-micro"
                       variant="ghost-muted"
                       className="me-0.5"
-                      aria-label="Clear settings search"
+                      aria-label={gt("Clear settings search")}
                       onClick={() => {
                         clearSearch();
                         searchInputRef.current?.focus();
@@ -329,14 +332,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 role="status"
                 className="px-2 py-6 text-center text-caption text-sidebar-muted-foreground"
               >
-                No settings found
+                <T>No settings found</T>
               </p>
             ) : null}
             {isSearching ? (
               <SidebarMenu
                 id={hasResults ? "settings-search-results" : undefined}
                 role={hasResults ? "listbox" : undefined}
-                aria-label={hasResults ? "Settings search results" : undefined}
+                aria-label={hasResults ? gt("Settings search results") : undefined}
               >
                 {results.map((item, index) => (
                   <SidebarMenuItem
@@ -357,14 +360,16 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     >
                       <SettingsSectionIcon to={item.to} />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-label text-inherit">{item.title}</span>
+                        <span className="block truncate text-label text-inherit">
+                          {m(item.title)}
+                        </span>
                         <span
                           className={cn(
                             "block truncate text-caption",
                             index === activeResultIndex ? "text-inherit" : "text-dim-foreground",
                           )}
                         >
-                          {SETTINGS_SECTION_LABELS[item.to]}
+                          {m(SETTINGS_SECTION_LABELS[item.to])}
                         </span>
                       </span>
                     </SidebarMenuButton>
@@ -378,7 +383,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     <SidebarMenuItem>
                       <SidebarMenuButton
                         size="compact"
-                        aria-label="Search settings"
+                        aria-label={gt("Search settings")}
                         onClick={() => setCompactSearchOpen(true)}
                       >
                         <SearchIcon className="size-3.5" />
@@ -400,7 +405,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                             !compactSearchOpen && "max-md:sr-only",
                           )}
                         >
-                          {group.heading}
+                          {m(group.heading)}
                         </h3>
                       ) : null}
                       {/* The heading stays outside the group it names so NVDA does not read the name twice. */}
@@ -428,7 +433,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                       !compactSearchOpen && "max-md:sr-only",
                                     )}
                                   >
-                                    {SETTINGS_SECTION_LABELS[to]}
+                                    {m(SETTINGS_SECTION_LABELS[to])}
                                   </span>
                                 </SidebarMenuButton>
                               </SidebarMenuItem>

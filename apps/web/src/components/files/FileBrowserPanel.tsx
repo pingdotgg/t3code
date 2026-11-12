@@ -679,7 +679,7 @@ export default function FileBrowserPanel({
           <button
             type="button"
             onClick={handleRefresh}
-            className="p-4 text-left text-xs leading-relaxed text-error-foreground"
+            className="p-4 text-left text-xs leading-relaxed text-error-foreground outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             {error ?? pathSearch.error} Click to retry.
           </button>

@@ -1,3 +1,4 @@
+import { Button } from "~/components/ui/button";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { memo, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
 
@@ -143,18 +144,19 @@ interface UnseenPeeks {
  */
 function UnseenPeekDot({ side, tabId }: { side: "left" | "right"; tabId: string }) {
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size="icon-fixed-xs"
       aria-label={side === "left" ? "New pane to the left" : "New pane to the right"}
       data-layout-unseen-peek={side}
       className={cn(
-        "absolute top-1/2 z-30 flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center",
+        "absolute top-1/2 z-30 -translate-y-1/2",
         side === "left" ? "left-0" : "right-0",
       )}
       onClick={() => useLayoutStore.getState().focusTab(tabId)}
     >
       <StatusDot tone="info" size="md" />
-    </button>
+    </Button>
   );
 }
 
