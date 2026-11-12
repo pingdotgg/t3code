@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as UrlParams from "effect/http/UrlParams";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { describe } from "vite-plus/test";
@@ -164,6 +165,86 @@ describe("OpenCode2Client message history", () => {
       assert.strictEqual(error._tag, "ClientError");
       assert.isTrue(Schema.isSchemaError(error.cause));
       assert.include(String(error.cause), field);
+    }),
+  );
+});
+
+describe("OpenCode2Client native image jobs", () => {
+  it.effect.each([
+    { path: "/work/image.png", location: "/work" },
+    { path: "/tmp/images/session/image.png", location: "/tmp/images/session" },
+  ])("reads remote image $path through its native filesystem location", ({ path, location }) =>
+    Effect.gen(function* () {
+      const transport = HttpClient.make((request) =>
+        Effect.sync(() => {
+          assert.strictEqual(request.url, "http://remote.test/api/fs/read/image.png");
+          assert.deepEqual(UrlParams.toRecord(request.urlParams), {
+            "location[directory]": location,
+          });
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(Buffer.from("iVBORw0KGgo=", "base64")),
+          );
+        }),
+      );
+      const service = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* service.connect({ baseUrl: "http://remote.test", password: "secret" });
+      assert.deepEqual(yield* api.readImage(path, "/work"), {
+        uri: "data:image/png;base64,iVBORw0KGgo=",
+        mime: "image/png",
+      });
+    }),
+  );
+
+  it.effect("rejects remote previews above the shared image limit", () =>
+    Effect.gen(function* () {
+      const transport = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response(new Uint8Array(11 * 1024 * 1024))),
+        ),
+      );
+      const service = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* service.connect({ baseUrl: "http://remote.test", password: "secret" });
+      const result = yield* api.readImage("/work/image.png", "/work").pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("reads scoped image jobs without accepting other sessions or job kinds", () =>
+    Effect.gen(function* () {
+      const job = {
+        kind: "image",
+        id: "image_test",
+        sessionID: "ses_owner",
+        status: "running",
+        path: "/work/image",
+        model: "test/image",
+      } as const;
+      const transport = HttpClient.make((request) =>
+        Effect.sync(() => {
+          assert.strictEqual(request.headers.authorization, utf8Basic("secret"));
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              data: [
+                job,
+                { ...job, sessionID: "ses_other" },
+                { ...job, kind: "shell" },
+                { ...job, status: "future" },
+              ],
+            }),
+          );
+        }),
+      );
+      const service = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* service.connect({ baseUrl: "http://remote.test", password: "secret" });
+      assert.deepEqual(yield* api.imageJobs("ses_owner"), [job]);
     }),
   );
 });
