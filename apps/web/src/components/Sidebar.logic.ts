@@ -1,6 +1,7 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -1291,15 +1292,18 @@ export function getFallbackThreadIdAfterDelete<
     "id" | "projectId" | "createdAt" | "updatedAt" | "settledOverride" | "lineage"
   > &
     ThreadSortInput &
-    ThreadSnoozeShell,
+    ThreadSnoozeShell &
+    Pick<Thread, "environmentId">,
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
   sortOrder: SidebarThreadSortOrder;
   now: string;
   deletedThreadIds?: ReadonlySet<T["id"]>;
+  delegatedUnderParent: ReadonlySet<string>;
 }): T["id"] | null {
-  const { deletedThreadId, deletedThreadIds, sortOrder, now, threads } = input;
+  const { deletedThreadId, deletedThreadIds, sortOrder, now, threads, delegatedUnderParent } =
+    input;
   const deletedThread = threads.find((thread) => thread.id === deletedThreadId);
   if (!deletedThread) {
     return null;
@@ -1312,6 +1316,9 @@ export function getFallbackThreadIdAfterDelete<
           thread.projectId === deletedThread.projectId &&
           thread.id !== deletedThreadId &&
           !deletedThreadIds?.has(thread.id) &&
+          !delegatedUnderParent.has(
+            threadKey({ environmentId: thread.environmentId, threadId: thread.id }),
+          ) &&
           thread.settledOverride !== "settled" &&
           !effectiveSnoozed(thread, { now }) &&
           !isSidebarHiddenThread(thread),
