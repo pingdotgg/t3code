@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -11,21 +12,21 @@ import {
   type AcpPromptBusyRetryPolicy,
 } from "./promptBusyRetry.ts";
 
-class BusyError extends Error {
-  override readonly name = "BusyError";
-  readonly _tag = "BusyError";
+class BusyError extends Schema.TaggedError<BusyError>()("BusyError", {}) {
+  override get message(): string {
+    return "session is busy";
+  }
 }
 
-class ProviderError extends Error {
-  override readonly name = "ProviderError";
-  readonly _tag = "ProviderError";
-}
+class ProviderError extends Schema.TaggedError<ProviderError>()("ProviderError", {}) {}
+
+const isBusyError = Schema.is(BusyError);
 
 const busyPolicy: AcpPromptBusyRetryPolicy = {
   maxAttempts: 3,
   isBusyFailure: (cause) =>
     Cause.findErrorOption(cause).pipe((option) =>
-      option._tag === "Some" ? option.value instanceof BusyError : false,
+      option._tag === "Some" ? isBusyError(option.value) : false,
     ),
   delayMs: () => 1_000,
 };
@@ -39,9 +40,7 @@ describe("retryPromptOnBusy", () => {
           busyPolicy,
           Effect.suspend(() => {
             attempts += 1;
-            return attempts === 1
-              ? Effect.fail(new BusyError("session is busy"))
-              : Effect.succeed("accepted");
+            return attempts === 1 ? Effect.fail(new BusyError({})) : Effect.succeed("accepted");
           }),
         ),
       );
@@ -61,9 +60,7 @@ describe("retryPromptOnBusy", () => {
           busyPolicy,
           Effect.suspend(() => {
             attempts += 1;
-            return attempts === 1
-              ? Effect.fail(new BusyError("session is busy"))
-              : Effect.succeed("accepted");
+            return attempts === 1 ? Effect.fail(new BusyError({})) : Effect.succeed("accepted");
           }),
         ),
       );
@@ -85,7 +82,7 @@ describe("retryPromptOnBusy", () => {
           busyPolicy,
           Effect.suspend(() => {
             attempts += 1;
-            return Effect.fail(new BusyError("session is busy"));
+            return Effect.fail(new BusyError({}));
           }),
         ),
       );
@@ -105,7 +102,7 @@ describe("retryPromptOnBusy", () => {
           busyPolicy,
           Effect.suspend(() => {
             attempts += 1;
-            return Effect.fail(new ProviderError());
+            return Effect.fail(new ProviderError({}));
           }),
         ),
       );
@@ -141,7 +138,7 @@ describe("retryPromptOnBusy", () => {
           undefined,
           Effect.suspend(() => {
             attempts += 1;
-            return Effect.fail(new BusyError("session is busy"));
+            return Effect.fail(new BusyError({}));
           }),
         ),
       );
@@ -159,7 +156,7 @@ describe("retryPromptOnBusy", () => {
           busyPolicy,
           Effect.suspend(() => {
             attempts += 1;
-            return Effect.fail(new BusyError("session is busy"));
+            return Effect.fail(new BusyError({}));
           }),
           { cancelled: Effect.succeed(true) },
         ),
@@ -183,9 +180,7 @@ describe("retryPromptOnBusy", () => {
           busyPolicy,
           Effect.suspend(() => {
             attempts += 1;
-            return attempts === 1
-              ? Effect.fail(new BusyError("session is busy"))
-              : Effect.succeed("accepted");
+            return attempts === 1 ? Effect.fail(new BusyError({})) : Effect.succeed("accepted");
           }),
           { cancelled: Effect.succeed(false) },
         ),
@@ -231,7 +226,7 @@ describe("AcpPromptBusyRetryGate", () => {
           busyPolicy,
           Effect.suspend(() => {
             attempts += 1;
-            return Effect.fail(new BusyError("session is busy"));
+            return Effect.fail(new BusyError({}));
           }),
           { cancelled: gate.cancelled },
         ),
