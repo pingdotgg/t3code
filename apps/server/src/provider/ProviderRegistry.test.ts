@@ -1362,10 +1362,6 @@ it.layer(
             cacheDir: config.providerStatusCacheDir,
             instanceId: cachedProvider.instanceId,
           });
-          yield* writeProviderStatusCache({
-            filePath,
-            provider: { ...cachedProvider, status: "ready" },
-          });
           const instance = {
             instanceId: cachedProvider.instanceId,
             driverKind: cachedProvider.driver,
@@ -1404,22 +1400,31 @@ it.layer(
             },
           );
 
-          yield* Effect.gen(function* () {
-            const registry = yield* ProviderRegistry.ProviderRegistry;
-            assert.strictEqual((yield* registry.getProviders)[0]?.status, failedProvider.status);
-            assert.strictEqual(
-              (yield* readProviderStatusCache(filePath))?.status,
-              failedProvider.status,
-            );
-          }).pipe(
-            Effect.provide(
-              ProviderRegistry.layer.pipe(
-                Layer.provide(layerInstanceRegistry),
-                Layer.provide(layerUnusedMutator),
+          // First boot has no cache file; the second has a stale ready one.
+          for (const hasCache of [false, true]) {
+            if (hasCache) {
+              yield* writeProviderStatusCache({
+                filePath,
+                provider: { ...cachedProvider, status: "ready" },
+              });
+            }
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              assert.strictEqual((yield* registry.getProviders)[0]?.status, failedProvider.status);
+              assert.strictEqual(
+                (yield* readProviderStatusCache(filePath))?.status,
+                failedProvider.status,
+              );
+            }).pipe(
+              Effect.provide(
+                ProviderRegistry.layer.pipe(
+                  Layer.provide(layerInstanceRegistry),
+                  Layer.provide(layerUnusedMutator),
+                ),
               ),
-            ),
-            Effect.scoped,
-          );
+              Effect.scoped,
+            );
+          }
         }).pipe(
           Effect.provide(
             ServerConfig.layerTest(process.cwd(), {

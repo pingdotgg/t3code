@@ -396,7 +396,7 @@ export const layer = Layer.effect(
 
     const bootProviders = yield* Effect.forEach(
       bootSources,
-      (source) =>
+      (source, index) =>
         Effect.gen(function* () {
           const filePath = yield* resolveProviderStatusCachePath({
             cacheDir: config.providerStatusCacheDir,
@@ -406,11 +406,15 @@ export const layer = Layer.effect(
           if (fallbackProvider === undefined) {
             return undefined;
           }
+          // A completed check is seeded by the boot upsert instead, which persists it.
+          const placeholder = awaitingBootInstances.has(bootInstances[index]!)
+            ? fallbackProvider
+            : undefined;
           return yield* readProviderStatusCache(filePath).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.flatMap((cachedProvider) => {
               if (cachedProvider === undefined) {
-                return Effect.succeed(fallbackProvider);
+                return Effect.succeed(placeholder);
               }
               const correlation = {
                 cachedProvider,
@@ -423,7 +427,7 @@ export const layer = Layer.effect(
                   cachedInstanceId: cachedProvider.instanceId ?? null,
                   driver: source.driverKind,
                   cachedDriver: cachedProvider.driver ?? null,
-                }).pipe(Effect.as(fallbackProvider));
+                }).pipe(Effect.as(placeholder));
               }
               return Effect.succeed(hydrateCachedProvider(correlation));
             }),
