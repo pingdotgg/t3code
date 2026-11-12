@@ -7269,9 +7269,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const models = adapterOptions.models === undefined ? [] : yield* adapterOptions.models;
-            const runtimePolicy = yield* resolveCodexRuntimePolicy(turnInput.runtimePolicy);
             const configuredReasoningSummary = yield* client
-              .request("config/read", { cwd: runtimePolicy.cwd, includeLayers: false })
+              .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
               .pipe(
                 Effect.map((response) => response.config.model_reasoning_summary ?? undefined),
                 Effect.catch(() =>
@@ -7282,7 +7281,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
               nativeThreadId: threadId,
               codexInput,
-              runtimePolicy,
+              runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
@@ -7750,41 +7749,47 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
             ),
           ),
-          startTurn: (turnInput) => {
-            const goalCommand =
-              turnInput.restartContinuationOfRunId === undefined
-                ? parseGoalCommand(turnInput.message)
-                : null;
-            if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
-            const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
-            return Effect.gen(function* () {
-              if (
-                turnInput.restartContinuationOfRunId === undefined &&
-                nativeThreadId != null &&
-                goalsPausedForWake.has(nativeThreadId) &&
-                goalsByNativeThread.get(nativeThreadId)?.status === "paused"
-              ) {
-                return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
-              }
-              yield* startNativeTurn(
-                turnInput,
-                turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
-                  : [],
-              );
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-              ),
-            );
-          },
+          // Resolved once per turn so capacity retries and goal continuations reuse the physical cwd.
+          startTurn: (requestedTurnInput) =>
+            Effect.flatMap(
+              resolveCodexRuntimePolicy(requestedTurnInput.runtimePolicy),
+              (runtimePolicy) => {
+                const turnInput = { ...requestedTurnInput, runtimePolicy };
+                const goalCommand =
+                  turnInput.restartContinuationOfRunId === undefined
+                    ? parseGoalCommand(turnInput.message)
+                    : null;
+                if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
+                const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
+                return Effect.gen(function* () {
+                  if (
+                    turnInput.restartContinuationOfRunId === undefined &&
+                    nativeThreadId != null &&
+                    goalsPausedForWake.has(nativeThreadId) &&
+                    goalsByNativeThread.get(nativeThreadId)?.status === "paused"
+                  ) {
+                    return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
+                  }
+                  yield* startNativeTurn(
+                    turnInput,
+                    turnInput.restartContinuationOfRunId === undefined
+                      ? yield* toCodexInput(turnInput)
+                      : [],
+                  );
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterTurnStartError({
+                        driver: CODEX_PROVIDER,
+                        threadId: turnInput.threadId,
+                        providerThreadId: turnInput.providerThread.id,
+                        runId: turnInput.runId,
+                        cause,
+                      }),
+                  ),
+                );
+              },
+            ),
           steerTurn: Effect.fn("CodexAdapterV2.steerTurn")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
