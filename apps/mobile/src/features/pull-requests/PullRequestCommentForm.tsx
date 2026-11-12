@@ -1,3 +1,8 @@
+import { composerPullRequests } from "../../state/pull-requests";
+import { useEnvironmentQuery } from "../../state/query";
+import { pullRequestTarget } from "./usePullRequestDiff";
+import { usePullRequestCompletions } from "./usePullRequestCompletions";
+import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
 import { useState } from "react";
 import { View } from "react-native";
 import { AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -29,13 +34,28 @@ export function PullRequestCommentForm({
   autoFocus?: boolean;
   minimumHeight?: number;
 }) {
+  const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
+  const completions = usePullRequestCompletions({
+    environmentId: params.environmentId,
+    projectId: params.projectId,
+    value,
+    onChangeValue: onChangeText,
+    support: detail.data?.capabilities ?? null,
+  });
   const insertion = useReviewAttachmentInsertion(value, onChangeText);
   const [uploading, setUploading] = useState(false);
   const [height, setHeight] = useState(minimumHeight);
   return (
     <View className="gap-1">
+      <PullRequestCompletionSuggestions completions={completions} />
       <TextInput
         {...insertion.inputProps}
+        selection={completions.selection}
+        onSelectionChange={(event) => {
+          insertion.inputProps.onSelectionChange(event);
+          completions.onSelectionChange(event);
+        }}
+        onBlur={completions.onBlur}
         accessibilityLabel={label}
         placeholder={placeholder}
         placeholderTextColorClassName="accent-foreground-muted"

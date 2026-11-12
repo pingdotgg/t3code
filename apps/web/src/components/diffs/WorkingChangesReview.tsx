@@ -31,7 +31,7 @@ import {
   GitBranch,
   ChevronDown,
   GitCommitHorizontal,
-  Sparkles,
+  Pencil,
   FilePlus,
   FileMinus,
   Plus,
@@ -924,7 +924,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                           aria-busy={generatingMessage}
                           onClick={() => void generatePreview()}
                         >
-                          <MorphIcon icon={Sparkles} />
+                          <MorphIcon icon={Pencil} />
                         </Button>
                       </InputGroupAddon>
                     ) : null}

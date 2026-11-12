@@ -2,7 +2,7 @@ import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useNavigation } from "@react-navigation/native";
 import { useState, type ReactNode } from "react";
 import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
-import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 
@@ -21,11 +21,10 @@ export function PullRequestSheetContent(props: {
   const android = Platform.OS === "android";
   const compactIos = Platform.OS === "ios" && props.compact === true;
   const pad = Platform.OS === "ios" && Platform.isPad;
-  const [headerHeight, setHeaderHeight] = useState(84);
+  const headerHeight = 84;
   const [bodyHeight, setBodyHeight] = useState(144);
   const [footerHeight, setFooterHeight] = useState(0);
   const [maxSheetHeight, setMaxSheetHeight] = useState(windowHeight);
-  const keyboardVisible = useKeyboardState((state) => state.isVisible);
   // On iOS 26 the native fit-to-contents wrapper contains a flex SafeAreaView. Bound the
   // scene with a measured detent instead, so its header and scroll view can lay out normally.
   // Detents are fractions of the sheet's maximum height, and an iPad form sheet's maximum is

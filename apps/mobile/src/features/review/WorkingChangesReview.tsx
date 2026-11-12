@@ -795,7 +795,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
                     onPress={() => void generatePreview()}
                     className="size-11 items-center justify-center"
                   >
-                    <SymbolView name="sparkles" size={21} tintColorClassName="accent-icon" />
+                    <SymbolView name="pencil" size={21} tintColorClassName="accent-icon" />
                   </Pressable>
                 ) : null}
               </View>

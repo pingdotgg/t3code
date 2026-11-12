@@ -1,8 +1,4 @@
 import {
-  parsePullRequestAnchor,
-  pullRequestAnchorMatchesUrl,
-} from "@t3tools/shared/pullRequestAnchor";
-import {
   groupReviewTimelineConversations,
   pullRequestReviewVerdict,
   reviewParticipantsLabel,
@@ -166,7 +162,6 @@ export function pullRequestTimelineRows(
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
   newestFirst = false,
 ) {
-  const linkTarget = parsePullRequestAnchor(params.navigationUrl);
   const threads = pullRequestConversationThreads(activity);
   const discussionIds = new Set(
     threads.flatMap((thread) => thread.comments.map((comment) => comment.id)),

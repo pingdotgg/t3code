@@ -4,7 +4,7 @@ import type {
   PullRequestRef,
   PullRequestReviewGuideStop,
 } from "@t3tools/contracts";
-import { ScrollTextIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
+import { ScrollTextIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";

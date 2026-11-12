@@ -1,9 +1,4 @@
-import {
-  EnvironmentId,
-  ProjectId,
-  type PullRequestFilesViewedResult,
-  type PullRequestRef,
-} from "@t3tools/contracts";
+import { type PullRequestFilesViewedResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode, useEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -16,36 +11,10 @@ const { host, setFilesViewed, toastAdd } = vi.hoisted(() => ({
   toastAdd: vi.fn(),
 }));
 
-vi.mock(import("~/state/query"), async (original) => ({
-  ...(await original()),
-  useEnvironmentQuery: (() => ({
-    data: host.data,
-    error: null,
-    isPending: false,
-    isSuccess: true,
-    refresh: host.refresh,
-  })) as never,
-}));
-vi.mock(import("~/state/use-atom-command"), async (original) => ({
-  ...(await original()),
-  useAtomCommand: (() => setFilesViewed) as never,
-}));
-vi.mock(import("../ui/toast"), async (original) => {
-  const actual = await original();
-  return { ...actual, toastManager: { ...actual.toastManager, add: toastAdd } as never };
-});
-
 import {
-  usePullRequestFilesViewed,
+  useReviewFileProgress,
   type PullRequestFilesViewedView,
-} from "./usePullRequestFilesViewed";
-
-const environmentId = EnvironmentId.make("pr-files-viewed-audit");
-const reference: PullRequestRef = {
-  projectId: ProjectId.make("project-a"),
-  repository: "acme/web",
-  number: 42,
-};
+} from "@t3tools/client-runtime/review-file-progress";
 
 function answer(state: "unviewed" | "viewed" | "dismissed"): PullRequestFilesViewedResult {
   return {
@@ -63,10 +32,16 @@ async function mountFilesViewed() {
   toastAdd.mockReset();
   setFilesViewed.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   let current: PullRequestFilesViewedView | undefined;
-  function Surface() {
-    const view = usePullRequestFilesViewed({
-      environmentId,
-      reference,
+  function Surface({data}: {data: PullRequestFilesViewedResult}) {
+    const view = useReviewFileProgress({
+      scopeKey: "pr-files-viewed-audit",
+      query: {
+        data,
+        error: null,
+        refresh: host.refresh,
+      },
+      save: setFilesViewed,
+      onError: toastAdd,
       enabled: true,
       paths: ["a.ts"],
     });
@@ -78,7 +53,7 @@ async function mountFilesViewed() {
   // A fresh element each time, so the hook reads the host's latest answer.
   const ui = () => (
     <StrictMode>
-      <Surface />
+      <Surface data={host.data as PullRequestFilesViewedResult} />
     </StrictMode>
   );
   // Environment reads are mocked and this hook does not navigate.

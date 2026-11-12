@@ -14,10 +14,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
-const filePathCollator = new Intl.Collator(undefined, {
-  numeric: true,
-  sensitivity: "base",
-});
 const INITIAL_FILE_COUNT = 4;
 
 export function useReviewFilePatches({

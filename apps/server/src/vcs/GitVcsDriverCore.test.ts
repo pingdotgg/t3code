@@ -3448,13 +3448,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isTrue(metadata.sources[0]!.patchesDeferred);
         assert.isEmpty(metadata.sources[0]!.diff);
         assert.deepStrictEqual(metadata.sources[0]!.files, [
-          {
-            path: "README.md",
-            previousPath: null,
-            changeType: "change",
-            additions: 1,
-            deletions: 1,
-          },
+          { path: "README.md", previousPath: null, additions: 1, deletions: 1, status: "modified" },
         ]);
       }),
     );
@@ -3585,9 +3579,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           {
             path: "excluded/new.ts",
             previousPath: null,
-            changeType: "new",
             additions: 1,
             deletions: 0,
+            status: "added",
           },
         ]);
         assert.include(source.diff, "+outside the cone");

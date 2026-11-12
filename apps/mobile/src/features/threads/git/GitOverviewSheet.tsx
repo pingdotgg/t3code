@@ -17,8 +17,6 @@ import {
 import { use, useEffect, useState } from "react";
 import { RefreshControl } from "../../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../../native/NativeScrollViewMarker";
-import { SymbolView } from "../../../components/ui/AppSymbol";
-import { Pressable } from "react-native";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppBar } from "../../../components/ui/AppBar";

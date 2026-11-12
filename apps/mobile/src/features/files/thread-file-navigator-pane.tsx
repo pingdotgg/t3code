@@ -3,15 +3,8 @@ import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useState, type ComponentProps, type ReactNode } from "react";
-import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
-import {
-  Screen,
-  ScreenStack,
-  ScreenStackHeaderConfig,
-  ScreenStackHeaderSearchBarView,
-  SearchBar,
-} from "react-native-screens";
+import { useState, type ReactNode } from "react";
+import { View } from "react-native";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
