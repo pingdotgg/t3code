@@ -181,6 +181,18 @@ it.each<{ readonly name: string; readonly mode?: "turn"; readonly steps: Readonl
     ],
   },
   {
+    // Past the storage growth step a still-growing stream waits longer; a pause still shows.
+    name: "a pause in a long stream below the storage growth step",
+    steps: [
+      { at: 0, text: `${"a".repeat(3_998)}\n\n`, shows: `${"a".repeat(3_998)}\n\n` },
+      { at: 500, text: `${"a".repeat(3_998)}\n\n${"b".repeat(998)}\n\n`, shows: null },
+      { idle: 1_300, shows: [] },
+      { dueAt: 2_900 },
+      { idle: 2_900, shows: [`${"a".repeat(3_998)}\n\n${"b".repeat(998)}\n\n`] },
+      { dueAt: null },
+    ],
+  },
+  {
     name: "turn mode",
     mode: "turn",
     steps: [{ at: 0, text: "A\n\nB", shows: null }, { dueAt: null }],

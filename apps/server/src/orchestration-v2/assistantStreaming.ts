@@ -138,6 +138,11 @@ interface StreamTrack {
   // Latest snapshot whose text has not all been delivered yet.
   readonly held: ProviderAdapter.ProviderAdapterV2Event | null;
   readonly dueAt: number;
+  // Doubles each time an idle delivery is deferred for the storage growth step, so it settles
+  // above the gaps between a slow stream's snapshots.
+  readonly idleDelay: number;
+  // The held snapshot at the last deferral: still held at the next deadline means a real pause.
+  readonly deferred: ProviderAdapter.ProviderAdapterV2Event | null;
   readonly scan: AssistantTextScan;
 }
 
@@ -208,7 +213,9 @@ export function makeAssistantStreamingFilter(
           text: delivered,
           at: previous?.at ?? Number.NEGATIVE_INFINITY,
           held: message.text !== delivered ? event : null,
-          dueAt: now + idleFlushMs,
+          dueAt: now + (previous?.idleDelay ?? idleFlushMs),
+          idleDelay: previous?.idleDelay ?? idleFlushMs,
+          deferred: previous?.deferred ?? null,
           scan,
         });
         return null;
@@ -225,7 +232,9 @@ export function makeAssistantStreamingFilter(
         text: ready,
         at: now,
         held: ready !== message.text ? event : null,
-        dueAt: now + idleFlushMs,
+        dueAt: now + (previous?.idleDelay ?? idleFlushMs),
+        idleDelay: previous?.idleDelay ?? idleFlushMs,
+        deferred: null,
         scan,
       });
       return withText(event, ready);
@@ -243,9 +252,12 @@ export function makeAssistantStreamingFilter(
           continue;
         }
         const text = streamedMessage(event)?.text ?? current.text;
-        // Stays undelivered until the next snapshot or the final event.
-        if (belowStorageGrowth(current.text, text)) {
-          tracks.set(key, { ...current, held: null });
+        // A stream still growing waits longer; one that paused since the last deferral delivers.
+        if (current.deferred !== event && belowStorageGrowth(current.text, text)) {
+          const idleDelay = current.idleDelay * 2;
+          const dueAt = now + idleDelay;
+          tracks.set(key, { ...current, dueAt, idleDelay, deferred: event });
+          if (nextDueAt === null || dueAt < nextDueAt) nextDueAt = dueAt;
           continue;
         }
         due.push(event);
@@ -254,6 +266,8 @@ export function makeAssistantStreamingFilter(
           at: now,
           held: null,
           dueAt: now,
+          idleDelay: current.idleDelay,
+          deferred: null,
           scan: current.scan,
         });
       }
