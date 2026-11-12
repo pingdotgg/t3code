@@ -515,11 +515,8 @@ const probeClaudeCapabilities = (
           ],
           { concurrency: "unbounded" },
         );
-        // Claude answers available-but-null while it holds back usage reads; retry it like a failure.
         const usage =
-          usageResult &&
-          Result.isSuccess(usageResult) &&
-          (usageResult.success.rate_limits !== null || !usageResult.success.rate_limits_available)
+          usageResult && Result.isSuccess(usageResult)
             ? {
                 rate_limits_available: usageResult.success.rate_limits_available,
                 rate_limits: usageResult.success.rate_limits,
