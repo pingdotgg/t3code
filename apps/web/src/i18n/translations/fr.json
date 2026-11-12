@@ -1,4 +1,7 @@
 {
+  "b282008280010314": "Commandes de premier niveau à ignorer",
+  "dd852b1a960c28e4": "Aucune commande ignorée",
+  "2ddefaf2b057fa29": "Masque les préfixes de commande dans les libellés et aperçus d'activité. Saisissez-en un par ligne. Les détails complets de la commande restent disponibles.",
   "0a75e464d833bca8": "Paramètres",
   "6aa1c88c4fa5be28": "Diagnostics",
   "fb29e435b1219373": "Licences open source",
