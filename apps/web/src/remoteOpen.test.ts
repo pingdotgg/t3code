@@ -1,4 +1,5 @@
 import {
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -76,6 +77,26 @@ describe("resolveRemoteOpenState", () => {
     expect(
       buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/work/project" }),
     ).toBe("vscode://vscode-remote/ssh-remote+192.168.1.20/work/project");
+    expect(
+      resolveRemoteOpenState({
+        target: new BearerConnectionTarget({ environmentId, label: "sol", connectionId: "lan" }),
+        sshTarget: null,
+        bearerHttpBaseUrl: "http://192.168.1.20:3773",
+        isDesktopRenderer: false,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: null,
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "route", host: "192.168.1.20" } });
+    // Without an mdns target only the tailnet is known to take SSH (Tailscale SSH, tailnet-bound sshd).
+    expect(
+      resolveRemoteOpenState({
+        target: primaryTarget("http://192.168.1.20:3773"),
+        sshTarget: null,
+        isDesktopRenderer: false,
+        remoteOpenTargets: [TAILSCALE_TARGETS[0]],
+        hostEnvironmentId: null,
+      }),
+    ).toEqual({ mode: "remote-links", host: TAILSCALE_TARGETS[0] });
   });
 
   it("keeps exec behavior for the desktop app's own primary even on a NAT URL", () => {

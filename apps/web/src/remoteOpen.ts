@@ -9,7 +9,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
-import { isPrivateNetworkHost, normalizeHostname } from "@t3tools/shared/hostClassification";
+import {
+  isPrivateNetworkHost,
+  isTailnetHost,
+  normalizeHostname,
+} from "@t3tools/shared/hostClassification";
 
 import { browserClientOs, type BrowserIdentity } from "~/connection/clientMetadata";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
@@ -17,6 +21,7 @@ import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
 import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import { environmentSession } from "~/state/session";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | "route" | RemoteOpenTarget["kind"];
@@ -54,7 +59,7 @@ function parseHostname(url: string): string | null {
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
-  /** Base URL of the bearer profile in use, unless it goes through T3 Connect. */
+  /** Base URL a connected bearer route actually uses. */
   readonly bearerHttpBaseUrl?: string | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
@@ -96,10 +101,17 @@ export function resolveRemoteOpenState(input: {
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
     // A private route host already reaches this server, so SSH follows it and the user's ssh config.
+    // Without an mdns target sshd is not on loopback, so only the tailnet is known to take SSH.
     const routeUrl =
       target._tag === "PrimaryConnectionTarget" ? target.httpBaseUrl : input.bearerHttpBaseUrl;
     const routeHost = routeUrl ? parseHostname(routeUrl) : null;
-    if (routeHost !== null && routeHost.length > 0 && isPrivateNetworkHost(routeHost)) {
+    const sshdOnAllInterfaces = input.remoteOpenTargets?.some((entry) => entry.kind === "mdns");
+    if (
+      routeHost !== null &&
+      routeHost.length > 0 &&
+      isPrivateNetworkHost(routeHost) &&
+      (sshdOnAllInterfaces || isTailnetHost(routeHost))
+    ) {
       return {
         mode: "remote-links",
         host: {
@@ -133,17 +145,17 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
       return UNRESOLVED_REMOTE_OPEN;
     }
     const profile = Option.getOrNull(entry.profile);
+    // The first saved route is not necessarily the one in use after failover.
+    const connected = Option.getOrNull(
+      get(environmentSession.preparedConnectionValueAtom(environmentId)),
+    );
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
-        target: entry.target,
+        target: connected?.target ?? entry.target,
         sshTarget:
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         bearerHttpBaseUrl:
-          profile !== null &&
-          profile._tag === "BearerConnectionProfile" &&
-          profile.authorization !== "t3-connect"
-            ? profile.httpBaseUrl
-            : null,
+          connected?.target._tag === "BearerConnectionTarget" ? connected.httpBaseUrl : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
         hostEnvironmentId: get(hostEnvironmentIdAtom),
