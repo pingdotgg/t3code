@@ -10,19 +10,6 @@ import { fileBasename } from "@t3tools/shared/path";
 import { resolveModelShortName } from "../providerClients.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
-export function subagentGroupSummary(
-  members: ReadonlyArray<{ readonly status: OrchestrationV2TurnItemStatus }>,
-) {
-  const active = members.some(
-    ({ status }) => status === "pending" || status === "running" || status === "waiting",
-  );
-  return {
-    label: `${active ? "Kicked off" : "Ran"} ${members.length} ${members.length === 1 ? "subagent" : "subagents"}`,
-    active,
-    failed: members.some(({ status }) => status === "failed"),
-  };
-}
-
 export function summarizeSubagentStatuses(
   statuses: ReadonlyArray<OrchestrationV2TurnItemStatus>,
 ): string {

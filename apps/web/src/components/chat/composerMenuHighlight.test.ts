@@ -6,8 +6,6 @@ describe("resolveComposerMenuActiveItemId", () => {
   it("clears the active result while async results are empty and resolves against restored results", () => {
     const search = {
       highlightedItemId: "second",
-      currentSearchKey: "path:src",
-      highlightedSearchKey: "path:src",
     };
     const cleared = resolveComposerMenuActiveItemId({ ...search, items: [] });
     expect(cleared).toBeNull();
@@ -18,5 +16,8 @@ describe("resolveComposerMenuActiveItemId", () => {
         items: [{ id: "new-result" }, { id: "second" }],
       }),
     ).toBe("new-result");
+    expect(
+      resolveComposerMenuActiveItemId({ ...search, items: [{ id: "first" }, { id: "second" }] }),
+    ).toBe("second");
   });
 });

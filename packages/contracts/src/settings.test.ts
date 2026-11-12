@@ -14,6 +14,9 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
+  DEFAULT_LAYOUT_SETTINGS,
+  DEFAULT_LAYOUT_TEMPLATE,
+  ProjectSettingsOverrides,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
@@ -39,7 +42,57 @@ const decodeStringOnlyEnvironment = Schema.decodeUnknownSync(
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
+const decodeProjectSettingsOverrides = Schema.decodeUnknownSync(ProjectSettingsOverrides);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("client layout settings", () => {
+  it("preserves absence so old clients can migrate their primary environment's layout", () => {
+    expect(decodeClientSettings({}).layout).toBeUndefined();
+    expect(encodeClientSettings(decodeClientSettings({}))).not.toHaveProperty("layout");
+  });
+
+  it("defaults the remaining fields and round-trips a saved layout", () => {
+    const settings = decodeClientSettings({
+      layout: { terminalPlacement: "new-column" },
+      pinnedProjectKeys: ["project"],
+    });
+    expect(settings).not.toHaveProperty("pinnedProjectKeys");
+    expect(settings.layout).toEqual({
+      ...DEFAULT_LAYOUT_SETTINGS,
+      terminalPlacement: "new-column",
+    });
+    expect(decodeClientSettings(encodeClientSettings(settings))).toEqual(settings);
+    expect(
+      decodeClientSettingsPatch({
+        layout: { template: DEFAULT_LAYOUT_TEMPLATE },
+        pinnedProjectKeys: ["project"],
+      }),
+    ).toEqual({
+      layout: { template: DEFAULT_LAYOUT_TEMPLATE },
+    });
+  });
+
+  it.each([{ terminalPlacement: "new-tab" }, { template: "retired-shape" }])(
+    "strips server layout while retaining unknown project override keys: %j",
+    (layout) => {
+      const input = {
+        layout,
+        projectSettingsOverrides: { project: { layout, defaultAutoPull: true } },
+      };
+      const settings = decodeServerSettings(input);
+      expect(settings).not.toHaveProperty("layout");
+      expect(settings.projectSettingsOverrides).toEqual({
+        project: { layout, defaultAutoPull: true },
+      });
+      expect(decodeServerSettingsPatch(input)).toEqual({
+        projectSettingsOverrides: { project: { layout, defaultAutoPull: true } },
+      });
+      expect(decodeProjectSettingsOverrides({ layout, defaultAutoPull: true })).toEqual({
+        defaultAutoPull: true,
+      });
+    },
+  );
+});
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
@@ -313,19 +366,6 @@ describe("ClientSettings notifications", () => {
 });
 
 describe("ClientSettings surface style", () => {
-  it("keeps the gradient rim for existing settings without a saved style", () => {
-    expect(decodeClientSettings({}).surfaceStyle).toBe("gradient-rim");
-  });
-
-  it.each(["gradient-rim", "flat", "aqua-blue", "gradient-rim-everywhere"])(
-    "round-trips the %s style",
-    (surfaceStyle) => {
-      const settings = decodeClientSettings({ surfaceStyle });
-      expect(encodeClientSettings(settings).surfaceStyle).toBe(surfaceStyle);
-      expect(decodeClientSettingsPatch({ surfaceStyle }).surfaceStyle).toBe(surfaceStyle);
-    },
-  );
-
   it("falls back to the gradient rim for a saved style that no longer exists", () => {
     expect(decodeClientSettings({ surfaceStyle: "brutal" }).surfaceStyle).toBe("gradient-rim");
     expect(decodeClientSettings({ surfaceStyle: "brushed-metal" }).surfaceStyle).toBe(

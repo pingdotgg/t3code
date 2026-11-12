@@ -409,9 +409,10 @@ export default function ProjectScriptsControl({
           )}
         </>
       ) : isPanel ? (
-        <div className="flex items-center" role="group" aria-label="Project scripts">
+        <div className="flex min-w-0 items-center" role="group" aria-label="Project scripts">
           {primaryScript ? (
             <ThreadDetailsControl
+              className="flex-1"
               aria-label={`Run ${primaryScript.name}`}
               disabled={!onRunScript}
               onClick={() => onRunScript?.(primaryScript)}
@@ -425,27 +426,34 @@ export default function ProjectScriptsControl({
               <span className="min-w-0 flex-1 truncate">{primaryScript.name}</span>
             </ThreadDetailsControl>
           ) : (
-            <ThreadDetailsControl onClick={openAddDialog}>
+            <ThreadDetailsControl className="flex-1" onClick={openAddDialog}>
               <SquareTerminalIcon />
               <MenuItemLabel>Add project action…</MenuItemLabel>
             </ThreadDetailsControl>
           )}
           {supportsStop && runningScriptServer?.pid != null ? (
-            <ThreadDetailsControl
-              part="icon"
-              aria-label={`Stop ${primaryScript?.name}`}
-              disabled={!canStopServer || stoppingServer}
-              onClick={async () => {
-                setStoppingServer(true);
-                await stopServer({
-                  environmentId,
-                  input: { pid: runningScriptServer.pid!, port: runningScriptServer.port },
-                });
-                setStoppingServer(false);
-              }}
-            >
-              <SquareIcon />
-            </ThreadDetailsControl>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <ThreadDetailsControl
+                    part="icon"
+                    aria-label={`Stop ${primaryScript?.name}`}
+                    disabled={!canStopServer || stoppingServer}
+                    onClick={async () => {
+                      setStoppingServer(true);
+                      await stopServer({
+                        environmentId,
+                        input: { pid: runningScriptServer.pid!, port: runningScriptServer.port },
+                      });
+                      setStoppingServer(false);
+                    }}
+                  />
+                }
+              >
+                <SquareIcon />
+              </TooltipTrigger>
+              <TooltipPopup>{`Stop ${primaryScript?.name}`}</TooltipPopup>
+            </Tooltip>
           ) : null}
           <Menu
             open={actionsMenuOpen.scripts}
@@ -453,9 +461,18 @@ export default function ProjectScriptsControl({
               setActionsMenuOpen({ presentation, scripts: open, imports: false })
             }
           >
-            <MenuTrigger render={<ThreadDetailsControl part="icon" aria-label="Project actions" />}>
-              <ChevronDownIcon />
-            </MenuTrigger>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={<ThreadDetailsControl part="icon" aria-label="Project actions" />}
+                  />
+                }
+              >
+                <ChevronDownIcon />
+              </TooltipTrigger>
+              <TooltipPopup>Project actions</TooltipPopup>
+            </Tooltip>
             <MenuPopup side="bottom" align="end">
               {scriptItems}
             </MenuPopup>

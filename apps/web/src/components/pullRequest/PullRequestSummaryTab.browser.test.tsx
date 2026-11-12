@@ -281,64 +281,6 @@ function openThread(id: string, bot = false): PullRequestReviewThread {
   };
 }
 
-it("filters promoted bot threads while retaining human replies and bot verdicts", async () => {
-  localStorage.removeItem("t3code:pull-request-comment-filter:v1");
-  const mixed = openThread("mixed", true);
-  await using screen = await render({
-    ...detail,
-    reviewThreads: [
-      openThread("bot-only", true),
-      {
-        ...mixed,
-        comments: [...mixed.comments, { ...openThread("human").comments[0]!, body: "Human reply" }],
-      },
-    ],
-    comments: [
-      {
-        ...openThread("verdict", true).comments[0]!,
-        kind: "review",
-        path: null,
-        reviewState: "CHANGES_REQUESTED",
-        body: "Bot verdict",
-      },
-    ],
-  });
-  await expect.element(screen.getByText("Finding bot-only")).not.toBeInTheDocument();
-  await expect.element(screen.getByText("Finding mixed")).toBeVisible();
-  await expect.element(screen.getByText("Human reply")).toBeVisible();
-  await expect.element(screen.getByText("Bot verdict")).toBeVisible();
-  await expect.element(screen.getByText("1 hidden", { exact: true })).toBeVisible();
-});
-
-it("pages promoted open threads together with the remaining conversations", async () => {
-  localStorage.removeItem("t3code:pull-request-comment-filter:v1");
-  await using screen = await render({
-    ...detail,
-    reviewThreads: Array.from({ length: 12 }, (_, index) => openThread(`thread-${index}`)),
-    comments: [
-      {
-        ...openThread("loose").comments[0]!,
-        kind: "issue-comment",
-        path: null,
-        reviewState: null,
-        body: "Loose conversation",
-      },
-    ],
-  });
-  await expect.element(screen.getByText("Finding thread-9", { exact: true })).toBeVisible();
-  await expect
-    .element(screen.getByText("Finding thread-10", { exact: true }))
-    .not.toBeInTheDocument();
-  await expect.element(screen.getByText("Loose conversation")).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: /Show 3 .*conversation/ }));
-  await expect.element(screen.getByText("Finding thread-11", { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("Loose conversation")).toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Show only 10 recent conversations" }));
-  await expect
-    .element(screen.getByText("Finding thread-10", { exact: true }))
-    .not.toBeInTheDocument();
-});
-
 it.each(["review", "issue-comment", "resolved-reply"] as const)(
   "reveals a linked %s in the summary conversation",
   async (kind) => {
@@ -428,3 +370,26 @@ it.each(["review", "issue-comment", "resolved-reply"] as const)(
     await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
   },
 );
+
+it("adds promoted review conversations to chat without requiring review permissions", async () => {
+  setup();
+  localStorage.removeItem("t3code:pull-request-comment-filter:v1");
+  const thread = openThread("finding");
+  const onAddToChat = vi.fn();
+  const value = { ...detail, reviewThreads: [thread] };
+  await using screen = await renderUi(
+    <PullRequestSummaryTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      threadRef={null}
+      reference={value}
+      detail={value}
+      activityPending={false}
+      activityError={null}
+      onRefresh={() => {}}
+      onAddToChat={onAddToChat}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add to chat", exact: true }));
+  expect(onAddToChat).toHaveBeenCalledWith({ kind: "thread", thread });
+});

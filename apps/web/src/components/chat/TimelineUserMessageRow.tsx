@@ -60,7 +60,7 @@ import {
   Redo2Icon,
 } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
-import { FreshSessionRow, ModelSwitchRow } from "./V2LifecycleRow";
+import { FreshSessionRow, HandoffNote, ModelSwitchNote } from "./V2LifecycleRow";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
@@ -111,7 +111,7 @@ function UserFilePreview(props: useRender.ComponentProps<"button">) {
       {
         type: "button",
         className:
-          "group/file focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-control text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none",
+          "group/file hover:surface-ghost-hover focus-visible:ring-ring flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-control text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none",
       },
       props,
     ),
@@ -248,15 +248,10 @@ function UserVideoAttachment({
 }
 
 export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
-  const ctx = use(TimelineRowCtx);
   const item = row.projectedItem?.item;
-  const modelSwitch = item?.type === "user_message" ? item.modelSwitch : undefined;
   return (
     <>
       {item?.type === "user_message" && item.freshContext ? <FreshSessionRow /> : null}
-      {modelSwitch ? (
-        <ModelSwitchRow environmentId={ctx.activeThreadEnvironmentId} modelSwitch={modelSwitch} />
-      ) : null}
       <UserMessageContent row={row} />
     </>
   );
@@ -265,11 +260,18 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
 function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   return ctx.workflowOpening?.messageId === row.message.id ? (
-    <WorkflowOpeningBlock
-      opening={ctx.workflowOpening}
-      environmentId={ctx.activeThreadEnvironmentId}
-      onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
-    />
+    <>
+      <WorkflowOpeningBlock
+        opening={ctx.workflowOpening}
+        environmentId={ctx.activeThreadEnvironmentId}
+        onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
+      />
+      {userMessageHasSwitch(row) ? (
+        <div className="flex justify-end pe-1 pt-1">
+          <UserMessageSwitchNote row={row} />
+        </div>
+      ) : null}
+    </>
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : (
@@ -277,14 +279,42 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
   );
 }
 
-function AutomationMessageToggle(props: useRender.ComponentProps<"button">) {
+function userMessageHasSwitch(row: Extract<TimelineRow, { kind: "message" }>) {
+  return Boolean(
+    row.switchHandoff ||
+    (row.projectedItem?.item.type === "user_message" && row.projectedItem.item.modelSwitch),
+  );
+}
+
+function UserMessageSwitchNote({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const item = row.projectedItem?.item;
+  return row.switchHandoff ? (
+    <HandoffNote
+      environmentId={ctx.activeThreadEnvironmentId}
+      item={row.switchHandoff}
+      runs={ctx.runs}
+    />
+  ) : item?.type === "user_message" && item.modelSwitch ? (
+    <ModelSwitchNote environmentId={ctx.activeThreadEnvironmentId} modelSwitch={item.modelSwitch} />
+  ) : null;
+}
+
+function AutomationMessageToggle({
+  queued,
+  ...props
+}: useRender.ComponentProps<"button"> & { queued?: boolean }) {
   return useRender({
     defaultTagName: "button",
     props: mergeProps<"button">(
       {
         type: "button",
-        className:
-          "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-pane px-3.5 py-2.5 text-left text-body focus-visible:outline-2 focus-visible:outline-ring",
+        className: cn(
+          "flex w-full min-w-0 cursor-pointer items-center text-left text-body focus-visible:outline-2 focus-visible:outline-ring",
+          queued
+            ? "h-7 gap-1 rounded-control"
+            : "gap-1.5 rounded-pane px-3.5 py-2.5 hover:surface-ghost-hover",
+        ),
       },
       props,
     ),
@@ -353,6 +383,11 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         />
       ) : null}
       <UserMessageProjectedStatus row={row} />
+      {userMessageHasSwitch(row) ? (
+        <div className="flex max-w-full justify-end pe-1">
+          <UserMessageSwitchNote row={row} />
+        </div>
+      ) : null}
       {expanded ? (
         <div className="flex items-center justify-end whitespace-nowrap text-meta tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:static pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/user-row:opacity-100 has-[button]:-me-1.5">
           <div className="flex shrink-0 items-center gap-2">
@@ -414,20 +449,28 @@ export function FoldedMessageHeader(props: {
   summary: string;
   expanded: boolean;
   onToggle: () => void;
+  queued?: boolean;
 }) {
   const Icon = props.icon;
   return (
     <AutomationMessageToggle
+      queued={props.queued === true}
       aria-expanded={props.expanded}
       data-scroll-anchor-ignore
       onClick={props.onToggle}
     >
-      <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
+      <Icon
+        className={cn(
+          "shrink-0 stroke-2 text-muted-foreground",
+          props.queued ? "size-3.5 max-sm:size-4" : "size-4",
+        )}
+      />
       <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
       <span className="min-w-0 flex-1 truncate">{props.summary}</span>
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
+          props.queued && "max-sm:size-4",
           props.expanded && "rotate-180",
         )}
       />
@@ -1083,15 +1126,25 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
       </div>
       <UserMessageProjectedStatus row={row} />
-      {!folded || expanded ? (
+      {!folded || expanded || userMessageHasSwitch(row) ? (
         <div
           className={cn(
-            "flex w-full max-w-[80%] justify-end pe-1",
-            floatActions && "@min-[37rem]:hidden",
-            ACTIONS_REVEAL_CLASS_NAME,
+            "flex w-full min-w-0 items-center justify-end gap-x-2 pe-1",
+            floatActions && !userMessageHasSwitch(row) && "@min-[37rem]:hidden",
           )}
         >
-          {messageActions}
+          {!folded || expanded ? (
+            <div
+              className={cn(
+                "flex shrink-0 justify-end",
+                floatActions && "@min-[37rem]:hidden",
+                ACTIONS_REVEAL_CLASS_NAME,
+              )}
+            >
+              {messageActions}
+            </div>
+          ) : null}
+          <UserMessageSwitchNote row={row} />
         </div>
       ) : null}
     </div>

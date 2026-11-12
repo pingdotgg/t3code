@@ -10,7 +10,9 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { useLocation } from "@tanstack/react-router";
+import { useScrollingWorkspacesEnabled } from "../../hooks/useSettings";
+import { isScrollingWorkspaceCommand } from "../../layout/layoutBehavior";
+import { useLayoutPageLocation } from "../../layout/pageNavigation";
 import { type KeyboardEvent, type ReactNode, useEffect, useReducer, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
@@ -780,7 +782,7 @@ function KeybindingKeyControl({
       type="button"
       onClick={() => setDraft({ isRecording: true })}
       aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
-      className="-ml-1.5 inline-flex h-7 max-w-full cursor-pointer items-center rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:surface-ghost-hover focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/24"
+      className="-ml-1.5 inline-flex h-7 max-w-full cursor-pointer items-center rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <KeybindingPill value={row.key} />
     </button>
@@ -1107,11 +1109,15 @@ function EditableKeybindingSettingsRow(
 }
 
 function useNewKeybindingDraft({
+  isSaving,
   allRows,
   onSave,
+  onCancel,
 }: {
   allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
+  onCancel: () => void;
+  isSaving: boolean;
 }) {
   const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
@@ -1145,8 +1151,7 @@ function useNewKeybindingDraft({
     if (event.key === "Escape") {
       // An unhandled Escape closes the settings page.
       event.stopPropagation();
-      setDraft({ keyDraft: "", isRecording: false });
-      event.currentTarget.blur();
+      if (!isSaving) onCancel();
       return;
     }
     const next = keybindingFromKeyboardEvent(event.nativeEvent, navigator.platform, {
@@ -1289,7 +1294,7 @@ function NewKeybindingCancelIcon({
 /** Add-binding form shaped like the table rows below it. */
 function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
-  const draft = useNewKeybindingDraft({ allRows, onSave });
+  const draft = useNewKeybindingDraft({ allRows, onSave, onCancel, isSaving });
 
   return (
     <div
@@ -1300,6 +1305,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       onKeyDown={(event) => {
         if (event.key !== "Escape" || event.defaultPrevented || isSaving) return;
         event.preventDefault();
+        event.stopPropagation();
         onCancel();
       }}
     >
@@ -1313,8 +1319,8 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       <span role="cell" className="min-w-0">
         <NewKeybindingKeyInput draft={draft} />
       </span>
-      <div role="presentation" className={KEYBINDING_TABLE_TAIL}>
-        <span role="cell" className="-ml-1.5 flex min-w-0 flex-1 items-center">
+      <div role="presentation" className={cn(KEYBINDING_TABLE_TAIL, "flex-wrap")}>
+        <span role="cell" className="-ml-1.5 flex min-w-20 flex-1 items-center">
           <NewKeybindingWhen draft={draft} variables={variables} />
         </span>
         <span role="cell" className="flex shrink-0 items-center gap-1">
@@ -1450,10 +1456,14 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  // Shortcuts that only drive scrolling workspaces stay hidden until the Labs toggle is on.
+  const listed = (command: KeybindingCommand) =>
+    scrollingWorkspaces || !isScrollingWorkspaceCommand(command);
   return {
-    commandOptions: buildKeybindingCommandOptions(merged),
-    allRows: buildKeybindingRows(merged),
+    commandOptions: buildKeybindingCommandOptions(merged).filter(listed),
+    allRows: buildKeybindingRows(merged).filter((row) => listed(row.command)),
   };
 }
 
@@ -1483,7 +1493,7 @@ export function KeybindingsSettingsPanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
-  const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
+  const searchTargetId = useLayoutPageLocation().hash.replace(/^#/, "");
   const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
 
   if (searchTargetId !== handledSearchTargetId) {
@@ -1646,7 +1656,7 @@ export function KeybindingsSettingsPanel() {
         <Button
           type="button"
           ref={addButtonRef}
-          size="sm"
+          size="standard"
           disabled={isAddingBinding || !canWriteSettings}
           onClick={() => setIsAddingBinding(true)}
         >

@@ -101,6 +101,8 @@ export function QueuedRunsControl({
   readonly editBlockedReason: string | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
+  /** Withdraws a message the server has not saved yet, so it never goes out. */
+  readonly onRemovePending: (messageId: MessageId) => void;
   readonly timestampFormat: TimestampFormat;
   readonly onOpenThread: (threadId: ThreadId, environmentId?: EnvironmentId) => void;
 }) {
@@ -169,7 +171,7 @@ export function QueuedRunsControl({
       key: message.id,
       message: undefined,
       runId: null,
-      messageId: null,
+      messageId: message.id,
       freshContext: false,
       serverIndex: null,
       text: message.text,
@@ -287,7 +289,7 @@ export function QueuedRunsControl({
       aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
       data-thread-queue="true"
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
-      className="relative flex w-full min-w-0 flex-col px-2 py-1 text-meta"
+      className="surface-composer-banner flex w-full min-w-0 flex-col px-2 py-1 text-meta"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           setDrag(null);
@@ -332,7 +334,7 @@ export function QueuedRunsControl({
               aria-current={isEditing ? "true" : undefined}
               className={cn(
                 "group/queued flex min-h-7 w-full min-w-0 items-center gap-1 rounded-control px-1 text-dim-foreground hover:bg-foreground/5 hover:text-muted-foreground focus-within:text-muted-foreground",
-                draggedRunId === item.runId && "bg-foreground/8 shadow-md",
+                draggedRunId !== null && draggedRunId === item.runId && "bg-foreground/8 shadow-md",
               )}
               onDragOver={(event) => {
                 if (drag && item.runId !== drag.runId) {
@@ -477,9 +479,11 @@ export function QueuedRunsControl({
                             variant="ghost-muted"
                             aria-label="Remove queued message"
                             className="-me-1 sm:-me-[3px]"
-                            disabled={item.runId === null || busyRunId !== null}
+                            disabled={item.runId !== null && busyRunId !== null}
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
+                              else if (item.messageId !== null)
+                                props.onRemovePending(item.messageId);
                             }}
                           />
                         }
@@ -564,6 +568,19 @@ function QueuedMessage(props: {
         : null;
   const bodyVisible = fold === null || expanded;
   const thumbnail = props.thumbnails[0];
+  const automationLink = scheduledTaskId ? (
+    <InlineButton
+      tone="muted"
+      render={
+        <Link
+          to="/settings/scheduled-tasks"
+          search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
+        />
+      }
+    >
+      Open automation
+    </InlineButton>
+  ) : null;
 
   return (
     <>
@@ -588,6 +605,7 @@ function QueuedMessage(props: {
       >
         {fold ? (
           <FoldedMessageHeader
+            queued
             icon={fold.icon}
             label={fold.label}
             summary={fold.summary}
@@ -599,7 +617,7 @@ function QueuedMessage(props: {
           <div
             className={cn(
               "flex min-w-0 items-center gap-2",
-              fold !== null && "max-h-96 overflow-auto px-3 pb-2",
+              fold !== null && "max-h-96 overflow-auto px-3 pb-2 max-sm:block",
             )}
           >
             {thumbnail ? (
@@ -628,11 +646,16 @@ function QueuedMessage(props: {
             {props.previewText ? (
               <p
                 className={
-                  fold && expanded ? "min-w-0 whitespace-pre-wrap wrap-anywhere" : "truncate"
+                  fold && expanded
+                    ? "min-w-0 whitespace-pre-wrap wrap-anywhere"
+                    : "truncate max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere"
                 }
               >
                 {props.previewText}
               </p>
+            ) : null}
+            {automationLink ? (
+              <span className="mt-2 block text-meta sm:hidden">{automationLink}</span>
             ) : null}
           </div>
         ) : null}
@@ -651,19 +674,7 @@ function QueuedMessage(props: {
                 Open thread
               </InlineButton>
             ) : null}
-            {scheduledTaskId ? (
-              <InlineButton
-                tone="muted"
-                render={
-                  <Link
-                    to="/settings/scheduled-tasks"
-                    search={{ environmentId: props.environmentId, taskId: scheduledTaskId }}
-                  />
-                }
-              >
-                Open automation
-              </InlineButton>
-            ) : null}
+            {automationLink ? <span className="max-sm:hidden">{automationLink}</span> : null}
             <span className="sr-only">
               <TimelineRowTimestamp
                 createdAt={DateTime.formatIso(props.message.createdAt)}

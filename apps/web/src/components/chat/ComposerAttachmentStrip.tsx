@@ -545,6 +545,7 @@ export function ComposerFilePreviewDialog({
   readonly onRemove: (fileId: string) => void;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
+  const popupRef = useRef<HTMLDivElement>(null);
   const onClose = () => onPreviewFileIdChange(null);
   return (
     <Dialog
@@ -555,6 +556,8 @@ export function ComposerFilePreviewDialog({
     >
       <DialogPopup
         {...composerFloatingLayerProps}
+        ref={popupRef}
+        initialFocus={popupRef}
         className="h-[min(85vh,52rem)] max-w-4xl overflow-hidden"
         showCloseButton={false}
       >
@@ -652,7 +655,7 @@ export function ComposerRestingImagePreviews({
       {counts.overflowCount > 0 ? (
         <button
           type="button"
-          className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           aria-label={`Show ${String(counts.overflowCount)} more image attachments`}
           onPointerDown={(event) => event.preventDefault()}
           onClick={onShowMore}

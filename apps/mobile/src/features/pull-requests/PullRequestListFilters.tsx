@@ -5,6 +5,7 @@ import { Atom } from "effect/reactivity";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
+import { THREAD_LIST_V2_SIDEBAR_ROW_STYLE } from "../threads/thread-list-v2-row-appearance";
 import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -31,7 +32,7 @@ const SORTS = {
 const ROW_STYLE =
   Platform.OS === "android"
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
-    : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
+    : { paddingTop: 16, paddingBottom: 10, gap: 8 };
 const id = (field: string, value: string) => JSON.stringify([field, value]);
 function choices(field: string, options: Readonly<Record<string, string>>, selected: string) {
   return Object.entries(options).map(([value, title]) => ({
@@ -41,12 +42,16 @@ function choices(field: string, options: Readonly<Record<string, string>>, selec
   }));
 }
 
-type ProjectOrder = readonly { readonly memberProjectRefs: readonly ScopedProjectRef[] }[];
+type ProjectOrder = readonly {
+  readonly label: string;
+  readonly memberProjectRefs: readonly ScopedProjectRef[];
+}[];
 const sameProjectOrder = (previous: ProjectOrder, next: ProjectOrder) =>
   previous.length === next.length &&
   previous.every((group, index) => {
     const members = next[index]!.memberProjectRefs;
     return (
+      group.label === next[index]!.label &&
       group.memberProjectRefs.length === members.length &&
       group.memberProjectRefs.every(
         (ref, member) =>
@@ -69,16 +74,13 @@ const sidebarProjectOrderFamily = Atom.family((mode: SidebarProjectGroupingMode)
       threads: get(environmentThreadShells.threadShellsAtom),
       pendingTasks: [],
       projectSortOrder: "updated_at",
-    }).map((scope) => ({ memberProjectRefs: scope.projectRefs })),
+    }).map((scope) => ({ label: scope.title, memberProjectRefs: scope.projectRefs })),
   ).pipe(Atom.withEquality(sameProjectOrder)),
 );
 
-function useProjectsInSidebarOrder<Project extends { id: string; environmentId: string }>(
-  projects: readonly Project[],
-) {
+export function usePullRequestProjectGroups() {
   const { sidebarProjectGroupingMode } = useMobileProjectGroupingSettings();
-  const scopes = useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
-  return sortProjectsByGroupOrder(projects, scopes);
+  return useAtomValue(sidebarProjectOrderFamily(sidebarProjectGroupingMode));
 }
 
 export interface PullRequestFilterMenu {
@@ -107,7 +109,7 @@ export function usePullRequestListFilters(props: {
   readonly onSearch: (kind: "labels" | "authors") => void;
 }) {
   const { value } = props;
-  const projects = useProjectsInSidebarOrder(props.projects);
+  const projects = sortProjectsByGroupOrder(props.projects, usePullRequestProjectGroups());
   const selectedLabels = value.filters.labels?.flat() ?? [];
   const selectedLabelSet = new Set(selectedLabels);
   const author = value.filters.author;
@@ -358,11 +360,16 @@ export function PullRequestListFilters(props: {
       horizontal
       showsHorizontalScrollIndicator={false}
       style={{ overflow: "visible" }}
-      // In the Android sidebar the first pill lines up with the rows' content instead
-      // (8dp row margin + 12dp padding).
+      // The first pill lines up with the rows' content: iOS rows use `px-4` on phone and the
+      // card padding in the sidebar; Android sidebar rows sit at 8dp margin + 12dp padding.
+      contentContainerClassName={Platform.OS === "ios" && !props.sidebar ? "px-4" : undefined}
       contentContainerStyle={
-        props.sidebar && Platform.OS === "android"
-          ? { ...ROW_STYLE, paddingHorizontal: 20 }
+        props.sidebar
+          ? {
+              ...ROW_STYLE,
+              paddingHorizontal:
+                Platform.OS === "android" ? 20 : THREAD_LIST_V2_SIDEBAR_ROW_STYLE.paddingHorizontal,
+            }
           : ROW_STYLE
       }
     >

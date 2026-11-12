@@ -6,6 +6,7 @@ import type {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
+  ScopedProjectRef,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
@@ -21,12 +22,13 @@ import {
   LayersIcon,
   ChevronDownIcon,
   ListFilterIcon,
+  SlidersHorizontalIcon,
   SearchIcon,
   TagIcon,
   UserRoundIcon,
   UsersRoundIcon,
 } from "lucide-react";
-import { type ElementType, useState } from "react";
+import { type ElementType, type ReactNode, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { useDebouncedValue } from "~/state/queries";
@@ -223,7 +225,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
   );
 }
 
-function PullRequestFilterRadioSubmenu<Value extends string>({
+export function PullRequestFilterRadioSubmenu<Value extends string>({
   label,
   icon: Icon,
   value,
@@ -366,7 +368,7 @@ function PullRequestAuthorFilter({
           {value ?? "Anyone"}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup className="w-65 [--type-label:0.8125rem]">
+      <MenuSubPopup className="w-65">
         <PullRequestAuthorChoices
           value={value}
           options={options}
@@ -482,6 +484,7 @@ function PullRequestLabelFilter({
 }
 
 export function PullRequestFiltersMenu({
+  compactItems,
   onOpenChange,
   involvement,
   involvementOptions,
@@ -500,6 +503,11 @@ export function PullRequestFiltersMenu({
   unavailable,
   onProject,
 }: {
+  /**
+   * The header's other controls, for a narrow column: given, the trigger is one sliders icon
+   * and these items lead the menu.
+   */
+  compactItems?: ReactNode;
   onOpenChange?: (open: boolean) => void;
   involvement: PullRequestInvolvement;
   involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
@@ -512,7 +520,12 @@ export function PullRequestFiltersMenu({
   server: EnvironmentId | undefined;
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<
+    ProjectFaviconProject & {
+      readonly id: ProjectId;
+      readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+    }
+  >;
   projectId: ProjectId | undefined;
   projectEnvironmentId: EnvironmentId | undefined;
   unavailable: ReadonlyMap<string, string>;
@@ -543,43 +556,70 @@ export function PullRequestFiltersMenu({
     projectId === undefined || projectEnvironmentId === undefined
       ? ALL_PROJECTS_VALUE
       : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId });
+  const unavailableReason = (project: (typeof projects)[number]) =>
+    project.memberProjectRefs.every((ref) =>
+      unavailable.has(
+        pullRequestProjectKey({ id: ref.projectId, environmentId: ref.environmentId }),
+      ),
+    )
+      ? unavailable.get(pullRequestProjectKey(project))
+      : undefined;
   const projectOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
     { value: ALL_PROJECTS_VALUE, label: "All projects", Icon: LayersIcon },
     ...projects
       .toSorted(
         (left, right) =>
-          Number(unavailable.has(pullRequestProjectKey(left))) -
-          Number(unavailable.has(pullRequestProjectKey(right))),
+          Number(unavailableReason(left) !== undefined) -
+          Number(unavailableReason(right) !== undefined),
       )
       .map((project) => ({
         value: pullRequestProjectKey(project),
         label: project.title,
         Icon: FolderGit2Icon,
         project,
-        ...(unavailable.has(pullRequestProjectKey(project))
-          ? { unavailable: unavailable.get(pullRequestProjectKey(project)) }
+        ...(unavailableReason(project) !== undefined
+          ? { unavailable: unavailableReason(project) }
           : {}),
       })),
   ];
   return (
     <Menu onOpenChange={onOpenChange}>
       <MenuTrigger
-        aria-label={filterCount > 0 ? `Filters, ${filterCount} active` : "Filters"}
-        render={<Button variant="ghost-muted" size="sm" />}
+        aria-label={
+          (compactItems ? "View and filters" : "Filters") +
+          (filterCount > 0 ? `, ${filterCount} active` : "")
+        }
+        render={
+          <Button
+            variant="ghost-muted"
+            size={compactItems && filterCount === 0 ? "icon-sm" : "sm"}
+          />
+        }
       >
-        <ListFilterIcon aria-hidden className="size-3.5" />
-        <span className="hidden @3xl/pr-list:inline">Filters</span>
+        {compactItems ? (
+          <SlidersHorizontalIcon aria-hidden className="size-3.5" />
+        ) : (
+          <>
+            <ListFilterIcon aria-hidden className="size-3.5" />
+            Filters
+          </>
+        )}
         {filterCount > 0 ? (
           <span className="rounded-full surface-selected-soft px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}
-        <ChevronDownIcon
-          aria-hidden
-          className="hidden size-3 text-dim-foreground @3xl/pr-list:inline"
-        />
+        {compactItems ? null : (
+          <ChevronDownIcon aria-hidden className="size-3 text-dim-foreground" />
+        )}
       </MenuTrigger>
-      <MenuPopup align="end" side="bottom" className="w-62 [--type-label:0.8125rem]">
+      <MenuPopup align="end" side="bottom" className="w-62">
+        {compactItems ? (
+          <>
+            {compactItems}
+            <MenuSeparator />
+          </>
+        ) : null}
         <PullRequestFilterRadioSubmenu
           label="Involvement"
           icon={UsersRoundIcon}

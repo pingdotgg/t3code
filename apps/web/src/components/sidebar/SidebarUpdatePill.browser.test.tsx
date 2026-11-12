@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
+import { SidebarProvider } from "../ui/sidebar";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
 const mocks = vi.hoisted(() => {
@@ -86,7 +87,11 @@ const releaseNotes = () => document.querySelector('[aria-label="Update release n
 describe("SidebarUpdatePill release notes", () => {
   it("closes when the release notes stop applying", async () => {
     setup(nightlyUpdate(RELEASE_NOTES));
-    await using _screen = await render(<SidebarUpdatePill />);
+    await using _screen = await render(
+      <SidebarProvider>
+        <SidebarUpdatePill />
+      </SidebarProvider>,
+    );
     await userEvent.tab();
     await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
 
@@ -96,7 +101,11 @@ describe("SidebarUpdatePill release notes", () => {
 
   it("opens when release notes arrive while the trigger has keyboard focus", async () => {
     setup(nightlyUpdate([]));
-    await using _screen = await render(<SidebarUpdatePill />);
+    await using _screen = await render(
+      <SidebarProvider>
+        <SidebarUpdatePill />
+      </SidebarProvider>,
+    );
     await userEvent.tab();
     expect(releaseNotes()).toBeNull();
 
@@ -119,7 +128,11 @@ describe("SidebarUpdatePill release notes", () => {
 describe("SidebarUpdatePill update everything", () => {
   it("does not refocus the update button after a pointer cancel", async () => {
     setup(null, { hasUpdates: true });
-    await using screen = await render(<SidebarUpdatePill />);
+    await using screen = await render(
+      <SidebarProvider>
+        <SidebarUpdatePill />
+      </SidebarProvider>,
+    );
     const button = screen.getByRole("button", { name: "Update everything" });
     await userEvent.click(button);
     const cancel = page.getByRole("button", { name: "Cancel" });
@@ -132,7 +145,11 @@ describe("SidebarUpdatePill update everything", () => {
 
   it("returns focus to the update button after Escape", async () => {
     setup(null, { hasUpdates: true });
-    await using screen = await render(<SidebarUpdatePill />);
+    await using screen = await render(
+      <SidebarProvider>
+        <SidebarUpdatePill />
+      </SidebarProvider>,
+    );
     const button = screen.getByRole("button", { name: "Update everything" });
     await userEvent.click(button);
     await expect.element(page.getByRole("button", { name: "Cancel" })).toBeVisible();

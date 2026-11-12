@@ -24,7 +24,6 @@ import {
   toolGroupAction,
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
-  workEntriesViewedImagePaths,
   type ToolGroupSummaryKind,
   liveThoughtLine,
   workEntryHiddenByToolCallVisibility,
@@ -493,6 +492,24 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
   return bMs > aMs ? b : a;
 }
 
+function minIsoTimestamp(a: string | null, b: string | null): string | null {
+  return a === null || b === null ? (a ?? b) : maxIsoTimestamp(a, b) === a ? b : a;
+}
+
+function runFirstAttemptStartedAt(
+  entries: ReadonlyArray<TimelineEntry>,
+  runId: RunId | null,
+): string | null {
+  let first: DateTime.Utc | null = null;
+  for (const entry of entries) {
+    const startedAt = entry.attempt?.runId === runId ? entry.attempt.startedAt : null;
+    if (startedAt != null && (first === null || DateTime.isLessThan(startedAt, first))) {
+      first = startedAt;
+    }
+  }
+  return first === null ? null : DateTime.formatIso(first);
+}
+
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
   "runId" | "status" | "startedAt" | "completedAt" | "turnEnded"
@@ -502,6 +519,7 @@ const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
 export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly continuesWorkLog?: boolean;
+  readonly superseded?: boolean;
   /** A user prompt followed directly by another prompt sits in the same prompt stack. */
   readonly continuesPromptStack?: boolean;
 };
@@ -516,6 +534,10 @@ type MessagesTimelineRowContent =
       updates: readonly OrchestrationV2Notification[];
       active: boolean;
       expanded: boolean;
+      /** The rows this fold shows only while open, in order. Empty while it is closed. */
+      revealedRowIds: readonly string[];
+      /** A closed fold directly above a prompt keeps a full turn gap below it. */
+      precedesPrompt?: boolean;
     }
   | {
       kind: "worktree-setup";
@@ -574,13 +596,6 @@ type MessagesTimelineRowContent =
       hasFailure: boolean;
     }
   | {
-      /** Images the agent opened in the tool group above, kept visible while the group is collapsed. */
-      kind: "viewed-images";
-      id: string;
-      createdAt: string;
-      paths: ReadonlyArray<string>;
-    }
-  | {
       kind: "turn-fold";
       deferredWorkItemIds?: ReadonlyArray<string>;
       id: string;
@@ -625,6 +640,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       message: ChatMessage;
       projectedItem?: OrchestrationV2ProjectedTurnItem;
+      switchHandoff?: Extract<OrchestrationV2ProjectedTurnItem["item"], { type: "handoff" }>;
       showAssistantMeta: boolean;
       suppressEmptyResponse?: boolean;
       showAssistantCopyButton: boolean;
@@ -704,17 +720,6 @@ function expandedWorkGroupRow(
     groupedEntries,
     isExpandedToolGroup: true,
   };
-}
-
-function viewedImagesRows(
-  groupId: string,
-  createdAt: string,
-  groupedEntries: ReadonlyArray<WorkLogEntry>,
-): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" }>> {
-  const paths = workEntriesViewedImagePaths(groupedEntries);
-  return paths.length === 0
-    ? []
-    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
 }
 
 export function resolveAssistantMessageCopyState({
@@ -990,6 +995,7 @@ function steerReplyEntryIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<
     if (timelineEntryStartsResponse(entry)) {
       lastReply = null;
     } else if (timelineEntryIsSteer(entry)) {
+      if (entry.kind !== "message" || entry.message.runId == null) continue;
       if (lastReply !== null) ids.add(lastReply);
       lastReply = null;
     } else if (
@@ -1418,7 +1424,13 @@ function deriveTurnFolds(input: {
     const lastEntryEnd = timelineEntryEnd(lastEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
+        ? computeElapsedMs(
+            minIsoTimestamp(
+              runFirstAttemptStartedAt(input.timelineEntries, runId),
+              input.latestRun.startedAt,
+            ) ?? input.latestRun.startedAt,
+            input.latestRun.completedAt,
+          )
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
@@ -1829,6 +1841,10 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  const activeTurnStartedAt = minIsoTimestamp(
+    input.activeTurnStartedAt ?? null,
+    runFirstAttemptStartedAt(timelineEntries, unsettledRunId),
+  );
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
         timelineEntries: input.timelineEntries,
@@ -2094,8 +2110,7 @@ export function deriveMessagesTimelineRows(input: {
       id: "working-indicator-row",
       createdAt:
         (compactsOnReturn ? undefined : resumeCompactionEntry?.entry.createdAt) ??
-        input.activeTurnStartedAt ??
-        null,
+        activeTurnStartedAt,
       ...(activeCompactionRunId !== null ? { compacting: true as const } : {}),
     });
   };
@@ -2115,13 +2130,6 @@ export function deriveMessagesTimelineRows(input: {
         ),
       );
     }
-    nextRows.push(
-      ...viewedImagesRows(
-        activeWorkRow.groupId,
-        activeWorkRow.createdAt,
-        activeWorkRow.groupedEntries,
-      ),
-    );
   };
 
   const timelineSlashCommand = (message: ChatMessage): TimelineSlashCommand | null => {
@@ -2425,13 +2433,6 @@ export function deriveMessagesTimelineRows(input: {
             );
           }
         }
-        nextRows.push(
-          ...viewedImagesRows(
-            workGroupId(timelineEntry.id),
-            timelineEntry.createdAt,
-            visibleGroupedEntries,
-          ),
-        );
       }
       index = cursor - 1;
       continue;
@@ -2627,33 +2628,89 @@ export function deriveMessagesTimelineRows(input: {
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
-        createdAt: input.activeTurnStartedAt ?? null,
+        createdAt: activeTurnStartedAt,
         groupId,
         expanded,
       });
       if (expanded) {
         nextRows.push(expandedWorkGroupRow(groupId, failedGroupAnchor.createdAt, groupedEntries));
       }
-      nextRows.push(...viewedImagesRows(groupId, failedGroupAnchor.createdAt, groupedEntries));
     } else {
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
-        createdAt: input.activeTurnStartedAt ?? null,
+        createdAt: activeTurnStartedAt,
       });
     }
   }
 
+  const supersededRowIds = new Set<string>();
+  for (const fold of supersededFoldsByAnchorEntryId.values()) {
+    if (!input.expandedAttemptIds?.has(fold.attemptId)) continue;
+    for (const entryId of fold.hiddenEntryIds) {
+      supersededRowIds.add(entryId);
+      supersededRowIds.add(`work-toggle:${entryId}`);
+      supersededRowIds.add(`work-live:${entryId}`);
+      supersededRowIds.add(`${workGroupId(entryId)}:details`);
+      const entry = timelineEntryById.get(entryId);
+      if (entry?.kind === "message") {
+        supersededRowIds.add(`assistant-meta:${entry.message.id}`);
+      }
+    }
+  }
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
   return withPromptGrouping(
-    result.map((row, index) =>
-      timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
-        ? { ...row, continuesWorkLog: true }
-        : row,
+    attachSwitchHandoffs(
+      result.map((sourceRow, index) => {
+        const row = supersededRowIds.has(sourceRow.id)
+          ? { ...sourceRow, superseded: true }
+          : sourceRow;
+        return timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
+          ? { ...row, continuesWorkLog: true }
+          : row;
+      }),
     ),
   );
+}
+
+export function attachSwitchHandoffs(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+): MessagesTimelineRow[] {
+  const prompts = new Map<string, Extract<MessagesTimelineRow, { kind: "message" }>>();
+  for (const row of rows) {
+    if (
+      row.kind === "message" &&
+      timelineRowIsUserPrompt(row) &&
+      row.message.runId !== null &&
+      !row.superseded
+    ) {
+      const key = `${row.projectedItem?.sourceThreadId ?? ""}:${row.message.runId}`;
+      if (!prompts.has(key)) prompts.set(key, row);
+    }
+  }
+  const handoffs = new Map<
+    string,
+    NonNullable<Extract<MessagesTimelineRow, { kind: "message" }>["switchHandoff"]>
+  >();
+  const moved = new Set<string>();
+  for (const row of rows) {
+    if (row.kind !== "event" || row.projectedItem.item.type !== "handoff" || row.superseded)
+      continue;
+    const prompt = prompts.get(
+      `${row.projectedItem.sourceThreadId ?? ""}:${row.projectedItem.item.runId}`,
+    );
+    if (!prompt || handoffs.has(prompt.id)) continue;
+    handoffs.set(prompt.id, row.projectedItem.item);
+    moved.add(row.id);
+  }
+  return rows
+    .filter((row) => !moved.has(row.id))
+    .map((row) => {
+      const switchHandoff = handoffs.get(row.id);
+      return row.kind === "message" && switchHandoff ? { ...row, switchHandoff } : row;
+    });
 }
 
 /** Flags prompts by their neighbours; rerun whenever rows move, so stale flags never split a group. */
@@ -2706,7 +2763,9 @@ function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
     (row.kind === "work" ||
       row.kind === "work-toggle" ||
       row.kind === "work-live" ||
-      row.kind === "thinking")
+      row.kind === "thinking" ||
+      // Subagent rows are tool rows in the same list.
+      (row.kind === "event" && row.projectedItem.item.type === "subagent"))
   );
 }
 
@@ -2957,17 +3016,24 @@ export function applyWorkingWindow(
   );
   let interruptRequested = false;
   let interruptSettled = false;
+  let itemsBeforeLatestPrompt = 0;
+  const supersededWork: WorkLogEntry[] = [];
   for (let index = boundaryIndex + 1; index < entries.length; index += 1) {
     const entry = entries[index]!;
     if (entry.kind === "message" && entry.message.role === "user") {
       key = entry.id;
+      itemsBeforeLatestPrompt = items.length;
       continue;
     }
-    if (entry.attempt?.status === "superseded" || replyIds.has(entry.id)) continue;
     const runId =
       entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry);
     // A provider-native subagent thread's live work has no app run.
     if (runId === null ? input.runlessWorkActive !== true : !runIds.has(runId)) continue;
+    if (entry.attempt?.status === "superseded") {
+      if (entry.kind === "work") supersededWork.push(entry.entry);
+      continue;
+    }
+    if (replyIds.has(entry.id)) continue;
     if (entry.kind === "work") {
       const item = entry.entry.projectedItem?.item;
       if (
@@ -3030,7 +3096,10 @@ export function applyWorkingWindow(
     }
   }
 
-  const answer = items.at(-1)?.kind === "text" ? items.pop() : undefined;
+  const answer =
+    items.at(-1)?.kind === "text" && items.length > itemsBeforeLatestPrompt
+      ? items.pop()
+      : undefined;
   const ids = collectWindowIds(items);
   const windowStartIndex = Math.max(
     workingIndex,
@@ -3038,15 +3107,23 @@ export function applyWorkingWindow(
   );
   const keptRows = (start: number, end?: number) =>
     rows.slice(start, end).filter((row) => !rowIsReplacedByWindow(row, ids));
-  const before = keptRows(workingIndex + 1, windowStartIndex + 1);
+  const before: MessagesTimelineRow[] = [];
+  const supersededAttempts: MessagesTimelineRow[] = [];
+  let inSupersededAttempt = false;
+  for (const row of keptRows(workingIndex + 1, windowStartIndex + 1)) {
+    if (row.kind === "attempt-fold") inSupersededAttempt = runIds.has(row.runId);
+    else if (row.kind === "message" && row.message.role === "user") inSupersededAttempt = false;
+    (inSupersededAttempt ? supersededAttempts : before).push(row);
+  }
   const after = keptRows(windowStartIndex + 1);
   const window: WorkingWindow = {
     key,
     items,
     compactCommand: compactCommandRunIds.has(unsettledRunId),
-    diff: sumFileChangeLineStat(
-      items.flatMap((item) => (item.kind === "work" ? [item.entry] : [])),
-    ),
+    diff: sumFileChangeLineStat([
+      ...supersededWork,
+      ...items.flatMap((item) => (item.kind === "work" ? [item.entry] : [])),
+    ]),
     failedTests: deriveFailedTests(items),
     retryAttempt: deriveRetryAttempt(items),
     stopping: interruptRequested && !interruptSettled,
@@ -3057,6 +3134,7 @@ export function applyWorkingWindow(
   return withPromptGrouping([
     ...rows.slice(0, workingIndex),
     ...before,
+    ...supersededAttempts,
     { ...workingRow, window },
     ...after.map((row) => (row.continuesWorkLog ? { ...row, continuesWorkLog: false } : row)),
   ]);
@@ -3200,6 +3278,22 @@ export function applyBackgroundActivityGroups(
       .find((id) => id !== undefined && updateIds.has(id.slice("background-activity:".length)));
     const id = expandedId ?? previousId ?? `background-activity:${first.id}`;
     const expanded = input.expandedWorkGroupIds?.has(id) ?? false;
+    const groupRows = rows.slice(start, index);
+    const finalAnswer = groupRows.findLast(
+      (row) =>
+        row.kind === "message" &&
+        row.message.role === "assistant" &&
+        (row.message.runId === activeRunId || !row.message.streaming),
+    );
+    // The answer and its meta stay when the fold closes.
+    const keptRows =
+      finalAnswer?.kind === "message"
+        ? groupRows.filter(
+            (row) =>
+              row === finalAnswer ||
+              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
+          )
+        : [];
     result.push({
       kind: "background-activity",
       id,
@@ -3209,30 +3303,57 @@ export function applyBackgroundActivityGroups(
       updates,
       active: activeRunId !== null && runIds.has(activeRunId),
       expanded,
+      revealedRowIds: expanded
+        ? groupRows.filter((row) => !keptRows.includes(row)).map((row) => row.id)
+        : [],
     });
     // Expansion returns the original virtual rows, identities, disclosures and actions.
-    const groupRows = rows.slice(start, index);
-    if (expanded) {
-      result.push(...groupRows);
-    } else {
-      const finalAnswer = groupRows.findLast(
-        (row) =>
-          row.kind === "message" &&
-          row.message.role === "assistant" &&
-          (row.message.runId === activeRunId || !row.message.streaming),
-      );
-      if (finalAnswer?.kind === "message") {
-        result.push(
-          ...groupRows.filter(
-            (row) =>
-              row === finalAnswer ||
-              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
-          ),
-        );
-      }
-    }
+    result.push(...(expanded ? groupRows : keptRows));
   }
-  return result;
+  return result.map((row, index) =>
+    row.kind === "background-activity" &&
+    !row.expanded &&
+    timelineRowIsUserPrompt(result[index + 1])
+      ? { ...row, precedesPrompt: true }
+      : row,
+  );
+}
+
+/**
+ * Where each row an open wake-ups fold reveals sits on the fold's rail: "end" closes it.
+ * Takes the folds' row ids as one string (ids newline-joined, folds NUL-joined) so callers
+ * can keep the map's identity while the rows around it stream.
+ */
+export function wakeUpsRailRows(foldRowIds: string): ReadonlyMap<string, "body" | "end"> {
+  const rail = new Map<string, "body" | "end">();
+  for (const fold of foldRowIds.split("\0")) {
+    const ids = fold.split("\n").filter((id) => id.length > 0);
+    ids.forEach((id, index) => rail.set(id, index === ids.length - 1 ? "end" : "body"));
+  }
+  return rail;
+}
+
+/**
+ * The key `wakeUpsRailRows` reads: for every open wake-ups fold, the ids of the rows from its
+ * header down to the last row it reveals. Reading the span from the rendered rows, not the
+ * fold's own list, also takes rows that join later, such as a turn's tool calls once its own
+ * fold is opened.
+ */
+export function wakeUpsRailKey(rows: readonly MessagesTimelineRow[]): string {
+  const folds: string[] = [];
+  rows.forEach((row, index) => {
+    if (row.kind !== "background-activity" || row.revealedRowIds.length === 0) return;
+    const revealed = new Set(row.revealedRowIds);
+    const span: string[] = [];
+    let end = 0;
+    for (const next of rows.slice(index + 1)) {
+      if (next.kind === "background-activity") break;
+      span.push(next.id);
+      if (revealed.has(next.id)) end = span.length;
+    }
+    folds.push(span.slice(0, end).join("\n"));
+  });
+  return folds.join("\0");
 }
 
 interface MessagesTimelineRowsProjection {
@@ -3442,6 +3563,8 @@ function withPreviousWindowItems(
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
   if (a.kind !== b.kind || a.id !== b.id) return false;
   if (a.continuesPromptStack !== b.continuesPromptStack) return false;
+  if (a.superseded !== b.superseded) return false;
+  if (a.continuesWorkLog !== b.continuesWorkLog) return false;
 
   switch (a.kind) {
     case "background-activity": {
@@ -3452,7 +3575,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         shallow(a.updates, bg.updates) &&
         a.active === bg.active &&
         a.expanded === bg.expanded &&
-        shallow(a.runIds, bg.runIds)
+        a.precedesPrompt === bg.precedesPrompt &&
+        shallow(a.runIds, bg.runIds) &&
+        shallow(a.revealedRowIds, bg.revealedRowIds)
       );
     }
     case "working":
@@ -3466,7 +3591,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
     }
     case "worktree-setup":
-      return a.snapshot === (b as typeof a).snapshot;
+      return a.snapshot === (b as typeof a).snapshot && a.embedded === (b as typeof a).embedded;
 
     case "assistant-meta": {
       const bm = b as typeof a;
@@ -3521,15 +3646,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
-
-    case "viewed-images": {
-      const bv = b as typeof a;
-      return (
-        a.createdAt === bv.createdAt &&
-        a.paths.length === bv.paths.length &&
-        a.paths.every((path, index) => path === bv.paths[index])
-      );
-    }
 
     case "html-render": {
       // Tool updates rebuild entries; preserve frames for unchanged pages.
@@ -3595,6 +3711,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
+        a.switchHandoff === bm.switchHandoff &&
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.suppressEmptyResponse === bm.suppressEmptyResponse &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&

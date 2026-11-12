@@ -4,6 +4,7 @@ import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -85,7 +86,10 @@ import {
   extendReplacementRangeForTrailingSpace,
   replaceTextRange,
 } from "../../composer-logic";
-import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import {
+  COMPOSER_PROMPT_PLACEHOLDER,
+  DISCONNECTED_COMPOSER_PLACEHOLDER,
+} from "../../composerPlaceholder";
 import { deriveComposerSendState, getAntigravitySendBlockReason } from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
@@ -113,7 +117,6 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
-import { observeComposerPromptLayout } from "./observeComposerPromptLayout";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   reconcileAttachmentContextReferences,
@@ -144,7 +147,7 @@ import {
   useEnvironmentSpeechInput,
   useSpeechUnavailableReason,
 } from "../../speech/useEnvironmentSpeechInput";
-import { ComposerSpeechButton, ComposerSpeechCancelButton } from "./ComposerSpeechButton";
+import { ComposerSpeechButton } from "./ComposerSpeechButton";
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -232,7 +235,6 @@ import {
 } from "./ExpandedImagePreview";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import {
-  getComposerPromptLengthValidationMessage,
   getComposerSubmissionValidationMessage,
   isComposerSubmissionBlocked,
   submitComposerDraft,
@@ -356,6 +358,7 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  onWorkspaceRequest?: (() => void) | undefined;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -460,8 +463,6 @@ export interface ChatComposerProps {
   stashHost?: HTMLDivElement | null;
   /** The thread's branch, shown on command approvals next to the working directory. */
   onComposerOverlayHeightChange: (height: number) => void;
-  /** The new-thread strip names the permissions, so the controls row hides its chip. */
-  permissionsShownInStrip: boolean;
 
   promptRef: React.RefObject<string>;
   composerImagesRef: React.RefObject<ComposerImageAttachment[]>;
@@ -948,7 +949,10 @@ export function ChatComposer(props: ChatComposerProps) {
     selectedModel,
   );
   // Over-limit prompts show their line as soon as they overflow, and send stays off until they fit.
-  const promptLengthMessage = getComposerPromptLengthValidationMessage(prompt);
+  const promptLengthMessage = getComposerSubmissionValidationMessage({
+    prompt,
+    submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+  });
   const [promptLengthDismissed, setPromptLengthDismissed] = useState(false);
   if (promptLengthDismissed && promptLengthMessage === null) setPromptLengthDismissed(false);
   const sendDisabledReason =
@@ -1022,9 +1026,6 @@ export function ChatComposer(props: ChatComposerProps) {
     targetKey: string;
     position: ComposerPromptHistoryPosition;
   } | null>(null);
-  const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
-    null,
-  );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
@@ -1045,12 +1046,10 @@ export function ChatComposer(props: ChatComposerProps) {
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const attachComposerBody = useStableCallback((node: HTMLDivElement | null) => {
     setComposerMenuAnchor(node);
-    const stopLayout = node ? observeComposerPromptLayout(node) : undefined;
     const stopObserving = observeWrappedPrompt(node);
     return () => {
       setComposerMenuAnchor(null);
       stopObserving?.();
-      stopLayout?.();
     };
   });
   // A pending question stays expanded: its card moves into the banner dock,
@@ -1101,6 +1100,8 @@ export function ChatComposer(props: ChatComposerProps) {
   const mobileComposerExpandInFlightRef = useRef(false);
   const pendingThreadImportsRef = useRef<Map<string, number>>(new Map());
   const isRevertingCheckpointRef = useRef(isRevertingCheckpoint);
+  // Window-level shortcuts belong to the focused pane's composer.
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed checkpoint revert flag to a ref read by async handlers
   useLayoutEffect(() => {
     isRevertingCheckpointRef.current = isRevertingCheckpoint;
@@ -1130,6 +1131,7 @@ export function ChatComposer(props: ChatComposerProps) {
       pasteAsTextShortcutUntilRef.current = 0;
     };
     const onDesktopPasteAsText = () => {
+      if (!paneFocusedRef.current) return;
       const activeElement = document.activeElement;
       const blocksPasteToFocus =
         activeElement instanceof Element &&
@@ -1153,7 +1155,7 @@ export function ChatComposer(props: ChatComposerProps) {
       target.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [backgroundThread]);
+  }, [backgroundThread, paneFocusedRef]);
 
   const composerSendState = deriveComposerSendState({
     prompt,
@@ -1207,14 +1209,9 @@ export function ChatComposer(props: ChatComposerProps) {
     composerTrigger?.kind ?? null,
   ).flatMap((group) => group.items);
   const composerMenuOpen = Boolean(composerTrigger) && isComposerEditorFocused;
-  const composerMenuSearchKey = composerTrigger
-    ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
-    : null;
   const activeComposerMenuItemId = resolveComposerMenuActiveItemId({
     items: composerMenuItems,
     highlightedItemId: composerHighlightedItemId,
-    currentSearchKey: composerMenuSearchKey,
-    highlightedSearchKey: composerHighlightedSearchKey,
   });
   const activeComposerMenuItem =
     composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
@@ -1227,8 +1224,6 @@ export function ChatComposer(props: ChatComposerProps) {
   });
 
   const isComposerApprovalState = activePendingApproval !== null;
-  // A send declines the approvals shown here to redirect the agent, so it steers the waiting
-  // turn instead of queueing behind it. Approvals the typing guard holds stay unseen and pending.
   const followUpBehavior = pendingApprovals.some(
     (approval) => !heldRequestIds.has(approval.requestId),
   )
@@ -1446,7 +1441,11 @@ export function ChatComposer(props: ChatComposerProps) {
   }
 
   if (composerSubmissionError !== null) {
-    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    const nextError = getComposerSubmissionValidationMessage({
+      prompt,
+      isSendBusy,
+      submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+    });
     if (nextError !== composerSubmissionError) {
       setComposerSubmissionError(nextError);
     }
@@ -1483,12 +1482,8 @@ export function ChatComposer(props: ChatComposerProps) {
   }, [composerTerminalContexts, composerTerminalContextsRef]);
 
   const resolvedHighlightedItemId = composerMenuOpen ? activeComposerMenuItemId : null;
-  const resolvedHighlightedSearchKey = composerMenuOpen ? composerMenuSearchKey : null;
   if (composerHighlightedItemId !== resolvedHighlightedItemId) {
     setComposerHighlightedItemId(resolvedHighlightedItemId);
-  }
-  if (composerHighlightedSearchKey !== resolvedHighlightedSearchKey) {
-    setComposerHighlightedSearchKey(resolvedHighlightedSearchKey);
   }
 
   const lastSyncedPendingInputRef = useRef<{
@@ -1546,7 +1541,6 @@ export function ChatComposer(props: ChatComposerProps) {
   if (shownComposerSessionKey !== composerSessionKey) {
     setShownComposerSessionKey(composerSessionKey);
     setComposerHighlightedItemId(null);
-    setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
     const pendingAnswer = activePendingProgress?.customAnswer;
@@ -1559,6 +1553,9 @@ export function ChatComposer(props: ChatComposerProps) {
     setIsDragOverComposer(false);
   }
 
+  // The observer reports the form's width before the first paint, so neither
+  // mounting nor a resize reads layout. The form has no padding or border, so
+  // its content box is its client width.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes composer form resizes to switch the footer and primary actions between compact layouts
   useLayoutEffect(() => {
     const composerForm = composerFormRef.current;
@@ -1924,6 +1921,7 @@ export function ChatComposer(props: ChatComposerProps) {
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
     ...(backgroundThread ? { targetRef: composerFormRef } : {}),
+    ownsFocus: () => paneFocusedRef.current,
   });
   // The editor freezes while dictation runs and drops focus; collapsing then would hide the recording pill.
   const dictationActiveRef = useRef(false);
@@ -2137,7 +2135,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const onComposerMenuItemHighlighted = (itemId: string | null) => {
     setComposerHighlightedItemId(itemId);
-    setComposerHighlightedSearchKey(composerMenuSearchKey);
   };
   const onComposerMenuItemHighlightedStable = useStableCallback(onComposerMenuItemHighlighted);
 
@@ -2217,6 +2214,7 @@ export function ChatComposer(props: ChatComposerProps) {
       return false;
     }
     const submission = submitComposerDraft({
+      isSendBusy,
       prompt: promptRef.current,
       submissionTarget,
       event,
@@ -2365,13 +2363,11 @@ export function ChatComposer(props: ChatComposerProps) {
         dictation={{
           level: speechInput.level,
           onStop: () => void speechInput.stop(),
+          onCancel: () => speechInput.cancel(),
           onSkipPostProcessing: () => speechInput.skipPostProcessing(),
         }}
       />
     ) : null;
-  // While recording, the send slot becomes Stop and finishes the recording.
-  const stopDictationStable = useStableCallback(() => void speechInput.stop());
-  const onStopDictation = speechInput.state.phase === "recording" ? stopDictationStable : undefined;
 
   // Escape dismisses the suggestion so Tab moves focus again.
   const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
@@ -2472,8 +2468,6 @@ export function ChatComposer(props: ChatComposerProps) {
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
   });
-  const composerControlsCollapsed = true;
-  const composerControlsHidden = false;
   const collapsedComposerImagePreviews =
     standaloneComposerImages.length > 0 ? (
       <ComposerRestingImagePreviews
@@ -2512,10 +2506,7 @@ export function ChatComposer(props: ChatComposerProps) {
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       handleRuntimeModeChange={handleRuntimeModeChange}
-      composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
-      permissionsShownInStrip={false}
-      composerControlsHidden={composerControlsHidden}
       restingHiddenBlockCount={expandedControlsHiddenBlockCount}
       iconOnlyBlockCount={expandedControlsIconOnlyBlockCount}
       pickerIconOnly={expandedControlsPickerIconOnly}
@@ -3029,13 +3020,6 @@ export function ChatComposer(props: ChatComposerProps) {
   }, []);
 
   const openModelPicker = () => {
-    if (composerControlsHidden) {
-      if (composerBlurFrameRef.current !== null) {
-        window.cancelAnimationFrame(composerBlurFrameRef.current);
-        composerBlurFrameRef.current = null;
-      }
-      setIsComposerFocused(true);
-    }
     setIsComposerModelPickerOpen(true);
   };
   const openModelPickerStable = useStableCallback(openModelPicker);
@@ -3126,6 +3110,10 @@ export function ChatComposer(props: ChatComposerProps) {
         }
       },
       openControl: (command) => {
+        if (command === "composer.workspace" && props.onWorkspaceRequest) {
+          props.onWorkspaceRequest();
+          return;
+        }
         if (composerBlurFrameRef.current !== null) {
           window.cancelAnimationFrame(composerBlurFrameRef.current);
           composerBlurFrameRef.current = null;
@@ -3392,6 +3380,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <ComposerApprovalPanel
         key={activePendingApproval.requestId}
         approval={activePendingApproval}
+        workspaceRoot={gitCwd ?? undefined}
         count={pendingApprovals.length}
         disabled={!canOperateThread}
         isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
@@ -3502,7 +3491,6 @@ export function ChatComposer(props: ChatComposerProps) {
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
-          data-inline-resting-controls="true"
           className={composerProviderState.composerFrameClassName}
         >
           <div
@@ -3568,22 +3556,24 @@ export function ChatComposer(props: ChatComposerProps) {
                     <button
                       type="button"
                       className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
-                      disabled={onStopDictation ? false : collapsedComposerPrimaryActionDisabled}
+                      hidden={voiceInputActive && !canInterrupt}
+                      disabled={
+                        voiceInputActive ? !canInterrupt : collapsedComposerPrimaryActionDisabled
+                      }
                       aria-label={
-                        onStopDictation ? "Stop voice input" : collapsedComposerPrimaryActionLabel
+                        voiceInputActive ? "Stop generation" : collapsedComposerPrimaryActionLabel
                       }
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (onStopDictation) onStopDictation();
-                        else if (collapsedComposerShowsStop) onInterrupt();
+                        if (voiceInputActive || collapsedComposerShowsStop) onInterrupt();
                         else if (showResumeAction) onResume();
                         else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
                           expandMobileComposer();
                         else submitComposer();
                       }}
                     >
-                      {onStopDictation || collapsedComposerShowsStop ? (
+                      {voiceInputActive || collapsedComposerShowsStop ? (
                         <span
                           className="size-2.5 rounded-xs bg-error-foreground"
                           aria-hidden="true"
@@ -3745,8 +3735,7 @@ export function ChatComposer(props: ChatComposerProps) {
                               ? "Enable a provider in Settings to send a message"
                               : environmentDisconnected
                                 ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                : (offeredPromptSuggestion ??
-                                  "Ask anything, @tag files/folders, $use skills, or / for commands")
+                                : (offeredPromptSuggestion ?? COMPOSER_PROMPT_PLACEHOLDER)
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
@@ -3819,8 +3808,6 @@ export function ChatComposer(props: ChatComposerProps) {
                   onResume={onResume}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryActionStable}
-                  onStopDictation={onStopDictation}
-                  stopDictationShortcutLabel={dictationShortcutLabel}
                   compactBeforeSendTokens={props.resumeCompactionTokens}
                   keepFullHistory={props.keepFullHistory}
                   onToggleKeepFullHistory={props.onToggleKeepFullHistory}
@@ -3833,15 +3820,6 @@ export function ChatComposer(props: ChatComposerProps) {
                       cancelShortcutLabel="Esc"
                       onRetry={() => void speechInput.start()}
                       onDismiss={() => speechInput.cancel()}
-                    />
-                  ) : null}
-                  {speechInput.available &&
-                  speechInput.state.phase !== "idle" &&
-                  speechInput.state.phase !== "error" ? (
-                    <ComposerSpeechCancelButton
-                      state={speechInput.state}
-                      shortcutLabel="Esc"
-                      onCancel={() => speechInput.cancel()}
                     />
                   ) : null}
                   <VoiceInputSetup

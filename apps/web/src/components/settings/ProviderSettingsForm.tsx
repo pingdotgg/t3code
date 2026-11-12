@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
@@ -378,7 +378,7 @@ function SecretSettingsControl({
         id={inputId}
         aria-describedby={descriptionId}
         aria-label={field.label}
-        size="sm"
+        size="settings"
         className="min-w-0 flex-1"
         value={reference ?? ""}
         configured={reference === undefined && configured}
@@ -414,7 +414,7 @@ function ProviderSettingsSelect({
   readonly field: ProviderSettingsFieldModel;
   readonly value: unknown;
   readonly inputId: string;
-  readonly size: "sm" | "xs";
+  readonly size: "sm" | "xs" | "compact";
   readonly className?: string | undefined;
   readonly onChange: ProviderSettingsFormProps["onChange"];
 }) {
@@ -430,7 +430,13 @@ function ProviderSettingsSelect({
         onChange(nextProviderConfigWithFieldValue(value, field, next === fallback ? "" : next));
       }}
     >
-      <SelectTrigger id={inputId} size={size} className={className} aria-label={field.label}>
+      <SelectTrigger
+        variant={size === "compact" ? "well" : "default"}
+        id={inputId}
+        size={size}
+        className={className}
+        aria-label={field.label}
+      >
         <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="start" alignItemWithTrigger={false}>
@@ -463,7 +469,7 @@ function ProviderSettingsTextInput({
       <DraftInput
         id={inputId}
         aria-describedby={descriptionId}
-        size="sm"
+        size="settings"
         className="w-full max-w-full"
         type={field.control === "password" ? "password" : undefined}
         autoComplete={field.control === "password" ? "off" : undefined}
@@ -546,7 +552,7 @@ function ProviderSettingsFieldRow({
           field={field}
           value={value}
           inputId={inputId}
-          size="sm"
+          size="compact"
           className="w-full max-w-full @min-[26rem]/settings-row:w-50"
           onChange={onChange}
         />
@@ -576,7 +582,7 @@ function ProviderSettingsFieldRow({
           <SecretInput
             id={inputId}
             aria-describedby={descriptionId}
-            size="sm"
+            size="settings"
             className="min-w-0 flex-1"
             configured={secretConfigured}
             value=""
@@ -725,6 +731,7 @@ export function ProviderSettingsForm({
   managed,
   environmentId,
 }: ProviderSettingsFormProps) {
+  const formId = useId();
   const fields = deriveProviderSettingsFields(definition, value);
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&
@@ -741,7 +748,7 @@ export function ProviderSettingsForm({
           key={field.key}
           field={field}
           value={value}
-          idPrefix={idPrefix}
+          idPrefix={`${idPrefix}-${formId}`}
           variant={variant}
           onChange={onChange}
           managedReason={managed?.keys.has(field.key) ? managed.reason : undefined}

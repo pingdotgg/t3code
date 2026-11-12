@@ -167,8 +167,33 @@ function defaultBindingForBinding(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => entry.command === binding.command)
+    // The last rule is the main key; alt+cmd aliases come first (later rules win).
+    DEFAULT_RESOLVED_KEYBINDINGS.findLast((entry) => entry.command === binding.command)
   );
+}
+
+function platformAllowsWhen(node: KeybindingWhenNode | undefined, isMac: boolean): boolean | null {
+  if (!node) return null;
+  switch (node.type) {
+    case "identifier":
+      return node.name === "isMac" ? isMac : null;
+    case "not": {
+      const value = platformAllowsWhen(node.node, isMac);
+      return value === null ? null : !value;
+    }
+    case "and": {
+      const left = platformAllowsWhen(node.left, isMac);
+      const right = platformAllowsWhen(node.right, isMac);
+      if (left === false || right === false) return false;
+      return left === true && right === true ? true : null;
+    }
+    case "or": {
+      const left = platformAllowsWhen(node.left, isMac);
+      const right = platformAllowsWhen(node.right, isMac);
+      if (left === true || right === true) return true;
+      return left === false && right === false ? false : null;
+    }
+  }
 }
 
 function keybindingRowId(command: KeybindingCommand, key: string, when: string): string {
@@ -207,7 +232,9 @@ export function buildKeybindingRows(
   platform = navigator.platform,
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
+  const isMac = isMacPlatform(platform);
   for (const binding of keybindings) {
+    if (platformAllowsWhen(binding.whenAst, isMac) === false) continue;
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
@@ -335,13 +362,13 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "terminal.splitVertical": "Split terminal vertically",
   "terminal.new": "New terminal",
   "terminal.close": "Close terminal",
-  "rightPanel.toggle": "Toggle right panel",
+  "rightPanel.toggle": "Toggle side pane",
   "threadPanel.toggle": "Toggle thread panel",
   "rightPanel.close": "Close right panel",
-  "rightPanel.new": "New right panel tab",
   "view.reopenClosed": "Reopen closed tab",
   "pullRequest.copyNumber": "Copy pull request number",
   "diff.toggle": "Toggle diff panel",
+  "pullRequests.toggle": "Toggle linked pull requests",
   "preview.toggle": "Toggle browser",
   "preview.refresh": "Reload browser",
   "preview.focusUrl": "Focus browser address",
@@ -385,6 +412,35 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "thread.pin": "Pin thread",
   "thread.undo": "Undo last thread action",
   "git.commitPush": "Commit and push",
+  "tab.new": "New tab",
+  "tab.close": "Close tab",
+  "tab.next": "Next tab",
+  "tab.previous": "Previous tab",
+  "layout.splitRight": "New pane to the right",
+  "layout.splitDown": "New pane below",
+  "layout.fill": "Fill the window",
+  "layout.focusLeft": "Focus pane on the left",
+  "layout.focusRight": "Focus pane on the right",
+  "layout.focusUp": "Focus pane above",
+  "layout.focusDown": "Focus pane below",
+  "layout.moveLeft": "Move pane left",
+  "layout.moveRight": "Move pane right",
+  "layout.moveUp": "Move pane up",
+  "layout.moveDown": "Move pane down",
+  "layout.focusFirstColumn": "Focus first column",
+  "layout.focusLastColumn": "Focus last column",
+  "layout.cycleColumnWidth": "Column width ⅓ ½ ⅔",
+  "layout.centerColumn": "Center column",
+  "layout.pullLeft": "Pull pane into the left column",
+  "layout.pullRight": "Push pane out to its own column",
+  "layout.shortcutSheet": "Show every shortcut",
+  "layout.focusWorkspaceDown": "Next workspace",
+  "layout.focusWorkspaceUp": "Previous workspace",
+  "layout.moveToWorkspaceDown": "Send pane to the next workspace",
+  "layout.moveToWorkspaceUp": "Send pane to the previous workspace",
+  "layout.moveWorkspaceDown": "Move workspace down",
+  "layout.moveWorkspaceUp": "Move workspace up",
+  "layout.overview": "Overview",
   "usage.open": "Open usage",
   "usage.cost": "Show usage by cost",
   "usage.tokens": "Show usage by tokens",

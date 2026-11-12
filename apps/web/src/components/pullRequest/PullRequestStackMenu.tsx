@@ -37,6 +37,7 @@ export function PullRequestStackMenu({
   environmentId,
   stale,
   canMerge,
+  conflictsWith = null,
   canRebase,
   mergeMethod,
   onSelect,
@@ -62,6 +63,8 @@ export function PullRequestStackMenu({
   environmentId: EnvironmentId;
   stale: boolean;
   canMerge: boolean;
+  /** The base branch this pull request conflicts with; the stack cannot merge through it. */
+  conflictsWith?: string | null;
   canRebase: boolean;
   mergeMethod: PullRequestMergeMethod;
   onSelect?: ((reference: PullRequestRef) => void) | undefined;
@@ -85,6 +88,7 @@ export function PullRequestStackMenu({
   const mergeDisabled =
     pending ||
     stale ||
+    conflictsWith !== null ||
     selectedLayer?.state !== "open" ||
     mergeLayers.some((layer) => !layer.headSha) ||
     mergeHasClosed ||
@@ -212,7 +216,9 @@ export function PullRequestStackMenu({
                 <MenuSeparator />
                 {canMerge ? (
                   <MenuItem disabled={mergeDisabled} onClick={() => setConfirmation("merge")}>
-                    <PullRequestGlyph.merged aria-hidden />
+                    <span className="flex size-4 shrink-0 items-center">
+                      <PullRequestGlyph.merged aria-hidden className="size-4" />
+                    </span>
                     Merge stack ({mergeLayers.length})
                   </MenuItem>
                 ) : null}
@@ -221,11 +227,17 @@ export function PullRequestStackMenu({
                     disabled={rebaseDisabled}
                     onClick={() => setConfirmation("update-branch")}
                   >
-                    <RefreshCwIcon aria-hidden />
+                    <span className="flex size-4 shrink-0 items-center">
+                      <RefreshCwIcon aria-hidden className="size-4" />
+                    </span>
                     Rebase stack
                   </MenuItem>
                 ) : null}
-                {mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
+                {conflictsWith !== null ? (
+                  <p className="px-2 py-1 text-meta text-muted-foreground">
+                    Resolve the conflicts with {conflictsWith} before merging.
+                  </p>
+                ) : mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
                   <p className="px-2 py-1 text-meta text-muted-foreground">
                     Every layer being merged must be open and ready for review.
                   </p>
@@ -235,7 +247,10 @@ export function PullRequestStackMenu({
           </MenuPopup>
         </Menu>
       ) : null}
-      {display !== "trigger" && canMerge && selectedLayer?.state === "open" ? (
+      {display !== "trigger" &&
+      canMerge &&
+      conflictsWith === null &&
+      selectedLayer?.state === "open" ? (
         <Tooltip>
           <TooltipTrigger
             render={

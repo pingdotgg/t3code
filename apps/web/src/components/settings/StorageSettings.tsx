@@ -79,6 +79,7 @@ export function WorktreesDirectoryRow() {
       }
       control={
         <Input
+          size="settings"
           key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
           aria-label="Worktree location"
           autoCapitalize="none"
@@ -207,7 +208,8 @@ function RetentionControl({
         }}
       >
         <SelectTrigger
-          size="sm"
+          variant="well"
+          size="compact"
           aria-label={label}
           leadingIcon={<CalendarIcon />}
           className="w-auto min-w-36"
@@ -239,7 +241,7 @@ function RetentionControl({
           <InputGroupInput
             ref={input}
             autoFocus
-            size="sm"
+            size="settings"
             type="number"
             min={minimum}
             max={MAX_RETENTION_DAYS}
@@ -664,20 +666,6 @@ export function WorktreeCleanupSection({ title = "Cleanup" }: { title?: string }
         {(!isProjectScope || (!mixedModes && mode === "custom")) && (
           <>
             <SettingsRow
-              title="Delete worktrees with deleted threads"
-              status={ruleStatus("worktreeOnDelete")}
-              managedPaths={lockablePath("worktreeOnDelete")}
-              description="When every thread using the worktree is deleted."
-              serverScoped={!isProjectScope}
-              control={
-                <Switch
-                  aria-label="Delete worktrees with deleted threads"
-                  checked={settings.worktreeOnDelete}
-                  onCheckedChange={(worktreeOnDelete) => updateWorktree({ worktreeOnDelete })}
-                />
-              }
-            />
-            <SettingsRow
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
               managedPaths={lockablePath("worktreeOnMerge")}
@@ -688,6 +676,34 @@ export function WorktreeCleanupSection({ title = "Cleanup" }: { title?: string }
                   aria-label="Delete merged worktrees"
                   checked={settings.worktreeOnMerge}
                   onCheckedChange={(worktreeOnMerge) => updateWorktree({ worktreeOnMerge })}
+                />
+              }
+            />
+            <SettingsRow
+              title="Delete unchanged worktrees"
+              status={ruleStatus("worktreeUnchanged")}
+              managedPaths={lockablePath("worktreeUnchanged")}
+              description="No commits beyond the default branch."
+              serverScoped={!isProjectScope}
+              control={
+                <Switch
+                  aria-label="Delete unchanged worktrees"
+                  checked={settings.worktreeUnchanged}
+                  onCheckedChange={(worktreeUnchanged) => updateWorktree({ worktreeUnchanged })}
+                />
+              }
+            />
+            <SettingsRow
+              title="Delete worktrees with deleted threads"
+              status={ruleStatus("worktreeOnDelete")}
+              managedPaths={lockablePath("worktreeOnDelete")}
+              description="When every thread using the worktree is deleted."
+              serverScoped={!isProjectScope}
+              control={
+                <Switch
+                  aria-label="Delete worktrees with deleted threads"
+                  checked={settings.worktreeOnDelete}
+                  onCheckedChange={(worktreeOnDelete) => updateWorktree({ worktreeOnDelete })}
                 />
               }
             />
@@ -742,20 +758,6 @@ export function WorktreeCleanupSection({ title = "Cleanup" }: { title?: string }
                     }
                   />
                 )}
-              <SettingsRow
-                title="Delete unchanged worktrees"
-                status={ruleStatus("worktreeUnchanged")}
-                managedPaths={lockablePath("worktreeUnchanged")}
-                description="No commits beyond the default branch."
-                serverScoped={!isProjectScope}
-                control={
-                  <Switch
-                    aria-label="Delete unchanged worktrees"
-                    checked={settings.worktreeUnchanged}
-                    onCheckedChange={(worktreeUnchanged) => updateWorktree({ worktreeUnchanged })}
-                  />
-                }
-              />
               {connectedEnvironments.every(
                 (environment) =>
                   environment.serverConfig?.environment.capabilities.storageCleanupRun === true,
@@ -784,7 +786,11 @@ export function WorktreeCleanupSection({ title = "Cleanup" }: { title?: string }
                           updateWorktree({ worktreeKeepWhen: next });
                       }}
                     >
-                      <SelectTrigger size="sm" aria-label="Keep worktrees with local changes">
+                      <SelectTrigger
+                        variant="well"
+                        size="compact"
+                        aria-label="Keep worktrees with local changes"
+                      >
                         <SelectValue>
                           {ruleStatus("worktreeKeepWhen")
                             ? "Mixed"

@@ -246,7 +246,7 @@ export function AssistantSelectionToolbar({
       ref={attachToolbar}
       role="toolbar"
       aria-label="Selection actions"
-      className="fixed z-50 flex h-8 max-w-[calc(100vw-1rem)] items-center gap-0.5 rounded-project-icon surface-popover p-0.75"
+      className="fixed z-50 flex h-8 max-w-[calc(100vw-1rem)] items-center gap-0.5 rounded-project-icon surface-popover p-0.75 [--control-radius:var(--radius-row)]"
       style={{ left: selection.anchor.centerX, top: selection.anchor.top }}
       onPointerDown={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -258,7 +258,7 @@ export function AssistantSelectionToolbar({
       }}
     >
       {/* Cite is the toolbar's primary action, so it sits on the selected fill. */}
-      <span className={tooLong ? "flex" : "flex rounded-control surface-selected-soft"}>
+      <span className={tooLong ? "flex" : "flex rounded-row surface-selected-soft"}>
         <Button
           variant="ghost"
           size="xs"

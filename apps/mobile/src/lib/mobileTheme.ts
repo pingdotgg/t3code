@@ -331,6 +331,9 @@ export function createMobileThemeVariables(
 ) {
   const c = nativeColors(colors);
   const groupedCard = themeColorToNativeColor(groupedCardColor);
+  // Keep the sidebar hue used by web chrome, below the native content sheet in dark mode.
+  const chrome =
+    appearance === "dark" ? flattenThemeColor(withAlpha(c.sidebar, 0.55), "#000000") : c.toolbar;
   const textSurfaces = [
     c.canvas,
     c.surface,
@@ -407,13 +410,13 @@ export function createMobileThemeVariables(
     "--color-icon": c.text,
     "--color-icon-muted": c.iconMuted,
     "--color-icon-subtle": c.secondaryLabel,
-    "--color-header": withAlpha(c.toolbar, 0.97),
+    "--color-header": appearance === "dark" ? chrome : withAlpha(chrome, 0.97),
     "--color-header-foreground": c.toolbarForeground,
     "--color-header-border": c.toolbarBorder,
     "--color-glass-surface": withAlpha(c.surfaceOverlay, 0.74),
     "--color-glass-fallback": themeColorWithAlpha(groupedCard, appearance === "dark" ? 0.9 : 0.94),
     "--color-glass-tint": withAlpha(c.surfaceOverlay, 0.22),
-    "--color-status-bar": c.canvas,
+    "--color-status-bar": chrome,
     "--color-md-body": c.text,
     "--color-md-strong": c.text,
     "--color-md-link": themeColorWithContrast(c.messageAction, c.canvas),
@@ -453,10 +456,39 @@ export function getMobileThemeColors(
   appearance: MobileThemeAppearance,
 ): ThemeColors {
   if (themeId === DEFAULT_MOBILE_THEME_ID) {
-    return appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
+    return appearance === "dark"
+      ? {
+          ...T3_CODE_DARK_THEME_COLORS,
+          canvas: "#151515",
+          chrome: "#151515",
+          surface: "#1d1d1d",
+          surfaceRaised: "#1d1d1d",
+          surfaceOverlay: "#1d1d1d",
+          secondary: "#1d1d1d",
+          muted: "#1d1d1d",
+          border: "#242424",
+          textMuted: "#8a8a8a",
+          mutedForeground: "#8a8a8a",
+          secondaryLabel: "#8a8a8a",
+          iconMuted: "#8a8a8a",
+          messageSurface: "#1d1d1d",
+          messageAction: "#eeeeee",
+          messageActionForeground: "#111111",
+        }
+      : {
+          ...T3_CODE_LIGHT_THEME_COLORS,
+          messageAction: "#111111",
+          messageActionForeground: "#ffffff",
+        };
   }
   const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
-  return getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
+  const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
+  if (themeId === "t3-code-classic" && appearance === "dark") {
+    // Classic needs the same pane lift above its black chrome as on web.
+    const canvas = flattenThemeColor(themeColorWithAlpha(colors.canvas, 0.945), "#ffffff");
+    return { ...colors, canvas, chrome: canvas };
+  }
+  return colors;
 }
 
 export function getMobileThemeVariables(
@@ -466,24 +498,23 @@ export function getMobileThemeVariables(
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
   const groupedCard =
-    themeId === DEFAULT_MOBILE_THEME_ID
-      ? appearance === "light"
-        ? colors.toolbarControlHover
-        : colors.sidebarRowActive
-      : themeId === "t3-chat"
+    themeId === DEFAULT_MOBILE_THEME_ID && appearance === "dark"
+      ? colors.surface
+      : themeId === DEFAULT_MOBILE_THEME_ID || themeId === "t3-code-classic"
         ? appearance === "light"
-          ? colors.toolbarControl
-          : colors.surface
-        : colors.muted;
+          ? colors.toolbarControlHover
+          : colors.sidebarRowActive
+        : themeId === "t3-chat"
+          ? appearance === "light"
+            ? colors.toolbarControl
+            : colors.surface
+          : colors.muted;
   const mobileColors =
-    themeId === DEFAULT_MOBILE_THEME_ID
+    themeId === DEFAULT_MOBILE_THEME_ID && appearance === "light"
       ? {
           ...colors,
           messageSurface: flattenThemeColor(
-            themeColorWithAlpha(
-              appearance === "dark" ? colors.sidebarRowActive : colors.border,
-              0.3,
-            ),
+            themeColorWithAlpha(colors.border, 0.3),
             colors.messageSurface,
           ),
         }
@@ -494,7 +525,7 @@ export function getMobileThemeVariables(
     groupedCard,
     themeId === "t3-chat" && appearance === "dark"
       ? [colors.messageActionForeground, colors.messageAction]
-      : themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat"
+      : themeId !== "t3-chat"
         ? [colors.messageAction, colors.messageActionForeground]
         : undefined,
   );

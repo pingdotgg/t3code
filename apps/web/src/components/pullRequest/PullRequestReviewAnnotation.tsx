@@ -39,7 +39,11 @@ import {
   mergePullRequestThreadComments,
   visibleBody,
 } from "./pullRequestDetail.logic";
-import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPresentation";
+import {
+  AddToChatIconButton,
+  PullRequestActorAvatar,
+  PullRequestActorLabel,
+} from "./pullRequestPresentation";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -424,6 +428,13 @@ export function ReviewThreadCard({
                     onClick={() => setEditingId(comment.id)}
                   />
                 ) : null}
+                {index === 0 &&
+                onAddToChat &&
+                comments.some((comment) => visibleBody(comment.body) !== null) ? (
+                  <span className="ml-auto">
+                    <AddToChatIconButton onClick={() => onAddToChat({ ...thread, comments })} />
+                  </span>
+                ) : null}
               </div>
               {editingId === comment.id ? (
                 <PullRequestMarkdownEditor
@@ -661,7 +672,7 @@ export function ReviewThreadCard({
                       autoFocus
                       size="sm"
                       completionScope={completionScope}
-                      value={reply}
+                      value={speech.displayText}
                       placeholder="Reply…"
                       aria-label="Reply to this conversation"
                       onValueChange={setReply}

@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
+import { isScrollingWorkspaceCommand } from "../../layout/layoutBehavior";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -24,6 +25,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
+  | "/settings/layout"
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
@@ -74,6 +76,8 @@ export interface SettingsSearchItem {
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  /** Hidden until Labs › Scrolling workspaces is on. */
+  readonly scrollingWorkspacesOnly?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -89,6 +93,7 @@ export interface SettingsSearchAvailability {
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
+  readonly scrollingWorkspaces?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
 }
 
@@ -99,6 +104,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": msg("Appearance"),
   "/settings/chat": msg("Chat"),
   "/settings/diffs": msg("Diffs & pull requests"),
+  "/settings/layout": msg("Layout"),
   "/settings/keybindings": msg("Keybindings"),
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
@@ -130,6 +136,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/general",
       "/settings/appearance",
+      "/settings/layout",
       "/settings/chat",
       "/settings/diffs",
       "/settings/keybindings",
@@ -182,6 +189,7 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
     to: "/settings/keybindings" as const,
     searchTerms: [command, ...defaultKeys],
     secondary: true,
+    ...(isScrollingWorkspaceCommand(command) ? { scrollingWorkspacesOnly: true } : {}),
     ...(defaultKeys.length === 0 ? { targetId: "keybindings" } : {}),
   };
 });
@@ -308,6 +316,54 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "layout-template",
+    title: "Your layout",
+    to: "/settings/layout",
+    searchTerms: [
+      "layout panes split columns template chat terminal diff files browser drag resize",
+    ],
+  },
+  {
+    id: "layout-terminal-placement",
+    title: "Terminal",
+    to: "/settings/layout",
+    searchTerms: ["terminal placement where cmd+j opens it below the chat new tab new column"],
+  },
+  {
+    id: "layout-side-pane-placement",
+    title: "Side pane",
+    to: "/settings/layout",
+    searchTerms: ["side pane placement diff files browser pull request beside the chat new column"],
+  },
+  {
+    id: "layout-side-pane-opens-on",
+    title: "Side pane opens on",
+    to: "/settings/layout",
+    searchTerms: ["side pane first tab last used diff files browser pull request"],
+  },
+  {
+    id: "layout-new-tab-position",
+    title: "New tabs",
+    to: "/settings/layout",
+    searchTerms: ["where new tabs open after the current tab at the end cmd+t"],
+  },
+  {
+    id: "layout-when-no-room",
+    title: "When it doesn't fit",
+    to: "/settings/layout",
+    searchTerms: ["no room shrink then scroll always shrink always scroll strip columns width"],
+    scrollingWorkspacesOnly: true,
+  },
+  {
+    id: "layout-three-finger-swipe",
+    title: "Three-finger swipe",
+    to: "/settings/layout",
+    searchTerms: ["trackpad gesture swipe between pages column workspace"],
+    desktopOnly: true,
+    macOnly: true,
+    scrollingWorkspacesOnly: true,
+  },
+  {
     id: "color-scheme",
     title: "Appearance mode",
     to: "/settings/appearance",
@@ -318,7 +374,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "theme",
     title: "Themes",
     to: "/settings/appearance",
-    searchTerms: ["appearance colors palette custom import export download"],
+    searchTerms: ["appearance colors palette custom import export download t3 code classic old"],
     targetId: "appearance",
   },
   {
@@ -364,7 +420,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "surface-style",
     title: "Style",
     to: "/settings/appearance",
-    searchTerms: ["surface buttons composer toned aqua gradient rim flat soft gloss blue"],
+    searchTerms: [
+      "surface buttons composer finish standard flat soft gloss glossy accent outline aqua gradient rim",
+    ],
   },
   {
     id: "panel-animations",
@@ -470,6 +528,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Working section"),
     to: "/settings/general",
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
+  },
+  {
+    id: "scrolling-workspaces",
+    title: "Scrolling workspaces",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta labs niri strip scroll sideways workspaces overview layout tour swipe panes shrink",
+    ],
   },
   {
     id: "boring-sidebar",
@@ -1390,6 +1456,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,
+  "/settings/layout": null,
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
@@ -1532,7 +1599,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.scrollingWorkspacesOnly || availability.scrollingWorkspaces === true),
   );
 }
 

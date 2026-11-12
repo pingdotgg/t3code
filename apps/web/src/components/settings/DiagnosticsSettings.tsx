@@ -89,7 +89,7 @@ function StatTooltip({ label, children }: { label: string; children: ReactNode }
         render={
           <button
             type="button"
-            className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-dim-foreground hover:text-foreground"
+            className="inline-flex size-3.5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-dim-foreground outline-none hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring"
             aria-label={`${label} details`}
           >
             <InfoIcon className="size-3" />
@@ -1027,9 +1027,12 @@ function DiagnosticsSettingsBody() {
 
       <SettingsSection
         title="Trace diagnostics"
+        className="max-sm:[&>[data-settings-scroll-target]]:flex-wrap max-sm:[&>[data-settings-scroll-target]]:gap-2"
         headerAction={
-          <div className="flex items-center gap-1.5">
-            <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
+          <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
+            <span className="max-sm:basis-full sm:contents">
+              <DiagnosticsLastChecked checkedAt={data?.readAt ?? null} />
+            </span>
             <Button
               size="xs"
               variant="secondary"
@@ -1250,9 +1253,7 @@ function DiagnosticsSettingsBody() {
                   </span>
                 </td>
                 <td className="px-3 py-3 align-top">
-                  <div className="truncate font-medium text-strong-foreground">
-                    {event.spanName}
-                  </div>
+                  <div className="truncate text-meta text-strong-foreground">{event.spanName}</div>
                   <div className="mt-0.5 text-dim-foreground">
                     <TraceIdCell traceId={event.traceId} />
                   </div>

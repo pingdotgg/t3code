@@ -14,19 +14,16 @@ import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entiti
 import { useEnvironments } from "~/state/environments";
 import {
   applyPullRequestOverrides,
+  displayPullRequestGroups,
   findProjectForRepository,
   findScopedProject,
   matchesPullRequestFilters,
-  pullRequestDiffStatKey,
   pullRequestEntryKey,
   pullRequestEntryViewer,
   pullRequestEnvironmentSetKey,
   pullRequestHostActions,
   resolveProjectScope,
-  resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
-  sortPullRequestGroups,
-  withDiffStat,
   type EnvironmentPullRequestEntry,
   type MergedPullRequestList,
   type PullRequestDiffStats,
@@ -39,8 +36,13 @@ import {
   pullRequestProjectQueries,
   type PullRequestHostAvailability,
 } from "./pullRequestProjectAssignment.logic";
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
+import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
+import {
+  pullRequestFilterProjects,
+  pullRequestProjectFilterQueries,
+} from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
+import { SORT_OPTIONS } from "./pullRequestListOptions";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly selectedUrl?: string;
@@ -87,8 +89,20 @@ export function usePullRequestScope(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
   const scopedProjectId = resolveProjectScope(search.projectId, projects, projectsKnown);
-  const scopedProject = findScopedProject(projects, scopedEnvironmentId, scopedProjectId);
-  const scopedProjects = pullRequestFilterProjects(projects, environmentLabels, scopedProject);
+  const scopedProject = findScopedProject(
+    projects,
+    search.projectEnvironmentId ?? scopedEnvironmentId,
+    scopedProjectId,
+  );
+  const sidebarProjectGroups = useSidebarProjectGroups();
+  const scopedProjects = pullRequestFilterProjects(
+    projects,
+    sidebarProjectGroups.map((group) => ({
+      label: group.displayName,
+      memberProjectRefs: group.memberProjectRefs,
+    })),
+    scopedProject,
+  );
 
   const selectedHost = search.selectedHost ?? search.host;
   // A named server still connecting is kept named rather than falling back: falling back while it
@@ -114,13 +128,17 @@ export function usePullRequestScope(
     linkedProjectId === undefined && search.repository !== undefined
       ? projectForRepository
       : findScopedProject(projects, selectedEnvironmentId, linkedProjectId ?? scopedProjectId);
-  const queryEnvironmentIds = resolveQueryEnvironmentIds(
+  const selectedQueries = pullRequestProjectFilterQueries(
+    scopedProjects,
     environmentIds,
-    projects,
-    scopedProject,
-    scopedProjectId,
-    projectsKnown,
+    scopedProjectId === undefined
+      ? undefined
+      : {
+          id: scopedProjectId,
+          environmentId: scopedProject?.environmentId ?? search.projectEnvironmentId,
+        },
   );
+  const queryEnvironmentIds = selectedQueries.map((query) => query.environmentId);
   const queriesFor = (
     availability?: PullRequestHostAvailability,
   ): ReadonlyArray<{
@@ -128,7 +146,8 @@ export function usePullRequestScope(
     readonly projectIds?: ReadonlyArray<ProjectId>;
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
-    if (!projectsKnown || scopedProjectId !== undefined) return plain;
+    if (!projectsKnown) return plain;
+    if (scopedProjectId !== undefined) return selectedQueries;
     return pullRequestProjectQueries(projects, queryEnvironmentIds, availability);
   };
   const environmentQueries = queriesFor(hostAvailability);
@@ -237,6 +256,7 @@ export function usePullRequestDisplayGroups({
   host,
   groups,
   statsByRow,
+  sortStatsByRow,
   overrides,
   state,
   localFilters,
@@ -250,6 +270,7 @@ export function usePullRequestDisplayGroups({
   host: string | undefined;
   groups: ReadonlyArray<PullRequestGroup<EnvironmentPullRequestEntry>>;
   statsByRow: PullRequestDiffStats;
+  sortStatsByRow: PullRequestDiffStats;
   overrides: ReadonlyMap<string, PullRequestListOverride>;
   state: PullRequestListState;
   localFilters: PullRequestListFilters;
@@ -276,7 +297,7 @@ export function usePullRequestDisplayGroups({
   const displayGroups = (() => {
     const enriched = groups.map((group) => {
       const overridden = applyPullRequestOverrides(
-        group.entries.map((entry) => withDiffStat(entry, statsByRow)),
+        group.entries,
         overrides,
         pullRequestEntryKey,
         state,
@@ -297,14 +318,7 @@ export function usePullRequestDisplayGroups({
             : overridden,
       };
     });
-    return sortPullRequestGroups(
-      enriched,
-      sort,
-      text,
-      (entry) =>
-        entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
-      involvement,
-    );
+    return displayPullRequestGroups(enriched, sort, text, statsByRow, sortStatsByRow, involvement);
   })();
   const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
   const hostActionsOf = pullRequestHostActions(hosts);
@@ -328,5 +342,81 @@ export function usePullRequestDisplayGroups({
     hostActionsOf,
     closeSweepRows,
     listedPullRequestsBySurface,
+  };
+}
+
+const MAX_SEARCH_LABEL_CANDIDATES = 100;
+
+function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch, "labels">> {
+  const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
+    0,
+    MAX_SEARCH_LABEL_CANDIDATES,
+  );
+  const labels: Array<string> = [];
+  const seen = new Set<string>();
+  for (const rawValue of values) {
+    if (typeof rawValue !== "string") continue;
+    const value = rawValue.trim().slice(0, 200);
+    const key = value.toLowerCase();
+    if (value.length === 0 || seen.has(key)) continue;
+    labels.push(value);
+    seen.add(key);
+    if (labels.length === 10) break;
+  }
+  return labels.length === 0 ? {} : { labels };
+}
+
+export function validatePullRequestsSearch(raw: Record<string, unknown>): PullRequestsSearch {
+  return {
+    ...(typeof raw.selectedUrl === "string" ? { selectedUrl: raw.selectedUrl.slice(0, 4096) } : {}),
+    involvement:
+      raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
+    state:
+      raw.state === "closed" || raw.state === "merged" || raw.state === "all" ? raw.state : "open",
+    ...(SORT_OPTIONS.some((option) => option.value === raw.sort)
+      ? { sort: raw.sort as PullRequestListSort }
+      : {}),
+    ...(typeof raw.repository === "string" && raw.repository
+      ? { repository: raw.repository.slice(0, 200) }
+      : {}),
+    ...(typeof raw.number === "number" && Number.isInteger(raw.number) && raw.number > 0
+      ? { number: raw.number }
+      : {}),
+    ...(typeof raw.projectId === "string" && raw.projectId
+      ? { projectId: raw.projectId as ProjectId }
+      : {}),
+    ...(typeof raw.environmentId === "string" && raw.environmentId
+      ? { environmentId: raw.environmentId as EnvironmentId }
+      : {}),
+    ...(typeof raw.projectEnvironmentId === "string" && raw.projectEnvironmentId
+      ? { projectEnvironmentId: raw.projectEnvironmentId as EnvironmentId }
+      : {}),
+    ...(typeof raw.host === "string" && raw.host ? { host: raw.host.slice(0, 200) } : {}),
+    ...(typeof raw.selectedProjectId === "string" && raw.selectedProjectId
+      ? { selectedProjectId: raw.selectedProjectId as ProjectId }
+      : {}),
+    ...(typeof raw.selectedHost === "string" && raw.selectedHost
+      ? { selectedHost: raw.selectedHost.slice(0, 200) }
+      : {}),
+    ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
+      ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
+      : {}),
+    // Keep every query as text and always own the key so an unvalidated parent value cannot leak.
+    q:
+      raw.q !== undefined && raw.q !== null && raw.q !== ""
+        ? (typeof raw.q === "string" ? raw.q : JSON.stringify(raw.q)).slice(0, 200)
+        : undefined,
+    ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
+    ...(raw.review === "approved" ||
+    raw.review === "changes-requested" ||
+    raw.review === "review-required" ||
+    raw.review === "none"
+      ? { review: raw.review }
+      : {}),
+    ...(raw.checks === "passing" || raw.checks === "failing" ? { checks: raw.checks } : {}),
+    ...(typeof raw.author === "string" && raw.author.trim()
+      ? { author: raw.author.trim().slice(0, 200) }
+      : {}),
+    ...pullRequestSearchLabels(raw.labels),
   };
 }

@@ -26,10 +26,27 @@ import { Separator } from "../ui/separator";
 import { Toggle } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+// The row widths below which the controls fold into the overflow menu.
+const FOLD_CLASSES = {
+  sm: {
+    row: "hidden items-center gap-1 @sm/diff-toolbar:flex",
+    menu: "flex @sm/diff-toolbar:hidden",
+  },
+  md: {
+    row: "hidden items-center gap-1 @md/diff-toolbar:flex",
+    menu: "flex @md/diff-toolbar:hidden",
+  },
+  "2xl": {
+    row: "hidden items-center gap-1 @2xl/diff-toolbar:flex",
+    menu: "flex @2xl/diff-toolbar:hidden",
+  },
+} as const;
+
 /**
  * The view controls every diff surface shares: layout, wrap, whitespace, file tree and fold-all.
  * Place it inside an `@container/diff-toolbar` row: narrow rows keep the layout toggle and move
  * the rest into an overflow menu.
+ * A row whose other content needs the room folds below `2xl`.
  */
 export function DiffViewControls({
   diffLayout,
@@ -38,6 +55,7 @@ export function DiffViewControls({
   ignoreWhitespace,
   onIgnoreWhitespaceChange,
   hasFiles,
+  foldBelow = "sm",
   fileTreeOpen,
   onFileTreeOpenChange,
   allFilesCollapsed,
@@ -54,6 +72,7 @@ export function DiffViewControls({
   onIgnoreWhitespaceChange: (ignoreWhitespace: boolean) => void;
   /** Fold-all and the file tree only mean something once there are files. */
   hasFiles: boolean;
+  foldBelow?: keyof typeof FOLD_CLASSES;
   fileTreeOpen: boolean;
   onFileTreeOpenChange: (open: boolean) => void;
   allFilesCollapsed: boolean;
@@ -69,9 +88,10 @@ export function DiffViewControls({
     }
   };
 
+  const fold = FOLD_CLASSES[foldBelow];
   return (
     <>
-      <div className="hidden items-center gap-1 @sm/diff-toolbar:flex">
+      <div className={fold.row}>
         {refresh && (
           <Tooltip>
             <TooltipTrigger
@@ -137,7 +157,7 @@ export function DiffViewControls({
           </TooltipPopup>
         </Tooltip>
       </div>
-      <div className="hidden items-center gap-1 @sm/diff-toolbar:flex">
+      <div className={fold.row}>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -220,7 +240,7 @@ export function DiffViewControls({
           </Tooltip>
         )}
       </div>
-      <div className="flex @sm/diff-toolbar:hidden">
+      <div className={fold.menu}>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="icon-sm" variant="ghost" />}

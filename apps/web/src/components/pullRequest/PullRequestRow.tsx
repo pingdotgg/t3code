@@ -187,7 +187,7 @@ export const PAGE_ROW_CLASS = "gap-3 rounded-lg px-3 py-2.5 [contain-intrinsic-b
 /** How a page row, and a folded stack, answers the pointer and the keyboard. */
 export const PAGE_ROW_HOVER_CLASS = "hover:surface-ghost-hover";
 export const PAGE_ROW_PRESS_CLASS =
-  "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 /** The first line's diff counts, in the mono the numbers line up in. */
 export const PAGE_DIFF_STAT_CLASS = "font-mono text-2xs";
@@ -367,7 +367,7 @@ function PullRequestRowImpl({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span className="min-w-12 truncate font-mono text-caption text-dim-foreground" />
+                    <span className="min-w-12 truncate font-mono text-caption text-dim-foreground max-sm:flex-1" />
                   }
                 >
                   {entry.headBranch}

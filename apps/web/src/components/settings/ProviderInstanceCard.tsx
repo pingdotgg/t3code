@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { Fragment, useState, type ReactElement, type ReactNode } from "react";
+import { Fragment, useId, useState, type ReactElement, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
@@ -289,7 +289,8 @@ function ProviderEnvironmentFieldRow(props: {
   readonly managedReason?: string | undefined;
   readonly secretSources: ReadonlyArray<SecretSource>;
 }) {
-  const inputId = `${props.idPrefix}-environment-${props.field.name}`;
+  const id = useId();
+  const inputId = `${props.idPrefix}-${id}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
 
   return (
@@ -302,7 +303,7 @@ function ProviderEnvironmentFieldRow(props: {
           {props.field.sensitive === false ? (
             <DraftInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               autoComplete="off"
               value={typeof value === "string" ? value : ""}
@@ -313,7 +314,7 @@ function ProviderEnvironmentFieldRow(props: {
           ) : (
             <SecretSourceInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               value={value}
               onCommit={(next) => props.onCommit(props.field, next)}
@@ -1162,7 +1163,7 @@ export function ProviderInstanceCard({
             </Text>
             {enabled && !updateProgress ? statusDotNode : null}
             {versionLabel ? (
-              <code className="shrink-0 font-mono text-caption text-dim-foreground">
+              <code className="shrink-0 font-mono text-meta text-dim-foreground">
                 {versionLabel}
               </code>
             ) : null}
@@ -1342,7 +1343,7 @@ export function ProviderInstanceCard({
                 />
                 <DraftInput
                   id={`provider-instance-${instanceId}-display-name`}
-                  size="sm"
+                  size="settings"
                   className="min-w-0 flex-1 @min-[26rem]/settings-row:w-50"
                   value={instance.displayName ?? ""}
                   onCommit={updateDisplayName}

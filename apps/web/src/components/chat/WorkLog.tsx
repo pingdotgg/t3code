@@ -27,7 +27,7 @@ export function WorkLogBlock({
 }
 
 export function WorkLogList({ children }: { children: ReactNode }) {
-  return <div className="flex min-w-0 flex-col gap-1">{children}</div>;
+  return <div className="flex min-w-0 flex-col gap-1 ps-4">{children}</div>;
 }
 
 type RowContent = {
@@ -105,7 +105,7 @@ export function WorkLogTarget({ children, mono = false }: { children: ReactNode;
 }
 
 const interactionClassName =
-  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
+  "cursor-pointer hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 function rowClassName(interactive: boolean) {
   return cn(
@@ -155,7 +155,7 @@ export function WorkLogDetails({
   followLive = false,
 }: {
   children: ReactNode;
-  kind?: "text" | "panel" | "media";
+  kind?: "text" | "panel";
 
   followLive?: boolean;
 }) {
@@ -168,7 +168,7 @@ export function WorkLogDetails({
       scroller.scrollTop = scroller.scrollHeight;
     }
   });
-  // Text, panel edges and media start on the row's label line.
+  // Text and panel edges start on the row's label line.
   return (
     <div
       ref={scrollerRef}
@@ -180,9 +180,7 @@ export function WorkLogDetails({
         "ms-7.5 cursor-auto",
         kind === "text"
           ? "flex max-h-96 flex-col gap-3 overflow-auto pe-0.5 py-1 select-text"
-          : kind === "panel"
-            ? "mt-0.5 mb-1.5 pb-2"
-            : "mt-1",
+          : "mt-0.5 mb-1.5 pb-2",
       )}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}

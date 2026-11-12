@@ -49,9 +49,7 @@ import {
   deriveTimelineEntriesFromVisibleTurnItems,
 } from "../../session-logic";
 import type { Root } from "mdast";
-import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
-import { TimelineRowCtx } from "./timelineRowContext";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
@@ -278,6 +276,39 @@ it("keeps collapsed approval shortcuts and disabled cancel actions inert", async
 });
 
 describe("MessagesTimeline work rows", () => {
+  it("does not rerender settled resource rows when the active answer streams", async () => {
+    const runId = RunId.make("streaming-run");
+    const resource: Entry = {
+      kind: "html-render",
+      id: "settled-resource",
+      createdAt: CREATED_AT,
+      runId: null,
+      htmlRender: { attachmentId: "visual", title: "Settled visual", height: 80 },
+    };
+    const renderHtmlRender = vi.fn(() => <span>Settled visual</span>);
+    const props = {
+      ...baseProps(),
+      isWorking: true,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+      renderHtmlRender,
+    };
+    const entries = (text: string) => [
+      resource,
+      message("Continue", { runId }),
+      message(text, { role: "assistant", runId, streaming: true }, "answer"),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries("First chunk")} />,
+    );
+    await expect.element(screen.getByText("First chunk", { exact: true })).toBeVisible();
+    renderHtmlRender.mockClear();
+    await screen.rerender(
+      <MessagesTimeline {...props} timelineEntries={entries("Second chunk")} />,
+    );
+    await expect.element(screen.getByText("Second chunk", { exact: true })).toBeVisible();
+    expect(renderHtmlRender).not.toHaveBeenCalled();
+  });
+
   it("keeps a tall HTML preview in place when its last accordion opens at the bottom", async () => {
     const props = baseProps();
     const html = injectHtmlRenderBootstrap(`<div style="height:1400px">Earlier preview content</div>
@@ -711,6 +742,44 @@ describe("MessagesTimeline work rows", () => {
 });
 
 describe("MessagesTimeline messages", () => {
+  it.each([0.98, 1.02])("keeps row sizes in layout pixels at scale %s", async (scale) => {
+    const props = baseProps();
+    const entries = [
+      message("A paragraph that wraps across the conversation. ".repeat(100), {
+        role: "assistant",
+      }),
+      message("The next prompt", {}, "next-prompt"),
+    ];
+    const timeline = (resolvedTheme: "light" | "dark") => (
+      <MessagesTimeline {...props} timelineEntries={entries} resolvedTheme={resolvedTheme} />
+    );
+    await using screen = await renderElement(timeline("light"));
+    const first = screen.container.querySelector<HTMLElement>("[data-timeline-row-id]")!;
+    const next = screen.container.querySelector<HTMLElement>(
+      '[data-timeline-row-id="entry-next-prompt"]',
+    )!;
+    const height = first.getBoundingClientRect().height;
+    await vi.waitFor(() =>
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBe(Math.round(height)),
+    );
+    await new Promise<void>((resolve) => {
+      const observer = new ResizeObserver(() => {
+        observer.disconnect();
+        resolve();
+      });
+      observer.observe(first);
+    });
+    screen.container.style.transform = `scale(${scale})`;
+    await screen.rerender(timeline("dark"));
+    screen.container.style.transform = "";
+    await vi.waitFor(() => {
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBe(Math.round(height));
+      expect(
+        Math.abs(next.getBoundingClientRect().top - first.getBoundingClientRect().bottom),
+      ).toBeLessThanOrEqual(1);
+    });
+  });
+
   it("settles when equally long messages have very different rendered heights", async () => {
     const props = baseProps();
     const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");
@@ -1400,6 +1469,7 @@ describe("MessagesTimeline citations", () => {
       attemptOrdinal: ordinal,
       rootNodeId: `node-${id}` as never,
       status,
+      startedAt: null,
       completedAt: null,
     });
     const superseded = attempt("attempt-1", 1, "superseded");
@@ -1482,12 +1552,59 @@ describe("MessagesTimeline automation prompts", () => {
     expect(screen.button(/^Automation/).textContent).toContain("Triage the inbox");
   });
 
-  it("leaves ordinary user messages as full bubbles", async () => {
-    setup();
-    await using screen = await renderTimeline([message(AUTOMATION_PROMPT)]);
-    expect(screen.buttons(/^Automation/)).toHaveLength(0);
-    expect(screen.text()).toContain("Label every new issue and close duplicates.");
-  });
+  it.each([undefined, "model", "effort", "failed", "queued"] as const)(
+    "keeps a %s switch note under the full user bubble",
+    async (change) => {
+      setup();
+      const entry = {
+        ...message(AUTOMATION_PROMPT),
+        ...(change
+          ? {
+              projectedItem: v2Item("user_message", {
+                status: change === "failed" ? "failed" : "completed",
+                inputIntent: change === "queued" ? "queued_turn" : "turn_start",
+                modelSwitch: {
+                  from: {
+                    instanceId: "codex",
+                    model: "before",
+                    options: [{ id: "reasoningEffort", value: "low" }],
+                  },
+                  to: {
+                    instanceId: "codex",
+                    model: change === "effort" ? "before" : "after",
+                    options: [{ id: "reasoningEffort", value: "high" }],
+                  },
+                },
+              }),
+            }
+          : {}),
+      };
+      await using screen = await renderTimeline([entry]);
+      expect(screen.buttons(/^Automation/)).toHaveLength(0);
+      expect(screen.text()).toContain("Label every new issue and close duplicates.");
+      const note = screen.container.querySelector<HTMLElement>("[data-model-switch-note]");
+      if (!change) {
+        expect(note).toBeNull();
+        return;
+      }
+      expect(note?.textContent).toBe(
+        change === "effort" ? "low → high" : "before low → after high",
+      );
+      if (change === "failed")
+        await expect.element(screen.getByText("failed", { exact: true })).toBeVisible();
+      const bubble = screen.container.querySelector<HTMLElement>(".surface-bubble")!;
+      const row = bubble.closest<HTMLElement>('[data-timeline-row-kind="message"]')!;
+      expect(row.contains(note)).toBe(true);
+      expect(bubble.contains(note)).toBe(false);
+      expect(note!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        bubble.getBoundingClientRect().bottom,
+      );
+      const before = row.getBoundingClientRect().height;
+      await userEvent.hover(bubble);
+      expect(row.getBoundingClientRect().height).toBe(before);
+      expect(screen.buttons("Copy message")).toHaveLength(1);
+    },
+  );
 
   it("reveals a find match beyond the folded automation prompt's initial viewport", async () => {
     setup();
@@ -1835,44 +1952,6 @@ describe("MessagesTimeline attachments", () => {
       void props.listRef.current!.scrollToIndex({ index: 20, animated: false });
     });
     await vi.waitFor(() => expect(one!.isConnected).toBe(false));
-  });
-
-  it("opens a viewed image as a gallery of the images beside it", async () => {
-    stubbedAsset.url =
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-    onTestFinished(() => {
-      stubbedAsset.url = "";
-    });
-    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
-    await using screen = await renderElement(
-      <TimelineRowCtx
-        value={
-          {
-            threadRef: { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("thread-1") },
-            workspaceRoot: "/repo",
-            onImageExpand,
-          } as never
-        }
-      >
-        <ViewedImagesTimelineRow
-          row={{
-            kind: "viewed-images",
-            id: "viewed",
-            createdAt: CREATED_AT,
-            paths: ["/repo/first.png", "/repo/second.png", "/repo/third.png"],
-          }}
-        />
-      </TimelineRowCtx>,
-    );
-    await screen.getByRole("button", { name: "Preview second.png" }).click();
-    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        index: 1,
-        images: ["first.png", "second.png", "third.png"].map((name) =>
-          expect.objectContaining({ name }),
-        ),
-      }),
-    );
   });
 });
 
@@ -2606,26 +2685,6 @@ describe("MessagesTimeline work rows", () => {
         .toHaveAttribute("aria-expanded", "true");
     },
   );
-
-  it("stops showing Thinking in the working window when the provider turn ends", async () => {
-    const runId = RunId.make("ended-provider-run");
-    const props = {
-      ...baseProps(),
-      timelineEntries: [message("Continue the queue", { runId })],
-      isWorking: true,
-      activeTurnInProgress: true,
-      activeTurnStartedAt: CREATED_AT,
-      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
-    };
-    await using screen = await renderElement(<MessagesTimeline {...props} />);
-    expect(screen.text()).toContain("Thinking");
-
-    await screen.rerender(
-      <MessagesTimeline {...props} latestRun={{ ...props.latestRun, turnEnded: true }} />,
-    );
-    expect(screen.text()).not.toContain("Thinking");
-    expect(screen.text()).toContain("Working for");
-  });
 
   it("updates reset labels across midnight and expires snooze at the deadline", async () => {
     const now = new Date(2026, 9, 18, 23, 59, 30);

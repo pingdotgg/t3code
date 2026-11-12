@@ -203,7 +203,7 @@ function ThreadRowContext({
         render={
           <span
             tabIndex={0}
-            className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption"
+            className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >
@@ -245,6 +245,7 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           <span
             className={cn(
               "flex min-w-0 items-center gap-1.5",
+              !stacked && "shrink-0",
               MENU_ROW_TEXT_CLASS,
               "text-foreground in-data-[active=true]:text-strong-foreground",
             )}
@@ -257,7 +258,12 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           ) : item.matchHint ? (
             <SearchMatchHintLine hint={item.matchHint} />
           ) : item.description ? (
-            <span className="min-w-0 text-dim-foreground text-meta font-normal">
+            <span
+              className={cn(
+                "min-w-0 text-dim-foreground text-meta font-normal",
+                !stacked && "truncate",
+              )}
+            >
               {item.description}
             </span>
           ) : null}

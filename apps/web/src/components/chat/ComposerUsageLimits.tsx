@@ -10,6 +10,7 @@ import {
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   collectLimitAccounts,
+  collectLimitPools,
   collectProviderUsageLimits,
   formatResetsIn,
   formatRunsOutIn,
@@ -297,15 +298,14 @@ function UsageLimitsAccounts({
   );
 }
 
-/**
- * The session a low-limit notice watches: the selected instance's own account
- * when it reports, else the tightest account of that driver a hub reports.
- */
+/** The governing limit for the selected model, pooled across reported accounts. */
 export interface LowLimitSignal {
-  /** Dismissals last until this window resets. */
+  /** The watched window; a dismissal lasts until that window resets. */
   readonly key: string;
   readonly driver: ServerProvider["driver"];
   readonly window: ServerProviderUsageWindow;
+  /** When the usage was read. */
+  readonly checkedAt: string;
 }
 
 /** The session window an instance reports for its own signed-in account. */
@@ -333,35 +333,92 @@ export function resolveLowLimitSignal(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   environmentId: EnvironmentId,
+  model?: string,
+  now = Date.now(),
 ): LowLimitSignal | null {
   if (!provider) return null;
-  const tightest =
-    ownSessionLimit(provider) ??
-    tightestSessionLimit(
-      collectLimitAccounts(
-        new Map([
-          [
-            environmentId,
-            {
-              entry: { target: { label: "" } },
-              serverConfig: { providers, usageLimitSources: sources },
-            },
-          ],
-        ]),
+  const accounts = collectLimitAccounts(
+    new Map([
+      [
+        environmentId,
+        {
+          entry: { target: { label: "" } },
+          serverConfig: { providers, usageLimitSources: sources },
+        },
+      ],
+    ]),
+  ).filter((account) => account.driver === provider.driver);
+  const active = accounts.map((account) => ({
+    ...account,
+    limits: {
+      ...account.limits,
+      windows: account.limits.windows.filter(
+        (window) => !window.resetsAt || !(Date.parse(window.resetsAt) <= now),
       ),
-      provider.driver,
-    );
-  if (!tightest || !isLowLimit(tightest.window)) return null;
+    },
+  }));
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const selected = `_${normalize(model ?? "")}_`;
+  const scoped = new Set(
+    active
+      .flatMap((account) => account.limits.windows)
+      .filter(
+        (window) =>
+          provider.driver === "claudeAgent" &&
+          window.id.startsWith("seven_day_") &&
+          selected.includes(`_${window.id.slice("seven_day_".length)}_`),
+      )
+      .map((window) => window.id),
+  );
+  const applicable = active.map((account) => ({
+    ...account,
+    limits: {
+      ...account.limits,
+      windows: account.limits.windows.filter(
+        (window) =>
+          provider.driver !== "claudeAgent" ||
+          (window.id.startsWith("seven_day_")
+            ? scoped.has(window.id)
+            : window.id !== "seven_day" || scoped.size === 0),
+      ),
+    },
+  }));
+  const pool = collectLimitPools(applicable, now)[0];
+  const pooled = pool?.windows.toSorted(
+    (left, right) => left.remainingPercent - right.remainingPercent,
+  )[0];
+  const single = accounts.length <= 1 ? ownSessionLimit(provider) : null;
+  const window: ServerProviderUsageWindow | undefined =
+    single?.window ??
+    (pooled
+      ? {
+          id: pooled.id,
+          kind: pooled.kind,
+          label: pooled.label,
+          usedPercent: 100 - pooled.remainingPercent,
+          resetsAt: pooled.resets[0]?.member.window.resetsAt,
+        }
+      : undefined);
+  // Pool members are read together; the newest read is the one that can show a new window.
+  const checkedAt =
+    single?.account.limits.checkedAt ??
+    active
+      .map((account) => account.limits.checkedAt)
+      .toSorted()
+      .at(-1);
+  if (
+    !window ||
+    !checkedAt ||
+    !isLowLimit(window) ||
+    (window.resetsAt && Date.parse(window.resetsAt) <= now)
+  )
+    return null;
   return {
-    key: [
-      environmentId,
-      provider.instanceId,
-      tightest.account.key,
-      tightest.window.id,
-      tightest.window.resetsAt ?? "",
-    ].join("\u0000"),
+    // Which account is tightest and its reported reset time both shift between usage reads.
+    key: [environmentId, provider.instanceId, window.id].join("\u0000"),
     driver: provider.driver,
-    window: tightest.window,
+    window,
+    checkedAt,
   };
 }
 
@@ -392,12 +449,29 @@ export function resolveLowLimitSwitchTarget(
   return candidates[0]?.provider ?? null;
 }
 
-// Session-scoped so a remount does not bring a dismissed notice back before
-// its window resets.
-const dismissedLowLimitKeys = new Set<string>();
+/** Each dismissed window's reset time, by signal key. */
+export type LowLimitDismissals = ReadonlyMap<string, number | null>;
 
-export function isLowLimitDismissed(key: string): boolean {
-  return dismissedLowLimitKeys.has(key);
+// Session-scoped so a remount does not bring a dismissed notice back before its window resets.
+let sessionLowLimitDismissals: LowLimitDismissals = new Map();
+
+export function readLowLimitDismissals(): LowLimitDismissals {
+  return sessionLowLimitDismissals;
+}
+
+function resetAt(window: ServerProviderUsageWindow): number | null {
+  const at = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
+  return Number.isFinite(at) ? at : null;
+}
+
+export function isLowLimitDismissed(
+  dismissals: LowLimitDismissals,
+  signal: LowLimitSignal,
+): boolean {
+  if (!dismissals.has(signal.key)) return false;
+  const dismissedResetAt = dismissals.get(signal.key) ?? null;
+  // Judged by when the usage was read, not the clock: a later read is what can show a new window.
+  return dismissedResetAt === null || Date.parse(signal.checkedAt) < dismissedResetAt;
 }
 
 /** Ticks once a minute; the rest of the composer does not re-render with it. */
@@ -484,7 +558,7 @@ export function lowLimitBannerItem({
   readonly switchTarget: ServerProvider | null;
   readonly onSwitch: (provider: ServerProvider) => void;
   readonly limits: LimitsSource | null;
-  readonly onDismissed: () => void;
+  readonly onDismissed: (dismissals: LowLimitDismissals) => void;
 }): ComposerBannerStackItem {
   return {
     id: `low-limit:${signal.key}`,
@@ -508,8 +582,11 @@ export function lowLimitBannerItem({
     ),
     dismissLabel: "Dismiss low usage notice",
     onDismiss: () => {
-      dismissedLowLimitKeys.add(signal.key);
-      onDismissed();
+      sessionLowLimitDismissals = new Map(sessionLowLimitDismissals).set(
+        signal.key,
+        resetAt(signal.window),
+      );
+      onDismissed(sessionLowLimitDismissals);
     },
   };
 }

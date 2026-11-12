@@ -20,6 +20,10 @@ import {
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
+import { pullRequestCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { copyThreadReference } from "~/lib/copyThreadReference";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
+import { openPullRequestWorkspace } from "../../layout/openRules";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -63,7 +67,7 @@ import {
 } from "react";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { useEnvironmentSettings, useScrollingWorkspacesEnabled } from "~/hooks/useSettings";
 import { usePanelAnimationSettings } from "~/panelAnimations";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -377,6 +381,8 @@ export function PullRequestDetailPanel({
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(
     () => linkedTab(revealAnchor) ?? initialTab,
   );
+  const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const reviewGuidesEnabled = useEnvironmentSettings(
     environmentId,
     (settings) => settings.reviewGuidesEnabled,
@@ -538,17 +544,27 @@ export function PullRequestDetailPanel({
         description: error.message,
       }),
   });
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!paneFocusedRef.current) return;
     if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveShortcutCommand(event, keybindings, {
       context: getShortcutContext(),
     });
+    const url = handoffSummary?.url;
+    if (command === "thread.copyReference" && url) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat)
+        void copyThreadReference(pullRequestCopyTarget(url, terminology.shortLabel));
+      return;
+    }
     if (command !== "pullRequest.copyNumber") return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number shortcut
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number and copy-link shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
     window.addEventListener("keydown", onKeyDown, true);
@@ -1374,6 +1390,10 @@ export function PullRequestDetailPanel({
           mergeMethod: selectedMergeMethod,
           stale: !nativeStackQuery.isFresh,
           canMerge: supportsStackActions && can("merge") && allowedMergeMethods.length > 0,
+          conflictsWith:
+            detail.state === "open" && detail.mergeability === "conflicting"
+              ? detail.baseBranch
+              : null,
           canRebase: supportsStackActions && detail.viewerPermissions.stackRebase === true,
           onActed: () => {
             refreshDetail();
@@ -1405,7 +1425,7 @@ export function PullRequestDetailPanel({
     />
   ) : null;
   const stackMergeButton =
-    stackMenuProps !== null && stackMenuProps.canMerge ? (
+    stackMenuProps !== null && stackMenuProps.canMerge && stackMenuProps.conflictsWith === null ? (
       <PullRequestStackMenu {...stackMenuProps} display="merge-button" />
     ) : null;
   const showsArmedNote = autoMergeArmed && primaryAction !== "auto-merge-armed";
@@ -1535,9 +1555,8 @@ export function PullRequestDetailPanel({
     );
 
   const headerBranches = detail ? (
-    <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground">
+    <span className="ml-auto flex min-w-0 flex-1 basis-full items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:basis-0">
       <PullRequestBaseBranch
-        compact
         baseBranch={detail.baseBranch}
         freshness={freshness}
         stacked={isStackedPullRequest}
@@ -1612,7 +1631,7 @@ export function PullRequestDetailPanel({
               ) : null}
               <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
                 <span
-                  className="inline-flex items-baseline gap-1 tabular-nums"
+                  className="inline-flex items-baseline gap-1 tabular-nums @max-sm/pr-header:hidden"
                   aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
                 >
                   <FileDiffIcon aria-hidden className="size-3 self-center" />
@@ -1654,9 +1673,18 @@ export function PullRequestDetailPanel({
                   threadRef ??
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
                 }
+                onOpenAsWorkspace={
+                  threadRef !== null && context !== "page" && scrollingWorkspaces
+                    ? () => openPullRequestWorkspace(threadRef, reference.number)
+                    : undefined
+                }
                 onThreadPickerOpenChange={setThreadPickerOpen}
                 refreshing={refreshing}
                 refreshFromHost={refreshFromHost}
+                timelineOrder={tab === "timeline" ? timelineOrder : null}
+                onToggleTimelineOrder={() =>
+                  setTimelineOrder((order) => (order === "newest" ? "oldest" : "newest"))
+                }
                 handoff={handoff}
                 attachesToComposer={attachTarget !== null}
                 askAboutPullRequest={askAboutPullRequest}
@@ -1825,11 +1853,11 @@ export function PullRequestDetailPanel({
               <span
                 aria-hidden
                 className={cn(
-                  "pointer-events-none absolute top-px left-0.5 h-6 rounded-lg surface-raised",
+                  "pointer-events-none absolute top-px left-px h-6 rounded-md surface-raised",
                   tabMotionActive && "transition-transform ease-out",
                 )}
                 style={{
-                  width: `calc((100% - 0.25rem - ${visibleTabs.length - 1} * 0.125rem) / ${visibleTabs.length})`,
+                  width: `calc((100% - 2px - ${visibleTabs.length - 1} * 0.125rem) / ${visibleTabs.length})`,
                   transform: `translateX(calc(${Math.max(
                     0,
                     visibleTabs.findIndex((item) => item.value === tab),
@@ -1983,7 +2011,7 @@ export function PullRequestDetailPanel({
                     detail={detail}
                     environmentId={environmentId}
                     threadRef={threadRef}
-                    order="newest"
+                    order={timelineOrder}
                     onOpenCommit={openCommit}
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onOpenCode={openFileInCode}

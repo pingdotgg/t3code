@@ -257,8 +257,7 @@ export function ArchivedThreadsPanel() {
       ) : allArchivedGroups.length === 0 ? (
         <section id={searchableSetting("archive").id} tabIndex={-1} className="pt-19">
           <SettingsEmptyState
-            align="start"
-            ghostRows={3}
+            icon={<ArchiveIcon />}
             title="No archived threads"
             description="Threads you archive stay searchable here and can be restored at any time."
           >
@@ -295,9 +294,9 @@ export function ArchivedThreadsPanel() {
                   }}
                   title={thread.title}
                   description={
-                    <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       {hasMultipleEnvironments ? (
-                        <span className="mb-1 block">{thread.environmentLabel}</span>
+                        <span className="w-full truncate">{thread.environmentLabel}</span>
                       ) : null}
                       <Tooltip>
                         <TooltipTrigger render={<span tabIndex={0} />}>
@@ -309,7 +308,7 @@ export function ArchivedThreadsPanel() {
                         </TooltipPopup>
                       </Tooltip>
                       {thread.messageCount === undefined ? null : (
-                        <span className="mt-1 block">
+                        <span>
                           {thread.messageCount} {thread.messageCount === 1 ? "message" : "messages"}
                         </span>
                       )}

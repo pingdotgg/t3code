@@ -122,7 +122,6 @@ export function ApproveAgentSurface() {
     return (
       <StandalonePage>
         <StandalonePageHeader
-          context="Agent sign-in"
           title="Connecting to T3 Connect"
           description="One moment while your account loads."
         />
@@ -192,7 +191,7 @@ function Message({
 }) {
   return (
     <StandalonePage>
-      <StandalonePageHeader context="Agent sign-in" title={title} description={description} />
+      <StandalonePageHeader title={title} description={description} />
       {children}
     </StandalonePage>
   );

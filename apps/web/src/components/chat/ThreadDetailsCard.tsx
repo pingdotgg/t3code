@@ -21,12 +21,14 @@ export function ThreadDetailsCard({
   anchor,
   handle,
   onContextMenu,
+  onFocusRequest,
   children,
 }: {
   threadRef: ScopedThreadRef;
   anchor: RefObject<Element | null>;
   handle: ReturnType<typeof PopoverCreateHandle>;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
+  onFocusRequest?: () => boolean;
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
   const detailsArea = workspaceAreaProps("details", 3, "Thread details");
@@ -80,7 +82,7 @@ export function ThreadDetailsCard({
   const card = (
     <div
       className={cn(
-        "isolate grid max-h-full grid-rows-[minmax(0,1fr)]",
+        "isolate grid min-w-0 max-h-full grid-rows-[minmax(0,1fr)]",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
@@ -88,8 +90,10 @@ export function ThreadDetailsCard({
       onContextMenu={onContextMenu}
       data-thread-details-card
     >
-      <ScrollArea scrollFade className="min-h-0">
-        <div ref={setContentElement}>{children(density)}</div>
+      <ScrollArea scrollFade orientation="vertical" className="min-h-0 min-w-0">
+        <div ref={setContentElement} className="min-w-0 overflow-x-clip">
+          {children(density)}
+        </div>
       </ScrollArea>
     </div>
   );
@@ -140,6 +144,7 @@ export function ThreadDetailsCard({
         role="dialog"
         data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
         initialFocus={() => {
+          if (onFocusRequest?.()) return false;
           requestWorkspaceFocus({ area: "details" });
           return false;
         }}

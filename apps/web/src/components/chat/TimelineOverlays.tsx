@@ -8,41 +8,45 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
  * what waits at the end of the timeline, which is out of view while it shows.
  */
 export function ScrollToEndButton(props: {
+  readonly visible: boolean;
   readonly bottom: number;
   readonly summary: ReadonlyArray<string>;
   readonly onScrollToEnd: () => void;
 }) {
+  const button = (
+    <Button
+      data-scroll-to-end="true"
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={props.onScrollToEnd}
+      className="pointer-events-auto"
+      size="xs"
+      variant="floating"
+    >
+      <ChevronDownIcon className="size-3.5" />
+      Scroll to end
+    </Button>
+  );
   return (
     <div
       className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
+      data-visible={props.visible}
+      inert={!props.visible}
       style={{ bottom: props.bottom }}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              data-scroll-to-end="true"
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={props.onScrollToEnd}
-              className="pointer-events-auto"
-              size="xs"
-              variant="floating"
-            />
-          }
-        >
-          <ChevronDownIcon className="size-3.5" />
-          Scroll to end
-        </TooltipTrigger>
-        <TooltipPopup>
-          {props.summary.length
-            ? props.summary.map((part) => (
-                <span className="block" key={part}>
-                  {part}
-                </span>
-              ))
-            : "Scroll to end"}
-        </TooltipPopup>
-      </Tooltip>
+      {props.summary.length > 0 ? (
+        <Tooltip>
+          <TooltipTrigger render={button} />
+          <TooltipPopup>
+            {props.summary.map((part) => (
+              <span className="block" key={part}>
+                {part}
+              </span>
+            ))}
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        button
+      )}
     </div>
   );
 }
