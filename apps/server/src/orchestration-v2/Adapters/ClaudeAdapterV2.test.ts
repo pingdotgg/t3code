@@ -3257,6 +3257,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly cache_read_input_tokens: number;
     };
     readonly modelUsage?: SDKResultMessage["modelUsage"];
+    readonly permissionDenials?: SDKResultMessage["permission_denials"];
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -3275,7 +3276,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         cache_read_input_tokens: 0,
       },
       modelUsage: input.modelUsage ?? {},
-      permission_denials: [],
+      permission_denials: input.permissionDenials ?? [],
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
       ...(input.origin === undefined ? {} : { origin: input.origin }),
@@ -7212,6 +7213,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.class, "usage_limit");
       assert.equal(terminal.failure.resetAt, "2026-10-12T12:20:00.000Z");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("does not report a turn the CLI's permission check blocked as completed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-cli-permission-denial"),
+          text: "Run printf T3_DENIAL_PROBE_ok.",
+          attachments: [],
+        }),
+      );
+      // Auto mode denies inside the CLI, so T3 never sees a permission request;
+      // the denial only shows up on the result.
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000697",
+          result: "The Bash command was denied, so I stopped.",
+          permissionDenials: [
+            {
+              tool_name: "Bash",
+              tool_use_id: "toolu_cli_denied_bash",
+              tool_input: { command: "printf T3_DENIAL_PROBE_ok" },
+            },
+          ],
+        }),
+      );
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.notEqual(terminal.status, "completed");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
