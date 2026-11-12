@@ -40,7 +40,7 @@ export function useEnvironmentQuery<A, E>(
   const result = useAtomValue(selectedAtom);
   const refresh = useAtomRefresh(selectedAtom);
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
+    data: AsyncResult.getOrElse(result, () => null),
     dataUpdatedAt: queryUpdatedAt(result),
     error: result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null,
     failure:

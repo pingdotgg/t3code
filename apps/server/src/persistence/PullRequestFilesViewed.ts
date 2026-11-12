@@ -84,18 +84,19 @@ const make = Effect.gen(function* () {
   });
 
   return PullRequestFilesViewedRepository.of({
-    list: (input) =>
-      listRows(input).pipe(
+    list: Effect.fn("PullRequestFilesViewedRepository.list")(function (input) {
+      return listRows(input).pipe(
         NodeSqliteClient.readOnly,
         Effect.map((rows) => ({
           files: rows.slice(0, MAX_FILES_VIEWED_ROWS),
           truncated: rows.length > MAX_FILES_VIEWED_ROWS,
         })),
         Effect.mapError(toSqlOrDecodeError("listPullRequestFilesViewed", "PullRequestFileViewed")),
-      ),
+      );
+    }),
 
-    set: (input) =>
-      sql
+    set: Effect.fn("PullRequestFilesViewedRepository.set")(function (input) {
+      return sql
         .withTransaction(
           Effect.forEach(
             input.files,
@@ -141,7 +142,8 @@ const make = Effect.gen(function* () {
           Effect.mapError(
             (cause) => new PersistenceSqlError({ operation: "setPullRequestFilesViewed", cause }),
           ),
-        ),
+        );
+    }),
   });
 });
 

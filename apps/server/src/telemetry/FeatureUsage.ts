@@ -70,6 +70,7 @@ const METHOD_FEATURES: Readonly<Record<string, (payload: Payload) => FeatureUsag
   [WS_METHODS.agentSessionsImport]: () => ({ feature: "agent_session.import" }),
   [WS_METHODS.projectCloneStart]: () => ({ feature: "project.clone" }),
   [WS_METHODS.sourceControlPublishRepository]: () => ({ feature: "repository.publish" }),
+  [WS_METHODS.sourceControlSignInStart]: () => ({ feature: "source_control.sign_in" }),
   [WS_METHODS.serverUpsertKeybinding]: () => ({ feature: "keybinding.customize" }),
   [WS_METHODS.guestShareCreate]: () => ({ feature: "guest_share.create" }),
 };
