@@ -1907,8 +1907,13 @@ it.effect.each([
             : offer(queue, signal);
         }) as typeof Queue.offer);
         const received: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const arrivals = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const reading = yield* subscription.events.pipe(
-          Stream.tap((event) => Effect.sync(() => received.push(event))),
+          Stream.tap((event) =>
+            Effect.sync(() => received.push(event)).pipe(
+              Effect.andThen(Queue.offer(arrivals, event)),
+            ),
+          ),
           Stream.runDrain,
           Effect.exit,
           Effect.tap(() => Effect.sync(() => milestones.push("detached"))),
@@ -1951,26 +1956,26 @@ it.effect.each([
           yield* TestClock.adjust("30 seconds");
         }
         yield* Fiber.join(detach);
+        if (failure === "interrupt" || failure === "projection") {
+          // An unconfirmed interrupt leaves the native turn streaming to its run.
+          const followUp = { ...event };
+          yield* Queue.offer(queue, followUp);
+          let arrived = yield* Queue.take(arrivals);
+          while (arrived !== followUp) arrived = yield* Queue.take(arrivals);
+          assert.isUndefined(reading.pollUnsafe());
+          assert.deepEqual(milestones, failure === "interrupt" ? ["interrupt"] : []);
+          return;
+        }
         const exit = yield* Fiber.join(reading);
         assert.isTrue(Exit.isFailure(exit));
-        if (failure === "interrupt" && Exit.isFailure(exit)) {
-          assert.instanceOf(
-            Cause.squash(exit.cause),
-            ProviderAdapter.ProviderAdapterInterruptError,
-          );
-        }
-        if (failure === "projection" && Exit.isFailure(exit)) {
-          assert.instanceOf(
-            Cause.squash(exit.cause),
-            ProviderAdapter.ProviderAdapterEventStreamError,
-          );
-        }
-        assert.deepEqual(received, status === "completed" ? [turnEvent, event] : [event]);
+        // Events published while the interrupt is pending still reach the moving run.
+        assert.deepEqual(
+          received,
+          status === "completed" ? [turnEvent, event] : sibling ? [event, event] : [event],
+        );
         assert.deepEqual(
           milestones,
-          status === "completed" || failure === "projection"
-            ? ["detached"]
-            : ["interrupt", "detached"],
+          status === "completed" ? ["detached"] : ["interrupt", "detached"],
         );
       }).pipe(
         Effect.provide(

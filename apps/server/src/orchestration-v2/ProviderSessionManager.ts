@@ -637,6 +637,8 @@ export const layerWithOptions = (
         threadId?: ThreadId,
         beforeFailure: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> = Effect.void,
       ) {
+        // A native turn that survived its interrupt keeps streaming to its run until it ends.
+        if (Exit.isFailure(yield* Effect.exit(beforeFailure))) return;
         const subscribers = yield* Ref.modify(entry.eventSubscribers, (current) => {
           const failed: Array<ProviderSessionEventSubscriber> = [];
           const remaining = new Map(current);
@@ -648,14 +650,9 @@ export const layerWithOptions = (
           }
           return [failed, remaining] as const;
         }).pipe(entry.requestEventPermit.withPermits(1));
-        const interruption = yield* Effect.exit(beforeFailure);
         yield* Effect.forEach(
           subscribers,
-          ({ queue }) =>
-            Queue.offer(queue, {
-              type: "failure",
-              cause: Exit.isFailure(interruption) ? interruption.cause : Cause.fail(error),
-            }),
+          ({ queue }) => Queue.offer(queue, { type: "failure", cause: Cause.fail(error) }),
           { discard: true },
         ).pipe(entry.requestEventPermit.withPermits(1));
       });
