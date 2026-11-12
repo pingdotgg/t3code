@@ -1,9 +1,13 @@
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as Signature from "effect/crypto/Signature";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -37,7 +41,6 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
-  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -60,20 +63,37 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
-function isCodexStandaloneCommandPath(commandPath: string): boolean {
-  return normalizeCommandPath(commandPath).includes("/packages/standalone/");
+const CODEX_STANDALONE_HOME_PATTERN = /^(.*)\/packages\/standalone\//is;
+
+function codexStandaloneHome(commandPath: string): string | null {
+  // Slash replacement preserves indices; Unicode lowercasing can change the path length.
+  const match = CODEX_STANDALONE_HOME_PATTERN.exec(commandPath.replaceAll("\\", "/"));
+  if (!match) {
+    return null;
+  }
+  const home = match[1]!;
+  // Keep root separators: `C:` is drive-relative, and an empty home is not `/`.
+  const isRoot = home === "" || /^[a-z]:$/i.test(home);
+  return commandPath.slice(0, home.length + (isRoot ? 1 : 0));
 }
 
-/** `codex update` owns the shared home's standalone tree; auth-overlay homes do not carry it. */
+// Standalone updates locate their install through CODEX_HOME. Account and auth-overlay
+// homes can share an executable, so only the updater uses the executable's owning home.
 function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
+    mise: { tool: "codex" },
     nativeUpdate: {
       args: ["update"],
-      isCommandPath: isCodexStandaloneCommandPath,
+      isCommandPath: (commandPath) => codexStandaloneHome(commandPath) !== null,
       requiresCommandPath: true,
-      env: { CODEX_HOME: sharedHomePath },
+      env: (context) => ({
+        CODEX_HOME:
+          codexStandaloneHome(context.realCommandPath) ??
+          codexStandaloneHome(context.resolvedCommandPath) ??
+          sharedHomePath,
+      }),
     },
   });
 }
@@ -83,7 +103,9 @@ export type CodexDriverEnv =
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
+  | Signature.Signature
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -132,10 +154,19 @@ export const CodexDriver: ProviderDriver<
     const pathService = yield* Path.Path;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
-    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
-    const homeLayout = yield* resolveCodexHomeLayout(config);
+    const processEnv = yield* mergeProviderInstanceEnvironment(
+      environment,
+      yield* HostProcess.Environment,
+    );
+    const environmentHome = processEnv.CODEX_HOME;
+    const homeLayout = yield* resolveCodexHomeLayout(
+      !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()
+        ? { ...config, homePath: environmentHome }
+        : config,
+    );
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({
       instanceId,
@@ -184,7 +215,10 @@ export const CodexDriver: ProviderDriver<
         enabled,
         config,
       },
-      { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        compatibility: installation.compatibility,
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -339,6 +373,17 @@ export const CodexDriver: ProviderDriver<
           ),
         );
 
+    // `codex login` and `codex logout` rewrite auth.json outside T3.
+    if (effectiveConfig.enabled) {
+      yield* fileSystem.watch(accountKey).pipe(
+        Stream.filter((event) => pathService.basename(event.path) === "auth.json"),
+        Stream.debounce(Duration.millis(250)),
+        Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+        Effect.ignoreCause({ log: true }),
+        Effect.forkScoped,
+      );
+    }
     return {
       instanceId,
       driverKind: DRIVER_KIND,

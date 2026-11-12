@@ -1,4 +1,9 @@
-import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
+import type { ToolCallDiffTarget } from "../../diffPanelStore";
+import type {
+  ProviderApprovalDecision,
+  RuntimeRequestId,
+  WorktreeSetupSnapshot,
+} from "@t3tools/contracts";
 import {
   type EnvironmentId,
   type MessageId,
@@ -13,9 +18,10 @@ import {
 import type { AsyncResult, Atom } from "effect/reactivity";
 import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
-import { createContext, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, createContext, type MouseEvent, type ReactNode } from "react";
 import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
+import type { PendingApproval } from "../../session-logic";
 import { type ChatFileAttachment } from "../../types";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
@@ -37,6 +43,12 @@ export interface TurnItemSource {
 }
 
 export interface TimelineRowSharedState {
+  pendingApprovals: ReadonlyMap<RuntimeRequestId, PendingApproval>;
+  respondingRequestIds: ReadonlyArray<RuntimeRequestId>;
+  canOperateThread: boolean;
+  onRespondToApproval:
+    | ((requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>)
+    | undefined;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -56,6 +68,7 @@ export interface TimelineRowSharedState {
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
+  onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
   /** Unset where there is no diff to open, so the timeline shows no "Open diff" button. */
   onOpenTurnDiff: ((runId: RunId, filePath?: string) => void) | undefined;
   /**
@@ -77,7 +90,8 @@ export interface TimelineRowSharedState {
   onFileDownload: (attachment: ChatFileAttachment) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
-  onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
+  onToggleWorkEntry: (anchorKey: string, collapsed: boolean, entryId?: string) => void;
+  onWorkEntryContentReady?: (anchorKey: string, entryId: string) => void;
   onCancelWorktreeSetup: (() => void) | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
@@ -94,6 +108,7 @@ export interface TimelineRowActivityState {
   isPreparingWorktree: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
+  liveAnswerPreview: string | null;
 }
 
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -107,7 +122,8 @@ export interface WorkGroupViewState {
 
 export const WorkGroupViewCtx = createContext<{
   state: WorkGroupViewState;
-  onToggleEntry: (collapsed: boolean) => void;
+  onToggleEntry: (collapsed: boolean, entryId: string) => void;
+  onContentReady?: ((entryId: string) => void) | undefined;
 } | null>(null);
 
 export type TimelineWorkEntry = Extract<
@@ -116,3 +132,14 @@ export type TimelineWorkEntry = Extract<
 >["groupedEntries"][number];
 
 export type TimelineRow = MessagesTimelineRow;
+
+export function useInitialOutputReady(pending: boolean, onReady: (() => void) | undefined) {
+  const notified = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals a disclosure after its first async output commits
+  useEffect(() => {
+    if (!pending && !notified.current) {
+      notified.current = true;
+      onReady?.();
+    }
+  }, [pending, onReady]);
+}

@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import {
   scopeProjectRef,
   scopedThreadKey,
@@ -325,8 +326,10 @@ export function ThreadPullRequestsMiniList({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
 }) {
-  const lines = pullRequestListLines(
-    resolveThreadPullRequestChains(visibleThreadPullRequests(pullRequests)),
+  const lines = pipe(
+    visibleThreadPullRequests(pullRequests),
+    resolveThreadPullRequestChains,
+    pullRequestListLines,
   );
   if (lines.length === 0) return null;
   return (
@@ -440,7 +443,7 @@ export function ChangeRequestStatusIcon({
   return <presentation.Icon className={className} />;
 }
 
-export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
+function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
   return (
     <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
       <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
@@ -464,7 +467,7 @@ export function resolveDisplayedThreadPr(input: {
     threadBranch !== null &&
     gitStatus !== null &&
     gitStatus.refName === threadBranch &&
-    gitStatus.pr != null
+    gitStatus.pr?.state === "open"
   ) {
     return gitStatus.pr;
   }
@@ -478,17 +481,12 @@ export function resolveDisplayedThreadPrProvider(input: {
   linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
   linkedPullRequestStatus?: LinkedThreadPullRequestStatus | null | undefined;
 }): VcsStatusResult["sourceControlProvider"] | undefined {
-  const { threadBranch, gitStatus, linkedPullRequest, linkedPullRequestStatus } = input;
+  const { gitStatus, linkedPullRequest, linkedPullRequestStatus } = input;
   if (linkedPullRequest != null) {
     return linkedPullRequestStatus?.sourceControlProvider;
   }
-  if (
-    threadBranch !== null &&
-    gitStatus !== null &&
-    gitStatus.refName === threadBranch &&
-    gitStatus.pr != null
-  ) {
-    return gitStatus.sourceControlProvider;
+  if (resolveDisplayedThreadPr(input) !== null) {
+    return gitStatus?.sourceControlProvider;
   }
 
   return undefined;
@@ -600,7 +598,7 @@ export function ThreadWorktreeIndicator({
   );
 }
 
-export function ThreadStatusLabel({
+function ThreadStatusLabel({
   status,
   compact = false,
 }: {
@@ -671,6 +669,8 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     thread.environmentId,
     thread.linkedPullRequest,
     leaseLiveStatus,
+    thread.pullRequests,
+    thread.branchPullRequest,
   );
   const gitStatus = useEnvironmentQuery(
     leaseLiveStatus &&
@@ -693,8 +693,11 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     linkedPullRequest: thread.linkedPullRequest,
     linkedPullRequestStatus: linkedPullRequest,
   };
-  const pr = resolveDisplayedThreadPr(displayedPrInput);
-  const prStatus = prStatusIndicator(pr, resolveDisplayedThreadPrProvider(displayedPrInput));
+  const pr = linkedPullRequest?.pr ?? resolveDisplayedThreadPr(displayedPrInput);
+  const prStatus = prStatusIndicator(
+    pr,
+    linkedPullRequest?.sourceControlProvider ?? resolveDisplayedThreadPrProvider(displayedPrInput),
+  );
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,

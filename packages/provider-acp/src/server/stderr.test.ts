@@ -50,4 +50,17 @@ describe("AcpStderr", () => {
     expect(excerpt).not.toContain("dXNlcjpwYXNz");
     expect(excerpt).not.toContain("ant-api-key-value");
   });
+
+  it("redacts the whole key when its body contains underscores", () => {
+    const excerpt = sanitizeAcpStderrExcerpt(
+      [
+        "anthropic=sk-ant-api03-AbCdEf_GhIjKlMnOpQr-StUvWx_yz0123456789-AA",
+        "openai=sk-proj-AbCdEfGhIj_KlMnOpQrStUv-WxYz_0123456789",
+      ].join("\n"),
+      "/Users/ada",
+      {},
+    );
+
+    expect(excerpt).toBe("anthropic=[redacted]\nopenai=[redacted]");
+  });
 });

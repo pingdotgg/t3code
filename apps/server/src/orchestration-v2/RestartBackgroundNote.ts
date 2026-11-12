@@ -1,4 +1,5 @@
 import type {
+  NodeId,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderTurn,
   OrchestrationV2RestartCancelledBackgroundWork,
@@ -6,7 +7,7 @@ import type {
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { latestRootProviderFailure, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Work = OrchestrationV2RestartCancelledBackgroundWork;
 type Attempt = Pick<OrchestrationV2RunAttempt, "id" | "runId">;
@@ -17,7 +18,11 @@ function compactLabel(value: unknown, maxLength = MAX_LABEL_LENGTH): string | un
   if (typeof value !== "string") return undefined;
   const text = value.replaceAll(/\s+/g, " ").trim();
   if (text.length === 0) return undefined;
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+  if (text.length <= maxLength) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(maxLength - 2);
+  const end = last >= 0xd800 && last <= 0xdbff ? maxLength - 2 : maxLength - 1;
+  return `${text.slice(0, end)}…`;
 }
 
 /** A bounded label that keeps its id suffix whole whenever it fits. */
@@ -51,6 +56,7 @@ export function cancelledTurnItemWork(
         kind: item.monitor === true ? "monitor" : "shell",
         label: compactLabel(item.input) ?? compactLabel(item.title) ?? "background command",
         id: item.id,
+        ...(item.completionWake === "always" ? { awaited: true as const } : {}),
       };
     case "dynamic_tool": {
       const monitor =
@@ -179,6 +185,68 @@ export function cancelledBeforeStart(
   run: Pick<OrchestrationV2Run, "status" | "startedAt" | "restartContinuationOfRunId">,
 ): boolean {
   return run.status === "cancelled" && neverStarted(run);
+}
+
+/** A follow-up task's latest run, passing over queued work it no longer waits on, as the original task does. */
+export function delegatedTaskResultRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  taskId: NodeId,
+): OrchestrationV2Run | undefined {
+  const taskRuns = runs
+    .filter((run) => run.delegatedTaskId === taskId)
+    .toSorted((a, b) => b.ordinal - a.ordinal);
+  const awaited = taskRuns.filter(
+    (run) => !cancelledBeforeStart(run) && !(run.status === "queued" && run.queueHeld === true),
+  );
+  // Executing work reports the task's state; a reordered queue can finish a newer run before an older one.
+  const executing = awaited.find((run) =>
+    ["preparing", "starting", "running", "waiting"].includes(run.status),
+  );
+  return executing ?? awaited.find((run) => run.status === "queued") ?? awaited[0] ?? taskRuns[0];
+}
+
+/** The provider never accepted this continuation's prompt, so starting it again repeats nothing. */
+export function continuationFailedBeforePrompt(
+  run: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartContinuationOfRunId">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>,
+): boolean {
+  return (
+    run.status === "failed" &&
+    run.restartContinuationOfRunId !== undefined &&
+    !providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId)
+  );
+}
+
+const CONTINUATION_START_RETRY_DELAYS_MS = [60_000, 180_000];
+
+/** Backoff before restarting a continuation that failed to start, or undefined to let it fail. */
+export function continuationStartRetryDelayMs(
+  run: OrchestrationV2Run,
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId">>;
+    readonly turnItems: Parameters<typeof latestRootProviderFailure>[1];
+  },
+): number | undefined {
+  if (!continuationFailedBeforePrompt(run, projection.providerTurns)) return;
+  // These fail the same way however often they start.
+  const failureClass = latestRootProviderFailure(run, projection.turnItems)?.class;
+  if (
+    failureClass === "usage_limit" ||
+    failureClass === "permission_error" ||
+    failureClass === "validation_error"
+  )
+    return;
+  let failedStarts = 0;
+  for (
+    let current: OrchestrationV2Run | undefined = run;
+    current !== undefined && continuationFailedBeforePrompt(current, projection.providerTurns);
+    current = projection.runs.find(
+      (candidate) => candidate.id === current?.restartContinuationOfRunId,
+    )
+  )
+    failedStarts += 1;
+  return CONTINUATION_START_RETRY_DELAYS_MS[failedStarts - 1];
 }
 
 export function isRestartContinuationSource(

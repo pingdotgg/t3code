@@ -29,7 +29,9 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { expandHomePath } from "../os-jank.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -209,7 +211,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   return yield* Effect.gen(function* () {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
       return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
     }
@@ -272,8 +274,34 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
   return projects;
 });
 
-/** A project id, or a path inside a project's folder (deepest project wins). */
-const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
+/** The checkouts of the git repository at `directory`, or none outside a repository. */
+const listGitCheckouts = Effect.fn("cli.thread.listGitCheckouts")(function* (directory: string) {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const list = (args: ReadonlyArray<string>) =>
+    processRunner
+      .run({ command: "git", args: ["worktree", "list", "--porcelain", ...args], cwd: directory })
+      .pipe(
+        Effect.option,
+        Effect.map((result) =>
+          Option.isSome(result) && result.value.code === 0 ? result.value.stdout : undefined,
+        ),
+      );
+  // Pre-2.36 Git rejects worktree list -z; normalize its line output to NUL records.
+  const stdout = (yield* list(["-z"])) ?? (yield* list([]))?.replaceAll("\n", "\0") ?? "";
+  return stdout.split("\0\0").flatMap((record) => {
+    const [first = "", ...attributes] = record.split("\0");
+    return first.startsWith("worktree ") && !attributes.includes("bare")
+      ? [first.slice("worktree ".length)]
+      : [];
+  });
+});
+
+/**
+ * A project id, or a path inside a project's folder (deepest project wins).
+ * A path inside a git worktree resolves as the same path in the repository's
+ * other checkouts.
+ */
+export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
   identifier: string,
 ) {
@@ -287,23 +315,57 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   // through a symlink (macOS /tmp), so both sides compare as real paths.
   const realPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(path.resolve(yield* HostProcess.WorkingDirectory, identifier));
+  const target = yield* realPath(
+    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
+  );
   const roots = yield* Effect.forEach(projects, (project) =>
     Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
   );
-  const containing = roots
-    .filter(({ root }) => {
-      const relative = path.relative(root, target);
-      return (
-        relative === "" ||
-        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-      );
-    })
-    .toSorted((left, right) => right.root.length - left.root.length)[0];
-  if (containing === undefined) {
+  const contains = (root: string, candidate: string) => {
+    const relative = path.relative(root, candidate);
+    return (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
+  };
+  const deepestContaining = (candidate: string) =>
+    roots
+      .filter(({ root }) => contains(root, candidate))
+      .toSorted((left, right) => right.root.length - left.root.length)[0]?.project;
+
+  const containing = deepestContaining(target);
+  if (containing !== undefined) return containing;
+  const targetInfo = yield* fileSystem.stat(target).pipe(Effect.option);
+  const gitDirectory =
+    Option.isSome(targetInfo) && targetInfo.value.type === "File" ? path.dirname(target) : target;
+  const listed = yield* listGitCheckouts(gitDirectory).pipe(
+    Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
+    Effect.provide(ProcessRunner.layer),
+  );
+  const ownCheckout = listed
+    .filter((checkout) => contains(checkout, target))
+    .toSorted((left, right) => right.length - left.length)[0];
+  if (ownCheckout === undefined) {
     return yield* new ThreadProjectNotFoundError({ identifier });
   }
-  return containing.project;
+  const relative = path.relative(ownCheckout, target);
+  const matches = new Map<ProjectId, (typeof projects)[number]>();
+  for (const checkout of listed) {
+    if (checkout === ownCheckout) continue;
+    const project = deepestContaining(path.join(checkout, relative));
+    if (project !== undefined) matches.set(project.id, project);
+  }
+  const [match, ...others] = matches.values();
+  if (match === undefined) {
+    return yield* new ThreadProjectNotFoundError({ identifier });
+  }
+  if (others.length > 0) {
+    const names = [match, ...others].map((project) => `${project.title} (${project.id})`);
+    return yield* new ThreadUsageError({
+      detail: `'${identifier}' is in a git worktree shared by several projects: ${names.join(", ")}. Pass a project id instead.`,
+    });
+  }
+  return match;
 });
 
 /** Every item on a timeline view, oldest first. */
@@ -331,6 +393,63 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
     afterPosition = page.nextPosition ?? undefined;
   } while (page.hasMore && afterPosition !== undefined);
   return { thread: page.thread, items };
+});
+
+/**
+ * The latest `count` user and assistant messages, oldest first. Positions
+ * count every timeline item, so the read starts near the end and widens
+ * backward only while tool and plan items leave too few messages.
+ */
+export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  count: number,
+) {
+  let { thread } = yield* tools.call(
+    "t3_thread_read",
+    { threadId, limit: 1, runLimit: 1 },
+    OrchestratorMcpThreadReadResult,
+  );
+  let messages: Array<OrchestratorMcpThreadTimelineItem> = [];
+  // The newest window has no upper bound, so items added since the first
+  // read are still shown.
+  let before: number | undefined;
+  let start = thread.itemCount;
+  let span = Math.max(count, READ_PAGE_LIMIT);
+  do {
+    const end = before;
+    start = Math.max(0, start - span);
+    const window: Array<OrchestratorMcpThreadTimelineItem> = [];
+    let afterPosition = start - 1;
+    let page: OrchestratorMcpThreadReadResult;
+    do {
+      page = yield* tools.call(
+        "t3_thread_read",
+        {
+          threadId,
+          view: "messages",
+          limit: READ_PAGE_LIMIT,
+          runLimit: 1,
+          ...(afterPosition < 0 ? {} : { afterPosition }),
+        },
+        OrchestratorMcpThreadReadResult,
+      );
+      window.push(
+        ...page.items.filter(
+          (item) =>
+            (item.type === "user_message" || item.type === "assistant_message") &&
+            (end === undefined || item.position < end),
+        ),
+      );
+      afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
+    } while (page.hasMore && afterPosition < (end ?? Number.POSITIVE_INFINITY) - 1);
+    thread = page.thread;
+    // A window can hold the whole --messages count, too many to spread as arguments.
+    messages = window.concat(messages);
+    before = start;
+    span *= 2;
+  } while (messages.length < count && start > 0);
+  return { thread, messages: messages.slice(Math.max(0, messages.length - count)) };
 });
 
 /** Item text past the read's per-item cap. */
@@ -451,11 +570,16 @@ const finishRun = Effect.fn("cli.thread.finishRun")(function* (
   }
 });
 
-const titleFromMessage = (message: string) => {
+export const titleFromMessage = (message: string) => {
   const firstLine = message.trim().split("\n")[0]?.trim() ?? "";
-  return firstLine.length > TITLE_MAX_CHARS
-    ? `${firstLine.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…`
-    : firstLine;
+  if (firstLine.length <= TITLE_MAX_CHARS) return firstLine;
+  let end = TITLE_MAX_CHARS - 1;
+  const previous = firstLine.charCodeAt(end - 1);
+  const next = firstLine.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${firstLine.slice(0, end).trimEnd()}…`;
 };
 
 const launchWorkspaceStrategy = (input: {
@@ -662,11 +786,11 @@ const threadShowCommand = Command.make("show", {
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.show")(function* (tools) {
-          const { thread, items } = yield* readTimeline(tools, threadId, "messages");
-          const conversation = items.filter(
-            (item) => item.type === "user_message" || item.type === "assistant_message",
+          const { thread, messages: latest } = yield* readLatestMessages(
+            tools,
+            threadId,
+            flags.messages,
           );
-          const latest = conversation.slice(Math.max(0, conversation.length - flags.messages));
           const messages = yield* Effect.forEach(latest, (item) =>
             readFullText(tools, threadId, item).pipe(
               Effect.map((text) => ({

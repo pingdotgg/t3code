@@ -60,10 +60,7 @@ export const dual = <
   // Only the resource type string is needed — a ResourceClass, a Platform,
   // or a bare `{ Type }` (useful when importing the class would create a
   // module cycle) all satisfy this.
-  cls:
-    | ResourceClassLike<R>
-    | Platform<R, any, any, any, any>
-    | { Type: R["Type"] },
+  cls: ResourceClassLike<R> | Platform<R, any, any, any, any> | { Type: R["Type"] },
   input: {
     live: () => LayerLive;
     local: () => LayerLocal;
@@ -147,12 +144,9 @@ export const dual = <
           Effect.flatMap(variant, (service) =>
             service.diff === undefined ? Effect.void : service.diff(input),
           ),
-        reconcile: (input) =>
-          Effect.flatMap(variant, (service) => service.reconcile(input)),
-        delete: (input) =>
-          Effect.flatMap(variant, (service) => service.delete(input)),
-        list: (...args) =>
-          Effect.flatMap(variant, (service) => service.list(...args)),
+        reconcile: (input) => Effect.flatMap(variant, (service) => service.reconcile(input)),
+        delete: (input) => Effect.flatMap(variant, (service) => service.delete(input)),
+        list: (...args) => Effect.flatMap(variant, (service) => service.list(...args)),
         mode: defaultMode,
         modes,
         localDataPlane: input.dataPlane,

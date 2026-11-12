@@ -10,7 +10,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -323,7 +322,7 @@ export function createTerminalSession(
     result: AsyncResult.AsyncResult<TerminalBufferState, unknown>,
   ) => {
     resizeRegistry = registry;
-    const buffer = Option.getOrElse(AsyncResult.value(result), () => EMPTY_TERMINAL_BUFFER_STATE);
+    const buffer = AsyncResult.getOrElse(result, () => EMPTY_TERMINAL_BUFFER_STATE);
     const status = result._tag === "Failure" ? "error" : buffer.status;
     if (status !== lastStatus) {
       lastStatus = status;

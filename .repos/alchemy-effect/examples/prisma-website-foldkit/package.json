@@ -2,6 +2,11 @@
   "name": "prisma-website-foldkit",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/prisma-website-foldkit"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -16,21 +21,18 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/prisma": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@foldkit/vite-plugin": "catalog:",
     "@tailwindcss/vite": "catalog:",
+    "@vercel/nft": "catalog:",
     "alchemy": "workspace:*",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "@vercel/nft": "catalog:"
+    "vite": "catalog:"
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/prisma-website-foldkit"
   }
 }

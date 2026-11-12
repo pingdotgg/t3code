@@ -5,7 +5,10 @@ import * as Drizzle from "@alchemy.run/drizzle/Postgres";
 import * as Config from "effect/Config";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -25,6 +28,7 @@ import {
   traceRelayHttpRequestWith,
   withoutCapturedParentSpan,
 } from "./http/Api.ts";
+import * as CloudMintSigner from "./auth/CloudMintSigner.ts";
 import * as RelayHttpApi from "./http/Api.ts";
 import { ManagedEndpointZone, RelayApiZone, RelayDeploymentConfig } from "./zone.ts";
 import { RelayObservability } from "./observability.ts";
@@ -64,6 +68,7 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
+import * as T3ChatAccounts from "./t3chat/T3ChatAccounts.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
@@ -71,18 +76,11 @@ import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 
-const layerWebcrypto = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-    digest: (algorithm, data) =>
-      Effect.promise(async () => {
-        const input = new Uint8Array(data.length);
-        input.set(data);
-        return new Uint8Array(await globalThis.crypto.subtle.digest(algorithm, input.buffer));
-      }),
-  }),
-);
+const layerWebcrypto = Layer.mergeAll(
+  Digest.layerWebCrypto,
+  Mac.layerWebCrypto,
+  Signature.layerWebCrypto,
+).pipe(Layer.provideMerge(SecureRandom.layerWebCrypto));
 
 const layerHttpPlatformNotSupported = Layer.succeed(HttpPlatform.HttpPlatform, {
   platform: "web",
@@ -166,6 +164,15 @@ export const layer = Api.make(
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    const t3ChatLinkSecret = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
+    const t3ChatBaseUrl = yield* Config.String("T3CHAT_URL").pipe(
+      Config.withDefault("https://t3.chat"),
+    );
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
@@ -236,6 +243,9 @@ export const layer = Api.make(
         managedEndpointCleanupMode,
         legacyManagedEndpointCleanupMode,
         ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
+        ...(t3ChatLinkSecret
+          ? { t3Chat: { baseUrl: t3ChatBaseUrl, linkSecret: t3ChatLinkSecret } }
+          : {}),
       });
     });
 
@@ -329,9 +339,9 @@ export const layer = Api.make(
           ManagedTunnelLimits.layer,
         ),
       ),
-      Layer.provideMerge(LiveActivities.layer),
+      Layer.provideMerge(Layer.mergeAll(LiveActivities.layer, T3ChatAccounts.layer)),
       Layer.provideMerge(DeliveryAttempts.layer),
-      Layer.provideMerge(RelayTokens.layer),
+      Layer.provideMerge(RelayTokens.layer.pipe(Layer.provideMerge(CloudMintSigner.layer))),
       Layer.provideMerge(
         RelayDb.RelayTransactions.layer.pipe(
           Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
@@ -576,3 +586,5 @@ export const layer = Api.make(
     ),
   ),
 );
+
+export default layer;
