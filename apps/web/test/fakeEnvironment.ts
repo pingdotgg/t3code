@@ -2,6 +2,7 @@
 // session that answers the shell, thread and config subscriptions from fixtures. Other RPCs
 // stay pending so nothing retries on timers. Everything above the wire is the app's own.
 import {
+  type AssetCreateUrlResult,
   AuthStandardClientScopes,
   EnvironmentId,
   EventId,
@@ -412,6 +413,7 @@ let pendingDispatches: Array<{
   readonly command: OrchestrationV2Command;
   readonly reply: Deferred.Deferred<never, OrchestrationV2DispatchCommandError>;
 }> = [];
+let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -438,6 +440,13 @@ const handlers: Record<string, (input: never) => unknown> = {
         return Effect.succeed({ sequence: sequence + 1 });
       const reply = Deferred.makeUnsafe<never, OrchestrationV2DispatchCommandError>();
       pendingDispatches.push({ command, reply });
+      return Deferred.await(reply);
+    }),
+  // Held like any other unanswered call, until `answerAssetUrls`.
+  [WS_METHODS.assetsCreateUrl]: () =>
+    Effect.suspend(() => {
+      const reply = Deferred.makeUnsafe<AssetCreateUrlResult>();
+      pendingAssetUrls.push(reply);
       return Deferred.await(reply);
     }),
   [WS_METHODS.subscribeTerminalMetadata]: () =>
@@ -588,6 +597,7 @@ export function installFakeEnvironment(
       acceptCommands = false;
       holdCommand = () => false;
       pendingDispatches = [];
+      pendingAssetUrls = [];
     },
   };
 }
@@ -606,6 +616,21 @@ export async function rejectPendingCommand(message: string): Promise<void> {
       }),
     ),
   );
+}
+
+export function hasPendingAssetUrl(): boolean {
+  return pendingAssetUrls.length > 0;
+}
+
+/** Answers every held asset URL request, as a server that still has the file. */
+export async function answerAssetUrls(): Promise<void> {
+  const replies = pendingAssetUrls;
+  pendingAssetUrls = [];
+  for (const reply of replies) {
+    await Effect.runPromise(
+      Deferred.succeed(reply, { relativeUrl: "/api/assets/fake", expiresAt: 4_102_444_800_000 }),
+    );
+  }
 }
 
 /** Commands the app dispatched to the environment, oldest first. */

@@ -20,7 +20,10 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  answerAssetUrls,
   dispatchedCommands,
+  emitThreadEvent,
+  hasPendingAssetUrl,
   installFakeEnvironment,
   rejectPendingCommand,
   threadWithHistory,
@@ -99,6 +102,61 @@ it("a machine chip stashed in one thread restores with its machine in another", 
   expect(
     useComposerDraftStore.getState().getComposerDraft(draftId)?.environmentContexts ?? [],
   ).toEqual([]);
+});
+
+it("a question that opens while a stashed file is checked keeps a machine stash", async () => {
+  const thread = threadWithHistory("thread-stash-late-question", 1);
+  const asking = threadWithQuestion("thread-stash-late-question", "Which file should change?");
+  const [request] = asking.runtimeRequests ?? [];
+  const question = asking.items.at(-1);
+  if (!request || !question) throw new Error("threadWithQuestion has no question");
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  usePromptStashStore.getState().stashEntry({
+    id: "stash-late-question",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    prompt: "Deploy on ",
+    attachments: [],
+    files: [
+      {
+        id: "file-notes",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+        attachmentId: "attachment-notes",
+        environmentId: ENVIRONMENT_ID,
+      },
+    ],
+    droppedImageNames: [],
+    records: [environmentContextRecord(EnvironmentId.make("environment-build"), "Build box")],
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText("Answer 0 for thread-stash-late-question.")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
+  await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
+
+  // The question opens while the restore still waits on the server's file check.
+  await vi.waitFor(() => expect(hasPendingAssetUrl()).toBe(true));
+  await emitThreadEvent(thread.id, { type: "turn-item.updated", payload: question });
+  await emitThreadEvent(thread.id, { type: "runtime-request.updated", payload: request });
+  await expect.element(page.getByText("Which file should change?")).toBeVisible();
+  await answerAssetUrls();
+
+  await vi.waitFor(() =>
+    expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
+  );
+  expect(usePromptStashStore.getState().entries).toHaveLength(1);
+  usePromptStashStore.getState().takeEntry("stash-late-question");
 });
 
 it("a new draft does not load its reserved thread before the server lists it", async () => {
