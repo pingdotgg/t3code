@@ -1000,6 +1000,100 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         { discard: true },
       );
 
+      // A killed add leaves tmp_objdir-* or tmp_pack_* behind, so it writes to a private store
+      // that is always removed and publishes only its finished objects. Inside objects/ keeps
+      // renames on one filesystem.
+      const objectsDir = hostEnv.GIT_OBJECT_DIRECTORY
+        ? path.resolve(input.cwd, hostEnv.GIT_OBJECT_DIRECTORY)
+        : path.join(gitCommonDir, "objects");
+      const privateObjectsDir = path.join(objectsDir, `t3-checkpoint-objects-${indexId}`);
+      const stageEnv: NodeJS.ProcessEnv = {
+        ...commitEnv,
+        GIT_OBJECT_DIRECTORY: privateObjectsDir,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: [
+          // Git C-unquotes entries starting with a quote, so the path may hold the separator.
+          `"${objectsDir.replace(/[\\"]/g, "\\$&")}"`,
+          hostEnv.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+        ]
+          .filter(Boolean)
+          .join(hostPlatform === "win32" ? ";" : ":"),
+      };
+      const cleanupPrivateObjects = fileSystem
+        .remove(privateObjectsDir, { recursive: true, force: true })
+        .pipe(Effect.ignore);
+      const publishFailed = (detail: string) =>
+        new VcsProcessExitError({
+          operation,
+          command: "publish checkpoint objects",
+          cwd: input.cwd,
+          exitCode: 1,
+          detail,
+        });
+      // Objects are content-addressed, so an existing target already holds the same bytes.
+      const publish = (from: string, to: string) =>
+        fileSystem
+          .exists(to)
+          .pipe(
+            Effect.flatMap((exists) =>
+              exists
+                ? Effect.void
+                : fileSystem
+                    .rename(from, to)
+                    .pipe(
+                      Effect.catch((error) =>
+                        fileSystem
+                          .exists(to)
+                          .pipe(
+                            Effect.flatMap((raced) => (raced ? Effect.void : Effect.fail(error))),
+                          ),
+                      ),
+                    ),
+            ),
+          );
+      const publishPrivateObjects = Effect.gen(function* () {
+        const entries = yield* fileSystem.readDirectory(privateObjectsDir);
+        yield* Effect.forEach(
+          entries.filter((name) => /^[0-9a-f]{2}$/.test(name)),
+          (fanout) =>
+            Effect.gen(function* () {
+              const source = path.join(privateObjectsDir, fanout);
+              const target = path.join(objectsDir, fanout);
+              if (!(yield* fileSystem.exists(target))) {
+                yield* fileSystem.makeDirectory(target, { recursive: true });
+                // Carry over core.sharedRepository permissions Git gave the private directory.
+                const { mode } = yield* fileSystem.stat(source);
+                yield* fileSystem.chmod(target, mode & 0o7777).pipe(Effect.ignore);
+              }
+              const objects = (yield* fileSystem.readDirectory(source)).filter((name) =>
+                /^[0-9a-f]+$/.test(name),
+              );
+              yield* Effect.forEach(
+                objects,
+                (name) => publish(path.join(source, name), path.join(target, name)),
+                { discard: true },
+              );
+            }),
+          { concurrency: 8, discard: true },
+        );
+        if (!entries.includes("pack")) return;
+        const packDir = path.join(privateObjectsDir, "pack");
+        const packFiles = (yield* fileSystem.readDirectory(packDir)).filter((name) =>
+          name.startsWith("pack-"),
+        );
+        // Git discovers a pack by its .idx, so publish the index after the files it describes.
+        const ordered = [
+          ...packFiles.filter((name) => !name.endsWith(".idx")),
+          ...packFiles.filter((name) => name.endsWith(".idx")),
+        ];
+        if (ordered.length === 0) return;
+        yield* fileSystem.makeDirectory(path.join(objectsDir, "pack"), { recursive: true });
+        yield* Effect.forEach(
+          ordered,
+          (name) => publish(path.join(packDir, name), path.join(objectsDir, "pack", name)),
+          { discard: true },
+        );
+      }).pipe(Effect.mapError((error) => publishFailed(error.message)));
+
       yield* Effect.gen(function* () {
         const sparseConfig = yield* execute({
           operation,
@@ -1256,8 +1350,11 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ".",
               ...exclusions,
             ],
-            env: commitEnv,
+            env: stageEnv,
           });
+        yield* fileSystem
+          .makeDirectory(privateObjectsDir, { recursive: true })
+          .pipe(Effect.mapError((error) => publishFailed(error.message)));
         yield* stageFiles([]).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
@@ -1314,6 +1411,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ),
           }),
         );
+        yield* publishPrivateObjects;
 
         const writeTreeResult = yield* execute({
           operation,
@@ -1363,7 +1461,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
-      }).pipe(Effect.ensuring(cleanupTempIndex));
+      }).pipe(Effect.ensuring(Effect.andThen(cleanupTempIndex, cleanupPrivateObjects)));
     }),
 
     hasCheckpointRef: (input) =>
