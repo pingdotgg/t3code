@@ -635,7 +635,7 @@ function RightPanelTab(
                     if (surface.kind === "device" && canRename) onStartRename(surface.id);
                   }}
                   className={cn(
-                    "cursor-pointer flex min-w-0 items-center",
+                    "cursor-pointer flex min-w-0 items-center outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring",
                     filesCrumb && notched && "max-md:hidden",
                     active && surface.kind === "diff" && "shrink-0",
                   )}

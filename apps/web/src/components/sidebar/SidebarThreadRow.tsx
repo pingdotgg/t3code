@@ -1444,7 +1444,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
                             className={cn(
-                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-meta text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                              "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-meta text-muted-foreground opacity-0 outline-none transition-opacity hover:surface-ghost-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                               isWoke && "group-any-hover/sidebar-row:static",
                             )}
                           />
