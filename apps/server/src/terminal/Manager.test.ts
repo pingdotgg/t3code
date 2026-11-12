@@ -4,12 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_TERMINAL_ID,
+  ProjectId,
+  ThreadId,
+  TerminalCwdNotFoundError,
   type TerminalAttachStreamEvent,
   type TerminalEvent,
   type TerminalOpenInput,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProjectId,
   retainedTerminalHistory,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
@@ -28,6 +30,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -35,12 +38,16 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./Manager.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import packageJson from "../../package.json" with { type: "json" };
@@ -409,6 +416,41 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
   }
 });
 
+it("restores bounded history across append compaction, clears and split Unicode", () => {
+  const maxBytes = 64;
+  const history = new TerminalManager.BoundedTerminalHistory(3, "", maxBytes);
+  let cursor: ReturnType<typeof history.persistenceUpdate>["cursor"] | undefined;
+  let persisted = "";
+  let compactions = 0;
+  const flush = () => {
+    const update = history.persistenceUpdate(cursor);
+    if (!update.append) compactions += 1;
+    const encoded = Buffer.from(update.data).toString();
+    persisted = update.append ? persisted + encoded : encoded;
+    cursor = update.cursor;
+    expect(Buffer.byteLength(persisted)).toBeLessThanOrEqual(maxBytes * 2);
+    expect(retainedHistory(persisted, 3, maxBytes)).toBe(Buffer.from(history.value()).toString());
+  };
+  for (let index = 0; index < 100; index += 1) {
+    history.append(`line ${index} 名\n`);
+    flush();
+  }
+  expect(compactions).toBeGreaterThan(1);
+  expect(compactions).toBeLessThan(50);
+  history.clear();
+  flush();
+  expect(persisted).toBe("");
+  history.append("\ud83d");
+  flush();
+  history.append("\ude80");
+  flush();
+  expect(persisted).toBe("🚀");
+  // More output than the retained window between flushes must replace the file.
+  history.append("z".repeat(maxBytes * 3));
+  flush();
+  expect(persisted).toBe("z".repeat(maxBytes));
+});
+
 it.layer(
   Layer.mergeAll(
     NodeServices.layer,
@@ -417,6 +459,91 @@ it.layer(
   ),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect.each([
+    { method: "open", location: "managed" },
+    { method: "attach", location: "managed" },
+    { method: "open", location: "subdirectory" },
+    { method: "open", location: "unmanaged" },
+    { method: "open", location: "no-worktree" },
+  ] as const)(
+    "recovers $method with a $location cwd without a cleanup gap",
+    ({ method, location }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { manager, ptyAdapter, baseDir } = yield* createManager();
+        const worktreesDir = path.join(baseDir, "worktrees");
+        const worktreePath =
+          location === "unmanaged"
+            ? path.join(baseDir, "missing")
+            : path.join(worktreesDir, "project", "feature");
+        const cwd = location === "subdirectory" ? path.join(worktreePath, "src") : worktreePath;
+        const cleanupQueued = yield* Deferred.make<Fiber.Fiber<void>>();
+        let creations = 0;
+        const prepareLaunch = yield* makePrepareTerminalLaunch(() =>
+          Effect.succeed({
+            id: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-1"),
+            worktreePath: location === "no-worktree" ? null : worktreePath,
+            branch: "feature",
+          }),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ServerConfig.ServerConfig)({
+                worktreesDir,
+              } as ServerConfig.ServerConfig["Service"]),
+              ServerSettings.layerTest(),
+              Layer.mock(ProjectService.ProjectService)({
+                getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
+              }),
+              Layer.mock(GitWorkflowService.GitWorkflowService)({
+                pruneWorktrees: () => Effect.void,
+                listLocalBranchNames: () => Effect.succeed(["feature"]),
+                createWorktree: () =>
+                  Effect.gen(function* () {
+                    creations++;
+                    yield* fs.makeDirectory(cwd, { recursive: true }).pipe(Effect.orDie);
+                    const cleanup = yield* withWorkspaceLease(
+                      worktreePath,
+                      Effect.sync(() => {
+                        assert.equal(ptyAdapter.spawnInputs.length, 1);
+                      }),
+                    ).pipe(Effect.forkChild({ startImmediately: true }));
+                    yield* Deferred.succeed(cleanupQueued, cleanup);
+                    return {} as never;
+                  }),
+              }),
+            ),
+          ),
+        );
+        const input = openInput({
+          cwd,
+          worktreePath: location === "subdirectory" ? null : worktreePath,
+        });
+        const launch = prepareLaunch(input).pipe(
+          Effect.flatMap(({ input, recover }) =>
+            (method === "attach"
+              ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
+              : manager.open(input).pipe(Effect.asVoid)
+            ).pipe(Effect.provideService(TerminalManager.TerminalCwdRecovery, recover)),
+          ),
+        );
+        if (location === "unmanaged" || location === "no-worktree") {
+          const error = yield* launch.pipe(Effect.flip);
+          assert.deepEqual(error, new TerminalCwdNotFoundError({ cwd }));
+          assert.equal(creations, 0);
+          assert.equal(ptyAdapter.spawnInputs.length, 0);
+          return;
+        }
+        yield* launch;
+        yield* Fiber.join(yield* Deferred.await(cleanupQueued));
+        assert.equal(creations, 1);
+        assert.equal(ptyAdapter.spawnInputs.length, 1);
+        assert.isTrue(yield* fs.exists(cwd));
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1042,6 +1169,119 @@ it.layer(
       const snapshot = events.filter((event) => event.type === "snapshot").at(-1)?.snapshot;
       expect(snapshot?.history).toBe("aa😀\rEND");
       expect(snapshot?.sequence).toBe(reopened.sequence);
+    }),
+  );
+
+  it.effect("persists small terminal updates without rewriting the retained history", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const writes = yield* Queue.unbounded<number>();
+      const maxBytes = 64 * 1024;
+      const { manager, ptyAdapter, logsDir } = yield* createManager(5_000, {
+        historyByteLimit: maxBytes,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (path, data, options) =>
+            fs
+              .writeFileString(path, data, options)
+              .pipe(
+                Effect.tap(() =>
+                  data.length > 0 ? Queue.offer(writes, Buffer.byteLength(data)) : Effect.void,
+                ),
+              ),
+        }),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("a".repeat(maxBytes));
+      let written = yield* Queue.take(writes);
+      for (let index = 0; index < 16; index += 1) {
+        process.emitData("b".repeat(1024));
+        written += yield* Queue.take(writes);
+      }
+      expect(written).toBeLessThan(maxBytes * 2);
+      const expected = "a".repeat(maxBytes - 16 * 1024) + "b".repeat(16 * 1024);
+      const persisted = yield* fs.readFileString(yield* historyLogPath(logsDir));
+      expect(Buffer.byteLength(persisted)).toBe(maxBytes + 16 * 1024);
+      for (const failure of [undefined, "write", "rename"] as const) {
+        let failed = false;
+        const fail = () => {
+          failed = true;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method: failure === "write" ? "writeFileString" : "rename",
+              cause: { code: "ENOSPC" },
+            }),
+          );
+        };
+        const recovered = yield* createManager(5_000, { historyByteLimit: maxBytes }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (file, data, options) =>
+              failure === "write" && !failed && data === expected
+                ? fs.writeFileString(file, "partial", options).pipe(Effect.andThen(fail))
+                : fs.writeFileString(file, data, options),
+            rename: (from, to) => (failure === "rename" && !failed ? fail() : fs.rename(from, to)),
+          }),
+        );
+        const recoveredPath = yield* historyLogPath(recovered.logsDir);
+        yield* fs.makeDirectory(recovered.logsDir, { recursive: true });
+        yield* fs.writeFileString(recoveredPath, persisted);
+        const snapshot = yield* recovered.manager.open(openInput());
+        expect(snapshot.status).toBe("running");
+        expect(snapshot.history).toBe(expected);
+        expect(failed).toBe(failure !== undefined);
+        expect(yield* fs.readFileString(recoveredPath)).toBe(
+          failure === undefined ? expected : persisted,
+        );
+        expect(yield* fs.readDirectory(recovered.logsDir)).toHaveLength(1);
+      }
+      yield* manager.close({ threadId: "thread-1" });
+      expect((yield* manager.open(openInput())).history).toBe(expected);
+      expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe(expected);
+    }),
+  );
+
+  it.effect("rewrites history after an append fails partway through", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const writes = yield* Queue.unbounded<void>();
+      let failAppend = false;
+      const { manager, ptyAdapter, logsDir } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (path, data, options) => {
+            if (options?.flag === "a" && failAppend) {
+              failAppend = false;
+              return fs.writeFileString(path, data.slice(0, 1), options).pipe(
+                // The file cannot also be a parent directory: fail after the partial append.
+                Effect.andThen(fs.writeFileString(`${path}/missing`, data)),
+                Effect.ensuring(Queue.offer(writes, undefined)),
+              );
+            }
+            return fs
+              .writeFileString(path, data, options)
+              .pipe(
+                Effect.tap(() => (data.length > 0 ? Queue.offer(writes, undefined) : Effect.void)),
+              );
+          },
+        }),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("start:");
+      yield* Queue.take(writes);
+      failAppend = true;
+      process.emitData("middle");
+      yield* Queue.take(writes);
+      expect(failAppend).toBe(false);
+      process.emitData(":end");
+      yield* Queue.take(writes);
+      expect(yield* fs.readFileString(yield* historyLogPath(logsDir))).toBe("start:middle:end");
+      yield* manager.close({ threadId: "thread-1" });
     }),
   );
 

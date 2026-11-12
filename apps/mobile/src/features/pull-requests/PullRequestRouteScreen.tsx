@@ -358,7 +358,7 @@ function usePullRequestToolbarHeight(bottomInset: number) {
 }
 
 export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
-  const returnToList = useAndroidWorkspaceBack("pullRequests");
+  const returnToList = useAndroidWorkspaceBack();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
