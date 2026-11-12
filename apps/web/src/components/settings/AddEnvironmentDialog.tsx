@@ -1,5 +1,10 @@
 import { pipe } from "effect/Function";
-import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  ChevronsLeftRightEllipsisIcon,
+  PlusIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -19,6 +24,7 @@ import * as Option from "effect/Option";
 import { cn } from "../../lib/utils";
 import { formatDesktopSshTarget } from "./EnvironmentRow";
 import { Input } from "../ui/input";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { CommandShortcut } from "../ui/command";
 import {
   Autocomplete,
@@ -59,11 +65,17 @@ import {
   threadJumpIndexFromCommand,
 } from "../../keybindings";
 import {
+  formatDesktopBridgeError,
+  gatewayHeadersFromDraft,
+  makeGatewayHeadersDraft,
   parseManualDesktopSshTarget,
   parsePairingUrlFields,
   parseRemotePairingFields,
   formatDesktopSshConnectionError,
+  resolveGatewayOrigin,
 } from "./ConnectionsSettings.logic";
+import { GatewayHeadersFields } from "./GatewayHeadersSettings";
+import { refreshDesktopGatewayHeadersState } from "~/state/desktopGatewayHeaders";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
@@ -112,6 +124,8 @@ export function AddEnvironmentDialog({
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
+  const [gatewayHeadersOpen, setGatewayHeadersOpen] = useState(false);
+  const [gatewayHeadersDraft, setGatewayHeadersDraft] = useState(makeGatewayHeadersDraft);
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -153,6 +167,8 @@ export function AddEnvironmentDialog({
       setSavedBackendMode("remote");
       setSavedBackendHost("");
       setSavedBackendPairingCode("");
+      setGatewayHeadersOpen(false);
+      setGatewayHeadersDraft(makeGatewayHeadersDraft());
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
@@ -205,14 +221,19 @@ export function AddEnvironmentDialog({
       return;
     }
 
+    const session = savedBackendSessionRef.current;
     setIsAddingSavedBackend(true);
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
+    let gatewayHeaders: ReturnType<typeof gatewayHeadersFromDraft> = [];
     try {
       remotePairingInput = parseRemotePairingFields({
         host: savedBackendHost,
         pairingCode: savedBackendPairingCode,
       });
+      if (desktopBridge && gatewayHeadersOpen) {
+        gatewayHeaders = gatewayHeadersFromDraft(gatewayHeadersDraft);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to add backend.";
       onErrorChange(message);
@@ -225,6 +246,26 @@ export function AddEnvironmentDialog({
       );
       setIsAddingSavedBackend(false);
       return;
+    }
+
+    if (desktopBridge && gatewayHeaders.length > 0) {
+      try {
+        await desktopBridge.setGatewayHeaders({
+          origin: resolveGatewayOrigin(remotePairingInput.host),
+          headers: gatewayHeaders,
+        });
+        refreshDesktopGatewayHeadersState();
+      } catch (error) {
+        if (session === savedBackendSessionRef.current) {
+          onErrorChange(formatDesktopBridgeError(error, "Could not save the gateway headers."));
+        }
+        setIsAddingSavedBackend(false);
+        return;
+      }
+      if (session !== savedBackendSessionRef.current) {
+        setIsAddingSavedBackend(false);
+        return;
+      }
     }
 
     const result = await connectPairing({
@@ -418,6 +459,37 @@ export function AddEnvironmentDialog({
           Paste a full pairing URL here to fill both fields automatically.
         </span>
       </div>
+      {desktopBridge ? (
+        <Collapsible open={gatewayHeadersOpen} onOpenChange={setGatewayHeadersOpen}>
+          <div className="-ml-2">
+            <CollapsibleTrigger
+              disabled={isAddingSavedBackend}
+              render={<Button size="xs" variant="ghost-muted" />}
+            >
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "transition-transform duration-150 motion-reduce:transition-none",
+                  gatewayHeadersOpen && "rotate-90",
+                )}
+              />
+              Behind an access proxy?
+            </CollapsibleTrigger>
+          </div>
+          <CollapsiblePanel>
+            <div className="flex flex-col gap-2 pt-2">
+              <GatewayHeadersFields
+                draft={gatewayHeadersDraft}
+                disabled={isAddingSavedBackend}
+                onChange={setGatewayHeadersDraft}
+              />
+              <p className="text-2xs text-muted-foreground">
+                Stored encrypted on this device and sent with every request to this host.
+              </p>
+            </div>
+          </CollapsiblePanel>
+        </Collapsible>
+      ) : null}
     </div>
   );
   const relayRouteOffer =
