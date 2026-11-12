@@ -1295,7 +1295,8 @@ process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.dat
       assert.equal(yield* backUp("resume"), "done");
       assert.equal(
         yield* fs.readFileString(path.join(backupDir("resume"), "database")),
-        "ABCDE56789",
+        // Elsewhere the copier may preallocate, so a partial file's length proves nothing.
+        (yield* HostProcess.Platform) === "linux" ? "ABCDE56789" : "0123456789",
       );
       assert.deepEqual(yield* fs.readDirectory(backupDir("resume")), ["database"]);
 

@@ -488,7 +488,12 @@ export async function backupDatabaseOnce(
   const stagingDir = `${backupDir}.staging`;
   const stampPath = NodePath.join(stagingDir, BACKUP_SOURCE_STAMP);
   const stamp = await databaseSourceStamp(pending.dbPath);
-  const resuming = (await NodeFSP.readFile(stampPath, "utf8").catch(() => undefined)) === stamp;
+  // A partial file's length is its valid prefix only for GNU cp's front-to-back writes;
+  // Windows CopyFileW and macOS copyfile may size the destination before copying data.
+  const resuming =
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+    process.platform === "linux" &&
+    (await NodeFSP.readFile(stampPath, "utf8").catch(() => undefined)) === stamp;
   if (!resuming) {
     await NodeFSP.rm(stagingDir, { recursive: true, force: true });
     await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
