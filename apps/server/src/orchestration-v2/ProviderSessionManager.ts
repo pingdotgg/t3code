@@ -4,15 +4,20 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
   ModelSelection,
+  type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2PromptSuggestion,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
+  type OrchestrationV2TurnItem,
   type ProviderThreadId,
+  type ProviderTurnId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -43,6 +48,7 @@ import {
   withMetrics,
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
@@ -66,6 +72,14 @@ const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThread
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
+// Providers can announce a retry and never resume. Longer than any adapter's own stall handling.
+const PROVIDER_RETRY_STALL_TIMEOUT = Duration.minutes(15);
+type ProviderErrorItem = Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+type ProviderRetryItem = ProviderErrorItem & {
+  readonly providerTurnId: ProviderTurnId;
+  readonly providerThreadId: ProviderThreadId;
+  readonly retry: NonNullable<ProviderErrorItem["retry"]>;
+};
 /** Suggestions outlive their sessions, so keep only the most recently updated threads. */
 const MAX_PROMPT_SUGGESTIONS = 256;
 const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
@@ -74,6 +88,30 @@ const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
   "running",
   "waiting",
 ]);
+
+/** Matches planDelegatedCompletionDelivery: true while a delegated task's result still wakes the thread. */
+export const delegatedTaskWillWake = (records: {
+  readonly thread: Pick<OrchestrationV2AppThread, "archivedAt" | "deletedAt">;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "delegatedCompletion">>;
+  readonly subagents: ReadonlyArray<
+    Pick<OrchestrationV2Subagent, "origin" | "status" | "runId" | "completionDelivery">
+  >;
+}): boolean =>
+  records.thread.archivedAt === null &&
+  records.thread.deletedAt === null &&
+  records.subagents.some((task) => {
+    const run = records.runs.find((candidate) => candidate.id === task.runId);
+    const delivery = task.completionDelivery?.state;
+    return (
+      task.origin === "app_owned" &&
+      isOrchestrationV2WorkActive(task.status) &&
+      run !== undefined &&
+      (run.delegatedCompletion?.disposition ?? "open") === "open" &&
+      delivery !== "acknowledged" &&
+      delivery !== "delivered" &&
+      delivery !== "disposed"
+    );
+  });
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -319,15 +357,21 @@ function providerThreadRuntimeKey(
 }
 
 function providerThreadLoadKey(input: {
+  readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly providerThread: Parameters<
     ProviderAdapter.ProviderAdapterV2SessionRuntime["resumeThread"]
   >[0]["providerThread"];
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): string {
+  const modelSelection =
+    input.modelSelection === undefined
+      ? undefined
+      : (input.runtime.normalizeThreadLoadModelSelection?.(input.modelSelection) ??
+        input.modelSelection);
   return JSON.stringify({
     providerThread: providerThreadRuntimeKey(input.providerThread),
-    modelSelection: input.modelSelection ?? null,
+    modelSelection: modelSelection ?? null,
     runtimePolicy: input.runtimePolicy ?? null,
   });
 }
@@ -346,6 +390,7 @@ export const layerWithOptions = (
   | ProjectionStore.ProjectionStoreV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | ProviderInstallationGate.ProviderInstallationGate
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
@@ -366,6 +411,7 @@ export const layerWithOptions = (
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const agentScope = yield* AgentScope;
+      const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
       // Labs flag, read live: Codex per turn (its shared session outlives a toggle), Claude per query.
       // Unreadable settings keep it off.
       const promptSuggestionsEnabled = Option.isNone(serverSettings)
@@ -532,7 +578,15 @@ export const layerWithOptions = (
                   capabilities,
                   subagent,
                 });
-                yield* mcpSessions.set(credential.config);
+                yield* mcpSessions.set({
+                  ...credential.config,
+                  hasPendingWake: projectionStore
+                    .getThreadRecords(threadId, ["runs", "subagents"])
+                    .pipe(
+                      Effect.map(delegatedTaskWillWake),
+                      Effect.orElseSucceed(() => false),
+                    ),
+                });
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),
@@ -1197,11 +1251,19 @@ export const layerWithOptions = (
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
           const hasPendingWork =
-            probedRuntime.hasPendingBackgroundWork === undefined
+            (probedRuntime.hasPendingBackgroundWork === undefined
               ? false
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
-                );
+                )) ||
+            // Closing now would skip the archive of a child whose parent has not taken its result.
+            Option.isSome(
+              yield* Effect.findFirst(entry.idleThreadUnloads.keys(), (threadId) =>
+                delegatedChildArchive(threadId).pipe(
+                  Effect.map((child) => child === "awaiting_delivery"),
+                ),
+              ),
+            );
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
@@ -1236,6 +1298,18 @@ export const layerWithOptions = (
               pinnedForMs: now - pinnedSinceMs,
             });
           }
+          // Closing skips the threads' own idle unloads, so archive delivered children first.
+          yield* Effect.forEach(
+            entry.idleThreadUnloads,
+            ([threadId, pending]) =>
+              unloadIdleThread({
+                providerSessionId: input.providerSessionId,
+                threadId,
+                generation: pending.generation,
+                archiveOnly: true,
+              }),
+            { discard: true },
+          );
           // Adapter probes yield; guard busyTurns and idleGeneration atomically when removing the entry.
           yield* releaseEntry({
             providerSessionId: input.providerSessionId,
@@ -1653,11 +1727,44 @@ export const layerWithOptions = (
         },
       );
 
+      // Provider clients list a delegated child as an ordinary conversation, so a
+      // finished one is archived once its parent has the result.
+      const delegatedChildArchive = Effect.fn("ProviderSessionManager.delegatedChildArchive")(
+        function* (threadId: ThreadId) {
+          const { thread, runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"], {
+            runStatuses: [],
+            includeLatestRun: true,
+          });
+          // Follow-up tasks name their run; the initial task is the node the child forked from.
+          const taskId =
+            runs.at(-1)?.delegatedTaskId ??
+            (thread.forkedFrom?.type === "node" ? thread.forkedFrom.nodeId : undefined);
+          const parentThreadId = thread.lineage.parentThreadId;
+          if (parentThreadId === null || taskId === undefined) return undefined;
+          const task = (yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+            subagentIds: [taskId],
+          })).subagents[0];
+          if (
+            task?.origin !== "app_owned" ||
+            task.childThreadId !== threadId ||
+            task.status !== "completed"
+          ) {
+            return undefined;
+          }
+          const delivery = task.completionDelivery?.state;
+          if (delivery === "pending" || delivery === "claimed") return "awaiting_delivery";
+          return delivery === "delivered" || delivery === "acknowledged" ? "ready" : undefined;
+        },
+        (effect) => effect.pipe(Effect.orElseSucceed(() => undefined)),
+      );
+
       const unloadIdleThread = Effect.fn("ProviderSessionManager.unloadIdleThread")(
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
           readonly threadId: ThreadId;
           readonly generation: number;
+          /** Session release unloads only the threads it would archive, and never waits. */
+          readonly archiveOnly?: boolean;
         }): Effect.fn.Return<void> {
           const outcome = yield* threadAttachment.withLock(
             threadAttachmentKey(input),
@@ -1684,6 +1791,11 @@ export const layerWithOptions = (
                       .hasPendingBackgroundWorkForThread(pending.providerThread)
                       .pipe(Effect.catchCause(() => Effect.succeed(false)));
               if (hasPendingWork) return "deferred" as const;
+              const child = yield* delegatedChildArchive(input.threadId);
+              // Unloading now would miss the archive once the parent takes the result.
+              if (child === "awaiting_delivery") return "deferred" as const;
+              const archive = child === "ready";
+              if (input.archiveOnly === true && !archive) return "skipped" as const;
               const unloading = yield* Ref.modify(sessions, (current) => {
                 const latest = current.get(key);
                 if (
@@ -1707,8 +1819,23 @@ export const layerWithOptions = (
                 return [true, updated] as const;
               });
               if (!unloading) return "skipped" as const;
-              yield* unloadThread({ providerThread: pending.providerThread }).pipe(
-                Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+              const unload = (archiveThread: boolean) =>
+                unloadThread({
+                  providerThread: pending.providerThread,
+                  archive: archiveThread,
+                }).pipe(Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS));
+              yield* unload(archive).pipe(
+                // A failed or timed-out archive may have left the thread loaded.
+                Effect.catch((cause) =>
+                  archive
+                    ? Effect.logWarning("orchestration-v2.driver-session.idle-archive-failed", {
+                        providerSessionId: input.providerSessionId,
+                        threadId: input.threadId,
+                        providerThreadId: pending.providerThread.id,
+                        cause,
+                      }).pipe(Effect.andThen(unload(false)))
+                    : Effect.fail(cause),
+                ),
                 Effect.tap(() =>
                   Ref.update(sessions, (current) => {
                     const latest = current.get(key);
@@ -1731,7 +1858,7 @@ export const layerWithOptions = (
             }),
           );
           // Wait outside the lock so the next attach is not blocked.
-          if (outcome === "deferred") {
+          if (outcome === "deferred" && input.archiveOnly !== true) {
             yield* Effect.sleep(Duration.millis(idleTimeoutMs));
             return yield* unloadIdleThread(input);
           }
@@ -1974,6 +2101,7 @@ export const layerWithOptions = (
                   providerSessionId,
                   threadId: input.threadId,
                   providerThreadKey: providerThreadLoadKey({
+                    runtime,
                     providerThread,
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -1989,6 +2117,7 @@ export const layerWithOptions = (
               return runtime.resumeThread(input);
             }
             const providerThreadKey = providerThreadLoadKey({
+              runtime,
               providerThread: input.providerThread,
               ...(input.modelSelection === undefined
                 ? {}
@@ -2033,6 +2162,7 @@ export const layerWithOptions = (
                   providerSessionId,
                   threadId,
                   providerThreadKey: providerThreadLoadKey({
+                    runtime,
                     providerThread,
                     ...(input.modelSelection === undefined
                       ? {}
@@ -2062,6 +2192,7 @@ export const layerWithOptions = (
                   providerSessionId,
                   threadId: input.targetThreadId,
                   providerThreadKey: providerThreadLoadKey({
+                    runtime,
                     providerThread,
                     ...(input.modelSelection === undefined
                       ? {}
@@ -2203,21 +2334,198 @@ export const layerWithOptions = (
           ),
       );
 
+      const makeRetryStallWatch = (entry: LiveSessionEntry) => {
+        const runningRetries = new Map<ProviderTurnId, ProviderRetryItem>();
+        const stalledRetries = new Map<ProviderTurnId, ProviderRetryItem>();
+        const stallTimers = new Map<ProviderTurnId, Fiber.Fiber<void>>();
+        // Claude and Pi keep the retry row running while a recovered reply streams, so any
+        // event on the retry's thread counts as the provider being alive.
+        const activeSinceCheck = new Set<ProviderTurnId>();
+        const noteThreadActivity = (event: ProviderAdapter.ProviderAdapterV2Event) => {
+          if (runningRetries.size === 0) return;
+          const threadId =
+            event.type === "turn_item.updated"
+              ? event.turnItem.threadId
+              : event.type === "message.updated"
+                ? event.message.threadId
+                : event.type === "node.updated"
+                  ? event.node.threadId
+                  : event.type === "plan.updated"
+                    ? event.plan.threadId
+                    : undefined;
+          if (threadId === undefined) return;
+          for (const item of runningRetries.values()) {
+            if (item.threadId === threadId) activeSinceCheck.add(item.providerTurnId);
+          }
+        };
+        // Stops the stalled turn; its interrupted terminal is then reported as the retry's failure.
+        const stopStalledRetry = Effect.fn("ProviderSessionManager.stopStalledRetry")(
+          function* (item: ProviderRetryItem) {
+            if (runningRetries.get(item.providerTurnId) !== item) return;
+            // The terminal this stop causes must not interrupt the stop itself.
+            stallTimers.delete(item.providerTurnId);
+            const current = (yield* Ref.get(sessions)).get(
+              sessionKey(entry.runtime.providerSessionId),
+            );
+            if (current?.runtime !== entry.runtime) return;
+            const { providerThread } = yield* projectionStore.getProviderControlContext(
+              item.threadId,
+              { providerThreadId: item.providerThreadId, providerTurnId: item.providerTurnId },
+            );
+            if (providerThread === undefined || runningRetries.get(item.providerTurnId) !== item)
+              return;
+            stalledRetries.set(item.providerTurnId, item);
+            yield* entry.exposedRuntime
+              .interruptTurn({ providerThread, providerTurnId: item.providerTurnId })
+              .pipe(
+                // A slow stop can still end the turn later, so that terminal keeps the retry failure.
+                Effect.catchTags({
+                  ProviderAdapterInterruptTimeoutError: (cause) =>
+                    Effect.logWarning("orchestration-v2.provider-retry-stall-stop-timed-out", {
+                      providerSessionId: entry.runtime.providerSessionId,
+                      cause,
+                    }),
+                }),
+              );
+          },
+          (effect, item) =>
+            effect.pipe(
+              Effect.catchCause((cause) =>
+                Effect.sync(() => stalledRetries.delete(item.providerTurnId)).pipe(
+                  Effect.andThen(
+                    Effect.logWarning("orchestration-v2.provider-retry-stall-stop-failed", {
+                      providerSessionId: entry.runtime.providerSessionId,
+                      cause,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+        );
+        const stopStallTimer = (providerTurnId: ProviderTurnId) => {
+          const fiber = stallTimers.get(providerTurnId);
+          stallTimers.delete(providerTurnId);
+          activeSinceCheck.delete(providerTurnId);
+          return fiber === undefined ? Effect.void : Fiber.interrupt(fiber);
+        };
+        const trackProviderRetry = (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ): {
+          readonly event: ProviderAdapter.ProviderAdapterV2Event;
+          readonly armed?: ProviderRetryItem;
+          readonly settled?: ProviderTurnId;
+        } => {
+          noteThreadActivity(event);
+          if (event.type === "turn_item.updated") {
+            const item = event.turnItem;
+            if (
+              item.type !== "error" ||
+              item.retry === undefined ||
+              item.providerTurnId === null ||
+              item.providerThreadId === null
+            )
+              return { event };
+            const retryItem = {
+              ...item,
+              providerTurnId: item.providerTurnId,
+              providerThreadId: item.providerThreadId,
+              retry: item.retry,
+            };
+            if (item.status === "running") {
+              runningRetries.set(retryItem.providerTurnId, retryItem);
+              return { event, armed: retryItem };
+            }
+            // A stall marker is set only once the stop is sent, so only the terminal clears it.
+            runningRetries.delete(retryItem.providerTurnId);
+            return { event, settled: retryItem.providerTurnId };
+          }
+          if (event.type === "provider_turn.updated") {
+            if (event.providerTurn.status === "running") return { event };
+            runningRetries.delete(event.providerTurn.id);
+            const settled = event.providerTurn.id;
+            return stalledRetries.has(settled) &&
+              (event.providerTurn.status === "interrupted" ||
+                event.providerTurn.status === "cancelled")
+              ? {
+                  event: { ...event, providerTurn: { ...event.providerTurn, status: "failed" } },
+                  settled,
+                }
+              : { event, settled };
+          }
+          if (event.type !== "turn.terminal") return { event };
+          runningRetries.delete(event.providerTurnId);
+          const stalled = stalledRetries.get(event.providerTurnId);
+          stalledRetries.delete(event.providerTurnId);
+          const settled = event.providerTurnId;
+          if (
+            stalled === undefined ||
+            (event.status !== "interrupted" && event.status !== "cancelled")
+          )
+            return { event, settled };
+          return {
+            settled,
+            event: {
+              type: "turn.terminal",
+              driver: event.driver,
+              providerThreadId: event.providerThreadId,
+              providerTurnId: event.providerTurnId,
+              runOrdinal: event.runOrdinal,
+              failureItemOrdinal: stalled.ordinal,
+              status: "failed",
+              failure: { ...stalled.failure, retryable: false },
+              retry: stalled.retry,
+              ...(stalled.startedAt === null ? {} : { retryStartedAt: stalled.startedAt }),
+              threadDisposition: event.threadDisposition,
+            },
+          };
+        };
+        return {
+          track: trackProviderRetry,
+          // Runs for every provider event; spans would be per-event noise. Timers are children
+          // of the pump fiber, so a released session takes them down.
+          update: Effect.fnUntraced(function* (tracked: ReturnType<typeof trackProviderRetry>) {
+            const item = tracked.armed;
+            if (item === undefined) {
+              if (tracked.settled !== undefined) yield* stopStallTimer(tracked.settled);
+              return;
+            }
+            yield* stopStallTimer(item.providerTurnId);
+            const window = Duration.sum(
+              PROVIDER_RETRY_STALL_TIMEOUT,
+              Duration.millis(item.retry.retryDelayMs ?? 0),
+            );
+            const timer = yield* Effect.gen(function* () {
+              // Only a thread that stayed silent for a whole window has stalled.
+              do {
+                activeSinceCheck.delete(item.providerTurnId);
+                yield* Effect.sleep(window);
+              } while (activeSinceCheck.has(item.providerTurnId));
+              yield* stopStalledRetry(item);
+            }).pipe(Effect.forkChild({ startImmediately: true }));
+            stallTimers.set(item.providerTurnId, timer);
+          }),
+        };
+      };
+
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
         let lastSessionStatus = entry.runtime.providerSession.status;
+        const retryStalls = makeRetryStallWatch(entry);
         return entry.runtime.events.pipe(
-          Stream.runForEach((event) => {
+          Stream.runForEach((nativeEvent) => {
             if (shutdownSignal.received) return Effect.void;
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
-            if (event.type === "command_output.delta") {
-              return commandOutput.append(event);
+            if (nativeEvent.type === "command_output.delta") {
+              return commandOutput.append(nativeEvent);
             }
-            if (event.type === "prompt_suggestion.updated") {
+            if (nativeEvent.type === "prompt_suggestion.updated") {
               return SubscriptionRef.update(promptSuggestionStore, (current) => {
                 const next = new Map(current);
-                next.delete(event.threadId);
-                next.set(event.threadId, { runId: event.runId, text: event.text });
+                next.delete(nativeEvent.threadId);
+                next.set(nativeEvent.threadId, {
+                  runId: nativeEvent.runId,
+                  text: nativeEvent.text,
+                });
                 for (const threadId of next.keys()) {
                   if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
                   next.delete(threadId);
@@ -2225,6 +2533,9 @@ export const layerWithOptions = (
                 return next;
               });
             }
+            const tracked = retryStalls.track(nativeEvent);
+            const event = tracked.event;
+            const armRetryStall = retryStalls.update(tracked);
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&
@@ -2254,6 +2565,7 @@ export const layerWithOptions = (
                   ? Effect.void
                   : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(
+              Effect.andThen(armRetryStall),
               Effect.andThen(
                 event.type === "provider_session.updated"
                   ? persistProviderSessionUpdate(entry, event)
@@ -2467,26 +2779,29 @@ export const layerWithOptions = (
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
               yield* agentScope.clear(input.threadId);
-              const runtime = yield* adapter
-                .openSession({
-                  threadId: input.threadId,
-                  providerSessionId: input.providerSessionId,
-                  modelSelection: input.modelSelection,
-                  runtimePolicy: input.runtimePolicy,
-                  promptSuggestions: promptSuggestionsEnabled,
-                  ...(input.resumeFromSession === undefined
-                    ? {}
-                    : { resumeFromSession: input.resumeFromSession }),
-                  ...(input.initialNativeThreadId === undefined
-                    ? {}
-                    : { initialNativeThreadId: input.initialNativeThreadId }),
-                  ...(input.initialProviderItemIdentityVersion === undefined
-                    ? {}
-                    : {
-                        initialProviderItemIdentityVersion:
-                          input.initialProviderItemIdentityVersion,
-                      }),
-                })
+              const runtime = yield* installationGate
+                .execute(
+                  input.modelSelection.instanceId,
+                  adapter.openSession({
+                    threadId: input.threadId,
+                    providerSessionId: input.providerSessionId,
+                    modelSelection: input.modelSelection,
+                    runtimePolicy: input.runtimePolicy,
+                    promptSuggestions: promptSuggestionsEnabled,
+                    ...(input.resumeFromSession === undefined
+                      ? {}
+                      : { resumeFromSession: input.resumeFromSession }),
+                    ...(input.initialNativeThreadId === undefined
+                      ? {}
+                      : { initialNativeThreadId: input.initialNativeThreadId }),
+                    ...(input.initialProviderItemIdentityVersion === undefined
+                      ? {}
+                      : {
+                          initialProviderItemIdentityVersion:
+                            input.initialProviderItemIdentityVersion,
+                        }),
+                  }),
+                )
                 .pipe(
                   Effect.provideService(Scope.Scope, sessionScope),
                   // Bound scope close after cleanup; a wedged finalizer must not hold the open lock or interrupter.

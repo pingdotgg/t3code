@@ -718,6 +718,11 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const fresh = yield* call("schedule_task", {
+      scheduledTaskId: "task-auto",
+      freshSession: true,
+    });
+    expect(fresh.structuredContent).toMatchObject({ freshSession: true });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
@@ -1100,7 +1105,21 @@ it.effect(
           Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (projectId) =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "MCP test",
+                  workspaceRoot: "/repo",
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                }),
+            }),
+          ),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),

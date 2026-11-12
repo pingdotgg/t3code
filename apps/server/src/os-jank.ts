@@ -1,5 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  buildEnvironmentCaptureCommand,
+  extractEnvironmentValues,
   listLoginShellCandidates,
   LoginShellEnvironment,
   mergePathEntries,
@@ -8,9 +10,14 @@ import {
   resolveWindowsEnvironment,
   setWindowsPath,
 } from "@t3tools/shared/shell";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the shared login shell probe runs synchronously through execFileSync.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
@@ -21,18 +28,19 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
   );
 }
 
-const LOGIN_SHELL_ENVIRONMENT_NAMES = ["PATH", "__MISE_DIFF", "JAVA_HOME"] as const;
+// __MISE_DIFF is mise's record of the PATH entries it added. It must travel
+// with the shell's PATH, or `mise x` can rebuild PATH behind a same-named
+// wrapper (`exec mise x claude -- claude`) that then re-runs itself forever.
+const LOGIN_SHELL_ENV_NAMES = ["PATH", "__MISE_DIFF", "JAVA_HOME"] as const;
+const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const SLOW_LOGIN_SHELL_TIMEOUT_MS = 20_000;
 
 function readSlowLoginShellEnvironment(shell: string): Partial<Record<string, string>> {
-  return readEnvironmentFromLoginShell(
-    shell,
-    LOGIN_SHELL_ENVIRONMENT_NAMES,
-    (file, args, options) =>
-      NodeChildProcess.execFileSync(file, args, {
-        ...options,
-        timeout: SLOW_LOGIN_SHELL_TIMEOUT_MS,
-      }),
+  return readEnvironmentFromLoginShell(shell, LOGIN_SHELL_ENV_NAMES, (file, args, options) =>
+    NodeChildProcess.execFileSync(file, args, {
+      ...options,
+      timeout: SLOW_LOGIN_SHELL_TIMEOUT_MS,
+    }),
   );
 }
 
@@ -47,9 +55,6 @@ function applyLoginShellEnvironment(
   if (mergedPath) {
     env.PATH = mergedPath;
   }
-  // mise's record of the PATH entries it added. It must travel with the
-  // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
-  // (`exec mise x claude -- claude`) that then re-runs itself forever.
   if (shellPath && shellEnvironment.__MISE_DIFF) {
     env.__MISE_DIFF = shellEnvironment.__MISE_DIFF;
   }
@@ -65,7 +70,7 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
   let waitedForSlowShell = false;
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
     try {
-      shellEnvironment = readEnvironmentFromLoginShell(shell, LOGIN_SHELL_ENVIRONMENT_NAMES);
+      shellEnvironment = readEnvironmentFromLoginShell(shell, LOGIN_SHELL_ENV_NAMES);
     } catch (error) {
       logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
       // A profile can be slow only while the machine boots. Wait for it once,
@@ -175,7 +180,7 @@ export const refreshPath = Effect.fn("refreshPath")(function* () {
     refreshState.set(env, state);
   }
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
-    const shellEnvironment = yield* readShellEnvironment(shell, LOGIN_SHELL_ENVIRONMENT_NAMES);
+    const shellEnvironment = yield* readShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES);
     const shellPath = shellEnvironment.PATH;
     if (!shellPath) continue;
     const known = new Set((state.shellPath ?? state.baseline ?? "").split(":"));
@@ -186,6 +191,68 @@ export const refreshPath = Effect.fn("refreshPath")(function* () {
     return shellPath.split(":").some((entry) => entry !== "" && !known.has(entry));
   }
   return false;
+});
+
+const readLoginShellOutput = Effect.fn("readLoginShellOutput")(
+  function* (shell: string) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        shell,
+        ["-ilc", buildEnvironmentCaptureCommand(shell, LOGIN_SHELL_ENV_NAMES)],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          // A profile that traps SIGTERM would otherwise hold the scope open
+          // past the timeout while cleanup waits for the exit.
+          forceKillAfter: "1 second",
+        },
+      ),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [Stream.mkString(Stream.decodeText(child.stdout)), child.exitCode],
+      { concurrency: 2 },
+    );
+    if (exitCode === 0) return stdout;
+    yield* Effect.logWarning(
+      `Login shell ${shell} exited with code ${exitCode} while reading PATH.`,
+    );
+    return "";
+  },
+  Effect.scoped,
+  Effect.timeoutOption(LOGIN_SHELL_TIMEOUT),
+);
+
+// Runs even when the desktop prepared the environment: that capture was taken
+// once at launch. Only the user's own shell counts; a fallback shell's PATH is
+// not their environment. Failure leaves PATH alone.
+export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(function* () {
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "darwin" && platform !== "linux") return;
+  const env = yield* HostProcess.Environment;
+  const [shell] = listLoginShellCandidates(platform, env.SHELL);
+  if (!shell) return;
+
+  const output = yield* readLoginShellOutput(shell).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning(`Failed to read PATH from login shell ${shell}.`, cause).pipe(
+        Effect.as(Option.some("")),
+      ),
+    ),
+  );
+  if (Option.isNone(output)) {
+    yield* Effect.logWarning(
+      `Timed out reading PATH from login shell ${shell} after ${Duration.format(LOGIN_SHELL_TIMEOUT)}; PATH is unchanged.`,
+    );
+    return;
+  }
+  const shellEnvironment = extractEnvironmentValues(output.value, LOGIN_SHELL_ENV_NAMES);
+  if (shellEnvironment.PATH) {
+    applyLoginShellEnvironment(env, platform, shellEnvironment);
+  } else {
+    yield* Effect.logWarning(`Login shell ${shell} printed no PATH; PATH is unchanged.`);
+  }
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {
