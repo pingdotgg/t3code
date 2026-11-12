@@ -118,6 +118,14 @@ const ASSISTANT_IDLE_FLUSH_MS = 800;
 const SNAPSHOT_GROWTH_START_LENGTH = 4_000;
 const SNAPSHOT_GROWTH_FACTOR = 1.5;
 
+function belowStorageGrowth(delivered: string, text: string): boolean {
+  return (
+    delivered.length >= SNAPSHOT_GROWTH_START_LENGTH &&
+    text.length < delivered.length * SNAPSHOT_GROWTH_FACTOR &&
+    text.startsWith(delivered)
+  );
+}
+
 type StreamedMessage = {
   readonly id: string;
   readonly text: string;
@@ -212,12 +220,7 @@ export function makeAssistantStreamingFilter(
       // An idle delivery may already show more than the next boundary; never shrink it. A
       // provider rewrite or truncation is not a prefix and replaces it.
       if (delivered.startsWith(ready)) return hold(scan);
-      if (
-        delivered.length >= SNAPSHOT_GROWTH_START_LENGTH &&
-        ready.length < delivered.length * SNAPSHOT_GROWTH_FACTOR &&
-        ready.startsWith(delivered)
-      )
-        return hold(scan);
+      if (belowStorageGrowth(delivered, ready)) return hold(scan);
       track(key, {
         text: ready,
         at: now,
@@ -239,9 +242,15 @@ export function makeAssistantStreamingFilter(
           if (nextDueAt === null || current.dueAt < nextDueAt) nextDueAt = current.dueAt;
           continue;
         }
+        const text = streamedMessage(event)?.text ?? current.text;
+        // Stays undelivered until the next snapshot or the final event.
+        if (belowStorageGrowth(current.text, text)) {
+          tracks.set(key, { ...current, held: null });
+          continue;
+        }
         due.push(event);
         tracks.set(key, {
-          text: streamedMessage(event)?.text ?? current.text,
+          text,
           at: now,
           held: null,
           dueAt: now,
