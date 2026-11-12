@@ -672,6 +672,46 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
+  it.effect("reports the relay's refusal when linking cannot register its tunnel", () => {
+    const { store } = makeMemorySecretStore();
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* link
+        .applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-123",
+          environmentCredential: "fresh-credential",
+          cloudMintPublicKey:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----",
+          endpointRuntime: {
+            providerKind: "cloudflare_tunnel",
+            connectorToken: "existing-token",
+            tunnelId: "existing-tunnel",
+          },
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("not_authorized");
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
+        respond: () =>
+          Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "trace-link-refused",
+            },
+            { status: 401 },
+          ),
+      }),
+    );
+  });
+
   it.effect("does not mark a link that was replaced while its rejection was in flight", () => {
     const { store, values } = makeMemorySecretStore([
       [
