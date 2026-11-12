@@ -506,9 +506,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.mapError((cause) => {
         if (isInstallationError(cause)) return cause;
-        if (cause._tag === "AntigravityRuntimeTempBacklogFullError") {
-          return installationError("verify", AntigravityRuntimeTemp.BACKLOG_FULL_MESSAGE, cause);
-        }
         const stderr = isAcpProcessExitedError(cause) ? (cause.stderr ?? "") : "";
         const detail = /\b(?:AF_INET6|enforce_kernel_ipv6_support)\b/.test(stderr)
           ? "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown."

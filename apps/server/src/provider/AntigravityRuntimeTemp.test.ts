@@ -77,7 +77,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityRunti
     }).pipe(Effect.scoped),
   );
 
-  it.effect("hands off slow cleanup, bounds deletion, and preserves live siblings", () =>
+  it.effect("keeps starting runs while cleanup stalls and preserves live siblings", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -106,14 +106,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityRunti
       yield* fs.writeFileString(path.join(live, "keep.txt"), "live");
       yield* cleanup.makeDirectory.pipe(Effect.scoped);
       yield* Deferred.await(entered);
-      for (let index = 0; index < 7; index += 1) {
+      for (let index = 0; index < 8; index += 1) {
         yield* cleanup.makeDirectory.pipe(Effect.scoped);
       }
-      expect(yield* cleanup.makeDirectory.pipe(Effect.scoped, Effect.flip)).toBeInstanceOf(
-        AntigravityRuntimeTemp.BacklogFullError,
-      );
       expect(starts).toBe(1);
-      expect((yield* fs.readDirectory(directory)).length).toBe(9);
+      expect((yield* fs.readDirectory(directory)).length).toBe(10);
       expect(yield* fs.readFileString(path.join(live, "keep.txt"))).toBe("live");
       yield* Deferred.succeed(release, undefined);
       yield* cleanup.drain;

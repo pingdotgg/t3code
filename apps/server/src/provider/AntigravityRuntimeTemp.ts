@@ -11,7 +11,6 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -23,25 +22,12 @@ import * as ServerConfig from "../config.ts";
 // Windows deletes off the request-serving process's libuv pool.
 const REMOVE_SCRIPT =
   'require("node:fs").rmSync(process.argv[1], { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });';
-const MAX_PENDING_DIRECTORIES = 8;
-export const BACKLOG_FULL_MESSAGE =
-  "Antigravity is still removing temporary runtime files. Wait for cleanup to finish, then try again.";
-
-export class BacklogFullError extends Schema.TaggedError<BacklogFullError>()(
-  "AntigravityRuntimeTempBacklogFullError",
-  {},
-) {
-  override get message() {
-    return BACKLOG_FULL_MESSAGE;
-  }
-}
-
 export class AntigravityRuntimeTemp extends Context.Service<
   AntigravityRuntimeTemp,
   {
     readonly makeDirectory: Effect.Effect<
       string,
-      PlatformError.PlatformError | BacklogFullError | NodeRuntimeUnavailableError,
+      PlatformError.PlatformError | NodeRuntimeUnavailableError,
       Scope.Scope
     >;
     readonly adopt: (directory: string) => Effect.Effect<void>;
@@ -127,10 +113,6 @@ export const make = Effect.fn("AntigravityRuntimeTemp.make")(function* (director
       allocation.withPermit(
         Effect.gen(function* () {
           yield* fs.makeDirectory(directory, { recursive: true });
-          const pending = (yield* fs.readDirectory(directory)).filter(
-            (entry) => entry.startsWith("run-") && !active.has(path.join(directory, entry)),
-          );
-          if (pending.length >= MAX_PENDING_DIRECTORIES) return yield* new BacklogFullError();
           const created = yield* fs.makeTempDirectory({ directory, prefix: "run-" });
           active.add(created);
           return created;

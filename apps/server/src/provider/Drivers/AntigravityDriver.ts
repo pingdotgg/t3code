@@ -234,9 +234,7 @@ export const AntigravityDriver: ProviderDriver<
               operation: "start",
               detail: isNodeRuntimeUnavailableError(cause)
                 ? nodeRuntimeUnavailableMessage("Antigravity sign-in")
-                : cause._tag === "AntigravityRuntimeTempBacklogFullError"
-                  ? AntigravityRuntimeTemp.BACKLOG_FULL_MESSAGE
-                  : "Could not create an Antigravity runtime temp directory.",
+                : "Could not create an Antigravity runtime temp directory.",
               cause,
             }),
         ),
