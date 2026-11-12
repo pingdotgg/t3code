@@ -9,6 +9,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   EventId,
+  GitManagerError,
   MessageId,
   ProjectId,
   ThreadId,
@@ -1167,6 +1168,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       ],
     };
     let scansCwd = true;
+    let registryProviders: ReadonlyArray<ServerProvider> = [provider];
     const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const pulled = yield* Queue.unbounded<void>();
     const responses = yield* Queue.unbounded<unknown>();
@@ -1177,11 +1179,12 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         resolveFileManagerRevealKind: () => Effect.undefined,
       }),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed([provider]),
+        getProviders: Effect.sync(() => registryProviders),
         streamChanges: Stream.fromQueue(providerChanges).pipe(
           Stream.tap(() => Queue.offer(pulled, undefined)),
         ),
-        refreshWorkspaceSnapshot: () => Effect.succeed([provider]),
+        refresh: () => Effect.sync(() => registryProviders),
+        refreshWorkspaceSnapshot: () => Effect.sync(() => registryProviders),
       }),
       Layer.mock(ProjectService.ProjectService)({
         workspaceScanDirectory: (cwd) => Effect.succeed(cwd),
@@ -1203,6 +1206,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
         streamChanges: Stream.make([]),
+        refresh: Effect.void,
       }),
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
         resolveTargets: () => Effect.succeed([]),
@@ -1358,6 +1362,121 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       },
     ]);
     yield* server.write(0, { _tag: "Interrupt", requestId: configRequest, interruptors: [] });
+
+    // A client that takes digests and deltas, against a catalog of over 200 KB.
+    const heavy: ServerProvider = {
+      ...provider,
+      slashCommands: Array.from({ length: 250 }, (_, index) => ({
+        name: `command-${index}`,
+        description: "d".repeat(400),
+      })),
+      skills: Array.from({ length: 200 }, (_, index) => ({
+        name: `skill-${index}`,
+        description: "d".repeat(500),
+        path: `/home/user/.claude/skills/skill-${index}/SKILL.md`,
+        enabled: true,
+      })),
+    };
+    registryProviders = [heavy];
+    const lightRequest = RpcMessage.RequestId("light-config");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: lightRequest,
+      tag: WS_METHODS.subscribeServerConfig,
+      payload: {
+        workspaceSnapshotsOnDemand: true,
+        providerCatalogsOnDemand: true,
+        providerCatalogDigests: true,
+        providerStatusDeltas: true,
+      },
+      headers: Headers.empty,
+    });
+    const light = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (light.type !== "snapshot") return yield* Effect.die("Missing light snapshot");
+    const digest = light.config.providers[0]?.catalogDigest;
+    assert.isString(digest);
+    assert.deepEqual(
+      [light.config.providers[0]?.slashCommands, light.config.providers[0]?.skills],
+      [[], []],
+    );
+    // Budget for the first config a phone decodes: the catalog stays out of it.
+    assert.isBelow(JSON.stringify(light.config.providers).length, 1024);
+    yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
+
+    // A health check sends the provider without the lists the client already holds.
+    yield* Queue.offer(providerChanges, [{ ...heavy, checkedAt: "2026-10-25T00:10:00.000Z" }]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const delta = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (delta.type !== "providerStatusDeltas") return yield* Effect.die("Expected provider deltas");
+    assert.deepEqual(
+      delta.payload.providers.map((entry) => [
+        entry.checkedAt,
+        entry.catalogDigest,
+        entry.models,
+        entry.slashCommands,
+        entry.skills,
+      ]),
+      [["2026-10-25T00:10:00.000Z", digest, undefined, undefined, undefined]],
+    );
+    yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
+
+    // A changed description changes the digest, so the client loads the lists again.
+    yield* Queue.offer(providerChanges, [
+      {
+        ...heavy,
+        checkedAt: "2026-10-25T00:20:00.000Z",
+        skills: heavy.skills.map((skill, index) =>
+          index === 0 ? { ...skill, description: "changed" } : skill,
+        ),
+      },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const redescribed = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (redescribed.type !== "providerStatusDeltas") {
+      return yield* Effect.die("Expected provider deltas");
+    }
+    assert.notEqual(redescribed.payload.providers[0]?.catalogDigest, digest);
+    yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
+
+    // A caller that only waits for a machine refresh gets no provider list back.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-omitted"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { workspaceSnapshotsOnDemand: true, omitProviders: true },
+      headers: Headers.empty,
+    });
+    assert.deepEqual(yield* Queue.take(responses), { providers: [] });
+
+    // The cwd snapshot brings the lists the digest stands for, under the same digest.
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("refresh-machine-catalog"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: {
+        instanceId,
+        cwd: "/b",
+        workspaceSnapshotsOnDemand: true,
+        providerCatalogsOnDemand: true,
+        omitProviders: true,
+        machineCatalog: true,
+      },
+      headers: Headers.empty,
+    });
+    const loaded = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.equal(loaded.providers[0]?.catalogDigest, digest);
+    assert.deepEqual(loaded.providers[0]?.slashCommands[0], { name: "command-0" });
+    assert.deepEqual(loaded.providers[0]?.skills[0], {
+      name: "skill-0",
+      path: "/home/user/.claude/skills/skill-0/SKILL.md",
+      enabled: true,
+    });
+    assert.lengthOf(loaded.providers[0]?.workspaceSnapshots ?? [], 1);
+    yield* server.write(0, { _tag: "Interrupt", requestId: lightRequest, interruptors: [] });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -1530,6 +1649,80 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       ["finalize"],
       "the thread's removed worktree should list the project's skills",
     );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("a git action that fails partway still refreshes the repository status", () =>
+  Effect.gen(function* () {
+    const failure = new GitManagerError({ operation: "test", cwd: "/repo", detail: "push failed" });
+    const refreshFailure = new GitManagerError({
+      operation: "refresh",
+      cwd: "/repo",
+      detail: "refresh failed",
+    });
+    const refreshed = yield* Deferred.make<string>();
+    const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
+        runStackedAction: () => Effect.fail(failure),
+      }),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+        refreshStatus: (cwd) =>
+          Deferred.succeed(refreshed, cwd).pipe(Effect.andThen(Effect.fail(refreshFailure))),
+      }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("git-test"),
+            subject: "git-test",
+            method: "browser-session-cookie",
+            scopes: [AuthSourceControlWriteScope],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.provide(services),
+          Layer.merge(RpcAuthorization.layer([AuthSourceControlWriteScope])),
+        ),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("git"),
+      tag: WS_METHODS.gitRunStackedAction,
+      payload: { actionId: "action", cwd: "/repo", action: "commit_push" },
+      headers: Headers.empty,
+    });
+    const exit = yield* Queue.take(exits);
+    assert.deepEqual(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit, failure);
+    assert.equal(yield* Deferred.await(refreshed), "/repo");
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

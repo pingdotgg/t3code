@@ -1999,6 +1999,17 @@ export function retargetNewTaskDraft(
   });
 }
 
+/** Retargets a saved draft once drafts load; an absent one is not created. */
+export async function retargetSavedNewTaskDraft(
+  draftKey: string,
+  project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+): Promise<boolean> {
+  await waitForComposerDraftsLoaded();
+  if (appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined) return false;
+  retargetNewTaskDraft(draftKey, project);
+  return true;
+}
+
 export function findNewTaskDraftKeys(
   drafts: Readonly<Record<string, ComposerDraft>>,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
