@@ -186,6 +186,20 @@ const scriptedTools = (script: Record<string, Array<unknown>>) => {
   return { tools: { call } satisfies ThreadTools, calls };
 };
 
+/** The reads that ask whether a run after `runId` holds a message someone sent. */
+const laterRunReads = (
+  laterRun: RunId,
+  items: ReadonlyArray<{ readonly runId: RunId; readonly type: string }>,
+) => [
+  {
+    recentRuns: [
+      { runId, ordinal: 1 },
+      { runId: laterRun, ordinal: 2 },
+    ],
+  },
+  { thread: {}, items, nextPosition: null, hasMore: false },
+];
+
 it.effect("--wait follows the sent run to its continuation's terminal status", () =>
   Effect.gen(function* () {
     const continuation = RunId.make("run-2");
@@ -223,16 +237,44 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
           resultRun: { runId: wakeRun, status: "completed" },
         },
       ],
+      // The wake run starts from a notification, which the messages view leaves out.
+      t3_thread_read: laterRunReads(wakeRun, []),
     });
 
     const outcome = yield* waitForRun(tools, threadId, runId);
 
     assert.deepStrictEqual(
-      calls.map((entry) => entry.args),
+      calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
       [{ threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true }],
     );
     assert.deepStrictEqual(outcome, { type: "ended", runId: wakeRun, status: "completed" });
   }),
+);
+
+it.effect(
+  "--wait keeps its own run's result when another client's later run settles the thread",
+  () =>
+    Effect.gen(function* () {
+      const sentRun = RunId.make("run-2");
+      const { tools } = scriptedTools({
+        t3_thread_wait: [
+          {
+            threadId,
+            runId,
+            status: "completed",
+            timedOut: false,
+            resultRun: { runId: sentRun, status: "failed" },
+          },
+        ],
+        t3_thread_read: laterRunReads(sentRun, [{ runId: sentRun, type: "user_message" }]),
+      });
+
+      assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId), {
+        type: "ended",
+        runId,
+        status: "completed",
+      });
+    }),
 );
 
 it.effect("--wait stops when the thread waits for an answer instead of polling forever", () =>
@@ -251,12 +293,17 @@ it.effect("--wait stops when the thread waits for an answer instead of polling f
 
 it.effect("--wait reports its run's result when a later run is the one waiting", () =>
   Effect.gen(function* () {
+    const sentRun = RunId.make("run-2");
     const { tools } = scriptedTools({
+      // The later run's request keeps the thread-wide wait from settling.
       t3_thread_wait: [
         { threadId, runId, status: "running", timedOut: true },
-        { threadId, runId, status: "completed", timedOut: false },
+        { threadId, runId, status: "completed", timedOut: true },
       ],
-      t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
+      t3_thread_read: [
+        { thread: { pendingRequestCount: 1 } },
+        ...laterRunReads(sentRun, [{ runId: sentRun, type: "user_message" }]),
+      ],
     });
 
     assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId), {

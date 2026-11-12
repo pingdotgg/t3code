@@ -499,6 +499,41 @@ type WaitOutcome =
   | { readonly type: "needs_input" };
 
 /**
+ * Whether a run after `runId` holds a message someone sent. Background work
+ * wakes a run with a notification, never a user message, so such a run is
+ * another request and its reply is not this one's.
+ */
+const sentRunAfter = Effect.fn("cli.thread.sentRunAfter")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  runId: RunId,
+) {
+  const { recentRuns } = yield* tools.call(
+    "t3_thread_read",
+    { threadId, limit: 1, runLimit: 50 },
+    OrchestratorMcpThreadReadResult,
+  );
+  const own = recentRuns.find((run) => run.runId === runId);
+  if (own === undefined) return true;
+  const later = new Set(
+    recentRuns.filter((run) => run.ordinal > own.ordinal).map((run) => run.runId),
+  );
+  if (later.size === 0) return false;
+  const { items } = yield* readTimeline(tools, threadId, "messages");
+  return items.some(
+    (item) => item.type === "user_message" && item.runId !== null && later.has(item.runId),
+  );
+});
+
+const TERMINAL_STATUSES: ReadonlyArray<OrchestratorMcpThreadStatus> = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "rolled_back",
+];
+
+/**
  * Waits for this exact run, following a restart to its continuation and the
  * runs its background work wakes, so a message another client sends meanwhile
  * cannot stand in for its result.
@@ -514,15 +549,30 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
       { threadId, runId, timeoutMs, untilDelegatedWorkSettled: true },
       OrchestratorMcpThreadWaitResult,
     );
-  const ended = (waited: OrchestratorMcpThreadWaitResult) =>
-    ({
-      type: "ended",
-      runId: waited.resultRun?.runId ?? waited.runId,
-      status: waited.resultRun?.status ?? waited.status,
-    }) satisfies WaitOutcome;
+  const own = (waited: OrchestratorMcpThreadWaitResult) =>
+    ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
+  // `resultRun` is the thread's latest finished run, whoever sent it.
+  const ended = Effect.fnUntraced(function* (waited: OrchestratorMcpThreadWaitResult) {
+    const result = waited.resultRun;
+    if (
+      result === undefined ||
+      waited.runId === null ||
+      result.runId === waited.runId ||
+      (yield* sentRunAfter(tools, threadId, waited.runId))
+    ) {
+      return own(waited);
+    }
+    return { type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome;
+  });
+  // The thread-wide wait also outlasts runs other clients sent after this one.
+  const othersHoldThread = (waited: OrchestratorMcpThreadWaitResult) =>
+    waited.runId !== null && TERMINAL_STATUSES.includes(waited.status)
+      ? sentRunAfter(tools, threadId, waited.runId)
+      : Effect.succeed(false);
   while (true) {
     const waited = yield* waitSlice(WAIT_SLICE_MS);
-    if (!waited.timedOut) return ended(waited);
+    if (!waited.timedOut) return yield* ended(waited);
+    if (yield* othersHoldThread(waited)) return own(waited);
     // A pending request on this run, or on an earlier run this one is queued
     // behind, blocks it until someone answers.
     const { thread } = yield* tools.call(
@@ -534,7 +584,10 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
       // The count is thread-wide: if this run ended since the slice, the
       // request belongs to a later run.
       const recheck = yield* waitSlice(1);
-      return recheck.timedOut ? ({ type: "needs_input" } satisfies WaitOutcome) : ended(recheck);
+      if (!recheck.timedOut) return yield* ended(recheck);
+      return (yield* othersHoldThread(recheck))
+        ? own(recheck)
+        : ({ type: "needs_input" } satisfies WaitOutcome);
     }
   }
 });
