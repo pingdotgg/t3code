@@ -223,6 +223,16 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      const cliIssue = antigravityAuthConfigIssue(auth, {
+        isCliRuntime: executable.harnessPath === null,
+      });
+      if (cliIssue !== null) {
+        return yield* new ProviderSetupError({
+          instanceId,
+          operation: "configure",
+          detail: cliIssue,
+        });
+      }
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: processEnvironment,

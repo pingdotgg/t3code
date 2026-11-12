@@ -121,7 +121,10 @@ export function antigravityAuthLabel(authMethod: AntigravityAuthMethod): string 
   }
 }
 
-export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string | null {
+export function antigravityAuthConfigIssue(
+  auth: AntigravityAuthConfig,
+  options?: { readonly isCliRuntime?: boolean },
+): string | null {
   switch (auth.authMethod) {
     case "oauth-personal":
       return null;
@@ -132,6 +135,9 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
     case "gemini-api-key":
       return auth.apiKey ? null : "Enter a Gemini API key in the Antigravity provider settings.";
     case "agent-platform":
+      if (options?.isCliRuntime && auth.apiKey) {
+        return "Agent Platform API keys are not supported with the agy CLI; use Application Default Credentials (ADC) or a credentials file.";
+      }
       return auth.apiKey || (auth.gcpProject && auth.gcpLocation)
         ? null
         : "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.";
