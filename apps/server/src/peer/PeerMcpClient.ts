@@ -18,6 +18,15 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
+const uncertainCall = Symbol("PeerMcpClient.UncertainCall");
+
+/** No usable answer arrived, so a keyed launch may already have been accepted. */
+export class UncertainCall extends OrchestratorMcpFailure {
+  readonly [uncertainCall] = true;
+}
+
+export const isUncertainCall = (error: OrchestratorMcpFailure) => uncertainCall in error;
+
 /** The only MCP protocol version a T3 Code `/mcp` registers. */
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -69,7 +78,7 @@ const decodeFailure = Schema.decodeUnknownOption(
 
 /** A peer link problem, as the agent that asked hears it. */
 const fromLinkError = (error: PeerLinkError) =>
-  new OrchestratorMcpFailure({
+  new (error.reason === "unreachable" ? UncertainCall : OrchestratorMcpFailure)({
     code:
       error.reason === "unknown_link"
         ? "invalid_request"
@@ -217,7 +226,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.mapError(
           () =>
-            new OrchestratorMcpFailure({
+            new UncertainCall({
               code: "orchestration_error",
               message: "The linked environment answered in an unexpected shape.",
             }),
@@ -274,7 +283,7 @@ const make = Effect.gen(function* () {
         Effect.catchTags({
           HttpClientError: () =>
             Effect.fail(
-              new OrchestratorMcpFailure({
+              new UncertainCall({
                 code: "orchestration_error",
                 message: "The linked environment stopped answering.",
               }),

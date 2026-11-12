@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { Tool, Toolkit } from "effect/ai";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
@@ -138,22 +139,58 @@ it.effect("keeps a link healthy when the peer refuses a call", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("renews a missing peer session once and reuses its replacement", () =>
+it.effect.each([
+  { name: "empty result", status: 200, body: "{}", uncertain: false },
+  { name: "HTTP refusal", status: 403, body: "", uncertain: false },
+  { name: "HTTP failure", status: 503, body: "", uncertain: false },
+  {
+    name: "tool refusal",
+    status: 200,
+    body: JSON.stringify({
+      result: {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              code: "orchestration_error",
+              message: "The operation could not be completed.",
+            }),
+          },
+        ],
+      },
+    }),
+    uncertain: false,
+  },
+  {
+    name: "version mismatch",
+    status: 200,
+    body: JSON.stringify({ result: { content: [{ type: "text", text: "{}" }] } }),
+    uncertain: false,
+  },
+  { name: "unreadable answer", status: 200, body: "not JSON", uncertain: true },
+  { name: "lost response", status: 200, body: "", uncertain: true },
+])("renews a missing peer session and distinguishes $name from an uncertain call", (answer) =>
   Effect.gen(function* () {
     const sessionHeaders: Array<string | undefined> = [];
-    const statuses = [200, 202, 404, 200, 202, 200, 200, 200];
+    const statuses = [200, 202, 404, 200, 202, 200, 200, answer.status];
     const outcomes: Array<string | null> = [];
     const http = HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const index = sessionHeaders.length;
         sessionHeaders.push(request.headers["mcp-session-id"]);
+        if (index === 7 && answer.name === "lost response") {
+          return yield* new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request }),
+          });
+        }
         const status = statuses[index];
         if (status === undefined) throw new Error("Unexpected retry");
         return HttpClientResponse.fromWeb(
           request,
           new Response(
             index === 7
-              ? "{}"
+              ? answer.body
               : index >= 5
                 ? JSON.stringify({
                     result: {
@@ -225,7 +262,16 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
         success: Result,
       })
       .pipe(Effect.flip);
-    expect(outcomes).toEqual([null, null, empty.message]);
+    expect(PeerMcpClient.isUncertainCall(empty)).toBe(answer.uncertain);
+    expect(outcomes).toEqual([
+      null,
+      null,
+      answer.name === "tool refusal"
+        ? null
+        : answer.name === "lost response"
+          ? "Transport error (POST https://peer.example/mcp)"
+          : empty.message,
+    ]);
     expect(sessionHeaders).toEqual([
       undefined,
       "old",

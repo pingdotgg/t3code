@@ -42,6 +42,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import * as PeerMcpClient from "./PeerMcpClient.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
@@ -355,7 +356,7 @@ const make = Effect.gen(function* () {
       }
       yield* launchPending(scope.thread.threadId, taskId).pipe(
         Effect.catchIf(
-          (error) => !isFinal(error) && !isModeRefusal(error) && error.code !== "invalid_request",
+          (error) => PeerMcpClient.isUncertainCall(error),
           (error) =>
             Effect.logWarning("remote-delegation.launch-deferred", {
               taskId,
@@ -506,7 +507,12 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.catchTags({
             OrchestratorMcpFailure: (error) => {
-              if (isFinal(error) || isModeRefusal(error) || error.code === "invalid_request") {
+              if (
+                isFinal(error) ||
+                isModeRefusal(error) ||
+                error.code === "invalid_request" ||
+                (!sentBefore && !PeerMcpClient.isUncertainCall(error))
+              ) {
                 const uncertain = `${error.message} The remote launch could not be confirmed. If it was already accepted, work may still be running on ${remote.label}.`;
                 return complete(
                   parentThreadId,
@@ -518,7 +524,10 @@ const make = Effect.gen(function* () {
                   sentBefore ? uncertain : undefined,
                 ).pipe(Effect.andThen(Effect.fail(error)));
               }
-              return Effect.fail(error);
+              // A prior send may have launched work; a later refusal cannot disprove acceptance.
+              return Effect.fail(
+                new PeerMcpClient.UncertainCall({ code: error.code, message: error.message }),
+              );
             },
           }),
         );

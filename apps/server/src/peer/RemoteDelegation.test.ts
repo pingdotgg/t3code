@@ -61,6 +61,7 @@ import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
+import * as PeerMcpClient from "./PeerMcpClient.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
@@ -121,6 +122,7 @@ interface BoxThread {
   readonly stops: Ref.Ref<ReadonlyArray<"interrupt" | "thread.stop" | "delegated-tasks">>;
   /** The launch starts no run, as one recorded before its run was kept. */
   readonly runless: Ref.Ref<boolean>;
+  readonly launchError: Ref.Ref<ThreadLaunch.ThreadLaunchError | null>;
   /** Completed on the first interrupt there. */
   readonly interruptedOnce: Deferred.Deferred<void>;
   readonly finished: Deferred.Deferred<void>;
@@ -164,6 +166,7 @@ const makeBoxThread = Effect.gen(function* () {
     interrupted: yield* Ref.make(0),
     stops: yield* Ref.make<ReadonlyArray<"interrupt" | "thread.stop" | "delegated-tasks">>([]),
     runless: yield* Ref.make(false),
+    launchError: yield* Ref.make<ThreadLaunch.ThreadLaunchError | null>(null),
     interruptedOnce: yield* Deferred.make<void>(),
     finished: yield* Deferred.make<void>(),
     holdRead: yield* Ref.make(false),
@@ -440,7 +443,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
   });
   const layerBoxLaunches = Layer.mock(ThreadLaunch.ThreadLaunchService)({
     launch: (input) =>
-      Ref.get(thread.runless).pipe(
+      Ref.get(thread.launchError).pipe(
+        Effect.flatMap((error) => (error === null ? Effect.void : Effect.fail(error))),
+        Effect.andThen(Ref.get(thread.runless)),
         Effect.flatMap((runless) =>
           Ref.set(thread.launched, input.threadId!).pipe(
             Effect.andThen(Ref.set(thread.linkOrigin, input.linkOrigin ?? null)),
@@ -821,6 +826,51 @@ const taskResult = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>, ta
       ),
     );
 
+it.effect("returns a definite launch refusal instead of an indefinitely launching task", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      yield* Ref.set(
+        thread.launchError,
+        new ThreadLaunch.ThreadLaunchError({
+          operation: "create-thread",
+          commandId: CommandId.make("command:refused-launch"),
+          projectId: boxProject,
+          cause: new Error("The destination cannot create the thread."),
+        }),
+      );
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const refused = yield* a.call("delegate_task", {
+        task: "Run the checks there.",
+        target: {
+          environmentId: box.environmentId,
+          projectId: boxProject,
+          providerInstanceId: instanceId,
+          model: "gpt-5.4",
+        },
+        mode: "async",
+        clientRequestId: "refused-launch",
+      });
+      expect(refused.isError).toBe(true);
+      expect(JSON.stringify(refused.content)).toContain("The operation could not be completed.");
+      const task = (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      expect(task.status).toBe("failed");
+      expect(task.result).toBe("The operation could not be completed.");
+      expect(task.completionDelivery?.state).toBe("disposed");
+      expect(task.remoteChild?.stoppedThere).toBe(true);
+      expect(task.remoteChild?.launchError).toBeUndefined();
+      expect(yield* Ref.get(thread.launchIds)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("returns the recorded task when an accepted launch loses its response", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -830,15 +880,34 @@ it.effect("returns the recorded task when an accepted launch loses its response"
         ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
       >([]);
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
-      const a = yield* makeLaptop(database, offers);
-      yield* linkTo(a.links, b, "full-access");
-      yield* seedParent(a);
-      yield* Ref.set(
-        thread.afterLaunch,
-        Ref.set(thread.afterLaunch, Effect.void).pipe(
-          Effect.andThen(Effect.die("The accepted launch response was lost.")),
+      const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+      const client = Context.get(linking, PeerMcpClient.PeerMcpClient);
+      let lost = false;
+      const a = yield* makeLaptop(
+        database,
+        offers,
+        Context.add(
+          linking,
+          PeerMcpClient.PeerMcpClient,
+          PeerMcpClient.PeerMcpClient.of({
+            call: (input) =>
+              client.call(input).pipe(
+                Effect.flatMap((result) => {
+                  if (input.tool !== "t3_thread_launch" || lost) return Effect.succeed(result);
+                  lost = true;
+                  return Effect.fail(
+                    new PeerMcpClient.UncertainCall({
+                      code: "orchestration_error",
+                      message: "The linked environment stopped answering.",
+                    }),
+                  );
+                }),
+              ),
+          }),
         ),
       );
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
       const delegated = yield* delegateToBox(a);
       expect(delegated.taskId).toBeDefined();
       const recorded = yield* a.orchestrator.getThreadProjection(parentThreadId);
