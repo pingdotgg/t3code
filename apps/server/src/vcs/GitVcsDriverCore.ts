@@ -4304,7 +4304,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...ref,
         worktreePath:
           ref.worktreePath ??
-          (ref.name === repositoryPaths.currentBranch ? repositoryPaths.worktreeRoot : null),
+          (!hasCurrentWorktreeBranch && ref.name === repositoryPaths.currentBranch
+            ? repositoryPaths.worktreeRoot
+            : null),
         current: hasCurrentWorktreeBranch
           ? ref.worktreePath === repositoryPaths.worktreeRoot
           : ref.name === repositoryPaths.currentBranch,

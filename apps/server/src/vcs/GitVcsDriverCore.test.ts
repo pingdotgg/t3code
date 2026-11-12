@@ -1278,6 +1278,70 @@ it.effect("follows a checkout made outside the driver after refs were cached", (
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("attributes the worktree to one ref when HEAD moves during a snapshot reread", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let switchDuringSnapshot: { cwd: string; refName: string } | null = null;
+      const switchingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          const isSnapshotWorktreeList =
+            command.args.includes("--git-dir") && command.args.includes("worktree");
+          if (isSnapshotWorktreeList && switchDuringSnapshot !== null) {
+            const { cwd, refName } = switchDuringSnapshot;
+            switchDuringSnapshot = null;
+            const handle = yield* delegate.spawn(
+              ChildProcess.make("git", ["switch", refName], { cwd }),
+            );
+            assert.equal(Number(yield* handle.exitCode), 0);
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, switchingSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      yield* git(cwd, ["branch", "feature/first"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      yield* git(cwd, ["branch", "feature/second"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      yield* driver.listRefs({ cwd });
+
+      // The HEAD read sees feature/first, then the snapshot reread sees feature/second.
+      yield* git(cwd, ["switch", "feature/first"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      switchDuringSnapshot = { cwd, refName: "feature/second" };
+      const refs = yield* driver.listRefs({ cwd });
+
+      assert.isNull(switchDuringSnapshot);
+      const worktreeRoot = refs.refs.find((ref) => ref.name === "feature/second")?.worktreePath;
+      assert.isString(worktreeRoot);
+      assert.deepEqual(
+        refs.refs.filter((ref) => ref.worktreePath === worktreeRoot).map((ref) => ref.name),
+        ["feature/second"],
+      );
+      assert.deepEqual(
+        refs.refs.filter((ref) => ref.current).map((ref) => ref.name),
+        ["feature/second"],
+      );
+    }),
+  ).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("marks the current branch when worktree metadata is unavailable", () =>
   Effect.scoped(
     Effect.gen(function* () {
