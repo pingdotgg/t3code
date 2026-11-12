@@ -1,3 +1,18 @@
+import { usePullRequestReviewScope } from "./usePullRequestReviewKey";
+import { pullRequestEnvironment } from "~/state/pullRequests";
+import { useEnvironmentQuery } from "~/state/query";
+import { useReviewThreadActions } from "./useReviewThreadActions";
+import type { PullRequestDetail } from "@t3tools/contracts";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
+
+import { PullRequestAttachments } from "./PullRequestAttachments";
+import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
+/**
+ * Pull-request-specific annotations: conversations already on the host and comments queued for
+ * the review being written. New comment composition uses the shared diff annotation.
+ */
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -9,23 +24,24 @@ import type {
   PullRequestThreadComment,
 } from "@t3tools/contracts";
 import {
+  CheckIcon,
+  ClockIcon,
   HammerIcon,
-  MessageSquareIcon,
   MessageSquarePlusIcon,
   Trash2Icon,
   CircleCheckIcon,
   CircleIcon,
 } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import { RelativeTime } from "~/components/RelativeTime";
 import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PullRequestEditButton } from "./PullRequestEditButton";
+
+import { Badge } from "../ui/badge";
+
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
@@ -36,7 +52,12 @@ import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPres
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
-import type { PendingReviewComment } from "./pullRequestReviewStore";
+import {
+  pendingReviewDiscardTargets,
+  usePendingReviewComments,
+  usePullRequestReviewStore,
+  type PendingReviewComment,
+} from "./pullRequestReviewStore";
 import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
@@ -87,11 +108,28 @@ export function getReviewPositionAnchor(position: PullRequestReviewPosition): {
 
 export function PendingReviewCommentCard({
   comment,
-  onRemove,
+  environmentId,
+  reference,
+  canCopyLink,
+  onAddToComposer,
 }: {
   comment: PendingReviewComment;
-  onRemove: () => void;
+  environmentId: EnvironmentId;
+  reference: PullRequestRef;
+  canCopyLink: boolean;
+  onAddToComposer?: (() => void) | undefined;
 }) {
+  const [replyCommentId, setReplyCommentId] = useState<string | null>(null);
+  const { busy, canSave, canDiscard, saveDraft, copyLink, discard } =
+    usePendingReviewCommentActions(environmentId, reference);
+  if (replyCommentId)
+    return (
+      <HostedReviewThreadCard
+        environmentId={environmentId}
+        reference={reference}
+        commentId={replyCommentId}
+      />
+    );
   return (
     <div
       className={cn(CARD_CLASS, "border-dashed")}
@@ -99,19 +137,59 @@ export function PendingReviewCommentCard({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <MessageSquareIcon className="size-3.5" />
-        <span>Pending. Sent when you submit the review</span>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="ml-auto"
-          aria-label="Discard this comment"
-          onClick={onRemove}
-        >
-          <Trash2Icon className="size-3.5" />
-        </Button>
+        <Badge variant="warning" size="sm">
+          <ClockIcon className="size-3" />
+          Pending
+        </Badge>
+        <span>
+          {comment.hostedComment
+            ? "Saved on GitHub · private until submitted"
+            : canCopyLink
+              ? busy
+                ? "Saving to GitHub…"
+                : "Only saved in T3"
+              : "Sent when you submit the review"}
+        </span>
+        {canCopyLink && canSave && !comment.hostedComment && !busy ? (
+          <Button size="xs" variant="ghost" onClick={() => void saveDraft(comment)}>
+            Retry save
+          </Button>
+        ) : null}
+        <div className="ml-auto flex items-center gap-1">
+          <PullRequestCommentActions
+            body={comment.body}
+            url={comment.hostedComment?.url ?? null}
+            onCopyLink={canCopyLink && canSave ? () => copyLink(comment) : undefined}
+            disabled={busy}
+            onAddToComposer={onAddToComposer}
+          />
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Discard this comment"
+            disabled={busy || (comment.hostedComment !== undefined && !canDiscard)}
+            onClick={() => void discard(comment)}
+          >
+            <Trash2Icon className="size-3.5" />
+          </Button>
+        </div>
       </div>
       <p className="mt-2 whitespace-pre-wrap leading-relaxed">{comment.body}</p>
+      {canCopyLink && canSave ? (
+        <Button
+          size="xs"
+          variant="ghost"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              const hosted = comment.hostedComment ?? (await saveDraft(comment));
+              if (hosted) setReplyCommentId(hosted.commentId);
+            })();
+          }}
+        >
+          Reply to conversation
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -120,15 +198,18 @@ export function PendingReviewCommentCard({
 export function InlineReviewThreads({
   threads,
   renderThread,
+  revealedThreadId,
 }: {
   threads: ReadonlyArray<PullRequestReviewThread>;
   renderThread: (thread: PullRequestReviewThread, hidden: boolean) => ReactNode;
+  revealedThreadId?: string | undefined;
 }) {
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
   // A conversation seen open stays shown once resolved, so it does not vanish under the reader.
   const open = threads.filter((thread) => !thread.isResolved);
-  if (open.some((thread) => !shown.has(thread.id))) {
-    setShown(new Set([...shown, ...open.map((thread) => thread.id)]));
+  const visible = threads.filter((thread) => !thread.isResolved || thread.id === revealedThreadId);
+  if (visible.some((thread) => !shown.has(thread.id))) {
+    setShown(new Set([...shown, ...visible.map((thread) => thread.id)]));
   }
   const resolved = threads.filter((thread) => thread.isResolved);
   const expanded = resolved.every((thread) => shown.has(thread.id));
@@ -184,7 +265,7 @@ export function ReviewThreadCard({
   canReact,
   environmentId,
   reference,
-  completionScope,
+  completionScope = null,
   pending,
   fixPending,
   fixLabel = "Fix in a thread",
@@ -197,6 +278,8 @@ export function ReviewThreadCard({
   onToggleResolved,
   onReacted,
   hidden,
+  onAddToComposer,
+  revealRequest,
 }: {
   thread: PullRequestReviewThread;
   workspaceRoot: string;
@@ -205,7 +288,7 @@ export function ReviewThreadCard({
   canReact: boolean;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  completionScope: PullRequestCompletionScope | null;
+  completionScope?: PullRequestCompletionScope | null;
   pending: boolean;
   fixPending?: boolean;
   fixLabel?: string;
@@ -221,12 +304,24 @@ export function ReviewThreadCard({
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
-  /** Set on a diff line. Hidden draws nothing but stays mounted, so an unsent reply survives. */
   hidden?: boolean;
+  revealRequest?: number | undefined;
+  onAddToComposer?: ((comment: PullRequestThreadComment) => void) | undefined;
 }) {
-  const [expanded, setExpanded] = useState(hidden !== undefined || !thread.isResolved);
+  // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
+  const pendingActions = usePendingReviewCommentActions(environmentId, reference);
+  const [expanded, setExpanded] = useState(
+    hidden !== undefined || revealRequest !== undefined || !thread.isResolved,
+  );
+  const [lastRevealRequest, setLastRevealRequest] = useState(revealRequest);
+  if (lastRevealRequest !== revealRequest) {
+    setLastRevealRequest(revealRequest);
+    if (revealRequest !== undefined) setExpanded(true);
+  }
+  const [uploading, setUploading] = useState(false);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
+  const [lastResolved, setLastResolved] = useState(thread.isResolved);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const sendingRef = useRef(false);
@@ -236,10 +331,49 @@ export function ReviewThreadCard({
   >(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const currentPage = loadedPage?.threadId === thread.id ? loadedPage : null;
-  const comments = mergePullRequestThreadComments(thread.comments, currentPage?.comments ?? []);
+  const receivedComments = mergePullRequestThreadComments(
+    thread.comments,
+    currentPage?.comments ?? [],
+  );
+  const { key: reviewKey, ready: reviewReady } = usePullRequestReviewScope(
+    environmentId,
+    reference,
+  );
+  const storedComments = usePendingReviewComments(reviewKey, [
+    { ...thread, comments: receivedComments },
+  ]);
+  const pendingComments = reviewReady ? storedComments : [];
+  const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
+  const discardById = new Map(
+    pendingReviewDiscardTargets(
+      pendingComments,
+      [{ ...thread, comments: receivedComments }],
+      removedIds,
+    ).flatMap((comment) =>
+      comment.hostedComment ? [[comment.hostedComment.commentId, comment] as const] : [],
+    ),
+  );
+  const pendingById = new Map(
+    pendingComments.flatMap((comment) =>
+      comment.hostedComment ? [[comment.hostedComment.commentId, comment] as const] : [],
+    ),
+  );
+  const comments = receivedComments.filter(
+    (comment) =>
+      !comment.pendingReviewId ||
+      (reviewReady &&
+        (thread.line === null ? !removedIds?.includes(comment.id) : pendingById.has(comment.id))),
+  );
   const nextCommentsCursor =
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
   const commentCount = thread.commentCount ?? comments.length;
+
+  // Follow resolution changes from this client or GitHub while allowing a finished thread to
+  // be opened manually. Failed resolve requests leave the current view and draft intact.
+  if (lastResolved !== thread.isResolved) {
+    setLastResolved(thread.isResolved);
+    if (hidden === undefined) setExpanded(!thread.isResolved);
+  }
 
   const saveEdit = async (commentId: string, body: string) => {
     if (savingEdit) return;
@@ -247,6 +381,7 @@ export function ReviewThreadCard({
     const saved = await onEditComment(commentId, body);
     setSavingEdit(false);
     if (saved) {
+      usePullRequestReviewStore.getState().updateHostedCommentBody(reviewKey, commentId, body);
       setLoadedPage((previous) =>
         previous?.threadId === thread.id
           ? {
@@ -261,7 +396,7 @@ export function ReviewThreadCard({
 
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (trimmed.length === 0 || pending || sendingRef.current) return;
+    if (trimmed.length === 0 || pending || uploading || sendingRef.current) return;
     sendingRef.current = true;
     const result = await settlePromise(() => onReply(trimmed));
     sendingRef.current = false;
@@ -277,7 +412,6 @@ export function ReviewThreadCard({
         : previous,
     );
     setReply("");
-    setReplying(false);
   };
   const loadMore = async () => {
     if (nextCommentsCursor === null || loadingMore) return;
@@ -359,23 +493,69 @@ export function ReviewThreadCard({
 
       {expanded ? (
         <>
-          <div className="mt-2 space-y-3">
-            {comments.map((comment) => (
-              <article key={comment.id} className="group min-w-0">
+          <div className="divide-y divide-border/70">
+            {comments.map((comment, index) => (
+              <article key={comment.id} className="group min-w-0 px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestActorLabel actor={comment.author} />
-                  <span>
-                    <RelativeTime timestamp={comment.createdAt} />
-                  </span>
-                  <PullRequestReactionBar
-                    className="ml-auto justify-end"
-                    reactions={comment.reactions ?? []}
-                    canReact={canReact}
-                    subjectId={comment.id}
-                    environmentId={environmentId}
-                    reference={reference}
-                    onRefresh={onReacted}
-                  />
+                  <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
+                  {comment.pendingReviewId ? (
+                    <Badge variant="warning" size="sm">
+                      <ClockIcon className="size-3" />
+                      Pending
+                    </Badge>
+                  ) : null}
+                  {index === 0 && thread.isOutdated ? (
+                    <Badge variant="warning" size="sm">
+                      Outdated
+                    </Badge>
+                  ) : null}
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    <PullRequestReactionBar
+                      reactions={comment.reactions ?? []}
+                      canReact={canReact}
+                      subjectId={comment.id}
+                      environmentId={environmentId}
+                      reference={reference}
+                      onRefresh={onReacted}
+                    />
+                    {index === 0 && canResolve && !thread.isResolved && !comment.pendingReviewId ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label="Resolve conversation"
+                        title="Resolve conversation"
+                        disabled={pending}
+                        onClick={onToggleResolved}
+                      >
+                        <CheckIcon className="size-4" />
+                      </Button>
+                    ) : null}
+                    {comment.pendingReviewId &&
+                    discardById.has(comment.id) &&
+                    pendingActions.canDiscard ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        aria-label="Discard this comment"
+                        disabled={pendingActions.busy}
+                        onClick={() => void pendingActions.discard(discardById.get(comment.id)!)}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </Button>
+                    ) : null}
+                    <PullRequestCommentActions
+                      body={comment.body}
+                      url={comment.url ?? null}
+                      onEdit={canEditComment(comment) ? () => setEditingId(comment.id) : undefined}
+                      onAddToComposer={onAddToComposer ? () => onAddToComposer(comment) : undefined}
+                      resolution={
+                        canResolve && !thread.comments.some((entry) => entry.pendingReviewId)
+                          ? { resolved: thread.isResolved, pending, onToggle: onToggleResolved }
+                          : undefined
+                      }
+                    />
+                  </div>
                 </div>
                 {editingId === comment.id ? (
                   <PullRequestMarkdownEditor
@@ -390,19 +570,13 @@ export function ReviewThreadCard({
                     onCancel={() => setEditingId(null)}
                   />
                 ) : (
-                  <div className="mt-1 flex items-start gap-1">
+                  <div className="mt-2">
                     <PullRequestMarkdown
                       className="min-w-0 flex-1 text-sm"
                       text={comment.body}
                       cwd={workspaceRoot}
                       environmentId={environmentId}
                     />
-                    {canEditComment(comment) ? (
-                      <PullRequestEditButton
-                        aria-label="Edit comment"
-                        onClick={() => setEditingId(comment.id)}
-                      />
-                    ) : null}
                   </div>
                 )}
               </article>
@@ -430,10 +604,10 @@ export function ReviewThreadCard({
                 text={reply}
                 textareaRef={replyRef}
                 onTextChange={setReply}
-                disabled={pending}
+                disabled={pending || uploading}
               >
                 {(speech) => (
-                  <div className="mt-2">
+                  <div data-review-reply-composer data-review-attachment-composer className="mt-2">
                     <PullRequestMarkdownTextarea
                       ref={replyRef}
                       readOnly={speech.freezesEditor}
@@ -453,8 +627,16 @@ export function ReviewThreadCard({
                           speech.state.phase === "idle" ? setReplying(false) : speech.cancel(),
                       })}
                     />
+                    <PullRequestAttachments
+                      environmentId={environmentId}
+                      reference={reference}
+                      disabled={pending || uploading}
+                      onBusyChange={setUploading}
+                      textareaRef={replyRef}
+                      onTextChange={setReply}
+                    />
                     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-                      <TextFieldSpeechControls speech={speech} disabled={pending} />
+                      <TextFieldSpeechControls speech={speech} disabled={pending || uploading} />
                       <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
                         Cancel
                       </Button>
@@ -474,7 +656,14 @@ export function ReviewThreadCard({
                 )}
               </SpeechTextField>
             ) : (
-              <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
+              <Button
+                size="xs"
+                variant="ghost"
+                data-review-reply-composer
+                data-review-attachment-composer
+                className="mt-2"
+                onClick={() => setReplying(true)}
+              >
                 Reply
               </Button>
             )
@@ -482,5 +671,86 @@ export function ReviewThreadCard({
         </>
       ) : null}
     </div>
+  );
+}
+
+/** Shared cached queries keep a Guide or pending-comment conversation live after a reply. */
+export function HostedReviewThreadCard({
+  environmentId,
+  reference,
+  threadId,
+  commentId,
+}: {
+  environmentId: EnvironmentId;
+  reference: PullRequestRef;
+  threadId?: string | undefined;
+  commentId?: string | undefined;
+}) {
+  const target = { environmentId, input: reference };
+  const detail = useEnvironmentQuery(pullRequestEnvironment.detail(target));
+  const activity = useEnvironmentQuery(pullRequestEnvironment.activity(target));
+  const thread = activity.data?.reviewThreads.find((entry) =>
+    threadId ? entry.id === threadId : entry.comments.some((comment) => comment.id === commentId),
+  );
+  const refreshActivity = activity.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Re-read hosted activity when opening a newly saved comment's conversation.
+  useEffect(() => {
+    if (commentId) refreshActivity();
+  }, [commentId, refreshActivity]);
+  if (!thread || !detail.data)
+    return (
+      <div className="p-3 text-sm" role="status">
+        {activity.error ??
+          detail.error ??
+          (activity.isPending || detail.isPending
+            ? "Loading conversation…"
+            : "This conversation is not available yet. Refresh to check again.")}
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={() => {
+            activity.refresh();
+            detail.refresh();
+          }}
+        >
+          Refresh conversation
+        </Button>
+      </div>
+    );
+  return (
+    <HostedReviewThreadContent
+      environmentId={environmentId}
+      reference={reference}
+      detail={detail.data}
+      thread={thread}
+      onRefresh={activity.refresh}
+    />
+  );
+}
+
+function HostedReviewThreadContent({
+  environmentId,
+  reference,
+  detail,
+  thread,
+  onRefresh,
+}: {
+  environmentId: EnvironmentId;
+  reference: PullRequestRef;
+  detail: PullRequestDetail;
+  thread: PullRequestReviewThread;
+  onRefresh: () => void;
+}) {
+  const actions = useReviewThreadActions(environmentId, reference, detail, onRefresh);
+  return (
+    <ReviewThreadCard
+      {...actions(thread)}
+      thread={thread}
+      environmentId={environmentId}
+      reference={reference}
+      workspaceRoot={detail.workspaceRoot}
+      canReact={detail.capabilities.reactions === true}
+      onReacted={onRefresh}
+    />
   );
 }

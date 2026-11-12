@@ -1,3 +1,5 @@
+import { pendingReviewIdentityFromThreads } from "@t3tools/client-runtime/review-editing";
+import { usePullRequestReviewScope } from "./usePullRequestReviewKey";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -9,10 +11,11 @@ import { useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { PullRequestReviewForm } from "./PullRequestReviewForm";
 import {
-  pullRequestReviewKey,
+  pendingReviewDiscardTargets,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
@@ -46,14 +49,31 @@ export function PullRequestComposer({
   const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const reviewRef = useRef<HTMLTextAreaElement>(null);
-  const pendingComments = usePendingReviewComments(reference);
-  const clearComments = usePullRequestReviewStore((store) => store.clear);
-  // Unsent summaries outlive the popover; select a boolean to avoid per-keystroke renders.
-  const reviewKey = pullRequestReviewKey(reference);
-  const summaryStarted = usePullRequestReviewStore(
-    (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
+  const { key: reviewKey, ready: reviewReady } = usePullRequestReviewScope(
+    environmentId,
+    reference,
   );
-  const reviewStarted = pendingComments.length > 0 || summaryStarted;
+  const storedComments = usePendingReviewComments(reviewKey, detail.reviewThreads);
+  const pendingComments = reviewReady ? storedComments : [];
+  const {
+    busy: draftBusy,
+    canDiscard,
+    discardAll,
+  } = usePendingReviewCommentActions(environmentId, reference);
+  // A summary typed but not sent is review work too, and it outlives the popover. Selected as a
+  // boolean rather than the text, so typing one does not re-render the composer per keystroke.
+  const summaryStarted = usePullRequestReviewStore(
+    (store) => reviewReady && (store.summaries[reviewKey] ?? "").trim().length > 0,
+  );
+  const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
+  const discardTargets = reviewReady
+    ? pendingReviewDiscardTargets(pendingComments, detail.reviewThreads, removedIds)
+    : [];
+  const pendingCount = reviewReady
+    ? pendingComments.length +
+      pendingReviewIdentityFromThreads(detail.reviewThreads, removedIds).outdatedComments.length
+    : 0;
+  const reviewStarted = pendingCount > 0 || summaryStarted;
   const [answeredOpenRequest, setAnsweredOpenRequest] = useState(openReviewRequest);
   if (openReviewRequest !== answeredOpenRequest) {
     setAnsweredOpenRequest(openReviewRequest);
@@ -80,20 +100,20 @@ export function PullRequestComposer({
       <PopoverTrigger
         render={<Button size="icon" variant="glass" />}
         aria-label={
-          pendingComments.length > 0
-            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+          pendingCount > 0
+            ? `Review ${term}, ${pendingCount} ${pendingCount === 1 ? "comment" : "comments"} pending`
             : reviewStarted || !canComment
               ? `Review ${term}`
               : `Comment on ${term}`
         }
       >
         <MessageSquareIcon className="size-4" />
-        {pendingComments.length > 0 ? (
+        {pendingCount > 0 ? (
           <span
             aria-hidden
             className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-3xs font-semibold tabular-nums text-white"
           >
-            {pendingComments.length}
+            {pendingCount}
           </span>
         ) : null}
       </PopoverTrigger>
@@ -119,7 +139,7 @@ export function PullRequestComposer({
             >
               <Toggle value="comment">Comment</Toggle>
               <Toggle value="review">
-                {pendingComments.length > 0 ? `Review (${pendingComments.length})` : "Review"}
+                {pendingCount > 0 ? `Review (${pendingCount})` : "Review"}
               </Toggle>
             </ToggleGroup>
           ) : (
@@ -128,14 +148,19 @@ export function PullRequestComposer({
             </PopoverTitle>
           )}
           <div className="flex items-center gap-1">
-            {mode === "review" && pendingComments.length > 0 ? (
+            {mode === "review" && discardTargets.length > 0 ? (
               <Button
                 size="icon-xs"
                 variant="ghost"
                 aria-label="Discard pending line comments"
                 title="Discard pending line comments"
-                disabled={reviewPending}
-                onClick={() => clearComments(reviewKey)}
+                disabled={
+                  reviewPending ||
+                  draftBusy ||
+                  (!canDiscard &&
+                    discardTargets.some((comment) => comment.hostedComment !== undefined))
+                }
+                onClick={() => void discardAll(discardTargets)}
               >
                 <Trash2Icon className="size-3.5" />
               </Button>
@@ -157,6 +182,7 @@ export function PullRequestComposer({
               reference={reference}
               completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
               term={term}
+              reviewThreads={detail.reviewThreads}
               verdicts={verdicts}
               requestChangesSummaryRequired={sourceControlClients
                 .get(detail.provider)

@@ -1,13 +1,49 @@
 import { describe, expect, it } from "vite-plus/test";
 import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
-import { filterPullRequestTestFiles } from "./pullRequestFileFilters";
+import { filterPullRequestTestFiles, isPullRequestTestFile } from "./pullRequestFileFilters";
 
 function patch(path: string) {
   return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
 }
 
 describe("mobile PR test file filter", () => {
+  it("recognizes test names and directories while keeping mocks in their own category", () => {
+    const paths = [
+      "src/app.test.ts",
+      "src/app.spec.tsx",
+      "src/__tests__/app.ts",
+      "test/app.js",
+      "e2e/login.ts",
+      "test_app.py",
+      "app_test.py",
+      "internal/app_test.go",
+      "app_test.cpp",
+      "spec/app_spec.rb",
+      "AppTests.swift",
+      "AppTest.kt",
+      "AppSpec.java",
+      "AppTests.cs",
+      "src\\__tests__\\app.ts",
+    ];
+    expect(paths.filter(isPullRequestTestFile)).toEqual(paths);
+    expect(
+      [
+        "src/testing.ts",
+        "src/contest.ts",
+        "src/testUtils.ts",
+        "latest/app.ts",
+        "tests.ts",
+        "specification.md",
+        "AppTest.ts",
+        "pnpm-lock.yaml",
+        "src/app.test.ts.snap",
+        "src/__snapshots__/app.snap",
+        "tests/helpers/fixtures.json",
+      ].filter(isPullRequestTestFile),
+    ).toEqual([]);
+  });
+
   it("removes whole files from the native diff while retaining source order and line anchors", () => {
     const parsed = buildReviewParsedDiff(
       ["src/first.test.ts", "src/first.ts", "src/__tests__/second.ts", "src/second.ts"]

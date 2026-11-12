@@ -2,6 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
+  GitStatusEntry,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
@@ -55,7 +56,11 @@ interface FileBrowserPanelProps {
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
   answersPanelFind?: boolean;
+  /** Existing Git status data decorates loaded rows without loading more directories. */
+  gitChanges?: ReadonlyArray<GitStatusEntry>;
 }
+
+const NO_GIT_CHANGES: ReadonlyArray<GitStatusEntry> = [];
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -157,10 +162,27 @@ export default function FileBrowserPanel({
   workspaceMutationId,
   hostFolder = false,
   answersPanelFind = false,
+  gitChanges = NO_GIT_CHANGES,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
   const { resolvedTheme } = useTheme();
+  const selectionCSS = (() => {
+    if (!selectedPath) return PIERRE_TREE_UNSAFE_CSS;
+    const path = selectedPath.replace(/\/$/, "");
+    return `${PIERRE_TREE_UNSAFE_CSS}
+      button[data-type='item']:is([data-item-path=${CSS.escape(path)}], [data-item-path=${CSS.escape(`${path}/`)}])::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        display: block;
+        pointer-events: none;
+        outline: 1px solid var(--ring);
+        outline-offset: -1px;
+        border-radius: var(--radius-md);
+      }
+    `;
+  })();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
   const {
@@ -316,6 +338,16 @@ export default function FileBrowserPanel({
     loadingDirectoriesRef.current = loadingDirectories;
     model.setComposition(model.getComposition());
   }, [loadingDirectories, model]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs selection styling into the imperative tree shadow DOM
+  useEffect(() => {
+    const shadow = model.getFileTreeContainer()?.shadowRoot;
+    if (!shadow) return;
+    const style = document.createElement("style");
+    style.dataset.reviewSelection = "true";
+    style.textContent = selectionCSS;
+    shadow.append(style);
+    return () => style.remove();
+  }, [model, selectionCSS]);
   const search = useFileTreeSearch(model);
   // Pierre restores the unfiltered tree when a search has no matches.
   const hasNoSearchMatches = search.value.trim().length > 0 && search.matchingPaths.length === 0;
@@ -391,16 +423,19 @@ export default function FileBrowserPanel({
   }, [directoryPaths, expansionRoot, load, model, pendingExpandedPaths]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
   useEffect(() => {
-    model.setGitStatus(
-      entries
-        .filter((entry) => entry.ignored)
-        .map((entry) => ({
-          path: treePath(entry),
-          status: "ignored",
-        })),
-    );
-  }, [entries, model]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected file's ancestor directories and aborts on cleanup
+    const statuses = new Map<string, GitStatusEntry>();
+    for (const entry of entries) {
+      if (entry.ignored) {
+        const path = treePath(entry);
+        statuses.set(path, { path, status: "ignored" });
+      }
+    }
+    // Pierre colors filenames, adds the status letter, and marks ancestor folders.
+    // Supplying unloaded paths also marks their visible ancestors without scanning them.
+    for (const change of gitChanges) statuses.set(change.path, change);
+    model.setGitStatus([...statuses.values()]);
+  }, [entries, gitChanges, model]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected file ancestors into the imperative tree
   useEffect(() => {
     if (!selectedPath) return;
     const controller = new AbortController();
@@ -517,7 +552,7 @@ export default function FileBrowserPanel({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {

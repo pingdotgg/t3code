@@ -3,7 +3,7 @@ import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { View } from "react-native";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -19,6 +19,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly projectName: string;
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
+  readonly toolbar?: ReactNode;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
@@ -74,6 +75,7 @@ export function ThreadFileNavigatorPane(props: {
         entriesQuery.selectPath(path);
         props.onSelectFile(path);
       }}
+      toolbar={props.toolbar}
     />
   );
 

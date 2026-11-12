@@ -1,6 +1,6 @@
 import { isDraftThreadRoute } from "./features/threads/thread-route-state";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
-import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
+import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideChapterScreen";
 import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
 import { PullRequestDiscussionScreen } from "./features/pull-requests/PullRequestDiscussionScreen";
 import { createWorkspaceStackNavigator } from "./features/layout/createWorkspaceStackNavigator";
@@ -46,13 +46,17 @@ import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRo
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
+import {
+  ThreadFilesWorkspaceScreen,
+  ThreadGitWorkspaceScreen,
+  ThreadFileWorkspaceScreen,
+} from "./features/layout/workspace/ThreadWorkspaceScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import {
   HardwareKeyboardCommandOverlay,
   HardwareKeyboardCommandProvider,
 } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
-import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
@@ -638,8 +642,13 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: { ...modalRoute({ header: "solid" }), gestureEnabled: false },
     }),
     ThreadReview: createNativeStackScreen({
-      screen: ReviewSheet,
+      screen: ThreadGitWorkspaceScreen,
       linking: `${THREAD_LINKING_PREFIX}/review`,
+      options: pageRoute(),
+    }),
+    ThreadReviewFile: createNativeStackScreen({
+      screen: ThreadGitWorkspaceScreen,
+      linking: `${THREAD_LINKING_PREFIX}/review/file`,
       options: pageRoute(),
     }),
     ThreadReviewComment: createNativeStackScreen({
@@ -648,12 +657,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: sheetRoute({ detent: 0.55, android: "fullScreen" }),
     }),
     ThreadFiles: createNativeStackScreen({
-      screen: ThreadFilesTreeScreen,
+      screen: ThreadFilesWorkspaceScreen,
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: pageRoute({ title: "Files" }),
     }),
     ThreadFile: createNativeStackScreen({
-      screen: ThreadFileScreen,
+      screen: ThreadFileWorkspaceScreen,
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
       options: pageRoute(),
     }),

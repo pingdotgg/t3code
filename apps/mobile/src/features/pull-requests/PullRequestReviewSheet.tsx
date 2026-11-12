@@ -1,4 +1,5 @@
 import { AsyncResult } from "effect/reactivity";
+import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -6,25 +7,35 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Platform, Pressable, View } from "react-native";
+import { Alert, Pressable, View } from "react-native";
 import { clearSubmittedReview } from "./pullRequestReviewDrafts";
-import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
+import {
+  PullRequestPendingBadge,
+  PullRequestPendingCommentActions,
+} from "./PullRequestPendingComment";
+import {
+  setReviewDraftBusy,
+  retireReviewDraftComments,
+  usePullRequestReviewDraft,
+} from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { Menu } from "../../components/ui/Menu";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestSheetContent as SheetContent } from "./PullRequestSheetContent";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
-import { PullRequestCompletionSuggestions } from "./PullRequestCompletionSuggestions";
-import { usePullRequestCompletions } from "./usePullRequestCompletions";
 
 function useActionSubmission(params: PullRequestParams) {
   const navigation = useNavigation();
-  const refreshDetail = useAtomRefresh(composerPullRequests.detail(pullRequestTarget(params)));
+  const target = pullRequestTarget(params);
+  const refreshDetail = useAtomRefresh(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(pullRequestTarget(params)));
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -68,11 +79,14 @@ export function PullRequestReviewSheet({
 }: StaticScreenProps<PullRequestParams & { readonly mode: "review" | "comment" }>) {
   const params = route.params;
   const target = pullRequestTarget(params);
-  const result = useEnvironmentQuery(composerPullRequests.detail(target));
+  const result = useEnvironmentQuery(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
   const { refresh: refreshDetail } = result;
   useFocusEffect(refreshDetail);
   const permissions = usePullRequestPermissions(params, result.data);
   const submission = useActionSubmission(params);
+  const [uploading, setUploading] = useState(false);
   const review = useAtomCommand(composerPullRequests.submitReview, { reportFailure: false });
   const comment = useAtomCommand(composerPullRequests.comment, { reportFailure: false });
   const navigation = useNavigation();
@@ -83,19 +97,12 @@ export function PullRequestReviewSheet({
       ...draft,
       ...(params.mode === "review" ? { summary: body } : { comment: body }),
     }));
-  const completions = usePullRequestCompletions({
-    environmentId: params.environmentId,
-    projectId: params.projectId,
-    value: body,
-    onChangeValue: setBody,
-    support: result.data?.capabilities ?? null,
-  });
-  const stale = store.draft.comments.some((comment) => comment.headSha !== result.data?.headSha);
+  const stale = store.comments.some((comment) => comment.headSha !== result.data?.headSha);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
   const offered = VERDICTS.filter((option) => permissions.verdicts.includes(option.value));
   const verdict = offered.find((option) => option.value === requestedVerdict) ?? offered[0];
   const reviewing = params.mode === "review";
-  const canSubmitComments = !store.draft.comments.length || permissions.canInlineComment;
+  const canSubmitComments = !store.comments.length || permissions.canInlineComment;
   // Forgejo requires a summary when requesting changes, even with inline comments.
   const summaryRequired =
     verdict !== undefined && result.data
@@ -103,147 +110,236 @@ export function PullRequestReviewSheet({
       : false;
   const canSubmit =
     store.ready &&
-    (!reviewing || (!stale && canSubmitComments)) &&
+    !uploading &&
+    !store.busy &&
+    (!reviewing ||
+      (store.activityLoaded && store.activityError === null && !stale && canSubmitComments)) &&
     (reviewing
       ? verdict !== undefined &&
         (summaryRequired
           ? body.trim().length > 0
           : verdict.value === "approve" ||
             body.trim().length > 0 ||
-            store.draft.comments.length > 0)
+            store.comments.length > 0 ||
+            Boolean(store.pendingReviewId))
       : permissions.canComment && body.trim().length > 0);
   const perform = () =>
     submission.submit(async () => {
-      if (!canSubmit)
+      if (!canSubmit || !store.isReady())
         throw new Error("Add your feedback and check your permissions before submitting.");
-      const submitted = store.draft;
-      const response =
-        reviewing && verdict
-          ? await review({
-              ...target,
-              input: {
-                ...target.input,
-                verdict: verdict.value,
-                body,
-                comments: submitted.comments.map(
-                  ({ id: _id, headSha: _sha, code: _code, ...comment }) => comment,
-                ),
-              },
-            })
-          : await comment({ ...target, input: { ...target.input, body } });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      store.update((current) =>
-        reviewing
-          ? clearSubmittedReview(current, submitted)
-          : { ...current, comment: current.comment === submitted.comment ? "" : current.comment },
-      );
-      await store.flush();
+      if (!setReviewDraftBusy(store.scope, true))
+        throw new Error("Wait for the pending comment to finish saving.");
+      return await (async () => {
+        const submitted = store.draft;
+        const submittedComments = store.comments;
+        const response =
+          reviewing && verdict
+            ? await review({
+                ...target,
+                input: {
+                  ...target.input,
+                  verdict: verdict.value,
+                  body,
+                  ...(store.pendingReviewId ? { pendingReviewId: store.pendingReviewId } : {}),
+                  ...(store.outdatedComments.length
+                    ? { outdatedComments: store.outdatedComments }
+                    : {}),
+                  comments: submittedComments.map(
+                    ({ id: _id, headSha: _sha, code: _code, ...comment }) => comment,
+                  ),
+                },
+              })
+            : await comment({ ...target, input: { ...target.input, body } });
+        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+        if (reviewing)
+          retireReviewDraftComments(
+            store.scope,
+            submittedComments,
+            store.outdatedComments.map((comment) => comment.id),
+          );
+        store.complete((current) =>
+          reviewing
+            ? clearSubmittedReview(current, submitted)
+            : { ...current, comment: current.comment === submitted.comment ? "" : current.comment },
+        );
+        await store.flush();
+      })().finally(async () => {
+        setReviewDraftBusy(store.scope, false);
+      });
     });
+  const verdictMenu =
+    reviewing && offered.length > 1 ? (
+      <Menu
+        title="Review verdict"
+        actions={offered.map((option) => ({
+          id: option.value,
+          title: option.title,
+          state: option.value === verdict?.value ? ("on" as const) : ("off" as const),
+        }))}
+        onPressAction={({ nativeEvent }) => {
+          const next = offered.find((option) => option.value === nativeEvent.event);
+          if (next && !submission.busy) setRequestedVerdict(next.value);
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Review verdict: ${verdict?.title ?? "Comment"}`}
+          disabled={submission.busy}
+          className="h-11 flex-row items-center gap-1.5 rounded-full border border-border-subtle px-3.5 active:opacity-70"
+        >
+          <Text className="text-xs font-t3-bold">{verdict?.title ?? "Comment"}</Text>
+          <SymbolView name="chevron.down" size={11} tintColorClassName="accent-icon-muted" />
+        </Pressable>
+      </Menu>
+    ) : null;
   return (
     <SheetContent
       title={reviewing ? "Submit review" : "Add comment"}
       subtitle={`#${params.number}${reviewing && result.data?.headSha ? ` · reviewing ${result.data.headSha.slice(0, 7)}` : ` · ${params.repository}`}`}
-      busy={submission.busy}
+      busy={submission.busy || uploading}
+      compact
       footer={
-        <Button
-          label={
-            submission.busy
-              ? "Submitting…"
-              : reviewing
-                ? verdict?.value === "approve"
-                  ? "Approve"
-                  : verdict?.value === "request-changes"
-                    ? "Request changes"
-                    : "Submit review"
-                : "Post comment"
-          }
-          fullWidth
-          tone={Platform.OS === "android" ? "primary" : "contrast"}
-          loading={submission.busy}
-          disabled={!canSubmit || result.isPending || result.error !== null}
-          onPress={() => void perform()}
-        />
+        <View className="flex-row items-center gap-2">
+          {verdictMenu}
+          <View className="flex-1" />
+          <Button
+            tone="text"
+            label="Cancel"
+            disabled={submission.busy}
+            onPress={() => navigation.goBack()}
+          />
+          <Button
+            tone={reviewing ? "primary" : "secondary"}
+            label={
+              submission.busy
+                ? reviewing
+                  ? "Submitting…"
+                  : "Posting…"
+                : reviewing
+                  ? "Submit review"
+                  : "Comment"
+            }
+            loading={submission.busy}
+            disabled={!canSubmit || result.isPending || result.error !== null || submission.busy}
+            onPress={() => void perform()}
+          />
+        </View>
       }
     >
-      {reviewing && offered.length > 1 ? (
-        <SegmentedControl
-          options={offered.map((option) => ({ value: option.value, label: option.title }))}
-          selected={verdict?.value ?? "comment"}
-          onSelect={(value) => {
-            if (!submission.busy) setRequestedVerdict(value);
-          }}
-          size="compact"
-        />
+      {store.legacyDraftAvailable ? (
+        <View className="gap-2 rounded-2xl bg-grouped-card p-4">
+          <Text className="text-sm text-foreground-muted">
+            Earlier drafts on this device have no account information. Restore them only if you
+            wrote them for {store.scope.viewer}.
+          </Text>
+          <Button
+            tone="text"
+            label="Restore my earlier drafts"
+            disabled={submission.busy || store.busy}
+            onPress={() =>
+              Alert.alert(
+                `Restore drafts for ${store.scope.viewer}?`,
+                "Only continue if you wrote these earlier drafts for this account. They will become available to this account on this device.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "I wrote these drafts",
+                    onPress: () => {
+                      void store.recoverLegacyDraft().then((saved) => {
+                        if (!saved)
+                          Alert.alert(
+                            "Could not restore the drafts",
+                            "The earlier drafts are kept on this device. Try again.",
+                          );
+                      });
+                    },
+                  },
+                ],
+              )
+            }
+          />
+        </View>
+      ) : null}
+      {reviewing && store.activityError ? (
+        <View className="gap-2">
+          <Text className="text-sm text-danger-foreground">{store.activityError}</Text>
+          <Button
+            label="Retry loading pending review"
+            tone="text"
+            onPress={store.refreshActivity}
+          />
+        </View>
       ) : null}
       <Text className="px-4 text-xs text-foreground-muted">
         {reviewing ? "Summary" : "Comment"}
       </Text>
-      <PullRequestCompletionSuggestions completions={completions} />
-      <TextInput
-        multiline
-        selection={completions.selection}
-        onSelectionChange={completions.onSelectionChange}
-        onBlur={completions.onBlur}
-        accessibilityLabel={reviewing ? "Review summary" : "Comment"}
+      <PullRequestCommentForm
+        params={params}
+        label={reviewing ? "Review summary" : "Comment"}
         placeholder={
           reviewing
             ? summaryRequired
               ? "Summary required to request changes…"
               : "Summarize your review…"
-            : "Write a comment…"
+            : "Leave a comment"
         }
-        placeholderTextColorClassName="accent-foreground-muted"
-        editable={store.ready && !submission.busy}
+        editable={store.ready && !submission.busy && !store.busy}
         value={body}
-        maxLength={65536}
         onChangeText={setBody}
-        className="min-h-36 rounded-[20px] bg-grouped-card p-4 text-base text-foreground"
-        style={{ textAlignVertical: "top" }}
+        busy={submission.busy}
+        onBusyChange={setUploading}
+        autoFocus={!reviewing}
       />
-      {reviewing && store.draft.comments.length ? (
+      {reviewing && store.comments.length ? (
         <View className="gap-2">
-          <Text className="text-sm font-t3-medium">
-            {store.draft.comments.length} pending line{" "}
-            {store.draft.comments.length === 1 ? "comment" : "comments"}
+          <Text className="text-xs text-foreground-muted">
+            {store.comments.length} pending line{" "}
+            {store.comments.length === 1 ? "comment" : "comments"} will post with this review
           </Text>
-          {store.draft.comments.map((draft) => (
-            <Pressable
-              key={draft.id}
-              accessibilityRole="button"
-              disabled={submission.busy}
-              onPress={() => {
-                const outdated = draft.headSha !== result.data?.headSha;
-                if (outdated)
-                  navigation.dispatch(
-                    StackActions.replace("PullRequestFile", {
-                      ...params,
-                      path: draft.path,
-                      replacingDraftId: draft.id,
-                    }),
-                  );
-                else
-                  navigation.dispatch(
-                    StackActions.replace("PullRequestInlineComment", {
-                      ...params,
-                      ...draft,
-                      draftId: draft.id,
-                    }),
-                  );
-              }}
-              className="gap-1 rounded-[20px] bg-grouped-card p-4"
-            >
-              <Text className="font-mono text-xs text-foreground-muted">
-                {draft.path} · {reviewPositionLabel(draft.position)}
-              </Text>
-              <Text numberOfLines={3} className="text-sm">
-                {draft.body}
-              </Text>
-              <Text className="text-2xs text-foreground-muted">
-                {draft.headSha !== result.data?.headSha
-                  ? "Branch changed · Tap to choose a new line"
-                  : "Tap to edit"}
-              </Text>
-            </Pressable>
+          {store.comments.map((draft) => (
+            <View key={draft.id} className="gap-1 rounded-[20px] bg-grouped-card p-4">
+              <View className="flex-row items-center gap-2">
+                <PullRequestPendingBadge />
+                <View className="flex-1" />
+                <PullRequestPendingCommentActions params={params} comment={draft} />
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                disabled={submission.busy}
+                onPress={() => {
+                  const outdated = draft.headSha !== result.data?.headSha;
+                  if (outdated)
+                    navigation.dispatch(
+                      StackActions.replace("PullRequestFile", {
+                        ...params,
+                        path: draft.path,
+                        replacingDraftId: draft.id,
+                      }),
+                    );
+                  else
+                    navigation.dispatch(
+                      StackActions.replace("PullRequestInlineComment", {
+                        ...params,
+                        ...draft,
+                        draftId: draft.id,
+                      }),
+                    );
+                }}
+                className="gap-1"
+              >
+                <Text className="font-mono text-xs text-foreground-muted">
+                  {draft.path} · {reviewPositionLabel(draft.position, draft.startPosition)}
+                </Text>
+                <Text numberOfLines={3} className="text-sm">
+                  {draft.body}
+                </Text>
+                <Text className="text-2xs text-foreground-muted">
+                  {draft.headSha !== result.data?.headSha
+                    ? "Branch changed · Tap to choose a new line"
+                    : "Tap to edit"}
+                </Text>
+              </Pressable>
+            </View>
           ))}
         </View>
       ) : null}

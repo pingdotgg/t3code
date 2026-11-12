@@ -20,11 +20,16 @@ export type DiffPanelSelection =
   | { kind: "commit"; sha: string; baseRef: string | null }
   | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
 
+// New panes use Uncommitted when Git reports local edits; saved choices always win.
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
+const UNSTAGED_SELECTION: DiffPanelSelection = Object.freeze({ kind: "unstaged" });
 
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  /** A link that selected a commit before opening the closed pane; opening keeps that selection. */
+  keepSelectionOnOpenThreadKey: string | null;
+  initializeGitScope: (ref: ScopedThreadRef, hasWorkingTreeChanges: boolean) => void;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
@@ -54,6 +59,18 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      keepSelectionOnOpenThreadKey: null,
+      initializeGitScope: (ref, hasWorkingTreeChanges) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if (state.byThreadKey[threadKey]) return state;
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: hasWorkingTreeChanges ? UNSTAGED_SELECTION : DEFAULT_SELECTION,
+            },
+          };
+        }),
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -200,9 +217,13 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
 export function selectThreadDiffPanelSelection(
   byThreadKey: Record<string, DiffPanelSelection>,
   ref: ScopedThreadRef | null | undefined,
+  hasWorkingTreeChanges = false,
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
-  return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+  return (
+    byThreadKey[scopedThreadKey(ref)] ??
+    (hasWorkingTreeChanges ? UNSTAGED_SELECTION : DEFAULT_SELECTION)
+  );
 }
 
 export function selectThreadBranchBaseRef(

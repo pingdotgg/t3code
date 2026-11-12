@@ -9,7 +9,7 @@ import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
 
-interface MarkdownEdit {
+export interface MarkdownEdit {
   readonly start: number;
   readonly end: number;
   readonly content: string;
@@ -236,7 +236,10 @@ function htmlTagMarkdown(
   return "";
 }
 
-export function markdownWithHtml(markdown: string): string {
+export function markdownWithHtml(
+  markdown: string,
+  recordEdits?: (edits: ReadonlyArray<MarkdownEdit>) => void,
+): string {
   if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return markdown;
   const edits: Array<{ start: number; end: number; content: string }> = [];
   const visit = (node: MarkdownNode, inTableCell: boolean, inLink: boolean) => {
@@ -280,6 +283,7 @@ export function markdownWithHtml(markdown: string): string {
     }
   };
   visit(parser.parse(markdown), false, false);
+  recordEdits?.(edits);
   return applyMarkdownEdits(markdown, edits);
 }
 
@@ -458,6 +462,11 @@ export function markdownForNativeParsing(markdown: string): string {
 
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownForNativeParsing(markdown));
+}
+
+// Source edits need offsets before native rendering transforms change the string's length.
+export function parseMarkdownSource(markdown: string): Root {
+  return parser.parse(markdown);
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {

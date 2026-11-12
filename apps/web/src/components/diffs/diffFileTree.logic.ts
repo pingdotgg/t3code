@@ -12,6 +12,26 @@ import { basenameOfPath, resolvePierreIconForEntry, T3_PIERRE_ICONS } from "~/pi
 export interface DiffFileTreeEntry {
   readonly path: string;
   readonly status: GitStatus;
+  readonly reviewed?: boolean;
+  readonly unresolvedComments?: number;
+}
+
+/** Pierre folder ids end with a slash; a selected folder includes its hidden descendants. */
+export function diffFileTreeReviewEntries(
+  entries: ReadonlyArray<DiffFileTreeEntry>,
+  selectedPaths: ReadonlyArray<string>,
+  clickedPath: string,
+): ReadonlyArray<DiffFileTreeEntry> {
+  const contains = (target: string, path: string) =>
+    target.endsWith("/") ? path.startsWith(target) : path === target;
+  const targets = selectedPaths.some((path) => contains(path, clickedPath))
+    ? selectedPaths
+    : [clickedPath];
+  const exact = new Set(targets);
+  const folders = targets.filter((path) => path.endsWith("/"));
+  return entries.filter(
+    (entry) => exact.has(entry.path) || folders.some((path) => entry.path.startsWith(path)),
+  );
 }
 
 function toGitStatus(file: FileDiffMetadata): GitStatus {

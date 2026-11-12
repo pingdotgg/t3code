@@ -12,6 +12,7 @@ import {
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
+import { ReviewCommitInput } from "./review.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 
@@ -30,9 +31,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsUploadAttachment]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdateComment]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSubmitReview]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsSaveDraftComment]: AuthSourceControlWriteScope,
+  [WS_METHODS.pullRequestsDiscardDraftComment]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsReplyToThread]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetThreadResolution]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetReaction]: AuthSourceControlWriteScope,
@@ -52,6 +56,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneRetry]: AuthSourceControlWriteScope,
+  [WS_METHODS.reviewSetStaged]: AuthSourceControlWriteScope,
+  [WS_METHODS.reviewCommit]: AuthSourceControlWriteScope,
+  [WS_METHODS.reviewGenerateCommitMessage]: AuthOrchestrationOperateScope,
+  [WS_METHODS.reviewRevert]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsPull]: AuthSourceControlWriteScope,
   [WS_METHODS.gitRunStackedAction]: AuthSourceControlWriteScope,
   [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
@@ -82,14 +90,23 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeReviewCommit = Schema.decodeUnknownSync(ReviewCommitInput);
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  // Publishing staged bytes needs the same read grant as an attachment URL, plus PR write.
+  if (method === WS_METHODS.pullRequestsUploadAttachment)
+    return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
+      return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+  }
+  if (method === WS_METHODS.reviewCommit && input !== undefined) {
+    const payload = decodeReviewCommit(input);
+    if (payload.action !== "amend" && payload.message.trim().length === 0)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   }
   if (method === WS_METHODS.gitRunStackedAction && input !== undefined) {

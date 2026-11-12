@@ -2,6 +2,7 @@ import { fakeTimers, render } from "../../../test/render";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { PullRequestMergeControl } from "./PullRequestMergeControl";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
 function MergeButton({ scopeKey, onConfirm }: { scopeKey: string; onConfirm: () => void }) {
@@ -82,22 +83,29 @@ it("stops swallowing Escape once the armed button unmounts", async () => {
 it.each(["merge", "enable-auto-merge"] as const)(
   "keeps a blocked %s action reachable without arming or performing it",
   async (primaryAction) => {
-    const perform = vi.fn(async () => true);
+    const perform = vi.fn(async (_action: string, _method?: string) => true);
     const { PullRequestPrimaryAction } = await import("./PullRequestDetailActions");
     const control = (mergeBlockedReason: string | null) => (
       <PullRequestPrimaryAction
-        pullRequestKey="owner/repo/7"
         primaryAction={primaryAction}
-        mergeBlockedReason={mergeBlockedReason}
         autoMergeArmed={false}
         armedAutoMergeLabel="Auto-merge enabled"
-        pendingAutoMergeLabel="Auto-merge (squash)"
-        selectedMergeMethod="squash"
-        selectedMergeMethodLabel="Squash and merge"
         statePresentation={null}
         pendingAction={null}
         perform={perform}
         resolveConflicts={null}
+        mergeControl={(autoMerge) => (
+          <PullRequestMergeControl
+            label={autoMerge ? "Auto-merge (squash)" : "Squash and merge"}
+            methodLabel="Squash and merge"
+            baseBranch="main"
+            autoMerge={autoMerge}
+            canAdminOverride={false}
+            pending={false}
+            blockedReason={mergeBlockedReason}
+            onConfirm={() => perform(primaryAction, "squash")}
+          />
+        )}
       />
     );
     await using screen = await render(control("Checking stack membership…"));
@@ -105,9 +113,9 @@ it.each(["merge", "enable-auto-merge"] as const)(
     const button = screen.getByRole("button");
     await userEvent.tab();
     await expect.element(button).toHaveFocus();
-    await expect.element(button).toHaveAccessibleDescription("Checking stack membership…");
     await userEvent.keyboard("{Enter}{Enter} ");
     expect(perform).not.toHaveBeenCalled();
+    await expect.element(button).toHaveAccessibleDescription("Checking stack membership…");
     await screen.rerender(control(null));
     await userEvent.click(button);
     expect(perform).not.toHaveBeenCalled();

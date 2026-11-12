@@ -7,6 +7,7 @@ import {
   getGitActionDisabledReason,
   resolveDefaultBranchActionDialogCopy,
   resolveQuickAction,
+  secondaryGitMenuItems,
 } from "./gitActions.ts";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -46,6 +47,14 @@ describe("git action copy", () => {
   it("says PR for a GitHub ref", () => {
     expect(resolveQuickAction(status({ aheadCount: 1 }), false).label).toBe("Push & create PR");
     expect(resolveQuickAction(status({ pr: openPr }), false).label).toBe("View PR");
+    const behind = status({ behindCount: 1, pr: openPr });
+    const items = buildMenuItems(behind, false);
+    expect(secondaryGitMenuItems(items, resolveQuickAction(behind, false))).toContainEqual(
+      expect.objectContaining({ kind: "open_pr", disabled: false }),
+    );
+    expect(
+      secondaryGitMenuItems(items, resolveQuickAction(status({ pr: openPr }), false)),
+    ).not.toContainEqual(expect.objectContaining({ kind: "open_pr" }));
     const [, , prItem] = buildMenuItems(status(), false);
     expect(prItem?.label).toBe("Create PR");
     expect(

@@ -1,6 +1,21 @@
+import { pendingReviewIdentityFromThreads } from "@t3tools/client-runtime/review-editing";
+import { usePullRequestReviewScope } from "./usePullRequestReviewKey";
+import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
+import { PullRequestAttachments } from "./PullRequestAttachments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
-import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
+/**
+ * The review half of the floating composer: the summary and the verdict that sends it, together
+ * with whatever line comments the review is holding. The count of those lives on the composer's
+ * trigger and mode toggle, and each pending card can be dropped from the diff, so neither is
+ * repeated here. The popover around it belongs to PullRequestComposer.
+ */
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewThread,
+  PullRequestReviewVerdict,
+} from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
 
@@ -14,7 +29,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { readableFailure } from "./pullRequestDetail.logic";
 import {
-  pullRequestReviewKey,
+  mergePendingReviewComments,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
@@ -55,6 +70,7 @@ export function PullRequestReviewForm({
   reference,
   completionScope,
   term,
+  reviewThreads,
   verdicts,
   requestChangesSummaryRequired,
   textareaRef,
@@ -69,6 +85,7 @@ export function PullRequestReviewForm({
   completionScope: PullRequestCompletionScope | null;
   /** The host's word for a change request, as in "pull request". */
   term: string;
+  reviewThreads: ReadonlyArray<PullRequestReviewThread>;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -76,20 +93,37 @@ export function PullRequestReviewForm({
   onPendingChange: (pending: boolean) => void;
   onSubmitted: () => void;
 }) {
+  const { busy: draftBusy } = usePendingReviewCommentActions(environmentId, reference);
+  const [uploading, setUploading] = useState(false);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
-  const comments = usePendingReviewComments(reference);
-  const reviewKey = pullRequestReviewKey(reference);
-  const body = usePullRequestReviewStore((store) => store.summaries[reviewKey] ?? "");
+  const { key: reviewKey, ready: reviewReady } = usePullRequestReviewScope(
+    environmentId,
+    reference,
+  );
+  const comments = usePendingReviewComments(reviewKey, reviewThreads);
+  const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
+  const remoteIdentity = pendingReviewIdentityFromThreads(reviewThreads, removedIds);
+  const pendingReviewId =
+    comments.find((comment) => comment.hostedComment)?.hostedComment?.reviewId ??
+    remoteIdentity.pendingReviewId;
+  // The panel stays mounted while the selected pull request changes. Keeping summaries beside
+  // the keyed line-comment drafts makes the selected pull request's body correct on the first
+  // render, before an effect could reset state left behind by the previous one.
+  const storedBody = usePullRequestReviewStore((store) => store.summaries[reviewKey] ?? "");
+  const body = reviewReady ? storedBody : "";
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
+  const updateSummary = (text: string) => {
+    if (reviewReady) setSummary(reviewKey, text);
+  };
   const speech = useTextFieldSpeech({
     environmentId,
     projectId: reference.projectId,
     ownerKey: JSON.stringify(["pr-review", environmentId, reviewKey]),
     text: body,
     textareaRef,
-    onTextChange: (text) => setSummary(reviewKey, text),
-    disabled: !active || pending,
+    onTextChange: updateSummary,
+    disabled: !reviewReady || !active || pending,
   });
   const { cancel } = speech;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discards a recording when the hidden form can no longer be submitted
@@ -106,8 +140,27 @@ export function PullRequestReviewForm({
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number], text: string) => {
-    const submittedComments = usePullRequestReviewStore.getState().drafts[reviewKey] ?? [];
-    if (pending || !canSubmit(verdict.value, text, submittedComments.length)) return;
+    const state = usePullRequestReviewStore.getState();
+    const submittedComments = mergePendingReviewComments(
+      state.drafts[reviewKey] ?? [],
+      reviewThreads,
+      state.removedHostComments[reviewKey] ?? [],
+    );
+    const identity = pendingReviewIdentityFromThreads(
+      reviewThreads,
+      state.removedHostComments[reviewKey],
+    );
+    const submittedReviewId =
+      submittedComments.find((comment) => comment.hostedComment)?.hostedComment?.reviewId ??
+      identity.pendingReviewId;
+    if (
+      !reviewReady ||
+      pending ||
+      uploading ||
+      draftBusy ||
+      !canSubmit(verdict.value, text, submittedComments.length, submittedReviewId)
+    )
+      return;
     const submittedBody = text;
     onPendingChange(true);
     const result = await submitReview({
@@ -115,8 +168,12 @@ export function PullRequestReviewForm({
       input: {
         ...reference,
         verdict: verdict.value,
+        ...(submittedReviewId ? { pendingReviewId: submittedReviewId } : {}),
         body: submittedBody,
         comments: submittedComments,
+        ...(identity.outdatedComments.length
+          ? { outdatedComments: identity.outdatedComments }
+          : {}),
       },
     });
     onPendingChange(false);
@@ -134,7 +191,22 @@ export function PullRequestReviewForm({
     // Preserve comments and summary edits made during submission.
     removeComments(
       reviewKey,
-      submittedComments.map((comment) => comment.id),
+      [
+        ...submittedComments.map((comment) => comment.id),
+        ...(state.drafts[reviewKey] ?? [])
+          .filter((comment) =>
+            identity.outdatedComments.some(
+              (outdated) => outdated.id === comment.hostedComment?.commentId,
+            ),
+          )
+          .map((comment) => comment.id),
+      ],
+      [
+        ...identity.outdatedComments.map((comment) => comment.id),
+        ...submittedComments.flatMap((comment) =>
+          comment.hostedComment ? [comment.hostedComment.commentId] : [],
+        ),
+      ],
     );
     clearSummary(reviewKey, submittedBody);
     toastManager.add({ type: "success", title: verdict.sent(term) });
@@ -142,10 +214,18 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string, commentCount: number) =>
+  const canSubmit = (
+    verdict: PullRequestReviewVerdict,
+    summary: string,
+    commentCount: number,
+    reviewId: string | undefined = pendingReviewId,
+  ) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
-      : verdict === "approve" || summary.trim().length > 0 || commentCount > 0;
+      : verdict === "approve" ||
+        summary.trim().length > 0 ||
+        commentCount > 0 ||
+        reviewId !== undefined;
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "", comments.length)
       ? "Summarize your review (optional)"
@@ -158,12 +238,13 @@ export function PullRequestReviewForm({
       <PullRequestMarkdownTextarea
         ref={textareaRef}
         completionScope={completionScope}
+        disabled={!reviewReady || pending || uploading || draftBusy}
         rows={3}
         readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
         aria-label="Review summary"
-        onValueChange={(next) => setSummary(reviewKey, next)}
+        onValueChange={updateSummary}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) return;
           if (
@@ -176,12 +257,20 @@ export function PullRequestReviewForm({
           }
         }}
       />
+      <PullRequestAttachments
+        environmentId={environmentId}
+        reference={reference}
+        disabled={!reviewReady || pending}
+        onBusyChange={setUploading}
+        textareaRef={textareaRef}
+        onTextChange={updateSummary}
+      />
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-        <TextFieldSpeechControls speech={speech} disabled={pending} />
+        <TextFieldSpeechControls speech={speech} disabled={!reviewReady || pending} />
         {offered.length > 1 ? (
           <Select
             value={selectedVerdict?.value ?? null}
-            disabled={pending}
+            disabled={!reviewReady || pending || uploading || draftBusy}
             onValueChange={(value) => {
               if (value !== null) setRequestedVerdict(value);
             }}
@@ -207,8 +296,11 @@ export function PullRequestReviewForm({
         <Button
           size="xs"
           disabled={
+            !reviewReady ||
             speech.preparing ||
             pending ||
+            uploading ||
+            draftBusy ||
             selectedVerdict === undefined ||
             (!canSubmit(selectedVerdict.value, body, comments.length) && !speech.blocksSubmission)
           }

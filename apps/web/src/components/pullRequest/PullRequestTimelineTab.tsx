@@ -1,3 +1,8 @@
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
+import { Button } from "../ui/button";
+import { CircleCheckIcon } from "lucide-react";
+import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
+import type { PullRequestTimelineThread } from "./pullRequestDetail.logic";
 import {
   parsePullRequestAnchor,
   pullRequestAnchorMatchesUrl,
@@ -8,6 +13,10 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
+import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
+import { useReviewThreadActions } from "./useReviewThreadActions";
+import { usePendingReviewComments, type PendingReviewComment } from "./pullRequestReviewStore";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -15,12 +24,12 @@ import type {
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
+  PullRequestReviewThread,
+  PullRequestThreadComment,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
-  CircleCheckIcon,
-  ExternalLinkIcon,
   FileCode2Icon,
   GitCommitHorizontalIcon,
   MessageSquareIcon,
@@ -33,7 +42,6 @@ import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { RelativeTime } from "~/components/RelativeTime";
 
-import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
@@ -49,11 +57,12 @@ import {
   type PullRequestChatSubject,
   type PullRequestReviewOutcome,
   type PullRequestTimelineEvent,
-  type PullRequestTimelineThread,
 } from "./pullRequestDetail.logic";
-import { canEditPullRequestComment } from "@t3tools/client-runtime/pull-request-editing";
+import {
+  canEditPullRequestComment,
+  groupPendingReviewComments,
+} from "@t3tools/client-runtime/review-editing";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
-import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
@@ -83,6 +92,7 @@ interface ReactionSurface {
   readonly reference: PullRequestRef;
   readonly completionScope: PullRequestCompletionScope | null;
   readonly onRefresh: () => void;
+  readonly onAddCommentToComposer?: ((comment: PullRequestComment) => void) | undefined;
 }
 
 function TimelineBody({
@@ -213,20 +223,6 @@ function AddToChatButton({
   );
 }
 
-function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
-  return url === null ? null : (
-    <Button
-      size="icon-xs"
-      variant="ghost-muted"
-      className="-mr-1 shrink-0"
-      aria-label="Open activity on host"
-      onClick={() => onOpen(url)}
-    >
-      <ExternalLinkIcon className="size-3" />
-    </Button>
-  );
-}
-
 function ConversationCard({
   event,
   editable,
@@ -282,6 +278,7 @@ function ConversationCard({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+              <PullRequestActorAvatar actor={event.actor} className="size-6 text-3xs" />
               <ActorName actor={event.actor} />
               <span className="text-muted-foreground">{event.title}</span>
               {event.reviewState ? <ReviewStateBadge state={event.reviewState} /> : null}
@@ -298,6 +295,18 @@ function ConversationCard({
               ) : null}
             </PullRequestMetaLine>
           </div>
+          <PullRequestCommentActions
+            body={event.body ?? ""}
+            url={event.url}
+            onOpen={onOpen}
+            onAddToComposer={
+              event.comment && reactions.onAddCommentToComposer
+                ? () => {
+                    if (event.comment) reactions.onAddCommentToComposer?.(event.comment);
+                  }
+                : undefined
+            }
+          />
           {editable !== null && !editing ? (
             <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
           ) : null}
@@ -315,11 +324,10 @@ function ConversationCard({
               onRefresh={reactions.onRefresh}
             />
           ) : null}
-          <OpenOnHostButton url={event.url} onOpen={onOpen} />
         </div>
       </div>
       {editing && editable !== null ? (
-        <div className="px-2 pb-2 pt-3">
+        <div className="px-3 pb-3 pt-3">
           <PullRequestMarkdownEditor
             value={editable.body}
             cwd={cwd}
@@ -333,7 +341,7 @@ function ConversationCard({
           />
         </div>
       ) : event.body ? (
-        <div className="px-2 pb-2">
+        <div className="px-3 pb-3">
           <TimelineBody
             body={event.body}
             markdown={event.markdown}
@@ -714,7 +722,7 @@ function ReviewVerdictEvent({
             onRefresh={reactions.onRefresh}
           />
         ) : null}
-        <OpenOnHostButton url={event.url} onOpen={onOpen} />
+        <PullRequestCommentActions body={event.body ?? ""} url={event.url} onOpen={onOpen} />
       </div>
       {event.body ? (
         <TimelineBody
@@ -741,6 +749,10 @@ export function PullRequestTimelineTab({
   onOpenCommit,
   onAddToChat,
   onRefresh,
+  embedded = false,
+  onAddCommentToComposer,
+  onAddThreadCommentToComposer,
+  onAddPendingToComposer,
 }: {
   /** A clicked link to scroll to and mark, until onRevealSettled reports it shown. */
   revealUrl?: string | undefined;
@@ -754,8 +766,32 @@ export function PullRequestTimelineTab({
   onOpenCommit: (oid: string) => void;
   onAddToChat?: (subject: PullRequestChatSubject) => void;
   onRefresh: () => void;
+  embedded?: boolean;
+  onAddCommentToComposer?: (comment: PullRequestComment) => void;
+  onAddPendingToComposer?: ((comment: PendingReviewComment) => void) | undefined;
+  onAddThreadCommentToComposer?: (
+    thread: PullRequestReviewThread,
+    comment: PullRequestThreadComment,
+  ) => void;
 }) {
-  const events = buildPullRequestTimeline(detail);
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const pending = usePendingReviewComments(reviewKey, detail.reviewThreads);
+  const { threads: conversations, pendingComments } = groupPendingReviewComments(
+    detail.reviewThreads,
+    pending,
+  );
+  // Private host drafts use the merged list, including its successful-removal tombstones.
+  // Keeping them in the ordinary discussion would duplicate cards or resurrect a discarded draft.
+  const hostedPendingIds = new Set(
+    detail.reviewThreads.flatMap((thread) =>
+      thread.comments.flatMap((comment) => (comment.pendingReviewId ? [comment.id] : [])),
+    ),
+  );
+  const events = buildPullRequestTimeline({
+    ...detail,
+    comments: detail.comments.filter((comment) => !hostedPendingIds.has(comment.id)),
+    reviewThreads: conversations,
+  });
   const location = parsePullRequestAnchor(revealUrl);
   const revealAnchor = location?.kind === "timeline" ? location.anchor : null;
   // The linked item stays marked and open after it is shown, until another link replaces it.
@@ -775,6 +811,7 @@ export function PullRequestTimelineTab({
   const matches = (event: PullRequestTimelineEvent) =>
     anchor !== null && pullRequestTimelineEventMatches(event, anchor);
 
+  const threadActions = useReviewThreadActions(environmentId, reference, detail, onRefresh);
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
@@ -786,10 +823,10 @@ export function PullRequestTimelineTab({
     reference,
     completionScope: pullRequestCompletionScope(detail, environmentId, reference),
     onRefresh,
+    onAddCommentToComposer,
   };
   const editable = new Map(
     events
-      .flatMap((event) => [event, ...(event.thread?.replies ?? [])])
       .flatMap((event) => (event.comment ? [event.comment] : []))
       .filter((comment) => canEditPullRequestComment(detail, comment))
       .map((comment) => [comment.id, comment] as const),
@@ -816,12 +853,40 @@ export function PullRequestTimelineTab({
   useEffect(() => {
     reveal();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- runs for each clicked link and again when activity resolves its row
-  }, [revealUrl, targetIndex]);
+  }, [revealUrl, targetIndex, rows]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
-  useEffect(() => () => stopHolding.current?.(), []);
+  useEffect(() => () => stopHolding.current?.(), [stopHolding]);
   const openOnHost = (url: string) => {
     void readLocalApi()?.shell.openExternal(url);
   };
+
+  const pendingCards = pendingComments.length ? (
+    <div className="relative mb-5 pl-12">
+      <IconMarker className="top-6" icon={<MessageSquareIcon className="size-3.5" />} />
+      <div className="mb-1 px-3 text-xs font-medium text-muted-foreground">
+        Pending review · {pendingComments.length}
+      </div>
+      {pendingComments.map((comment) => (
+        <div key={comment.id}>
+          <div className="flex min-w-0 items-center gap-1.5 px-3 text-2xs text-muted-foreground">
+            <FileCode2Icon aria-hidden className="size-3 shrink-0" />
+            <span className="truncate">{comment.path}</span>
+          </div>
+          <PendingReviewCommentCard
+            comment={comment}
+            environmentId={environmentId}
+            reference={reference}
+            canCopyLink={
+              detail.capabilities.review.draftComment === true && detail.viewerPermissions.comment
+            }
+            onAddToComposer={
+              onAddPendingToComposer ? () => onAddPendingToComposer(comment) : undefined
+            }
+          />
+        </div>
+      ))}
+    </div>
+  ) : null;
 
   const rowKey = (row: PullRequestTimelineRow) => {
     if (row.kind === "comments")
@@ -846,7 +911,33 @@ export function PullRequestTimelineTab({
       );
     }
     const event = row.event;
-    if (event.thread !== undefined) {
+    if (event.reviewThread) {
+      const thread = event.reviewThread;
+      return (
+        <div
+          className="relative mb-5 pl-12"
+          {...(matches(event) ? { "data-pr-link-target": true, tabIndex: -1 } : {})}
+        >
+          <ReviewThreadCard
+            {...threadActions(thread)}
+            completionScope={reactions.completionScope}
+            revealRequest={matches(event) ? linked?.count : undefined}
+            thread={thread}
+            workspaceRoot={detail.workspaceRoot}
+            environmentId={environmentId}
+            reference={reference}
+            canReact={reactions.canReact}
+            onReacted={onRefresh}
+            onAddToComposer={
+              onAddThreadCommentToComposer
+                ? (comment) => onAddThreadCommentToComposer(thread, comment)
+                : undefined
+            }
+          />
+        </div>
+      );
+    }
+    if (event.thread) {
       return (
         <ReviewThreadEvent
           event={event}
@@ -877,7 +968,7 @@ export function PullRequestTimelineTab({
     return <LifecycleEvent event={event} term={term} />;
   };
 
-  if (events.length === 0) {
+  if (events.length === 0 && pendingComments.length === 0) {
     return (
       <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
         <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
@@ -901,18 +992,10 @@ export function PullRequestTimelineTab({
       keyExtractor={rowKey}
       renderItem={renderRow}
       estimatedItemSize={140}
-      className="scrollbar-gutter-both h-full px-4"
+      className={cn("scrollbar-gutter-both px-4", embedded ? "h-[min(60vh,40rem)] py-2" : "h-full")}
       contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
-      ListHeaderComponent={
-        anchor !== null && targetIndex < 0 && revealUrl === undefined ? (
-          <p role="status" className="py-4 text-xs text-muted-foreground">
-            The linked item is not in the loaded activity.
-          </p>
-        ) : (
-          <div className="h-5" />
-        )
-      }
-      ListFooterComponent={<div className="h-5" />}
+      ListHeaderComponent={<div className="pt-5">{order === "newest" ? pendingCards : null}</div>}
+      ListFooterComponent={<div className="pb-5">{order === "oldest" ? pendingCards : null}</div>}
     />
   );
 }

@@ -1,4 +1,5 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import { orderReviewFiles } from "@t3tools/client-runtime/review-workspace";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "../review/reviewModel";
 
@@ -23,10 +24,11 @@ export function getCachedPullRequestDiffPages(
   pages: readonly PullRequestDiffPage[],
   scope: string,
   terminology: ChangeRequestTerminology,
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   const first = pages[0];
   if (!first) return { kind: "empty" };
-  const key = JSON.stringify([scope, terminology.singular, first.cursor]);
+  const key = JSON.stringify([scope, terminology.singular, first.cursor, ignoreWhitespace]);
   let snapshots = parsedSnapshots.get(first.result);
   if (!snapshots) {
     snapshots = new Map();
@@ -42,7 +44,7 @@ export function getCachedPullRequestDiffPages(
   )
     return previous.parsed;
   const cache = previous?.cache ?? new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
-  const parsed = combinePullRequestDiffPages(pages, cache, scope, terminology);
+  const parsed = combinePullRequestDiffPages(pages, cache, scope, terminology, ignoreWhitespace);
   snapshots.set(key, { pages, cache, parsed });
   return parsed;
 }
@@ -73,11 +75,16 @@ export function combinePullRequestDiffPages(
   cache: WeakMap<PullRequestDiffResult, ReviewParsedDiff>,
   scope: string,
   terminology: ChangeRequestTerminology,
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   const parsed = pages.map((page) => {
     const cached = cache.get(page.result);
     if (cached) return cached;
-    let value = buildReviewParsedDiff(page.result.patch, `${scope}:${page.cursor ?? "first"}`);
+    let value = buildReviewParsedDiff(
+      page.result.patch,
+      `${scope}:${page.cursor ?? "first"}`,
+      ignoreWhitespace,
+    );
     if (value.kind === "files" && page.result.omittedFileStats?.length) {
       const omittedFileStats = new Map(
         page.result.omittedFileStats.map((stat) => [stat.path, stat]),
@@ -96,7 +103,10 @@ export function combinePullRequestDiffPages(
     cache.set(page.result, value);
     return value;
   });
-  const files = parsed.flatMap((page) => (page.kind === "files" ? page.files : []));
+  const files = orderReviewFiles(
+    parsed.flatMap((page) => (page.kind === "files" ? page.files : [])),
+    (file) => file.path,
+  );
   if (files.length === 0) return parsed[0] ?? { kind: "empty" };
   return {
     kind: "files",

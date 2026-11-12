@@ -2,7 +2,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import {
   maintainerEditsChoiceInForce,
   type MaintainerEditsChoice,
-} from "@t3tools/client-runtime/pull-request-editing";
+} from "@t3tools/client-runtime/review-editing";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
