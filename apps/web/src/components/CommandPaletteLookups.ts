@@ -4,6 +4,7 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 
+import { translateDynamic } from "../i18n";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useClientSettings } from "../hooks/useSettings";
 import { getProjectOrderKey } from "@t3tools/client-runtime/state/project-grouping";
@@ -29,7 +30,11 @@ export function useEnvironmentLookups() {
         environment.environmentId,
         {
           kind: isLocal ? "local" : "remote",
-          label: isPrimary ? "Local" : isLocal ? `${environment.label} (Local)` : environment.label,
+          label: isPrimary
+            ? translateDynamic("palette:labels.local")
+            : isLocal
+              ? translateDynamic("palette:labels.localEnvironment", { label: environment.label })
+              : environment.label,
           machine: resolveEnvironmentMachineKind(environment.serverConfig),
         },
       ] as const;

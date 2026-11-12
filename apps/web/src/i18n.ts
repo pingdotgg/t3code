@@ -1,4 +1,6 @@
+import enPalette from "../locales/en/palette.json";
 import enSettings from "../locales/en/settings.json";
+import zhHansPalette from "../locales/zh-Hans/palette.json";
 import zhHansSettings from "../locales/zh-Hans/settings.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
@@ -14,11 +16,19 @@ declare module "i18next" {
     defaultNS: "settings";
     resources: {
       settings: typeof enSettings;
+      palette: typeof enPalette;
     };
   }
 }
 
 export const i18n = i18next.createInstance();
+
+/** Translates a key that is computed at runtime and lives outside the typed key union. */
+export function translateDynamic(key: string, options?: Record<string, unknown>): string {
+  return options === undefined
+    ? (i18n.t(key as never) as string)
+    : (i18n.t(key as never, { ...options }) as string);
+}
 
 // Init runs at import so `useTranslation` works wherever the module is reached
 // from, including tests that render components directly.
@@ -27,10 +37,10 @@ if (!i18n.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings"],
+    ns: ["settings", "palette"],
     resources: {
-      en: { settings: enSettings },
-      "zh-Hans": { settings: zhHansSettings },
+      en: { settings: enSettings, palette: enPalette },
+      "zh-Hans": { settings: zhHansSettings, palette: zhHansPalette },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.
     // resolveUiLanguage only ever yields exact codes, so no non-explicit matching.

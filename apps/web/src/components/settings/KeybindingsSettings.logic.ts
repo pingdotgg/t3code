@@ -13,6 +13,7 @@ import {
   US_SHIFTED_TO_UNSHIFTED_KEYS,
 } from "@t3tools/shared/keybindings";
 
+import { translateDynamic } from "../../i18n";
 import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
@@ -211,17 +212,21 @@ export interface KeybindingGroup {
 const KEYBINDING_GROUPS = [
   {
     id: "navigation",
-    title: "Navigation",
+    title: "keybindingGroups.navigation",
     prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
   },
-  { id: "threads", title: "Threads", prefixes: ["thread", "chat", "pullRequest"] },
-  { id: "composer", title: "Composer", prefixes: ["composer", "modelPicker"] },
-  { id: "terminal", title: "Terminal", prefixes: ["terminal"] },
-  { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
-  { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
-  { id: "scripts", title: "Project scripts", prefixes: ["script"] },
+  { id: "threads", title: "keybindingGroups.threads", prefixes: ["thread", "chat", "pullRequest"] },
+  { id: "composer", title: "keybindingGroups.composer", prefixes: ["composer", "modelPicker"] },
+  { id: "terminal", title: "keybindingGroups.terminal", prefixes: ["terminal"] },
+  { id: "preview", title: "keybindingGroups.previewAndDiff", prefixes: ["preview", "diff"] },
+  {
+    id: "appearance",
+    title: "keybindingGroups.appearance",
+    prefixes: ["theme", "appearance", "themeEditor"],
+  },
+  { id: "scripts", title: "keybindingGroups.projectScripts", prefixes: ["script"] },
 ] as const;
-const OTHER_KEYBINDING_GROUP = { id: "other", title: "Other" } as const;
+const OTHER_KEYBINDING_GROUP = { id: "other", title: "keybindingGroups.other" } as const;
 
 function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
   const prefix = String(command).split(".")[0] ?? "";
@@ -243,7 +248,15 @@ export function groupKeybindingRows(
   }
   return [...KEYBINDING_GROUPS, OTHER_KEYBINDING_GROUP].flatMap((group) => {
     const groupRows = rowsByGroup.get(group.id);
-    return groupRows ? [{ id: group.id, title: group.title, rows: groupRows }] : [];
+    return groupRows
+      ? [
+          {
+            id: group.id,
+            title: translateDynamic(group.title),
+            rows: groupRows,
+          },
+        ]
+      : [];
   });
 }
 
@@ -369,6 +382,19 @@ export function buildKeybindingCommandOptions(
 }
 
 export function commandLabel(command: KeybindingCommand): string {
+  const raw = String(command);
+  if (raw.startsWith("script.") && raw.endsWith(".run")) {
+    return translateDynamic(`keybindingCommands.scriptRun`, {
+      script: titleCaseCommandSegment(raw.slice("script.".length, -".run".length)),
+    });
+  }
+  // Missing translations fall back to the generated English label.
+  return translateDynamic(`keybindingCommands.${raw}`, {
+    defaultValue: commandLabelFallback(command),
+  });
+}
+
+function commandLabelFallback(command: KeybindingCommand): string {
   if (command === "workspace.focusNext") return "Focus Next Workspace Area";
   if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
@@ -385,11 +411,7 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "view.reopenClosed") return "Reopen Closed Tab";
   if (command === "uiLocale.cycle") return "UI Locale: Cycle Interface Language";
   if (command === "preview.focusUrl") return "Preview: Focus URL";
-  const raw = String(command);
-  if (raw.startsWith("script.") && raw.endsWith(".run")) {
-    return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
-  }
-  return raw.split(".").map(titleCaseCommandSegment).join(": ");
+  return String(command).split(".").map(titleCaseCommandSegment).join(": ");
 }
 
 function titleCaseCommandSegment(segment: string): string {

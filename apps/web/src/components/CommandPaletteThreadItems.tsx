@@ -17,6 +17,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
+import { translateDynamic } from "../i18n";
 
 import {
   applyProviderInstanceSettings,
@@ -142,7 +143,8 @@ export function useCommandPaletteThreadItems(input: {
           project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
           projectTitle={projectTitle ?? null}
           environmentLabel={
-            projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote"
+            projectEnvironmentLocationById.get(thread.environmentId)?.label ??
+            translateDynamic("palette:labels.remote")
           }
           branch={thread.branch}
           worktreePath={thread.worktreePath}

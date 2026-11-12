@@ -34,6 +34,7 @@ import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
+import { translateDynamic } from "../i18n";
 
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
@@ -50,8 +51,11 @@ export function buildLinkedThreadActionItems(
     kind: "action",
     value: `thread:${input.environmentId}:${thread.id}`,
     threadRef: { environmentId: input.environmentId, threadId: thread.id },
-    title: thread.title || "Untitled thread",
-    description: thread.archivedAt === null ? "Linked thread" : "Archived thread",
+    title: thread.title || translateDynamic("palette:labels.untitledThread"),
+    description:
+      thread.archivedAt === null
+        ? translateDynamic("palette:labels.linkedThread")
+        : translateDynamic("palette:labels.archivedThread"),
     searchTerms: [input.query, thread.title],
     icon: input.icon,
     run: () => input.runThread({ environmentId: input.environmentId, id: thread.id }),
@@ -359,7 +363,9 @@ export function buildCommandPaletteProjectMetadata(input: {
   const environmentLabels = new Set<string>();
 
   for (const project of input.projects) {
-    const label = input.locationByEnvironmentId.get(project.environmentId)?.label ?? "Remote";
+    const label =
+      input.locationByEnvironmentId.get(project.environmentId)?.label ??
+      translateDynamic("palette:labels.remote");
     searchTerms.push(project.title, project.workspaceRoot, label);
     environmentLabels.add(label);
   }
@@ -456,7 +462,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       thread.id === input.activeThread?.id &&
       thread.environmentId === input.activeThread.environmentId;
     if (isCurrent) {
-      descriptionParts.push("Current thread");
+      descriptionParts.push(translateDynamic("palette:labels.currentThread"));
     }
 
     const leadingContent = input.renderLeadingContent?.(thread);
@@ -598,28 +604,28 @@ export function filterCommandPaletteGroups(input: {
     if (input.allOptions && input.allOptions.nestedItems.length > 0) {
       searchableGroups.push({
         value: "nested-search",
-        label: "Suggestions",
+        label: translateDynamic("palette:groups.suggestions"),
         items: input.allOptions.nestedItems,
       });
     }
     if (input.threadSearchItems.length > 0) {
       searchableGroups.push({
         value: "threads-search",
-        label: "Threads",
+        label: translateDynamic("palette:groups.threads"),
         items: input.threadSearchItems,
       });
     }
     if (input.projectSearchItems.length > 0) {
       searchableGroups.push({
         value: "projects-search",
-        label: "Projects",
+        label: translateDynamic("palette:groups.projects"),
         items: input.projectSearchItems,
       });
     }
     if (input.settingsSearchItems && input.settingsSearchItems.length > 0) {
       searchableGroups.push({
         value: "settings-search",
-        label: "Settings",
+        label: translateDynamic("palette:groups.settings"),
         items: input.settingsSearchItems,
       });
     }
@@ -661,7 +667,14 @@ export function filterCommandPaletteGroups(input: {
   const messageItems = (input.threadMessageItems ?? []).filter((item) => !listed.has(item.value));
   return messageItems.length === 0
     ? groups
-    : [...groups, { value: "threads-messages", label: "In messages", items: messageItems }];
+    : [
+        ...groups,
+        {
+          value: "threads-messages",
+          label: translateDynamic("palette:groups.inMessages"),
+          items: messageItems,
+        },
+      ];
 }
 
 /** Every option inside a submenu as one row, e.g. "New thread in t3code" or "Change theme: Dracula". */
@@ -770,12 +783,16 @@ export function buildRootGroups(input: {
 }): CommandPaletteGroup[] {
   const groups: CommandPaletteGroup[] = [];
   if (input.actionItems.length > 0) {
-    groups.push({ value: "actions", label: "Actions", items: input.actionItems });
+    groups.push({
+      value: "actions",
+      label: translateDynamic("palette:groups.actions"),
+      items: input.actionItems,
+    });
   }
   if (input.recentThreadItems.length > 0) {
     groups.push({
       value: "recent-threads",
-      label: "Recent Threads",
+      label: translateDynamic("palette:groups.recentThreads"),
       items: input.recentThreadItems,
     });
   }
@@ -785,13 +802,13 @@ export function buildRootGroups(input: {
 export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): string {
   switch (mode) {
     case "root":
-      return "Search commands, projects, and threads...";
+      return translateDynamic("palette:placeholders.root");
     case "root-browse":
-      return "Enter project path (e.g. ~/projects/my-app)";
+      return translateDynamic("palette:placeholders.rootBrowse");
     case "submenu":
-      return "Search...";
+      return translateDynamic("palette:placeholders.submenu");
     case "submenu-browse":
-      return "Enter path (e.g. ~/projects/my-app)";
+      return translateDynamic("palette:placeholders.submenuBrowse");
   }
 }
 
@@ -836,9 +853,12 @@ export function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null):
   if (!flow) return null;
   if (flow.step === "confirm") return null;
   if (flow.source === "url") {
-    return "Enter Git clone URL";
+    return translateDynamic("palette:placeholders.remoteUrl");
   }
-  return `Enter ${addProjectRemoteSourceLabel(flow.source)} repository (${addProjectRemoteSourcePathHint(flow.source)})`;
+  return translateDynamic("palette:placeholders.remoteRepository", {
+    label: addProjectRemoteSourceLabel(flow.source),
+    hint: addProjectRemoteSourcePathHint(flow.source),
+  });
 }
 
 export function buildPaletteRemoteSourceReadiness(
@@ -863,7 +883,7 @@ export function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
-  return "An error occurred.";
+  return translateDynamic("palette:labels.errorFallback");
 }
 
 const OVERLAY_MODE_BY_COMMAND = {

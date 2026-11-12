@@ -6,6 +6,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { FolderGit2Icon, LinkIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { sourceControlIcon } from "~/sourceControlPresentation";
 import { ITEM_ICON_CLASS } from "./CommandPalette.logic";
@@ -82,6 +83,8 @@ export function NewProjectPublishHostPicker(props: {
   readonly onValueChange: (kind: SourceControlProviderKind) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { t } = useTranslation("palette");
+  const hostPickerAria = t("labels.hostForNewRepository");
   return (
     <span
       className="flex"
@@ -102,7 +105,7 @@ export function NewProjectPublishHostPicker(props: {
           if (kind !== null) props.onValueChange(kind);
         }}
       >
-        <SelectTrigger size="xs" variant="ghost" aria-label="Host for the new repository">
+        <SelectTrigger size="xs" variant="ghost" aria-label={hostPickerAria}>
           <SelectValue>
             {(kind: SourceControlProviderKind) => sourceControlClients.get(kind).label}
           </SelectValue>
@@ -128,6 +131,7 @@ export function NewProjectSummary(props: {
   readonly projectsRoot: string | null;
   readonly environmentLabel: string | null;
 }) {
+  const { t } = useTranslation("palette");
   return (
     <div className="p-2 pb-0">
       <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
@@ -136,13 +140,17 @@ export function NewProjectSummary(props: {
         </CommandPaletteTitleIcon>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-foreground text-sm">
-            {props.name.length > 0 ? props.name : "New project"}
+            {props.name.length > 0 ? props.name : t("items.newProject")}
           </span>
           <span className="truncate text-muted-foreground/85 text-xs">
             {props.name.length > 0
-              ? `Creates ${props.pathPreview}`
-              : `Goes in ${props.projectsRoot}`}
-            {props.environmentLabel === null ? null : ` on ${props.environmentLabel}`}
+              ? t("labels.createsPath", { path: props.pathPreview })
+              : props.environmentLabel === null
+                ? t("labels.goesIn", { root: props.projectsRoot })
+                : t("labels.goesInOn", {
+                    root: props.projectsRoot,
+                    environment: props.environmentLabel,
+                  })}
           </span>
         </span>
       </div>
@@ -155,9 +163,12 @@ export function RemoteRepositorySummary(props: {
   readonly title: string;
   readonly description: string;
 }) {
+  const { t } = useTranslation("palette");
   return (
     <div className="shrink-0 p-2 pb-0">
-      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
+      <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+        {t("labels.repository")}
+      </div>
       <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
         <CommandPaletteTitleIcon>
           {remoteProjectSourceIcon(props.source, ITEM_ICON_CLASS)}

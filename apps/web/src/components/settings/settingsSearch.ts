@@ -11,6 +11,7 @@ import {
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Schema from "effect/Schema";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import { translateDynamic } from "../../i18n";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
@@ -50,7 +51,10 @@ export type SettingsSearchScope =
 
 export interface SettingsSearchItem {
   readonly id: string;
+  /** i18n key under the `settings` namespace; resolve for display with `searchItemTitle`. */
   readonly title: string;
+  /** Interpolation values for the title key, such as a source control host name. */
+  readonly titleValues?: Readonly<Record<string, unknown>>;
   readonly to: SettingsPath;
   readonly targetId?: string;
   readonly searchTerms?: ReadonlyArray<string>;
@@ -92,30 +96,35 @@ export interface SettingsSearchAvailability {
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
-  "/settings/diagnostics": "Diagnostics",
-  "/settings/projects": "Projects",
-  "/settings/general": "General",
-  "/settings/appearance": "Appearance",
-  "/settings/chat": "Chat",
-  "/settings/diffs": "Diffs & pull requests",
-  "/settings/keybindings": "Keybindings",
-  "/settings/snap-shot": "SnapShots",
-  "/settings/providers": "Providers",
-  "/settings/threads": "Threads",
-  "/settings/browser": "Browser",
-  "/settings/devices": "Devices",
-  "/settings/scheduled-tasks": "Scheduled tasks",
-  "/settings/source-control": "Source control",
-  "/settings/worktrees": "Worktrees",
-  "/settings/connections": "Environments",
-  "/settings/access": "Sharing & access",
-  "/settings/secrets": "Secrets",
-  "/settings/maintenance": "Maintenance",
-  "/settings/labs": "Labs",
-  "/settings/about": "About",
-  "/settings/voice": "Voice",
-  "/settings/archived": "Archive",
+  "/settings/diagnostics": "nav.diagnostics",
+  "/settings/projects": "nav.projects",
+  "/settings/general": "nav.general",
+  "/settings/appearance": "nav.appearance",
+  "/settings/chat": "nav.chat",
+  "/settings/diffs": "nav.diffs",
+  "/settings/keybindings": "nav.keybindings",
+  "/settings/snap-shot": "nav.snapShot",
+  "/settings/providers": "nav.providers",
+  "/settings/threads": "nav.threads",
+  "/settings/browser": "nav.browser",
+  "/settings/devices": "nav.devices",
+  "/settings/scheduled-tasks": "nav.scheduledTasks",
+  "/settings/source-control": "nav.sourceControl",
+  "/settings/worktrees": "nav.worktrees",
+  "/settings/connections": "nav.environments",
+  "/settings/access": "nav.sharingAccess",
+  "/settings/secrets": "nav.secrets",
+  "/settings/maintenance": "nav.maintenance",
+  "/settings/labs": "nav.labs",
+  "/settings/about": "nav.about",
+  "/settings/voice": "nav.voice",
+  "/settings/archived": "nav.archive",
 };
+
+/** Localized label for a settings page, as shown in the sidebar and breadcrumb. */
+export function sectionLabel(path: SettingsPath): string {
+  return translateDynamic(SETTINGS_SECTION_LABELS[path]);
+}
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
 export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
@@ -135,7 +144,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: "Agents",
+    heading: "navGroups.agents",
     paths: [
       "/settings/providers",
       "/settings/threads",
@@ -145,11 +154,11 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: "Code",
+    heading: "navGroups.code",
     paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
   },
   {
-    heading: "Connections",
+    heading: "navGroups.connections",
     paths: [
       "/settings/connections",
       "/settings/access",
@@ -174,7 +183,8 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
   );
   return {
     id: keybindingSearchAnchorId(command),
-    title: commandLabel(command),
+    // commandLabel also resolves this key; the sort above stays on the English label.
+    title: `keybindingCommands.${command}`,
     to: "/settings/keybindings" as const,
     searchTerms: [command, ...defaultKeys],
     secondary: true,
@@ -200,8 +210,9 @@ export function sourceControlHostSearchItems(
       {
         id: sourceControlHostSettingsSearchId(definition.kind),
         title: credentials
-          ? `${definition.label} accounts and token`
-          : `${definition.label} credentials`,
+          ? "search.sourceControlHostAccountsAndToken"
+          : "search.sourceControlHostCredentials",
+        titleValues: { host: definition.label },
         to: "/settings/source-control" as const,
         searchTerms: [
           credentials
@@ -223,7 +234,7 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
   .flatMap((definition) => [definition.label, ...(definition.searchKeywords ?? [])])
   .join(" ");
 
-export const SETTINGS_SEARCH_ITEMS = [
+const SETTINGS_SEARCH_ITEMS_RAW = [
   {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
@@ -1334,9 +1345,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
-] as const satisfies ReadonlyArray<SettingsSearchItem>;
+] as const satisfies ReadonlyArray<Omit<SettingsSearchItem, "title"> & { title: string }>;
+
+// Titles live in the locale files; each item's id names its `search.<id>` key.
+// Keybinding items already carry their `keybindingCommands.<command>` key.
+export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> =
+  SETTINGS_SEARCH_ITEMS_RAW.map(({ title, ...item }) => ({
+    ...item,
+    title: String(item.id).startsWith("keybinding-") ? title : `search.${item.id}`,
+  }));
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
+
+/** Localized title of a settings search item. */
+export function searchItemTitle(item: Pick<SettingsSearchItem, "title" | "titleValues">): string {
+  return translateDynamic(item.title, item.titleValues);
+}
 
 const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
 
@@ -1404,7 +1428,7 @@ export function getSettingsSearchTargetScope(targetId: string) {
     items.find((candidate) => candidate.targetId === targetId);
   return item
     ? {
-        title: item.title,
+        title: searchItemTitle(item),
         scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
       }
@@ -1468,8 +1492,8 @@ export function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
   readonly title: string;
 } {
-  const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: anchorId, title };
+  const item = SEARCH_ITEMS_BY_ID.get(id)!;
+  return { id: item.id, title: searchItemTitle(item) };
 }
 
 export function filterAvailableSettingsSearchItems(
@@ -1519,7 +1543,7 @@ export function searchSettings(
 
   return settingsForThisPlatform(items)
     .flatMap((item, index) => {
-      const title = normalizeSearchText(item.title);
+      const title = normalizeSearchText(searchItemTitle(item));
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
