@@ -1,3 +1,4 @@
+import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -9,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  retainedTerminalHistory,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -41,6 +43,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import packageJson from "../../package.json" with { type: "json" };
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -740,34 +743,52 @@ it.layer(
     }),
   );
 
-  it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        processTable: Effect.succeed([
-          { pid: 9000, ppid: 1, name: "zsh" },
-          { pid: 100, ppid: 9000, name: "zsh" },
-          { pid: 9001, ppid: 1, name: "zsh" },
-          { pid: 200, ppid: 9001, name: "node" },
-          { pid: 9002, ppid: 1, name: "zsh" },
-          { pid: 300, ppid: 9002, name: "zsh" },
-          { pid: 301, ppid: 300, name: "sleep" },
-          { pid: 9003, ppid: 1, name: "zsh" },
-        ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-      yield* manager.open(openInput({ terminalId: "idle" }));
-      yield* manager.open(openInput({ terminalId: "dev-server" }));
-      yield* manager.open(openInput({ terminalId: "subshell" }));
-      yield* manager.open(openInput({ threadId: "thread-2" }));
+  it.effect(
+    "closes idle shells and opted-in actions on settlement without stopping other commands",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 100, ppid: 9000, name: "zsh" },
+            { pid: 9001, ppid: 1, name: "zsh" },
+            { pid: 200, ppid: 9001, name: "node" },
+            { pid: 9002, ppid: 1, name: "zsh" },
+            { pid: 300, ppid: 9002, name: "zsh" },
+            { pid: 301, ppid: 300, name: "sleep" },
+            { pid: 9003, ppid: 1, name: "zsh" },
+            { pid: 9004, ppid: 1, name: "zsh" },
+            { pid: 400, ppid: 9004, name: "node" },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+        yield* manager.open(openInput({ terminalId: "idle" }));
+        yield* manager.open(openInput({ terminalId: "dev-server" }));
+        yield* manager.open(openInput({ terminalId: "subshell" }));
+        yield* manager.open(openInput({ threadId: "thread-2", stopOnSettle: true }));
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
 
-      yield* manager.closeIdle({ threadId: "thread-1" });
+        yield* manager.closeIdle({ threadId: "thread-1" });
 
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
-        true,
-        false,
-        false,
-        false,
-      ]);
-    }),
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          false,
+        ]);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: false }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes[4]?.killed).toBe(false);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          true,
+        ]);
+      }),
   );
 
   it.effect("labels a running command by its whole process name, spaces included", () =>
@@ -1138,6 +1159,7 @@ it.layer(
 
       process.emitData("prompt ");
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
+      process.emitData("\u001b[=c\u001b[=0c");
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
@@ -1835,6 +1857,51 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      platform: "linux",
+      parentEnv: { TERM_PROGRAM: "Apple_Terminal", TERM_PROGRAM_VERSION: "455" },
+      runtimeEnv: { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+    },
+    {
+      platform: "win32",
+      parentEnv: { term_program: "Apple_Terminal", Term_Program_Version: "455" },
+      runtimeEnv: { Term_Program: "", term_program_version: "custom-version" },
+    },
+  ] as const)(
+    "identifies as T3 Code unless the terminal env overrides it on $platform",
+    ({ platform, parentEnv, runtimeEnv }) =>
+      Effect.gen(function* () {
+        const originalEnv = { ...parentEnv };
+        const env = Object.freeze(parentEnv);
+        const { manager, ptyAdapter } = yield* createManager(5, { env }).pipe(
+          Effect.provide(layerWithHostPlatform(platform)),
+        );
+
+        yield* manager.open(openInput());
+        yield* manager.open(openInput({ terminalId: "override", env: runtimeEnv }));
+
+        expect(ptyAdapter.spawnInputs).toHaveLength(2);
+        for (const [index, expected] of [
+          { TERM_PROGRAM: "t3code", TERM_PROGRAM_VERSION: packageJson.version },
+          { TERM_PROGRAM: "", TERM_PROGRAM_VERSION: "custom-version" },
+        ].entries()) {
+          const spawnEnv = ptyAdapter.spawnInputs[index]!.env;
+          for (const [key, value] of Object.entries(expected)) {
+            expect
+              .soft(
+                Object.entries(spawnEnv)
+                  .filter(([candidate]) => candidate.toUpperCase() === key)
+                  .map(([, entryValue]) => entryValue),
+                `${index === 0 ? "default" : "override"} ${key}`,
+              )
+              .toEqual([value]);
+          }
+        }
+        expect(env).toEqual(originalEnv);
+      }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -1926,6 +1993,20 @@ it.layer(
     }),
   );
 
+  it.effect("expands a provider home named in any case on Windows", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const home = yield* HostProcess.HomeDirectory;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { GROK_HOME: "C:\\inherited-grok" },
+      });
+
+      yield* manager.open(openInput({ env: { grok_home: "~/.grok-work" } }));
+
+      expect(ptyAdapter.spawnInputs[0]?.env.GROK_HOME).toBe(path.join(home, ".grok-work"));
+    }).pipe(Effect.provide(layerWithHostPlatform("win32"))),
+  );
+
   it.effect("fails closed when a provider instance is missing", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("deleted_instance");
@@ -1975,6 +2056,7 @@ it.layer(
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        deriveProviderInstanceConfigMap,
         serverSettings,
         path,
         rawProviderInstanceId: "configured_home",
@@ -2046,6 +2128,25 @@ it.layer(
     }),
   );
 
+  it.effect("starts bash as a login shell on macOS only", () =>
+    Effect.gen(function* () {
+      for (const [platform, shell, args] of [
+        ["darwin", "/bin/bash", ["-l"]],
+        ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
+        ["linux", "/bin/bash", undefined],
+        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
+        ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["win32", "pwsh.exe", ["-NoLogo"]],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => shell,
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+        expect.soft(ptyAdapter.spawnInputs[0]?.args, `${platform} ${shell}`).toEqual(args);
+      }
+    }),
+  );
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager();
@@ -2222,6 +2323,57 @@ it.layer(
 
       yield* Deferred.await(restored);
       expect(process.resizeCalls.at(-1)).toEqual({ cols: 130, rows: 15 });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends bounded attach streams only the history the client retains", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const maxHistoryBytes = 9;
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const published = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "yz\n"
+          ? Deferred.succeed(published, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("aaaa\nx名😀");
+      process.emitData("yz\n");
+      yield* Deferred.await(published);
+      unsubscribe();
+
+      const full = yield* Stream.toPull(manager.attachOutputStream(openInput(), "full"));
+      const bounded = yield* Stream.toPull(
+        manager.attachOutputStream({ ...openInput(), maxHistoryBytes }, "bounded"),
+      );
+      const expectRetained = Effect.fnUntraced(function* () {
+        const [fullEvents, boundedEvents] = [yield* full, yield* bounded];
+        const fullSnapshot = fullEvents.at(-1);
+        if (fullSnapshot?.type !== "snapshot") throw new Error("Expected a full snapshot");
+        expect(boundedEvents.at(-1)).toEqual({
+          ...fullSnapshot,
+          snapshot: {
+            ...fullSnapshot.snapshot,
+            history: retainedTerminalHistory(fullSnapshot.snapshot.history, maxHistoryBytes),
+          },
+        });
+        return fullSnapshot.snapshot.history;
+      });
+
+      expect(yield* expectRetained()).toBe("aaaa\nx名😀yz\n");
+      // The cap starts inside 名, so the tail begins at the next code point.
+      expect(retainedTerminalHistory("aaaa\nx名😀yz\n", maxHistoryBytes)).toBe("😀yz\n");
+      process.emitData("after\n");
+      expect(yield* full).toEqual(yield* bounded);
+
+      yield* publishPastOutputBudget(manager, process);
+      expect(yield* expectRetained()).toMatch(/last\n$/);
+
+      process.emitExit({ exitCode: 0, signal: 0 });
+      expect(yield* full).toEqual(yield* bounded);
+      yield* manager.attachStream({ ...openInput(), restartIfNotRunning: true }, () => Effect.void);
+      yield* expectRetained();
     }).pipe(Effect.scoped),
   );
 
