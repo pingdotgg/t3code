@@ -30,7 +30,7 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
 // __MISE_DIFF is mise's record of the PATH entries it added. It must travel
 // with the shell's PATH, or `mise x` can rebuild PATH behind a same-named
 // wrapper (`exec mise x claude -- claude`) that then re-runs itself forever.
-const LOGIN_SHELL_ENV_NAMES = ["PATH", "__MISE_DIFF", "JAVA_HOME"] as const;
+const LOGIN_SHELL_ENV_NAMES = ["PATH", "__MISE_DIFF", "JAVA_HOME", "SSH_AUTH_SOCK"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const SLOW_LOGIN_SHELL_TIMEOUT_MS = 20_000;
 
@@ -61,6 +61,10 @@ function applyLoginShellEnvironment(
   // is only reachable through the JAVA_HOME the shell profile sets.
   if (!env.JAVA_HOME && shellEnvironment.JAVA_HOME) {
     env.JAVA_HOME = shellEnvironment.JAVA_HOME;
+  }
+  // SSH-signed commits need the agent socket; `wsl.exe --exec` skips the profile that exports it.
+  if (!env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
+    env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
   }
 }
 
