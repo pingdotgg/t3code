@@ -10,6 +10,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
   resolveLockedWorkspaceLabel,
+  resolveWorktreeBaseBranchCandidate,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -252,6 +253,29 @@ describe("resolveBranchSelectionTarget", () => {
       nextWorktreePath: "/repo/.t3/worktrees/feature-a",
       reuseExistingWorktree: false,
     });
+  });
+});
+
+describe("resolveWorktreeBaseBranchCandidate", () => {
+  const ref = (name: string, flags: { current?: boolean; isDefault?: boolean }): VcsRef => ({
+    name,
+    current: flags.current ?? false,
+    isDefault: flags.isDefault ?? false,
+    worktreePath: null,
+  });
+
+  it("prefers the default branch, then the current listed branch", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate([
+        ref("feature", { current: true }),
+        ref("staging", { isDefault: true }),
+      ]),
+    ).toBe("staging");
+    expect(resolveWorktreeBaseBranchCandidate([ref("feature", { current: true })])).toBe("feature");
+  });
+
+  it("has no candidate while the repository has no refs yet, such as mid-clone", () => {
+    expect(resolveWorktreeBaseBranchCandidate([])).toBeNull();
   });
 });
 
