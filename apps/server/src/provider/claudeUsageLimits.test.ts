@@ -199,6 +199,22 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual([monthlyWindow]);
   });
 
+  it("flags a $0 cap instead of reporting a monthly window", () => {
+    const response = {
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: null,
+        seven_day: null,
+        extra_usage: { is_enabled: true, used_credits: 0, monthly_limit: 0, utilization: null },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits).toEqual({
+      checkedAt,
+      windows: [],
+      zeroSpendCap: true,
+    });
+  });
+
   it("omits disabled budgets and refuses invalid money without an enabled fallback", () => {
     const rateLimits = enterpriseResponse.rate_limits;
     const response = {

@@ -202,6 +202,7 @@ export function claudeUsageResponseToLimits(input: {
     overageIncluded ??= entry.display_name;
   }
   const spendPercent = readSpendPercent(response.rate_limits);
+  const extra = response.rate_limits.extra_usage;
   if (spendPercent !== undefined) {
     windows.push({
       id: "monthly_spend",
@@ -211,7 +212,10 @@ export function claudeUsageResponseToLimits(input: {
     });
   }
   return {
-    limits: makeUsageLimits({ checkedAt, windows }),
+    limits: {
+      ...makeUsageLimits({ checkedAt, windows }),
+      ...(extra?.is_enabled && extra.monthly_limit === 0 ? { zeroSpendCap: true } : {}),
+    },
     names: { overageIncluded },
   };
 }
