@@ -13,6 +13,7 @@ import {
   repositoryUrlFromPagePath,
   projectChangeRequestHost,
   remoteWebOrigin,
+  type SourceControlMediaUrl,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
@@ -25,7 +26,19 @@ const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/commit\/([0-9a-f]+)\/?$/iu;
 const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/src\/(?:branch|tag|commit)\/[^/]/u;
 
+const ATTACHMENT_PATH =
+  /^\/attachments\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/iu;
+
 const KIND = SourceControlProviderKind.make("forgejo");
+
+/** An upload, which a private repository serves only to a signed-in request. */
+function attachmentMediaUrl(url: URL): SourceControlMediaUrl | null {
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  const uuid = ATTACHMENT_PATH.exec(url.pathname)?.[1]?.toLowerCase();
+  return uuid === undefined
+    ? null
+    : { fetchUrl: `${url.origin}/attachments/${uuid}`, fileName: uuid, immutable: true };
+}
 
 const changeRequestHeadRef = (number: number) => `refs/pull/${number}/head`;
 
@@ -122,6 +135,8 @@ export const definition = defineSourceControl({
           baseUrl: /^https?:/iu.test(remoteUrl) ? new URL(remoteUrl).origin : `https://${host}`,
         }
       : null,
+  // Forgejo runs on any host; the driver sends a token only to a server fj is signed in to.
+  mediaUrl: attachmentMediaUrl,
   changeRequestHost,
   isChangeRequestInRepository: (identity, link) => {
     if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
