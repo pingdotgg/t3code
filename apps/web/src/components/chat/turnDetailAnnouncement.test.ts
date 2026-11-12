@@ -135,7 +135,7 @@ describe("turnDetail", () => {
 
   it("cuts a long step without splitting an emoji", () => {
     const edit = work("edit", { itemType: "file_change", changedFiles: [`${"a".repeat(111)}😀z`] });
-    expect(turnDetail([prompt, edit], undefined, null).activity?.isWellFormed()).toBe(true);
+    expect(turnDetail([prompt, edit], undefined, null).activity).not.toMatch(/[\uD800-\uDFFF]/u);
   });
 
   it.each<{
@@ -305,7 +305,7 @@ describe("nextTurnDetailAnnouncement", () => {
   it("cuts a long message without splitting an emoji", () => {
     const long = { ...said("long", true, true), text: `${"a".repeat(1999)}😀z` };
     const [spoken] = speak("messages", [frame(null), frame(null, [long])]);
-    expect(spoken?.isWellFormed()).toBe(true);
+    expect(spoken).not.toMatch(/[\uD800-\uDFFF]/u);
   });
 
   it("says a step again after waiting on the user", () => {
