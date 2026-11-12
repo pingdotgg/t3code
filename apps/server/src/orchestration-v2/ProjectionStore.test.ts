@@ -741,6 +741,37 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n");
       assert.include(plan, `USING INDEX sqlite_autoindex_orchestration_v2_projection_${table}_1`);
     }
+    // The filters every command reads with seek the rows they keep, not every row of the thread.
+    const command = traceSqlStatements();
+    yield* store
+      .getThreadRecords(threadId, ["nodes", "subagents", "turnItems", "contextTransfers"], {
+        turnItemTypes: ["user_message", "error"],
+        omitSettledLeafNodes: true,
+        omitSettledSubagents: true,
+        contextTransferStatuses: ["pending"],
+      })
+      .pipe(Effect.withTracer(command.tracer));
+    for (const [table, seeks] of [
+      ["turn_items", ["USING INDEX orchestration_v2_projection_turn_items_conversation_idx"]],
+      ["nodes", ["nodes_settled_leaf_idx (thread_id=? AND <expr>=?)"]],
+      ["subagents", ["USING COVERING INDEX orchestration_v2_projection_subagents_settled_idx"]],
+      [
+        "context_transfers",
+        [
+          "source_thread_status_idx (source_thread_id=? AND status=?)",
+          "target_thread_idx (target_thread_id=? AND status=?)",
+        ],
+      ],
+    ] as const) {
+      const query = command.statements.find((statement) =>
+        statement.includes(`FROM orchestration_v2_projection_${table}`),
+      );
+      assert.isDefined(query);
+      const plan = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+        .map((row) => row.detail)
+        .join("\n");
+      for (const seek of seeks) assert.include(plan, seek);
+    }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],
@@ -828,6 +859,16 @@ it.effect("record reads filter notification sources without dropping matching me
       plan.some((detail) => detail.includes("turn_items_user_message_idx")),
       plan.join("\n"),
     );
+    // With every user item loaded, the items give the order and the lookup does not run.
+    const withItems = traceSqlStatements();
+    const ordered = yield* store
+      .getThreadRecords(threadId, ["messages", "turnItems"], {
+        messageRoles: ["user"],
+        turnItemTypes: ["user_message"],
+      })
+      .pipe(Effect.withTracer(withItems.tracer));
+    assert.deepEqual(ordered.messages, userMessages.messages);
+    assert.isFalse(withItems.statements.some((statement) => statement.includes("MIN(ordinal)")));
     assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
