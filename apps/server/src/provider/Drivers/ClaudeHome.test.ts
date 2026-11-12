@@ -60,7 +60,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   });
 
   it.effect(
-    "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden",
+    "drops the launching Claude session and Electron's run-as-Node flag, and keeps the SDK entrypoint unless overridden",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -80,8 +80,10 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           { name: "CLAUDE_EFFORT", value: "low", sensitive: false },
         ];
 
+        // Claude Code 2.1.322 treats only sdk-ts/sdk-py as an SDK session; other entrypoints are
+        // print sessions, which cannot hold artifact watches.
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
-          CLAUDE_CODE_ENTRYPOINT: "t3-code",
+          CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
           KEEP: "1",
         });
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
