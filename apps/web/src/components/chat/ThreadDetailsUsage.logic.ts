@@ -20,8 +20,8 @@ export interface ThreadDetailsLimits {
 
 /**
  * The limits the thread details card shows for one provider instance.
- * An instance routed through a usage hub (CLIProxyAPI) reads no subscription limits of its own,
- * so the card falls back to the hub, but only when exactly one hub account serves the driver:
+ * An instance on a custom endpoint, such as a usage hub (CLIProxyAPI), reads no subscription limits
+ * of its own, so the card falls back to the hub, but only when exactly one hub account serves the driver:
  * with several, nothing says which one this thread spends.
  */
 export function resolveThreadDetailsLimits(
@@ -40,7 +40,9 @@ export function resolveThreadDetailsLimits(
     provider?.usageLimits;
   if (own && limitsNotice(own) === null) return { limits: own, sourceLabel: null };
 
-  const hub = provider ? onlyHubAccount(provider, providers, sources) : null;
+  // Only an instance sending requests to a custom endpoint may be spending a hub's account.
+  const hub =
+    provider?.auth.type === "customEndpoint" ? onlyHubAccount(provider, providers, sources) : null;
   if (hub) return { limits: hub.account.usageLimits, sourceLabel: hub.source.label };
   return own ? { limits: own, sourceLabel: null } : null;
 }

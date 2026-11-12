@@ -43,7 +43,7 @@ function claudeInstance(usageLimits: ServerProviderUsageLimits): ServerProvider 
     installed: true,
     version: null,
     status: "ready",
-    auth: { status: "authenticated", type: "apiKey", label: "Claude API Key" },
+    auth: { status: "authenticated", type: "customEndpoint", label: "Custom API endpoint" },
     checkedAt,
     models: [],
     slashCommands: [],
@@ -112,6 +112,18 @@ describe("resolveThreadDetailsLimits", () => {
     );
 
     expect(resolved).toEqual({ limits: limitsAt(40), sourceLabel: null });
+  });
+
+  it("does not borrow a hub account for an instance that is not on a custom endpoint", () => {
+    const direct = claudeInstance(unsupported);
+    const resolved = resolveThreadDetailsLimits(
+      instanceId,
+      [{ ...direct, auth: { ...direct.auth, type: "apiKey", label: "Claude API Key" } }],
+      [hub("hub", [{ id: "claude-a.json", limits: limitsAt(19) }])],
+      now,
+    );
+
+    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
   });
 
   it("keeps the instance's notice when the account in use is not certain", () => {
