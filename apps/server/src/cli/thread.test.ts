@@ -203,8 +203,8 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
     assert.deepStrictEqual(
       calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
       [
-        { threadId, runId, timeoutMs: 15_000 },
-        { threadId, runId, timeoutMs: 15_000 },
+        { threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true },
+        { threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true },
       ],
     );
   }),

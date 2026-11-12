@@ -499,8 +499,9 @@ type WaitOutcome =
   | { readonly type: "needs_input" };
 
 /**
- * Waits for this exact run, following a restart to its continuation, so a
- * message another client sends meanwhile cannot stand in for its result.
+ * Waits for this exact run, following a restart to its continuation and the
+ * runs its background work wakes, so a message another client sends meanwhile
+ * cannot stand in for its result.
  */
 export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
   tools: ThreadTools,
@@ -508,9 +509,17 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
   runId: RunId,
 ) {
   const waitSlice = (timeoutMs: number) =>
-    tools.call("t3_thread_wait", { threadId, runId, timeoutMs }, OrchestratorMcpThreadWaitResult);
+    tools.call(
+      "t3_thread_wait",
+      { threadId, runId, timeoutMs, untilDelegatedWorkSettled: true },
+      OrchestratorMcpThreadWaitResult,
+    );
   const ended = (waited: OrchestratorMcpThreadWaitResult) =>
-    ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
+    ({
+      type: "ended",
+      runId: waited.resultRun?.runId ?? waited.runId,
+      status: waited.resultRun?.status ?? waited.status,
+    }) satisfies WaitOutcome;
   while (true) {
     const waited = yield* waitSlice(WAIT_SLICE_MS);
     if (!waited.timedOut) return ended(waited);
