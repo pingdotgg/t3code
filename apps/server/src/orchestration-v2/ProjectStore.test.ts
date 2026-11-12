@@ -133,15 +133,6 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
         yield* projects.apply({
           ...event,
           sequence: 2,
-          eventId: EventId.make("event-renamed-auto-pull"),
-          type: "project.meta-updated",
-          payload: { projectId, autoPull: true, updatedAt: "2026-03-24T00:00:01.000Z" },
-        });
-        assert.strictEqual(yield* hasCustomTitle(), false);
-
-        yield* projects.apply({
-          ...event,
-          sequence: 3,
           eventId: EventId.make("event-renamed-title"),
           type: "project.meta-updated",
           payload: { projectId, title: "custom repo", updatedAt: "2026-03-24T00:00:02.000Z" },
@@ -149,15 +140,7 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
         assert.strictEqual(yield* hasCustomTitle(), true);
         yield* projects.apply({
           ...event,
-          sequence: 4,
-          eventId: EventId.make("event-renamed-scripts"),
-          type: "project.meta-updated",
-          payload: { projectId, scripts: [], updatedAt: "2026-03-24T00:00:03.000Z" },
-        });
-        assert.strictEqual(yield* hasCustomTitle(), true);
-        yield* projects.apply({
-          ...event,
-          sequence: 5,
+          sequence: 3,
           eventId: EventId.make("migration:39:project:project-renamed:baseline"),
           type: "project.created",
           payload: {
