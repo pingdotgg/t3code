@@ -169,7 +169,7 @@ describe("scan cache round trip", () => {
     expect(restored).toEqual(original);
   });
 
-  it.each([5, 6, 7, 8, 10, 11, 12, 13, 14])(
+  it.each([5, 6, 7, 8, 10, 11, 12, 13, 14, 15])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
@@ -232,7 +232,7 @@ describe("scan cache round trip", () => {
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
       expect(restored.get("/gone-codex.jsonl")).toEqual(
-        version >= 14
+        version >= 15
           ? original.get("/gone-codex.jsonl")
           : {
               ...original.get("/gone-codex.jsonl"),
@@ -241,11 +241,11 @@ describe("scan cache round trip", () => {
             },
       );
       expect(restored.get("/clean-codex.jsonl")).toEqual(
-        version >= 14
+        version >= 15
           ? cleanCodex
           : {
               ...cleanCodex,
-              size: -1,
+              size: version === 14 ? cleanCodex.size : -1,
               position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
             },
       );
@@ -261,7 +261,38 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it.each([11, 12, 13, 14])(
+  it("re-parses a v14 Codex entry that skipped records and restarts a clean one when it grows", () => {
+    const codex = (malformedRecords: number): CachedFile => ({
+      size: 10,
+      mtimeMs: 100,
+      provider: "codex",
+      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
+      tailRecords: [],
+      malformedRecords,
+      position: position({
+        state: { ...initialCodexScanState(), model: "gpt-6-astra", sessionId: "session-a" },
+      }),
+    });
+    const original: ScanCache = new Map([
+      ["/skipped-codex.jsonl", codex(1)],
+      ["/clean-codex.jsonl", codex(0)],
+    ]);
+    const v14 = { ...parse(makeScanCacheWriter()(original, {})), version: 14 };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(v14)), TEST_FORMAT_MAP);
+    expect(restored.get("/skipped-codex.jsonl")).toEqual({
+      ...codex(1),
+      size: -1,
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+    // Served while unchanged, but its state predates the latest snapshot time, so it cannot resume.
+    expect(restored.get("/clean-codex.jsonl")).toEqual({
+      ...codex(0),
+      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+    });
+  });
+
+  it.each([11, 12, 13, 14, 15])(
     "re-parses v%s Claude transcripts for corrected attempt usage",
     (version) => {
       const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
