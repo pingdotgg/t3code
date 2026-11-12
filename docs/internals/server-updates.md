@@ -36,6 +36,12 @@ runtime that installed it. Until a deferred local upgrade restarts, systemd (bef
 daemon-reload) and launchd (before bootstrap) can respawn the old launcher, which
 rejects the state the new installer wrote.
 
+A launchd plist names a [copy](../../apps/server/src/cloud/stableLauncher.ts) of the
+selected runtime's executable at a fixed path instead of the runtime, because TCC keys a launch agent's
+privacy grants to its program path. Installs and the launcher replace that copy by
+rename under the unit lease rather than rewriting the plist, so a running launcher
+keeps its old inode.
+
 Task Scheduler tracks only the console host it started, not the launcher. `schtasks /End`
 kills that host and nothing else; the launcher takes its closed console as SIGTERM. The task
 reads as stopped at once, and `/Run` then starts a second launcher beside the first, so a

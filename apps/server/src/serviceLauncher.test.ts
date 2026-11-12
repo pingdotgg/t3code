@@ -20,6 +20,7 @@ import {
   renderBootServiceTask,
   renderBootServiceUnit,
 } from "./cloud/bootService.ts";
+import { stableLauncherPaths } from "./cloud/stableLauncher.ts";
 import {
   databaseBackupBlocker,
   Launcher,
@@ -750,6 +751,25 @@ if (context.update?.status === "pending") {
         assert.equal(unit.loadedContents, expected);
         assert.equal(unit.reloads, 1);
       }),
+  );
+
+  // regression: #17225 macOS privacy grants are keyed to the launch agent's program path
+  it.effect("publishes the committed runtime to a launch agent's stable launcher", () =>
+    Effect.gen(function* () {
+      const render = (plan: Parameters<typeof renderBootServicePlist>[0]) =>
+        renderBootServicePlist(
+          { ...plan, program: [stableLauncherPaths(plan.baseDir).entryPath, "__service-launcher"] },
+          { homeDir: "/Users/test", environmentPath: "/usr/bin" },
+        );
+      const { fs, root, unit } = yield* commitUpdate(render);
+      const launcher = stableLauncherPaths(root);
+      assert.equal(yield* fs.readFileString(unit.path), render(unitPlan(root, "1.0.0")));
+      assert.equal(yield* fs.readFileString(launcher.sentinelPath), "1.1.0\n");
+      assert.equal(
+        yield* fs.readFileString(launcher.entryPath),
+        yield* fs.readFileString(`${root}/runtime/versions/1.1.0/t3`),
+      );
+    }),
   );
 
   it.effect(

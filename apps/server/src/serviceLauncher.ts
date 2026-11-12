@@ -8,6 +8,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
+import { publishStableLauncher, stableLauncherPaths } from "./cloud/stableLauncher.ts";
 
 import type {
   PendingServiceUpdate,
@@ -27,6 +28,7 @@ import {
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
   serviceUnitLogPathOf,
+  serviceUnitProgramOf,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -1176,8 +1178,27 @@ export class Launcher {
         ) {
           return;
         }
-        const repointed = repointServiceUnit(contents, version);
-        if (repointed !== contents) await replaceFileDurably(unit.path, repointed);
+        const launcher = stableLauncherPaths(this.#baseDir);
+        const program = serviceUnitProgramOf(contents);
+        if (
+          program !== undefined &&
+          NodePath.resolve(program) === NodePath.resolve(launcher.entryPath)
+        ) {
+          const published = await NodeFSP.readFile(launcher.sentinelPath, "utf8").catch(() => "");
+          if (
+            !isExactServiceVersion(published.trim()) ||
+            compareExactServiceVersions(published.trim(), version) < 0
+          ) {
+            await publishStableLauncher(
+              this.#baseDir,
+              runtimePaths(this.#baseDir, version).entryPath,
+              version,
+            );
+          }
+        } else {
+          const repointed = repointServiceUnit(contents, version);
+          if (repointed !== contents) await replaceFileDurably(unit.path, repointed);
+        }
         // A previous rename may have succeeded before reload failed.
         await unit.reload();
       } finally {
