@@ -12,20 +12,15 @@ export interface MiniflareInstance {
 
 export type Options = Extract<MiniflareOptions, { modules: Array<any> }>;
 
-export async function createMiniflare(
-  options: Options,
-): Promise<MiniflareInstance> {
+export async function createMiniflare(options: Options): Promise<MiniflareInstance> {
   const miniflare = new Miniflare(options);
   const url = await miniflare.ready;
-  const fetch = (path: string) =>
-    miniflare.dispatchFetch(`http://localhost${path}`);
+  const fetch = (path: string) => miniflare.dispatchFetch(`http://localhost${path}`);
   return {
     url,
     fetch,
-    fetchText: (path: string) =>
-      fetch(path).then((response) => response.text()),
-    fetchJson: <T>(path: string) =>
-      fetch(path).then((response) => response.json() as Promise<T>),
+    fetchText: (path: string) => fetch(path).then((response) => response.text()),
+    fetchJson: <T>(path: string) => fetch(path).then((response) => response.json() as Promise<T>),
     [Symbol.asyncDispose]: () => miniflare.dispose(),
   };
 }

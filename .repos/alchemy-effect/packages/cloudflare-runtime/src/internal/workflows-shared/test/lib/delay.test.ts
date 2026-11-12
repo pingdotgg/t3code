@@ -5,6 +5,7 @@ import {
 	DEFAULT_RETRY_DELAY_MS,
 	invokeDelayFunction,
 	raceAgainstAbort,
+	schedulerWait,
 } from "../../lib/delay.ts";
 import { DelayFunctionError } from "../../lib/retries.ts";
 import type { WorkflowDynamicDelayContext } from "cloudflare:workers";
@@ -248,5 +249,28 @@ describe("invokeDelayFunction", () => {
 			}
 		);
 		await expect(promise).rejects.toThrow(DelayFunctionError);
+	});
+});
+
+describe("schedulerWait", () => {
+	it("resolves immediately if the signal is already aborted", async ({
+		expect,
+	}) => {
+		const controller = new AbortController();
+		controller.abort();
+		await expect(
+			schedulerWait(5000, { signal: controller.signal })
+		).resolves.toBeUndefined();
+	});
+
+	it("resolves when the signal aborts while waiting", async ({ expect }) => {
+		const controller = new AbortController();
+		const promise = schedulerWait(60_000, { signal: controller.signal });
+		controller.abort();
+		await expect(promise).resolves.toBeUndefined();
+	});
+
+	it("clamps negative durations to 0", async ({ expect }) => {
+		await expect(schedulerWait(-100)).resolves.toBeUndefined();
 	});
 });

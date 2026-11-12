@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { BUILT_IN_DRIVERS } from "../provider/builtInDrivers.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
 import { disallowedDriverReason, providerHostEnvironment } from "./managedProviders.ts";
 
@@ -141,6 +142,11 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
               },
             },
           }),
+          // Startup reads OTLP endpoints before the policy, and environment variables outrank them.
+          JSON.stringify({
+            ...base,
+            settings: { "observability.otlpTracesUrl": { value: "", locked: true } },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -148,7 +154,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 13);
+      assert.lengthOf(reasons, 14);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
       assert.include(reasons[6], "adds entries users could not remove");
       assert.include(reasons[7], "adds entries users could not remove");
@@ -157,6 +163,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.include(reasons[10], 'lock "worktreeCleanup" too');
       assert.include(reasons[11], 'lock "providerInstances.codex" as a whole');
       assert.include(reasons[12], "holds a credential");
+      assert.include(reasons[13], "a policy cannot override");
     }),
   );
 
@@ -349,6 +356,20 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
 
   it.effect("tells clients which drivers run and which instance fields are locked", () =>
     Effect.gen(function* () {
+      // A provider the policy cannot name would also escape its launch-setting rules.
+      const everyDriver = BUILT_IN_DRIVERS.map((driver) => driver.driverKind);
+      const allowingAll = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { providers: { allowedDrivers: everyDriver } },
+        }),
+      );
+      assert.deepEqual<unknown>(
+        allowingAll.summary?.limits?.providers?.allowedDrivers,
+        everyDriver,
+      );
+
       const policy = yield* loadFrom(
         JSON.stringify({
           schemaVersion: 1,
