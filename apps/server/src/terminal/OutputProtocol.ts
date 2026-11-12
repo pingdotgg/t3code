@@ -53,36 +53,13 @@ const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
             byteLengthOf(event.snapshot.label)
           : 0);
 
-const TERMINAL_EVENT_TYPES = new Set([
-  "started",
-  "output",
-  "exited",
-  "closed",
-  "error",
-  "cleared",
-  "restarted",
-  "activity",
-  "snapshot",
-]);
-
-// Windowed chunks carry terminal events, so charge them the way the output
-// queue below does instead of serializing the frame a second time just to
-// measure it. Only the event shapes queuedSize measures take the fast path;
-// anything else keeps the exact JSON measurement.
+// Byte-windowed streams carry TerminalAttachStreamEvent, whose encoded form is the
+// event itself, so charge it like the output queue does instead of serializing twice.
 const chunkSize = (values: ReadonlyArray<unknown>) =>
-  values.reduce<number>((total, value) => {
-    if (typeof value === "string") return total + EVENT_OVERHEAD + Buffer.byteLength(value);
-    if (
-      typeof value === "object" &&
-      value !== null &&
-      "type" in value &&
-      typeof value.type === "string" &&
-      TERMINAL_EVENT_TYPES.has(value.type)
-    ) {
-      return total + queuedSize(value as TerminalEvent | TerminalAttachStreamEvent);
-    }
-    return total + Buffer.byteLength(JSON.stringify(value) ?? "");
-  }, EVENT_OVERHEAD);
+  values.reduce<number>(
+    (total, value) => total + queuedSize(value as TerminalAttachStreamEvent),
+    EVENT_OVERHEAD,
+  );
 
 interface Window {
   readonly bytes: boolean;
