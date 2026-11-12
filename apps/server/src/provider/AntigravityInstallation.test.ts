@@ -22,6 +22,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
+import * as AntigravityRuntimeTemp from "./AntigravityRuntimeTemp.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
@@ -175,6 +176,9 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
           )
         : installationFs.makeTempDirectoryScoped(settings),
   });
+  const runtimeTemp = yield* AntigravityRuntimeTemp.make(path.join(baseDir, "antigravity-gc")).pipe(
+    Effect.provideService(FileSystem.FileSystem, trackedFs),
+  );
   const installation = yield* AntigravityInstallation.makeAntigravityInstallation({
     baseDir,
     ...(options.native ? {} : { releaseAsset: asset }),
@@ -194,6 +198,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
       ? Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner)
       : (effect) => effect,
     Effect.provideService(FileSystem.FileSystem, trackedFs),
+    Effect.provideService(AntigravityRuntimeTemp.AntigravityRuntimeTemp, runtimeTemp),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
@@ -289,6 +294,62 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity installation", (it) => {
+  it.effect("activates a validated runtime before profile cleanup finishes", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const node = yield* HostProcess.ExecutablePath;
+      const cleanupEntered = yield* Deferred.make<void>();
+      const validators: ChildProcessSpawner.ChildProcessHandle[] = [];
+      const initialized = {
+        protocolVersion: 1,
+        agentInfo: { name: "antigravity-acp", version: "fixture-new" },
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: { resume: {} },
+          auth: { logout: {} },
+        },
+        authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
+      };
+      const script = [
+        'const fs = require("node:fs");',
+        'const path = require("node:path");',
+        'const unpack = path.join(process.env.TMPDIR ?? process.env.TEMP, "_MEI-fixture");',
+        "fs.mkdirSync(unpack, { recursive: true });",
+        'fs.writeFileSync(path.join(unpack, "payload.bin"), "fixture");',
+        'require("node:readline").createInterface({ input: process.stdin }).on("line", line => {',
+        "  const request = JSON.parse(line);",
+        `  const result = request.method === "initialize" ? ${JSON.stringify(initialized)} : {};`,
+        '  if (request.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");',
+        "});",
+      ].join("\n");
+      const observedSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag === "StandardCommand" && command.args[0] === "--eval") {
+            yield* Deferred.succeed(cleanupEntered, undefined);
+            return yield* Effect.never;
+          }
+          if (command._tag === "StandardCommand" && command.command.endsWith(executableName)) {
+            const handle = yield* spawner.spawn(
+              ChildProcess.make(node, ["-e", script], command.options),
+            );
+            validators.push(handle);
+            return handle;
+          }
+          return yield* spawner.spawn(command);
+        }),
+      );
+      const { installation } = yield* makeHarness({
+        useDefaultValidation: true,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner));
+      yield* installation.start;
+      expect((yield* terminalState(installation)).phase).toBe("succeeded");
+      yield* Deferred.await(cleanupEntered);
+      expect((yield* installation.resolve()).version).toBe("fixture-new");
+      expect(validators).toHaveLength(1);
+      for (const handle of validators) expect(yield* handle.isRunning).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.each([...new Set(["win32", hostPlatform])] as NodeJS.Platform[])(
     "migrates the legacy managed runtime to the native CLI on %s and retains the old release",
     (platform) =>

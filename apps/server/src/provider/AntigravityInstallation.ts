@@ -21,7 +21,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -41,6 +40,7 @@ import {
   parseAntigravityCliRelease,
   type AntigravityCliReleaseAsset,
 } from "./antigravityCliRelease.ts";
+import * as AntigravityRuntimeTemp from "./AntigravityRuntimeTemp.ts";
 import { openZipArchive } from "../zipArchive.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
@@ -137,7 +137,7 @@ export class AntigravityInstallation extends Context.Service<
         ),
       });
     }),
-  );
+  ).pipe(Layer.provideMerge(AntigravityRuntimeTemp.layer));
 }
 
 export interface AntigravityInstallationOptions {
@@ -188,6 +188,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const random = yield* SecureRandom.SecureRandom;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const runtimeTemp = yield* AntigravityRuntimeTemp.AntigravityRuntimeTemp;
   const serviceScope = yield* Effect.scope;
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
@@ -447,27 +448,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     Effect.fn("AntigravityInstallation.validate")(
       function* (executable: AntigravityExecutable, expectedVersion: string) {
         const validationScope = yield* Effect.scope;
-        const profileDirectory = yield* Effect.acquireRelease(
-          fs.makeTempDirectory({ prefix: "t3-antigravity-validate-" }),
-          (directory) =>
-            fs.remove(directory, { recursive: true, force: true }).pipe(
-              // Windows may retain DLL handles briefly after taskkill returns.
-              Effect.retry({
-                times: platform === "win32" ? 10 : 0,
-                schedule: Schedule.spaced("100 millis"),
-                while: (error) =>
-                  error.reason._tag === "PermissionDenied" ||
-                  error.reason._tag === "Busy" ||
-                  error.reason._tag === "Unknown",
-              }),
-              Effect.orDie,
-            ),
+        const profileDirectory = yield* runtimeTemp.makeDirectory.pipe(
+          Effect.provideService(HostProcess.Environment, environment),
         );
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           platform,
           baseEnv: environment,
-          // A shallow scoped profile cleans up unpacked files within Windows' path limit.
           tempDirectory: profileDirectory,
         });
         const runtime = yield* makeAntigravityAcpRuntime({
