@@ -508,6 +508,61 @@ describe("ApnsDeliveries", () => {
     },
   );
 
+  it.effect.each([
+    { case: "another thread changes", alsoRunning: true },
+    { case: "the waiting thread republishes", alsoRunning: false },
+  ])(
+    "does not re-alert an input the device was already told about when $case",
+    ({ alsoRunning }) => {
+      const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+      const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+      const waitingRow = {
+        ...aggregate.activities[0]!,
+        phase: "waiting_for_input" as const,
+        status: "Input",
+      };
+      const delivered: RelayAgentActivityAggregateState = {
+        ...aggregate,
+        activities: [waitingRow],
+      };
+      const next: RelayAgentActivityAggregateState = alsoRunning
+        ? {
+            ...aggregate,
+            activeCount: 2,
+            updatedAt: "1970-01-01T00:00:04.000Z",
+            activities: [
+              waitingRow,
+              {
+                ...aggregate.activities[0]!,
+                threadId: "thread-b" as typeof waitingRow.threadId,
+                threadTitle: "Thread B",
+                updatedAt: "1970-01-01T00:00:04.000Z",
+              },
+            ],
+          }
+        : delivered;
+
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.sendForTarget({
+          target: {
+            ...target,
+            push_token: "apns-device-token",
+            push_to_start_token: null,
+            activity_push_token: null,
+            remote_started_at: null,
+            last_aggregate_json: JSON.stringify(delivered),
+          },
+          aggregate: next,
+          nowMs: 5_000,
+        });
+
+        expect(queuedJobs).toEqual([]);
+        expect(attempts).toEqual([]);
+      }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
+    },
+  );
+
   it.effect("queues bounded alert notification payloads", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
