@@ -60,7 +60,6 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -151,6 +150,27 @@ const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
 function isAgentBusyPromptError(error: EffectAcpErrors.AcpError): boolean {
   return (
     error._tag === "AcpRequestError" && error.errorMessage.startsWith("Agent is already processing")
+  );
+}
+
+function sendPromptWhenIdle<A>(
+  turn: { readonly interrupted: boolean; readonly finalized: boolean },
+  prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
+): Effect.Effect<A, EffectAcpErrors.AcpError> {
+  // A Stop can land during the wait, so the flags are rechecked before each resend.
+  const stopped = () => turn.interrupted || turn.finalized;
+  return prompt().pipe(
+    Effect.catchIf(
+      (error) => isAgentBusyPromptError(error) && !stopped(),
+      (error) =>
+        Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt),
+            ),
+          ),
+        ),
+    ),
   );
 }
 
@@ -8421,14 +8441,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : undefined;
             yield* (
               compactSession === undefined
-                ? Effect.suspend(() =>
+                ? sendPromptWhenIdle(context, () =>
                     runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                  ).pipe(
-                    Effect.retry({
-                      schedule: Schedule.spaced(ACP_BUSY_PROMPT_RETRY_INTERVAL),
-                      while: (error) =>
-                        isAgentBusyPromptError(error) && !context.interrupted && !context.finalized,
-                    }),
                   )
                 : Deferred.succeed(context.promptDispatched, undefined).pipe(
                     Effect.andThen(compactSession(runtime, requestedSessionId)),

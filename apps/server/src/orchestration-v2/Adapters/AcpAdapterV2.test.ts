@@ -524,6 +524,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly wrapPrompt?: (
     prompt: AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"],
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
+  readonly cancelled?: Deferred.Deferred<void>;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -543,9 +544,14 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
         environment: input.environment,
         wrapRuntime: (runtime) => {
           natives.push(runtime);
-          return input.wrapPrompt === undefined
-            ? runtime
-            : { ...runtime, prompt: input.wrapPrompt(runtime.prompt) };
+          return {
+            ...runtime,
+            prompt: input.wrapPrompt?.(runtime.prompt) ?? runtime.prompt,
+            cancel:
+              input.cancelled === undefined
+                ? runtime.cancel
+                : Deferred.succeed(input.cancelled, undefined).pipe(Effect.andThen(runtime.cancel)),
+          };
         },
       }),
     },
@@ -576,6 +582,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   return {
     runtime,
     natives,
+    providerThread,
     startTurn,
     /** A turn still running makes the next start fail, without waiting on time. */
     nextTurnRejected: (ordinal: number) =>
@@ -4135,6 +4142,54 @@ describe("AcpAdapterV2", () => {
       const [delivered] = yield* Fiber.join(followUp);
       assert.equal(delivered?.status, "completed");
       assert.equal(promptCalls, 3);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("sends no more prompts once a follow-up waiting on a busy agent is stopped", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const rejected = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({}),
+        cancelled,
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          return promptCalls === 1
+            ? prompt(payload, options)
+            : Deferred.succeed(rejected, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    EffectAcpErrors.AcpRequestError.internalError(
+                      "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
+                    ),
+                  ),
+                ),
+              );
+        },
+      });
+      yield* harness.startTurn(1);
+      yield* harness.terminals(1);
+
+      const stopped = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(2);
+      yield* Deferred.await(rejected);
+      const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(
+          ProviderInstanceId.make("acp-prompt-inactivity"),
+          "mock-session-1:turn:2",
+        ),
+      });
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(cancelled);
+      yield* TestClock.adjust("1 second");
+      const [terminal] = yield* Fiber.join(stopped);
+      yield* Fiber.join(interrupt);
+      assert.equal(terminal?.status, "interrupted");
+      assert.equal(promptCalls, 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
