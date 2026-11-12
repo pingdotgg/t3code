@@ -65,6 +65,10 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitManager from "./GitManager.ts";
+import * as CursorOriginDriver from "@t3tools/source-control-cursor-origin/server/driver";
+import * as ServerSourceControlHost from "../sourceControl/ServerSourceControlHost.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 /** A change request the fake host reports. Omitted fields read as an open, undated request. */
 type FakeChangeRequest = Omit<ChangeRequest, "provider" | "state" | "updatedAt"> & {
@@ -87,6 +91,8 @@ interface FakeProviderScenario {
   prListOtherwise?: ReadonlyArray<FakeChangeRequest>;
   defaultBranch?: string;
   pullRequest?: FakeChangeRequest;
+  /** The answer to a bare-number lookup in the checkout's own repository; null is not found. */
+  pullRequestInCheckout?: FakeChangeRequest | null;
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: string;
   failCause?: unknown;
@@ -488,7 +494,22 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
         ),
       getChangeRequest: (input) =>
         record(input.cwd, { operation: "getChangeRequest", reference: input.reference }).pipe(
-          Effect.map(() => toChangeRequest(pullRequest())),
+          Effect.flatMap(() => {
+            const inCheckout =
+              /^\d+$/.test(input.reference) && scenario.pullRequestInCheckout !== undefined
+                ? scenario.pullRequestInCheckout
+                : pullRequest();
+            return inCheckout === null
+              ? Effect.fail(
+                  new SourceControlProviderFailure({
+                    provider: kind,
+                    operation: "getChangeRequest",
+                    cwd: input.cwd,
+                    detail: "Not found.",
+                  }),
+                )
+              : Effect.succeed(toChangeRequest(inCheckout));
+          }),
         ),
       getRepositoryCloneUrls: (input) =>
         record(input.cwd, {
@@ -739,6 +760,16 @@ function makeManager(input?: {
 }
 
 const asThreadId = (threadId: string) => threadId as ThreadId;
+
+// Forgejo names a repository by the last two segments of its web path, under any mount.
+const forgejoRepositoryName = (url: string) =>
+  /^https?:\/\//iu.test(url)
+    ? new URL(url).pathname
+        .replace(/\.git$/u, "")
+        .split("/")
+        .slice(-2)
+        .join("/")
+    : null;
 
 const layerGitManagerTest = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
@@ -4808,6 +4839,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     yield* initRepo(repoDir);
     const remoteDir = yield* createBareRemote();
     yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+    yield* configureVisibleRemoteUrlWithLocalRewrite(
+      repoDir,
+      "origin",
+      "https://github.com/pingdotgg/codething-mvp.git",
+      remoteDir,
+    );
     yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
     yield* runGit(repoDir, ["checkout", "-b", "feature/pr-safe"]);
     NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "first\n");
@@ -5125,6 +5162,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* initRepo(repoDir);
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/pingdotgg/codething-mvp.git",
+          remoteDir,
+        );
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-upstream"]);
         NodeFS.writeFileSync(NodePath.join(repoDir, "upstream.txt"), "upstream\n");
@@ -5183,6 +5226,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* initRepo(repoDir);
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/pingdotgg/codething-mvp.git",
+          remoteDir,
+        );
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-no-head-repo"]);
         NodeFS.writeFileSync(NodePath.join(repoDir, "no-head-repo.txt"), "upstream\n");
@@ -5321,6 +5370,552 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each(["local", "worktree"] as const)(
+    "refuses a %s PR checkout in a checkout of another repository",
+    (mode) =>
+      Effect.gen(function* () {
+        // A pull request read can borrow any project on its host, but checking it out there would
+        // fetch another repository's history into the wrong checkout.
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/foreign"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "foreign.txt"), "foreign\n");
+        yield* runGit(repoDir, ["add", "foreign.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Another repository's head"]);
+        yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/23165/head"]);
+        yield* runGit(repoDir, ["push", "origin", "feature/foreign"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        yield* runGit(repoDir, ["branch", "-D", "feature/foreign"]);
+        const remoteUrl = "https://github.com/octocat/Hello-World.git";
+        yield* runGit(repoDir, ["remote", "set-url", "origin", remoteUrl]);
+        yield* runGit(repoDir, ["config", `url.${remoteDir}.insteadOf`, remoteUrl]);
+
+        const gitCommands: string[] = [];
+        const { manager } = yield* makeManager({
+          gitCommands,
+          providerScenario: {
+            pullRequest: {
+              number: 23165,
+              title: "Another repository's PR",
+              url: "https://github.com/pingdotgg/t3code/pull/23165",
+              baseRefName: "main",
+              headRefName: "feature/foreign",
+              state: "open",
+              isCrossRepository: false,
+            },
+            pullRequestInCheckout: null,
+          },
+        });
+
+        const error = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "https://github.com/pingdotgg/t3code/pull/23165",
+          mode,
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Pull request #23165 belongs to github.com/pingdotgg/t3code, and this project is not a checkout of it.",
+        );
+        expect(gitCommands.filter((command) => command.startsWith("fetch"))).toEqual([]);
+        const worktrees = (yield* runGit(repoDir, ["worktree", "list", "--porcelain"])).stdout;
+        expect(worktrees.match(/^worktree /gm)).toHaveLength(1);
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+      }),
+  );
+
+  it.effect("refuses a PR from a server on another port of the checkout's host", () =>
+    Effect.gen(function* () {
+      // Forgejo keeps a login per `host:port`, so a link to the server on :4000 is read there
+      // even from a checkout of the same path on :3000.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["remote", "add", "origin", "http://forge.test:3000/team/repo.git"]);
+
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        gitCommands,
+        providerScenario: {
+          pullRequest: {
+            number: 5,
+            title: "Other server's PR",
+            url: "http://forge.test:4000/team/repo/pulls/5",
+            baseRefName: "main",
+            headRefName: "feature/other-server",
+            state: "open",
+            isCrossRepository: false,
+          },
+          pullRequestInCheckout: null,
+        },
+      });
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "http://forge.test:4000/team/repo/pulls/5",
+        mode: "worktree",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain(
+        "Pull request #5 belongs to forge.test/team/repo, and this project is not a checkout of it.",
+      );
+      expect(gitCommands.filter((command) => command.startsWith("fetch"))).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    "https://github.com/acme/old-name/pull/7",
+    "https://github.com/acme/new-name/pull/7",
+    "feature/renamed",
+  ])("prepares a PR thread from %s in a checkout under a repository's old name", (reference) =>
+    Effect.gen(function* () {
+      // The host redirects the old name, so only it knows the checkout is of the renamed repository.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/acme/old-name.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/renamed"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "renamed.txt"), "renamed\n");
+      yield* runGit(repoDir, ["add", "renamed.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Renamed repository PR branch"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/renamed"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/renamed"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 7,
+            title: "Renamed repository PR",
+            url: "https://github.com/acme/new-name/pull/7",
+            baseRefName: "main",
+            headRefName: "feature/renamed",
+            state: "open",
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "acme/new-name",
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference,
+        mode: "local",
+      });
+
+      expect(result.branch).toBe("feature/renamed");
+    }),
+  );
+
+  it.effect("prepares a worktree PR thread through an insteadOf shorthand remote", () =>
+    Effect.gen(function* () {
+      // `gh:` only names the repository once `insteadOf` rewrites it; the SSH command serves the
+      // rewritten GitHub URL from a local bare repository.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/shorthand"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "shorthand.txt"), "shorthand\n");
+      yield* runGit(repoDir, ["add", "shorthand.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Shorthand PR branch"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/shorthand"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/84/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/shorthand"]);
+      yield* runGit(repoDir, ["remote", "set-url", "origin", "gh:pingdotgg/codething-mvp.git"]);
+      yield* runGit(repoDir, ["config", "url.git@github.com:.insteadOf", "gh:"]);
+      yield* runGit(repoDir, ["config", "ssh.variant", "simple"]);
+      yield* runGit(repoDir, [
+        "config",
+        "core.sshCommand",
+        `sh -c 'exec git-upload-pack "$0"' '${remoteDir}'`,
+      ]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 84,
+            title: "Shorthand PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/84",
+            baseRefName: "main",
+            headRefName: "feature/shorthand",
+            state: "open",
+            isCrossRepository: false,
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "https://github.com/pingdotgg/codething-mvp/pull/84",
+        mode: "worktree",
+      });
+
+      expect(result.worktreePath).not.toBeNull();
+      expect(
+        (yield* runGit(result.worktreePath as string, ["show", "HEAD:shorthand.txt"])).stdout,
+      ).toBe("shorthand\n");
+    }),
+  );
+
+  it.effect("prepares a worktree PR thread through a GitHub SSH host alias remote", () =>
+    Effect.gen(function* () {
+      // `github-work` is an `~/.ssh/config` alias for github.com; the SSH command serves it from a
+      // local bare repository.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/alias"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alias.txt"), "alias\n");
+      yield* runGit(repoDir, ["add", "alias.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Alias PR branch"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/alias"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/85/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/alias"]);
+      yield* runGit(repoDir, [
+        "remote",
+        "set-url",
+        "origin",
+        "git@github-work:pingdotgg/codething-mvp.git",
+      ]);
+      yield* runGit(repoDir, ["config", "ssh.variant", "simple"]);
+      yield* runGit(repoDir, [
+        "config",
+        "core.sshCommand",
+        `sh -c 'exec git-upload-pack "$0"' '${remoteDir}'`,
+      ]);
+
+      const { service } = createFakeSourceControlProvider({
+        pullRequest: {
+          number: 85,
+          title: "Alias PR",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/85",
+          baseRefName: "main",
+          headRefName: "feature/alias",
+          state: "open",
+          isCrossRepository: false,
+        },
+      });
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          resolveRemoteWebHost: ({ context }) =>
+            Effect.succeed(context.remoteUrl.startsWith("git@github-work:") ? "github.com" : null),
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "https://github.com/pingdotgg/codething-mvp/pull/85",
+        mode: "worktree",
+      });
+
+      expect(result.worktreePath).not.toBeNull();
+      expect(
+        (yield* runGit(result.worktreePath as string, ["show", "HEAD:alias.txt"])).stdout,
+      ).toBe("alias\n");
+    }),
+  );
+
+  it.effect("prepares a worktree PR thread through a Forgejo SSH host remote", () =>
+    Effect.gen(function* () {
+      // Forgejo serves SSH from its own host; only the provider knows `ssh.forge.test` is the
+      // repository behind `forge.test` web links.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/forgejo-ssh"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "forgejo.txt"), "forgejo\n");
+      yield* runGit(repoDir, ["add", "forgejo.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Forgejo SSH PR branch"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/forgejo-ssh"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/86/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/forgejo-ssh"]);
+      yield* runGit(repoDir, ["remote", "set-url", "origin", "git@ssh.forge.test:team/repo.git"]);
+      yield* runGit(repoDir, ["config", "ssh.variant", "simple"]);
+      yield* runGit(repoDir, [
+        "config",
+        "core.sshCommand",
+        `sh -c 'exec git-upload-pack "$0"' '${remoteDir}'`,
+      ]);
+
+      const { service } = createFakeSourceControlProvider({
+        pullRequest: {
+          number: 86,
+          title: "Forgejo SSH PR",
+          url: "http://forge.test:3000/git/team/repo/pulls/86",
+          baseRefName: "main",
+          headRefName: "feature/forgejo-ssh",
+          state: "open",
+          isCrossRepository: false,
+        },
+      });
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          refineRepositoryIdentity: ({ identity }) =>
+            Effect.succeed(
+              identity.locator.remoteUrl === "git@ssh.forge.test:team/repo.git"
+                ? { ...identity, webUrl: "http://forge.test:3000/git/team/repo" }
+                : identity,
+            ),
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "http://forge.test:3000/git/team/repo/pulls/86",
+        mode: "worktree",
+      });
+
+      expect(result.worktreePath).not.toBeNull();
+      expect(
+        (yield* runGit(result.worktreePath as string, ["show", "HEAD:forgejo.txt"])).stdout,
+      ).toBe("forgejo\n");
+    }),
+  );
+
+  it.effect("prepares a local PR thread from a Cursor Origin remote", () =>
+    Effect.gen(function* () {
+      // Origin's git host is not its browser host; only Origin's own refinement maps the remote.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://origin.cursor.com/acme/web.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/origin"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "origin.txt"), "origin\n");
+      yield* runGit(repoDir, ["add", "origin.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Origin PR branch"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/origin"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/origin"]);
+
+      const origin = yield* CursorOriginDriver.driver.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSourceControlHost.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  ServerSettings.ServerSettingsService.layerTest(),
+                  VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
+                ),
+              ),
+            ),
+            FetchHttpClient.layer,
+            SourceControlRateLimit.layer,
+          ),
+        ),
+      );
+      const url = "https://cursor.com/codebase/acme/web/pull/7";
+      const { service } = createFakeSourceControlProvider({
+        kind: "cursor-origin",
+        pullRequest: {
+          number: 7,
+          title: "Origin PR",
+          url,
+          baseRefName: "main",
+          headRefName: "feature/origin",
+          state: "open",
+          isCrossRepository: false,
+        },
+      });
+      const { refineRepositoryIdentity } = origin.sourceControl;
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          ...(refineRepositoryIdentity && { refineRepositoryIdentity }),
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: url,
+        mode: "local",
+      });
+
+      expect(result.branch).toBe("feature/origin");
+    }),
+  );
+
+  it.effect.each([
+    { host: "GitHub", root: "https://github.com", pullPath: "pull", forgejo: false },
+    // Forgejo names the head `owner/repo` without its installation mount.
+    {
+      host: "Forgejo under /git",
+      root: "https://forge.test/git",
+      pullPath: "pulls",
+      forgejo: true,
+    },
+    // SSH omits the mount; only the provider maps the remote to its mounted web repository.
+    {
+      host: "Forgejo under /git over SSH",
+      root: "https://forge.test/git",
+      pullPath: "pulls",
+      forgejo: true,
+      remoteUrl: "git@forge.test:octocat/codething-mvp.git",
+    },
+    // A clone of only the user's own fork names neither the base nor the head repository.
+    {
+      host: "GitHub from another fork",
+      root: "https://github.com",
+      pullPath: "pull",
+      forgejo: false,
+      cloneOwner: "me",
+    },
+  ])("prepares a worktree PR thread in a clone of only a fork on $host", (forge) =>
+    Effect.gen(function* () {
+      // A contributor's clone of their own fork has no remote for the base repository; the head
+      // repository still makes it a checkout of the pull request.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", forkDir]);
+      const visibleUrl =
+        forge.remoteUrl ?? `${forge.root}/${forge.cloneOwner ?? "octocat"}/codething-mvp.git`;
+      yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "origin", visibleUrl, forkDir);
+      yield* runGit(repoDir, [
+        "config",
+        "--add",
+        `url.${forkDir}.insteadOf`,
+        `${forge.root}/octocat/codething-mvp.git`,
+      ]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/fork-only"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork\n");
+      yield* runGit(repoDir, ["add", "fork.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork-only PR branch"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/fork-only"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/82/head"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/fork-only"]);
+
+      const providerScenario: FakeProviderScenario = {
+        pullRequest: {
+          number: 82,
+          title: "Fork-only PR",
+          url: `${forge.root}/pingdotgg/codething-mvp/${forge.pullPath}/82`,
+          baseRefName: "main",
+          headRefName: "feature/fork-only",
+          state: "open",
+          isCrossRepository: true,
+          headRepositoryNameWithOwner: "octocat/codething-mvp",
+          headRepositoryOwnerLogin: "octocat",
+        },
+        repositoryCloneUrls: {
+          "octocat/codething-mvp": {
+            url: `${forge.root}/octocat/codething-mvp.git`,
+            sshUrl: "git@github.com:octocat/codething-mvp.git",
+          },
+        },
+      };
+      const { manager } = yield* makeManager({
+        providerScenario,
+        ...(forge.forgejo
+          ? {
+              sourceControlProvider: {
+                ...createFakeSourceControlProvider(providerScenario).service,
+                repositoryNameFromRemoteUrl: forgejoRepositoryName,
+                refineRepositoryIdentity: ({ identity }) =>
+                  Effect.succeed(
+                    identity.locator.remoteUrl === forge.remoteUrl
+                      ? { ...identity, webUrl: `${forge.root}/octocat/codething-mvp` }
+                      : identity,
+                  ),
+              },
+            }
+          : {}),
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: providerScenario.pullRequest!.url,
+        mode: "worktree",
+      });
+
+      expect(result.worktreePath).not.toBeNull();
+      expect((yield* runGit(result.worktreePath as string, ["show", "HEAD:fork.txt"])).stdout).toBe(
+        "fork\n",
+      );
+    }),
+  );
+
+  it.effect("refuses a mounted Forgejo PR from a checkout on the host's root server", () =>
+    Effect.gen(function* () {
+      // A host can proxy one forge at its root and another under `/git`; the same owner/name on
+      // the root server is a different repository.
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", forkDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://forge.test/octocat/codething-mvp.git",
+        forkDir,
+      );
+
+      const providerScenario: FakeProviderScenario = {
+        pullRequest: {
+          number: 82,
+          title: "Fork-only PR",
+          url: "https://forge.test/git/pingdotgg/codething-mvp/pulls/82",
+          baseRefName: "main",
+          headRefName: "feature/fork-only",
+          state: "open",
+          isCrossRepository: true,
+          headRepositoryNameWithOwner: "octocat/codething-mvp",
+          headRepositoryOwnerLogin: "octocat",
+        },
+        pullRequestInCheckout: null,
+      };
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        gitCommands,
+        providerScenario,
+        sourceControlProvider: {
+          ...createFakeSourceControlProvider(providerScenario).service,
+          repositoryNameFromRemoteUrl: forgejoRepositoryName,
+        },
+      });
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "https://forge.test/git/pingdotgg/codething-mvp/pulls/82",
+        mode: "worktree",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain(
+        "Pull request #82 belongs to forge.test/git/pingdotgg/codething-mvp, and this project is not a checkout of it.",
+      );
+      expect(gitCommands.filter((command) => command.startsWith("fetch"))).toEqual([]);
+      const worktrees = (yield* runGit(repoDir, ["worktree", "list", "--porcelain"])).stdout;
+      expect(worktrees.match(/^worktree /gm)).toHaveLength(1);
+    }),
+  );
+
   it.effect("preserves fork upstream tracking when preparing a worktree PR thread", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -5328,6 +5923,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const originDir = yield* createBareRemote();
       const forkDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        originDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-fork"]);
@@ -5389,6 +5990,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-stale"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "stale.txt"), "stale\n");
@@ -5444,6 +6051,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-force-pushed"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "force-pushed.txt"), "first\n");
@@ -5518,6 +6131,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-commit"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "local-commit.txt"), "first\n");
@@ -5596,6 +6215,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-dirty-worktree"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "dirty.txt"), "first\n");
@@ -5680,6 +6305,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* initRepo(repoDir);
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/pingdotgg/codething-mvp.git",
+          remoteDir,
+        );
         yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
         const forkDir = isCrossRepository ? yield* createBareRemote() : null;
         if (forkDir) {
@@ -5753,6 +6384,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-ref-only"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "ref-only.txt"), "ref only\n");
@@ -5858,6 +6495,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const originDir = yield* createBareRemote();
       const forkDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        originDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "fork-main-collision"]);
@@ -5961,6 +6604,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const originDir = yield* createBareRemote();
       const forkDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        originDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-fork"]);
@@ -6031,6 +6680,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-setup-failure"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "setup-failure.txt"), "setup failure\n");
@@ -6081,6 +6736,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        yield* createBareRemote(),
+      );
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-root-only"]);
 
       const { manager } = yield* makeManager({

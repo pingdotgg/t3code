@@ -2877,6 +2877,159 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // A PR read may borrow any checkout on its host, so check out only in one of its base or head
+  // repository, compared by the URL the host answers with (links can name a renamed repository).
+  // Raw config shows a local `insteadOf` mirror; `remote -v` resolves shorthand like `gh:`.
+  const ensurePullRequestBelongsToCheckout = Effect.fn(
+    "GitManager.ensurePullRequestBelongsToCheckout",
+  )(function* (cwd: string, pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo) {
+    // A URL that names no repository leaves nothing to compare; the PR came from this checkout.
+    const baseKey = pullRequestRepositoryKey(pullRequest.url);
+    if (baseKey === null) return;
+    const provider = yield* sourceControlProvider(cwd);
+    const headRepository = resolveHeadRepositoryNameWithOwner(pullRequest);
+    // The head is named without the installation mount (Forgejo under `/git`) its web URL
+    // carries, so it lives under the base's serving root. The same path at the host's root can be
+    // another server; SSH remotes that omit the mount match through provider refinement below.
+    const baseName = parseRepositoryNameWithOwnerFromRemoteUrl(
+      `https://${baseKey}`,
+      provider,
+    )?.toLowerCase();
+    const headRoot =
+      baseName && baseKey.endsWith(`/${baseName}`)
+        ? baseKey.slice(0, -baseName.length - 1)
+        : baseKey.split("/")[0];
+    const repositoryKeys = new Set([
+      sourceControlDefinitions.canonicalRepositoryKey(baseKey),
+      ...(headRepository
+        ? [
+            sourceControlDefinitions.canonicalRepositoryKey(
+              `${headRoot}/${headRepository.toLowerCase()}`,
+            ),
+          ]
+        : []),
+    ]);
+    // A clone of only the user's own fork names neither repository; no host says whose fork a
+    // checkout is, so a same-named repository under the PR's serving root counts as one.
+    const repositoryName = (baseName ?? baseKey).split("/").pop()?.toLowerCase();
+    const isPullRequestRepository = (key: string) => {
+      if (repositoryKeys.has(sourceControlDefinitions.canonicalRepositoryKey(key))) return true;
+      const root = `${headRoot}/`.toLowerCase();
+      const lower = key.toLowerCase();
+      const path = lower.startsWith(root) ? lower.slice(root.length) : "";
+      return path.includes("/") && path.split("/").pop() === repositoryName;
+    };
+    const listRemoteUrls = (args: ReadonlyArray<string>) =>
+      gitCore
+        .execute({
+          operation: "GitManager.preparePullRequestThread.remotes",
+          cwd,
+          args,
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          Effect.map((result) =>
+            result.stdout.split("\n").flatMap((line) => {
+              // `key url` from config, `name\turl (fetch)` from `remote -v`; URLs may hold spaces.
+              const separator = line.search(/\s/);
+              if (separator === -1) return [];
+              const name = line.slice(0, separator).replace(/^remote\.(.*)\.url$/, "$1");
+              const url = line
+                .slice(separator + 1)
+                .replace(/ \((?:fetch|push)\)$/, "")
+                .trim();
+              return name && url ? [{ name, url }] : [];
+            }),
+          ),
+        );
+    const remotes = new Map(
+      [
+        ...(yield* listRemoteUrls(["config", "--get-regexp", "^remote\\..*\\.url$"])),
+        ...(yield* listRemoteUrls(["remote", "-v"])),
+      ].map(({ name, url }) => [url, name]),
+    );
+    // Keys drop the port, but two servers can share a hostname; an HTTP URL names its server.
+    const httpPort = (value: string) => {
+      try {
+        const url = new URL(value);
+        return url.protocol === "http:" || url.protocol === "https:" ? url.port : null;
+      } catch {
+        return null;
+      }
+    };
+    const pullRequestPort = httpPort(pullRequest.url);
+    const matches = (url: string) => {
+      const port = httpPort(url);
+      return (
+        isPullRequestRepository(sourceControlDefinitions.repositoryKeyFromRemote(url)) &&
+        (port === null || pullRequestPort === null || port === pullRequestPort)
+      );
+    };
+    if ([...remotes.keys()].some((remoteUrl) => matches(remoteUrl))) return;
+
+    // A remote may not name its web server: an SSH alias for github.com, or a Forgejo SSH host
+    // (perhaps without the mount) that only the provider maps to the web repository.
+    const resolveContext = (input: {
+      readonly cwd: string;
+      readonly context: SourceControlProvider.SourceControlProviderContext;
+    }) => sourceControlProviders.resolveHandle(input).pipe(Effect.map((handle) => handle.context));
+    const servedFromWeb = Effect.fn("GitManager.ensurePullRequestBelongsToCheckout.remote")(
+      function* (remoteUrl: string, remoteName: string) {
+        const refined =
+          provider.refineRepositoryIdentity === undefined
+            ? undefined
+            : yield* provider
+                .refineRepositoryIdentity({
+                  identity: {
+                    canonicalKey: sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl),
+                    provider: provider.kind,
+                    locator: { source: "git-remote", remoteName, remoteUrl },
+                    rootPath: cwd,
+                  },
+                  resolveContext,
+                })
+                .pipe(Effect.orElseSucceed(() => undefined));
+        if (refined?.webUrl !== undefined) return matches(refined.webUrl);
+        const recognized = sourceControlDefinitions.recognizeRemote(remoteUrl);
+        if (recognized === null || provider.resolveRemoteWebHost === undefined) return false;
+        const webHost = yield* provider
+          .resolveRemoteWebHost({
+            cwd,
+            context: {
+              provider: { ...recognized, kind: provider.kind },
+              remoteName,
+              remoteUrl,
+            },
+            resolveContext,
+          })
+          .pipe(Effect.orElseSucceed(() => null));
+        const key = sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl);
+        const path = key.indexOf("/");
+        return (
+          webHost !== null && path !== -1 && isPullRequestRepository(`${webHost}${key.slice(path)}`)
+        );
+      },
+    );
+    for (const [remoteUrl, remoteName] of remotes) {
+      if (yield* servedFromWeb(remoteUrl, remoteName)) return;
+    }
+    // The host knows this checkout's repository under any spelling, such as a pre-rename name.
+    const inCheckout = yield* provider
+      .getChangeRequest({ cwd, reference: String(pullRequest.number) })
+      .pipe(Effect.option);
+    if (
+      Option.isSome(inCheckout) &&
+      sourceControlDefinitions.isSameChangeRequest(inCheckout.value.url, pullRequest.url)
+    ) {
+      return;
+    }
+    return yield* new GitManagerError({
+      operation: "preparePullRequestThread",
+      cwd,
+      detail: `Pull request #${pullRequest.number} belongs to ${baseKey}, and this project is not a checkout of it.`,
+    });
+  });
+
   // Some hosts only switch branches on checkout; use the existing lossless refresh to advance them.
   const moveToPullRequestHead = (cwd: string, headSha: string | undefined) =>
     headSha === undefined || !/^[0-9a-f]{7,64}$/i.test(headSha)
@@ -2920,6 +3073,12 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
+      // A bare number resolves in this checkout's own repository; other references can name another.
+      if (!/^\d+$/.test(normalizedReference))
+        yield* ensurePullRequestBelongsToCheckout(input.cwd, {
+          ...pullRequest,
+          ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        });
 
       if (input.mode === "local") {
         yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
