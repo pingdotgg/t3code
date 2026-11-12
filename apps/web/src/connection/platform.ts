@@ -422,9 +422,13 @@ const layerCapabilities = Layer.effectContext(
   }),
 );
 
-const loadPrimaryConnectionRegistration = Effect.fn(
+export const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
-)(function* (resolved: PrimaryEnvironmentTarget) {
+)(function* (topologyTarget: PrimaryEnvironmentTarget) {
+  // The desktop issues its bearer only once its backend is ready, possibly on a new port.
+  yield* Effect.promise(readDesktopPrimaryBearerToken).pipe(Effect.ignoreCause);
+  const reread = readPrimaryEnvironmentTargetResult();
+  const resolved = (reread._tag === "Success" ? reread.target : null) ?? topologyTarget;
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: resolved.target.httpBaseUrl,
   }).pipe(
