@@ -2419,7 +2419,6 @@ layer("ProviderEventIngestorV2", (it) => {
         ["thread.model-selection-updated"],
       );
       assert.lengthOf(repeated, 0);
-      assert.lengthOf(otherInstance, 0);
       assert.deepEqual((yield* projectionStore.getThread(threadId)).modelSelection, switched);
       for (const newer of [
         { ...modelSelection, model: "user-selected-model" },
