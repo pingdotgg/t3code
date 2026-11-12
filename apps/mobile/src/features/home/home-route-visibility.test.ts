@@ -14,10 +14,12 @@ describe("runWhenHomeCovered", () => {
     runWhenHomeCovered(clearSearch);
     recordHomeTransitionStart(true);
     expect(clearSearch).not.toHaveBeenCalled();
-    recordHomeTransitionEnd(true);
+    recordHomeTransitionEnd(true, true);
+    expect(clearSearch).not.toHaveBeenCalled();
+    recordHomeTransitionEnd(true, false);
     expect(clearSearch).toHaveBeenCalledTimes(1);
     recordHomeTransitionStart(false);
-    recordHomeTransitionEnd(true);
+    recordHomeTransitionEnd(true, false);
     expect(clearSearch).toHaveBeenCalledTimes(1);
   });
 
@@ -26,8 +28,8 @@ describe("runWhenHomeCovered", () => {
     runWhenHomeCovered(clearSearch);
     recordHomeTransitionStart(true);
     recordHomeTransitionStart(false);
-    recordHomeTransitionEnd(false);
-    recordHomeTransitionEnd(true);
+    recordHomeTransitionEnd(false, false);
+    recordHomeTransitionEnd(true, false);
     expect(clearSearch).not.toHaveBeenCalled();
   });
 });
