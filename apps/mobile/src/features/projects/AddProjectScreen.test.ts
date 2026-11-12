@@ -274,6 +274,26 @@ describe("clone project permissions", () => {
       expect(state.projects).toEqual([]);
     },
   );
+
+  it("opens the existing project instead of cloning into its folder", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "repo",
+        workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+      },
+    ];
+    try {
+      await cloneAction()();
+
+      expect(NodeFS.existsSync(NodePath.join(state.baseDirectory, "repo"))).toBe(false);
+      expect(state.projects).toEqual([]);
+    } finally {
+      state.existingProjects = [];
+    }
+  });
 });
 
 function mountProjectFlow(
@@ -488,10 +508,10 @@ describe("add project source environment", () => {
 });
 
 describe("local project navigation", () => {
-  function setup() {
+  function setup(baseDirectory = "/tmp/t3-mobile-audit-fixture") {
     state.navigationState = undefined;
     state.scopes = new Set([AuthOrchestrationOperateScope]);
-    state.baseDirectory = "/tmp/t3-mobile-audit-fixture";
+    state.baseDirectory = baseDirectory;
     state.projects = [];
     state.dispatch.mockReset();
     state.alert.mockReset();
@@ -521,6 +541,27 @@ describe("local project navigation", () => {
       "Project added",
       "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
     );
+  });
+
+  it("opens an existing project typed as a home-relative path instead of creating it", async () => {
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "bike-documents",
+        workspaceRoot: "/home/tester/projects/bike-documents",
+      },
+    ];
+    try {
+      const { created, projected, submit } = setup("~/projects/bike-documents/");
+      created.resolve(AsyncResult.success(undefined));
+      projected.resolve(null);
+      await submit();
+
+      expect(state.projects).toEqual([]);
+    } finally {
+      state.existingProjects = [];
+    }
   });
 
   it("does not replace a reopened flow when the previous submission finishes", async () => {
