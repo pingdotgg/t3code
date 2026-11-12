@@ -616,6 +616,7 @@ describe("PreviewManager", () => {
                 attach: () => {},
                 detach: () => {},
                 setShown: () => {},
+                setCaptureDrawn: () => {},
                 loadFailed: () => {},
                 humanStartedDownload: () => true,
                 placeDownload: () => true,
@@ -2112,6 +2113,7 @@ describe("PreviewManager", () => {
           }),
         );
         expect(yield* Queue.take(capturing)).toBe(true);
+        yield* manager.setCaptureDrawn("tab_1", true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
       }).pipe(Effect.provide(managerLayer()), Effect.scoped),

@@ -125,6 +125,22 @@ export function resolveBrowserViewportLayout(
   };
 }
 
+/**
+ * Chromium rasters a CSS-scaled guest at its on-screen scale, so captures of it lose detail.
+ * Its raster scale also counts x/y-to-z terms, which a `preserve-3d` parent keeps and the
+ * screen drops, so `fullDetail` draws like `scale()` but keeps full-resolution frames.
+ */
+export function resolveBrowserViewportTransform(
+  scale: number,
+  fullDetail: boolean,
+): string | undefined {
+  if (scale >= 1) return undefined;
+  if (!fullDetail) return `scale(${scale})`;
+  // Positive depth keeps the guest in front of its parent for hit testing.
+  const depth = Math.sqrt(1 - scale * scale);
+  return `matrix3d(${scale}, 0, ${depth}, 0, 0, ${scale}, ${depth}, 0, 0, 0, 1, 0, 0, 0, 0, 1)`;
+}
+
 export function resolveBrowserDeviceViewportLayout(
   container: { readonly width: number; readonly height: number },
   setting: Exclude<PreviewViewportSetting, { readonly _tag: "fill" }>,
