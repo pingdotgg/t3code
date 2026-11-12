@@ -35,6 +35,11 @@ export interface SourceControlProcessInput {
   /** The error's detail when the command reports something it was asked for as missing. */
   readonly notFoundDetail?: string;
   /**
+   * Reads a message safe to show, such as the host's API error text, from stderr to use as the
+   * error's detail. Raw stderr stays out of errors: it can hold credentials and remote URLs.
+   */
+  readonly failureDetail?: (stderr: string) => string | null;
+  /**
    * Runs sharing a key run at most `limit` at a time, for a host that throttles bursts of its CLI.
    * The first run of a key fixes its limit.
    */

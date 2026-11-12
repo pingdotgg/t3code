@@ -128,7 +128,10 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
   get detail(): string {
     const cause = this.cause;
     if (isVcsProcessExitError(cause) && cause.failureKind === "not-found") {
-      return "GitLab project or resource not found.";
+      return cause.detail;
+    }
+    if (isVcsProcessExitError(cause) && cause.detail.startsWith(GITLAB_API_DETAIL_PREFIX)) {
+      return `GitLab CLI command failed: ${cause.detail}`;
     }
     if (isVcsProcessTimeoutError(cause)) {
       return `GitLab CLI timed out after ${cause.timeoutMs}ms.`;
@@ -443,6 +446,15 @@ const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null =
   return null;
 };
 
+const GITLAB_API_DETAIL_PREFIX = "GitLab returned ";
+// glab ends an API failure with `<status> {message: <GitLab's reply>}`, after the request URL.
+const GITLAB_API_MESSAGE = /\b([45]\d\d) \{message: (.{1,300}?)\}(?=\.?(?: |$))/;
+
+const glabFailureDetail = (stderr: string): string | null => {
+  const match = GITLAB_API_MESSAGE.exec(stderr.replace(/\s+/g, " ").trim());
+  return match === null ? null : `${GITLAB_API_DETAIL_PREFIX}${match[1]}: ${match[2]}`;
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -461,7 +473,8 @@ export const make = Effect.gen(function* () {
         // glab may otherwise prefer a different checkout remote.
         ...(input.host === undefined ? {} : { env: { GITLAB_HOST: input.host } }),
         classifyFailure: classifyGlabFailure,
-        ...(notFoundDetail === undefined ? {} : { notFoundDetail }),
+        failureDetail: glabFailureDetail,
+        notFoundDetail: notFoundDetail ?? "GitLab project or resource not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
