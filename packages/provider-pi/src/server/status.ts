@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -57,6 +58,7 @@ const PI_PRESENTATION = {
 
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
+const PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS = 5_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
  * Version 0.80.5 was the first published package containing both hooks.
@@ -81,6 +83,8 @@ interface PiDiscovery extends PiDiscoveredCommands {
   readonly authenticated: boolean;
   /** Pi's active model when Pi lists no model of its provider, so it cannot start a turn. */
   readonly unavailableActiveModel: { readonly provider: string; readonly id: string } | undefined;
+  /** Pi without extensions can load no model, so text generation fails for every entry. */
+  readonly textGenerationUnavailable: boolean;
 }
 
 function piModelsFromSettings(
@@ -141,6 +145,7 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
+  textGenerationLaunch = false,
 ) {
   const launch = buildPiRpcLaunch({
     launchArgs,
@@ -148,6 +153,8 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
     mcpSession: undefined,
     extensionPath: undefined,
     ephemeral: true,
+    disableExtensions: textGenerationLaunch,
+    disableTools: textGenerationLaunch,
     shortLived: true,
   });
   const connection = yield* makePiRpcConnection({
@@ -164,12 +171,55 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
+// Text generation runs Pi with --no-extensions, so it cannot load models that an
+// extension or package registers. Listing models with that launch tells them apart.
+const discoverPiTextGenerationModelSlugs = Effect.fn(
+  "PiProviderStatus.discoverPiTextGenerationModelSlugs",
+)(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  cwd?: string,
+) {
+  const connection = yield* makePiDiscoveryConnection(
+    piSettings,
+    environment,
+    launchArgs,
+    cwd,
+    true,
+  );
+  const modelsData = yield* connection.request({ type: "get_available_models" });
+  const models = yield* Effect.fromResult(parseDiscoveredModels(modelsData, undefined));
+  return new Set(models.map((model) => model.slug));
+}, Effect.scoped);
+
 const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
 ) {
+  // This optional probe must finish before the normal discovery deadline so
+  // it cannot discard an otherwise usable catalog and authentication state.
+  const textGenerationModelSlugsFiber = yield* discoverPiTextGenerationModelSlugs(
+    piSettings,
+    environment,
+    launchArgs,
+    cwd,
+  ).pipe(
+    // Pi exits before answering when launch args name a provider only an extension registers.
+    Effect.catchIf(
+      (error) =>
+        error._tag === "PiRpcError" && (error.operation === "read" || error.operation === "exit"),
+      () => Effect.succeed(new Set<string>()),
+    ),
+    Effect.orElseSucceed(() => undefined),
+    Effect.timeoutOrElse({
+      duration: PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS,
+      orElse: () => Effect.void,
+    }),
+    Effect.forkScoped,
+  );
   const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
   const stateData = yield* connection.request({ type: "get_state" });
   const modelsData = yield* connection.request({ type: "get_available_models" });
@@ -178,13 +228,21 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     .pipe(Effect.orElseSucceed(() => undefined));
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+  const textGenerationModelSlugs = yield* Fiber.join(textGenerationModelSlugsFiber);
   // Pi lists only models of providers it holds credentials for, including extension, virtual and
   // --api-key ones. Turns need only the provider's credentials, so uncatalogued model ids still run.
   const activeModel = recordField(stateData, "model");
   const activeProvider = recordString(activeModel, "provider");
   const activeModelId = recordString(activeModel, "id");
   return {
-    models: discoveredModels,
+    models:
+      textGenerationModelSlugs === undefined
+        ? discoveredModels
+        : discoveredModels.map((model) =>
+            textGenerationModelSlugs.has(model.slug)
+              ? model
+              : { ...model, supportsTextGeneration: false },
+          ),
     slashCommands: withPiBuiltinSlashCommands(slashCommands),
     skills,
     authenticated: discoveredModels.length > 0,
@@ -194,6 +252,7 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
       !discoveredModels.some((model) => model.subProvider === activeProvider)
         ? { provider: activeProvider, id: activeModelId }
         : undefined,
+    textGenerationUnavailable: textGenerationModelSlugs?.size === 0,
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
@@ -514,22 +573,25 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
           resolvedLaunchArgs.args,
           discovery.unavailableActiveModel,
         );
-  return buildServerProvider({
-    presentation: PI_PRESENTATION,
-    enabled: piSettings.enabled,
-    checkedAt,
-    models,
-    slashCommands: discovery.slashCommands,
-    skills: discovery.skills,
-    probe: {
-      installed: true,
-      version,
-      // Other Pi models still work when only the default is unavailable, so keep the picker usable.
-      status: discovery.authenticated ? "ready" : "warning",
-      auth: { status: discovery.authenticated ? "authenticated" : "unauthenticated", type: "pi" },
-      ...(message === undefined ? {} : { message }),
-    },
-  });
+  return {
+    ...buildServerProvider({
+      presentation: PI_PRESENTATION,
+      enabled: piSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: discovery.slashCommands,
+      skills: discovery.skills,
+      probe: {
+        installed: true,
+        version,
+        // Other Pi models still work when only the default is unavailable, so keep the picker usable.
+        status: discovery.authenticated ? "ready" : "warning",
+        auth: { status: discovery.authenticated ? "authenticated" : "unauthenticated", type: "pi" },
+        ...(message === undefined ? {} : { message }),
+      },
+    }),
+    ...(discovery.textGenerationUnavailable ? { supportsTextGeneration: false } : {}),
+  };
 });
 
 export const enrichPiSnapshot = (input: {
