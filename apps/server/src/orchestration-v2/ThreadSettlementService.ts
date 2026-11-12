@@ -154,13 +154,12 @@ export function isAutoSettlementCandidate(
   // A guest is waiting on the owner; settling would hide the Request.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) return false;
   if (thread.activityRunStatus != null) return false;
-  // A usage limit interrupts the work; settling would hide Resume at reset. Only subagents with
-  // armed recovery are held: the store returns them once their parent is put away.
+  // A usage limit interrupts the work; settling would hide Resume at reset. Subagents reach the
+  // sweep only once their parent is put away, and abandoned work settles even when limited.
   if (
     thread.status === "failed" &&
     thread.lastErrorClass === "usage_limit" &&
-    (thread.lineage.relationshipToParent !== "subagent" ||
-      (thread.limitRecovery?.runId === thread.latestRunId && thread.limitRecovery.autoResume))
+    thread.lineage.relationshipToParent !== "subagent"
   ) {
     return false;
   }

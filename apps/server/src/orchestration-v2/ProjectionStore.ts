@@ -227,7 +227,6 @@ export type ProjectionSettlementCandidate = Pick<
   | "latestUserMessageAt"
   | "status"
   | "lastErrorClass"
-  | "limitRecovery"
   | "activityRunStartedAt"
   | "activityRunStatus"
   | "pendingRuntimeRequest"
@@ -7950,14 +7949,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     LIMIT 1
                   )
                     AND blocked.status = 'failed'
-                    -- Abandoned subagents still settle for cleanup unless recovery is armed.
-                    AND (
-                      json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
-                      OR (
-                        json_extract(t.payload_json, '$.limitRecovery.runId') IS blocked.run_id
-                        AND json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
-                      )
-                    )
+                    -- Subagents here have a put-away parent: abandoned work that still settles.
+                    AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
                     -- threadErrorSummary: a differing session error replaces the failure.
                     AND (
                       SELECT json_extract(error.payload_json, '$.failure.class') = 'usage_limit'

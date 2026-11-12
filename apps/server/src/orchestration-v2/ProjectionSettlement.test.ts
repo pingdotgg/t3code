@@ -393,7 +393,7 @@ it.effect(
         yield* createRun(providerFailed, "failed"),
         "provider_error",
       );
-      // A subagent of a settled parent still settles for cleanup unless recovery is armed.
+      // A subagent of a settled parent is abandoned work; it settles even with recovery armed.
       const putAwayParent = yield* createThread("put-away-parent", { settledOverride: "settled" });
       const childOf = () => ({
         lineage: {
@@ -465,6 +465,7 @@ it.effect(
           providerFailed,
           sessionErrorAfterLimit,
           abandonedLimited,
+          armedChild,
           background,
           persistent,
           rolledBack,
