@@ -2,6 +2,7 @@ import "~/index.css";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
@@ -247,5 +248,43 @@ describe("right panel thumb buttons", () => {
     // The page canvas already went back in the tab; the panel must not go back a second time.
     releaseThumbButton(screen.getByTestId("page-canvas").element(), 3);
     expect(actions).toEqual(["back", "forward", "back"]);
+  });
+});
+
+const DEVICE_SURFACE: RightPanelSurface = {
+  id: "device:host:phone",
+  kind: "device",
+  target: { hostId: "host", deviceId: "phone", platform: "ios", name: "Phone" },
+};
+
+describe("device tab rename", () => {
+  it("keeps the editor open on an Enter that confirms an IME candidate", async () => {
+    const onRenameDevice = vi.fn();
+    const props = panel(DEVICE_SURFACE).props as RightPanelTabsProps;
+    await using screen = await render(
+      <RightPanelTabs {...props} surfaces={[DEVICE_SURFACE]} onRenameDevice={onRenameDevice}>
+        {null}
+      </RightPanelTabs>,
+    );
+    await userEvent.dblClick(screen.getByRole("button", { name: "Phone", exact: true }));
+    const input = screen.getByRole("textbox", { name: "Device tab name" });
+    await userEvent.fill(input, "にほん");
+
+    for (const shape of [
+      { isComposing: true, keyCode: 13 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      input
+        .element()
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...shape }),
+        );
+    }
+
+    await expect.element(input).toHaveFocus();
+    expect(onRenameDevice).not.toHaveBeenCalled();
+    await userEvent.fill(input, "日本語");
+    await userEvent.keyboard("{Enter}");
+    expect(onRenameDevice).toHaveBeenCalledExactlyOnceWith(DEVICE_SURFACE.id, "日本語");
   });
 });
