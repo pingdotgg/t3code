@@ -260,6 +260,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const BOUND_TARGET_REFUSAL =
+  "`target` sets the model for runs that start a new thread. This task's runs post in its bound thread, which uses that thread's model. Set bindToCurrentThread: false to choose one.";
+
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
     scheduledTaskId: task.id,
@@ -269,6 +272,14 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
+    // A bound run follows its thread's current model, not the stored selection.
+    ...(task.threadId !== null
+      ? {}
+      : {
+          providerInstanceId: task.modelSelection.instanceId,
+          model: task.modelSelection.model,
+          options: task.modelSelection.options ?? [],
+        }),
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -1330,7 +1341,12 @@ const make = Effect.gen(function* () {
   };
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly parent: {
+      readonly thread: Pick<
+        OrchestrationV2ThreadProjection["thread"],
+        "modelSelection" | "projectId"
+      >;
+    };
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
@@ -1463,6 +1479,30 @@ const make = Effect.gen(function* () {
       modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
       supportedRuntimeModes: provider.supportedRuntimeModes,
     };
+  });
+
+  const resolveScheduledTaskSelection = Effect.fn(
+    "OrchestratorMcpService.resolveScheduledTaskSelection",
+  )(function* (
+    project: Effect.Success<ReturnType<typeof requireProject>>,
+    inherited: ModelSelection | null,
+    target: OrchestratorMcpScheduleTaskInput["target"],
+  ) {
+    if (target === undefined) {
+      return inherited ?? (yield* projectDefaultModelSelection(project));
+    }
+    const modelSelection =
+      inherited ??
+      project.defaultModelSelection ??
+      (target.providerInstanceId !== undefined && target.model !== undefined
+        ? { instanceId: target.providerInstanceId, model: target.model }
+        : yield* projectDefaultModelSelection(project));
+    const resolved = yield* resolveTargetRechecking({
+      parent: { thread: { modelSelection, projectId: project.id } },
+      target,
+      providers: yield* loadProviders,
+    });
+    return resolved.modelSelection;
   });
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
@@ -2027,8 +2067,14 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
-      const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+      if (input.target !== undefined && bindToCurrentThread) {
+        return yield* failure("invalid_request", BOUND_TARGET_REFUSAL);
+      }
+      const modelSelection = yield* resolveScheduledTaskSelection(
+        project,
+        parent?.thread.modelSelection ?? null,
+        input.target,
+      );
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -2124,6 +2170,9 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
+        if (input.target !== undefined && threadId !== null) {
+          return yield* failure("invalid_request", BOUND_TARGET_REFUSAL);
+        }
         // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
         const workspaceStrategy =
           (threadId === null) === (existing.threadId === null)
@@ -2150,7 +2199,14 @@ const make = Effect.gen(function* () {
                   ? "new_thread"
                   : "continue",
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          modelSelection:
+            input.target === undefined
+              ? existing.modelSelection
+              : yield* resolveScheduledTaskSelection(
+                  yield* requireProject(existing.projectId),
+                  existing.modelSelection,
+                  input.target,
+                ),
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,

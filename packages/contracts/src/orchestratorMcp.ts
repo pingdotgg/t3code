@@ -679,13 +679,20 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Default true: runs post in this thread. False: new thread per run.",
+      description: "Default true: runs post here. False: new thread per run.",
     }),
   ),
   freshSession: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Runs share one thread but each starts a fresh session without earlier runs' context. Unbound: the first run makes the thread.",
+        "Each run starts a fresh session in one shared thread. Unbound: the first run makes it.",
+    }),
+  ),
+  target: Schema.optional(
+    Schema.Struct({
+      providerInstanceId: Schema.optional(ProviderInstanceId),
+      model: Schema.optional(TrimmedNonEmptyString),
+      options: Schema.optional(OrchestratorMcpTargetOptionsFromRecord),
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
@@ -710,6 +717,9 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
   freshSession: Schema.Boolean,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  model: Schema.optional(Schema.String),
+  options: Schema.optional(Schema.Array(ProviderOptionSelection)),
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
@@ -753,6 +763,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
   freshSession: Schema.optional(Schema.Boolean),
+  target: OrchestratorMcpScheduleTaskInput.fields.target,
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
