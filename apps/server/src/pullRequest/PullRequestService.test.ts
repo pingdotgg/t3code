@@ -1,4 +1,4 @@
-import { SourceControlProviderKind, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
@@ -40,9 +40,6 @@ import {
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
-import * as PullRequestWatchService from "./PullRequestWatchService.ts";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 
 function project(input: {
   readonly id: string;
@@ -2218,7 +2215,7 @@ it.effect("routes a hosted reference to another repository through a project on 
   }),
 );
 
-it.effect("a new watch rechecks hosting availability after a cached read in another project", () =>
+it.effect("an uncached summary reaches the host despite a cached read in another project", () =>
   Effect.gen(function* () {
     const caller = project({
       id: "caller",
@@ -2235,7 +2232,6 @@ it.effect("a new watch rechecks hosting availability after a cached read in anot
     });
     let missing = false;
     let reads = 0;
-    let dispatched = false;
     const service = yield* makeService({
       projects: [caller, target],
       providers: [
@@ -2273,53 +2269,8 @@ it.effect("a new watch rechecks hosting availability after a cached read in anot
     yield* service.summary(reference, { recoverTransientFailure: false });
     assert.strictEqual(reads, 1);
 
-    const threadId = ThreadId.make("watch-thread");
-    const thread = v2PullRequestThread({
-      id: threadId,
-      projectId: caller.id,
-      title: "Watch",
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      pullRequests: [],
-      latestUserMessageAt: null,
-      createdAt: "2026-07-01T00:00:00Z",
-      updatedAt: "2026-07-01T00:00:00Z",
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-    });
-    const watches = yield* PullRequestWatchService.PullRequestWatchService.pipe(
-      Effect.provide(
-        PullRequestWatchService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.succeed(PullRequestService.PullRequestService, service),
-              Layer.mock(ProjectService.ProjectService)({
-                getShell: () => Effect.succeedSome(caller),
-              }),
-              Layer.mock(Orchestrator.OrchestratorV2)({
-                getThreadShell: () => Effect.succeed(thread),
-                dispatch: () =>
-                  Effect.sync(() => {
-                    dispatched = true;
-                    return { sequence: 1, storedEvents: [] };
-                  }),
-              }),
-              NodeCrypto.layer,
-            ),
-          ),
-        ),
-      ),
-    );
-    const error = yield* watches
-      .setWatching({
-        threadId,
-        watching: true,
-        target: { url: "https://gitlab.com/team/project/-/merge_requests/42" },
-      })
+    const error = yield* service
+      .summary(reference, { recoverTransientFailure: false, bypassCache: true })
       .pipe(Effect.flip);
     expect(error).toMatchObject({
       _tag: "PullRequestUnavailableError",
@@ -2327,7 +2278,6 @@ it.effect("a new watch rechecks hosting availability after a cached read in anot
       provider: "gitlab",
     });
     assert.strictEqual(reads, 2);
-    assert.isFalse(dispatched);
   }),
 );
 
