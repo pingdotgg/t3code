@@ -56,15 +56,17 @@ describe("sidebar shift guard", () => {
     expect(list.pressed).toEqual(["B"]);
   });
 
-  it("keeps rows that did not move clickable", async () => {
+  it("keeps rows that did not move, or barely moved, clickable", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);
     using _clock = fakeTimers();
 
     list.remove("C");
+    list.button("A").closest("ul")!.style.paddingTop = "2px";
     list.guard.update();
     await userEvent.click(list.button("A"));
-    expect(list.pressed).toEqual(["A"]);
+    await userEvent.click(list.button("B"));
+    expect(list.pressed).toEqual(["A", "B"]);
   });
 
   it("keeps rows clickable when an empty list first fills", async () => {

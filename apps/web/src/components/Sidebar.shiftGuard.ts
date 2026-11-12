@@ -21,7 +21,7 @@ function editsText(event: KeyboardEvent) {
 }
 
 function readTops(list: HTMLElement) {
-  const tops = new Map<Element, number>();
+  const tops = new Map<HTMLElement, number>();
   for (const child of list.children) {
     if (child instanceof HTMLElement) tops.set(child, child.offsetTop);
   }
@@ -113,7 +113,11 @@ export function createSidebarShiftGuard(list: HTMLElement) {
       // A list filling from empty slid nothing under the pointer.
       const ownMove = tops.size === 0 || now - lastInputAt < OWN_INPUT_WINDOW_MS;
       for (const [row, top] of next) {
-        if (tops.get(row) === top) continue;
+        const previous = tops.get(row);
+        if (previous === top) continue;
+        // A nudge of under half a row, such as a header settling, still leaves the row the pointer
+        // aimed at under it.
+        if (previous !== undefined && Math.abs(top - previous) * 2 < row.offsetHeight) continue;
         // The latest move decides: one the user caused clears an earlier mark.
         if (ownMove) movedAt.delete(row);
         else movedAt.set(row, now);
