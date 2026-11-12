@@ -7,7 +7,6 @@ import { DEFAULT_RUNTIME_MODE } from "../types";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
-  orchestrationV2WorktreePending,
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
@@ -16,6 +15,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
