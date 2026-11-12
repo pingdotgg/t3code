@@ -259,6 +259,7 @@ export interface LimitAccount {
     readonly environmentId: EnvironmentId;
     readonly label: string;
   }>;
+  readonly sourceKey: string | null;
   readonly sourceLabel: string | null;
   readonly redeem: {
     readonly environmentId: EnvironmentId;
@@ -328,6 +329,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
+      sourceKey: environments.length > 0 ? null : (previous.sourceKey ?? next.sourceKey),
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
         hubRedeems.get(key)?.redeem ??
@@ -360,6 +362,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         plan: provider.auth.label,
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
+        sourceKey: null,
         sourceLabel: null,
         redeem: { environmentId, input: { instanceId: provider.instanceId } },
         limits: provider.usageLimits,
@@ -372,10 +375,16 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       const sourceLabel = labelEnvironment
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
+      // One source lists each credential once, so two of its accounts that resolve to the same
+      // login (one e-mail, two organisations) are separate quotas and must not merge.
+      const claimed = new Set<string>();
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
+        const resolved = resolveKey(account);
+        const mergeKey = resolved && !claimed.has(resolved) ? resolved : key;
+        if (resolved) claimed.add(resolved);
+        merge(mergeKey, {
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),
@@ -383,6 +392,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           plan: account.plan,
           accentColor: undefined,
           environments: [],
+          sourceKey: JSON.stringify([environmentId, source.id]),
           sourceLabel,
           redeem: account.usageLimits.resetCredits?.nextCreditId
             ? {
@@ -450,7 +460,10 @@ export interface LimitPoolWindow {
 }
 
 export interface LimitPool {
+  readonly key: string;
   readonly driver: ServerProvider["driver"];
+  /** The CLI Proxy source, when one driver's accounts come from more than one place. */
+  readonly label: string | null;
   readonly accounts: readonly LimitAccount[];
   readonly windows: readonly LimitPoolWindow[];
 }
@@ -505,14 +518,38 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
 export function collectLimitPools(
   accounts: readonly LimitAccount[],
   now: number,
+  options: { readonly splitSources?: boolean } = {},
 ): readonly LimitPool[] {
-  const byDriver = new Map<ServerProvider["driver"], LimitAccount[]>();
-  for (const account of accounts) {
-    const list = byDriver.get(account.driver);
-    if (list) list.push(account);
-    else byDriver.set(account.driver, [account]);
+  const sourcesByDriver = new Map<ServerProvider["driver"], Set<string>>();
+  if (options.splitSources ?? true) {
+    for (const account of accounts) {
+      if (!account.sourceKey) continue;
+      const sources = sourcesByDriver.get(account.driver) ?? new Set<string>();
+      sourcesByDriver.set(account.driver, sources.add(account.sourceKey));
+    }
   }
-  return [...byDriver].map(([driver, members]) => {
+  const split = (account: LimitAccount) => (sourcesByDriver.get(account.driver)?.size ?? 0) > 1;
+  const byPool = new Map<string, LimitAccount[]>();
+  for (const account of accounts) {
+    const key =
+      split(account) && account.sourceKey
+        ? `${account.driver}:${account.sourceKey}`
+        : account.driver;
+    const list = byPool.get(key);
+    if (list) list.push(account);
+    else byPool.set(key, [account]);
+  }
+  // Pools of one driver stay together, in the order drivers first appear (the sort is stable).
+  const driverOrder = new Map<ServerProvider["driver"], number>();
+  for (const account of accounts) {
+    if (!driverOrder.has(account.driver)) driverOrder.set(account.driver, driverOrder.size);
+  }
+  const grouped = [...byPool].sort(
+    ([, [left]], [, [right]]) => driverOrder.get(left!.driver)! - driverOrder.get(right!.driver)!,
+  );
+  return grouped.map(([key, members]) => {
+    const driver = members[0]!.driver;
+    const label = split(members[0]!) ? (members[0]!.sourceLabel ?? null) : null;
     const orderWindow = members
       .flatMap((account) => account.limits.windows)
       .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
@@ -531,7 +568,7 @@ export function collectLimitPools(
         accountSortName(left).localeCompare(accountSortName(right)) ||
         left.key.localeCompare(right.key),
     );
-    return { driver, accounts: sorted, windows: poolWindows(sorted, now) };
+    return { key, driver, label, accounts: sorted, windows: poolWindows(sorted, now) };
   });
 }
 

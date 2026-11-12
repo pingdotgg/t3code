@@ -804,6 +804,97 @@ describe("pools", () => {
     ).toEqual(["weekly", "weekly:secondary"]);
   });
 
+  it("keeps each CLI Proxy source in its own pool and names it", () => {
+    const hubAccount = (id: string, usedPercent: number) => ({
+      id,
+      driver: claude,
+      email: `${id}@example.com`,
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                id: UsageLimitSourceId.make("main"),
+                label: "Main hub",
+                accounts: [
+                  hubAccount("a", 100),
+                  { ...hubAccount("x", 50), driver: ProviderDriverKind.make("codex") },
+                  hubAccount("b", 100),
+                ],
+              },
+              {
+                ...source,
+                id: UsageLimitSourceId.make("work"),
+                label: "Work hub",
+                // Two organisations of one login: separate credentials with separate quotas.
+                accounts: [hubAccount("c", 20), { ...hubAccount("d", 94), email: "c@example.com" }],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    const pools = collectLimitPools(accounts, now);
+    // A driver with one source keeps its unlabelled pool; one driver's pools stay adjacent.
+    expect(pools.map((pool) => [pool.driver, pool.label, pool.accounts.length])).toEqual([
+      ["claudeAgent", "Main hub", 2],
+      ["claudeAgent", "Work hub", 2],
+      ["codex", null, 1],
+    ]);
+    expect(new Set(pools.map((pool) => pool.key)).size).toBe(3);
+    expect(pools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 43, 50]);
+
+    const combined = collectLimitPools(accounts, now, { splitSources: false });
+    expect(combined.map((pool) => [pool.driver, pool.label, pool.accounts.length])).toEqual([
+      ["claudeAgent", null, 4],
+      ["codex", null, 1],
+    ]);
+
+    const sources = input.get(EnvironmentId.make("env-a"))!.serverConfig.usageLimitSources;
+    for (const separateEnvironments of [false, true]) {
+      const sharedLabelSources = sources.map((entry) => ({ ...entry, label: "proxy.example.com" }));
+      const presentations = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [],
+              usageLimitSources: separateEnvironments
+                ? sharedLabelSources.slice(0, 1)
+                : sharedLabelSources,
+            },
+          },
+        ],
+      ]);
+      if (separateEnvironments) {
+        presentations.set(EnvironmentId.make("env-b"), {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [{ ...sharedLabelSources[1]!, id: sources[0]!.id }],
+          },
+        });
+      }
+      const sameLabelPools = collectLimitPools(collectLimitAccounts(presentations), now);
+      expect(sameLabelPools.map((pool) => [pool.driver, pool.accounts.length])).toEqual([
+        ["claudeAgent", 2],
+        ["claudeAgent", 2],
+        ["codex", 1],
+      ]);
+      expect(new Set(sameLabelPools.map((pool) => pool.key)).size).toBe(3);
+      expect(sameLabelPools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 43, 50]);
+    }
+  });
+
   it("pools windows by id across accounts and orders resets by when they land", () => {
     const input = new Map([
       [
@@ -902,6 +993,7 @@ describe("pools", () => {
           plan: undefined,
           accentColor: undefined,
           environments: [],
+          sourceKey: null,
           sourceLabel: null,
           redeem: null,
           limits: {
@@ -947,6 +1039,7 @@ describe("pooled account columns", () => {
     plan: undefined,
     accentColor: undefined,
     environments: [],
+    sourceKey: "hub",
     sourceLabel: "Hub",
     redeem: null,
     limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows },
