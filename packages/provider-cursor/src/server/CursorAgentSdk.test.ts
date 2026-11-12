@@ -187,7 +187,13 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.runOperations.length = 0;
       cursorSdkMock.listRuns.mockClear();
       cursorSdkMock.cancelRun.mockClear();
-      cursorSdkMock.setStoredRuns([{ id: "run-stale", status: "running" }]);
+      cursorSdkMock.setStoredRuns([
+        ...Array.from({ length: 50 }, (_, index) => ({
+          id: `run-terminal-${index}`,
+          status: index === 0 ? "cancelled" : "finished",
+        })),
+        { id: "run-stale", status: "running" },
+      ]);
 
       const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
@@ -206,12 +212,18 @@ describe("CursorAgentSdkRunner", () => {
       assert.deepStrictEqual(cursorSdkMock.runOperations, [
         "run.start",
         "agent.listRuns",
+        "agent.listRuns",
         "agent.cancelRun",
         "run.start",
       ]);
       assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[0], [
         "agent-cursor-agent-sdk-test",
         { runtime: "local", cwd: process.cwd() },
+      ]);
+      assert.strictEqual(cursorSdkMock.listRuns.mock.calls.length, 2);
+      assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls[1], [
+        "agent-cursor-agent-sdk-test",
+        { runtime: "local", cwd: process.cwd(), cursor: "50" },
       ]);
       assert.deepStrictEqual(cursorSdkMock.cancelRun.mock.calls[0], [
         "run-stale",
@@ -220,41 +232,6 @@ describe("CursorAgentSdkRunner", () => {
           cwd: process.cwd(),
         },
       ]);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("cancels the abandoned run on a later page behind older terminal runs", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.runOperations.length = 0;
-      cursorSdkMock.listRuns.mockClear();
-      cursorSdkMock.cancelRun.mockClear();
-      cursorSdkMock.setStoredRuns([
-        ...Array.from({ length: 50 }, (_, index) => ({
-          id: `run-terminal-${index}`,
-          status: index === 0 ? "cancelled" : "finished",
-        })),
-        { id: "run-abandoned-on-second-restart", status: "running" },
-      ]);
-
-      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const session = yield* runner.open({
-        operation: "resume",
-        agentId: "agent-cursor-agent-sdk-test",
-        options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
-        threadId: ThreadId.make("thread-cursor-agent-sdk-second-stale-run-test"),
-        providerSessionId: ProviderSessionId.make(
-          "provider-session-cursor-agent-sdk-second-stale-run-test",
-        ),
-      });
-      const run = yield* session.send({ message: "continue" });
-      yield* run.wait;
-
-      assert.deepStrictEqual(cursorSdkMock.listRuns.mock.calls.length, 2);
-      assert.deepStrictEqual(
-        cursorSdkMock.cancelRun.mock.calls[0]?.[0],
-        "run-abandoned-on-second-restart",
-      );
-      assert.deepStrictEqual(cursorSdkMock.runOperations.at(-1), "run.start");
     }).pipe(Effect.provide(layerTest)),
   );
 
