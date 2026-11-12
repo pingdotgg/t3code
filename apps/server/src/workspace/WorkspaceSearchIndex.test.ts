@@ -144,6 +144,69 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
   ),
 );
 
+it.effect("finds whole words beyond a file's rejected candidate cap", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-words-" });
+      yield* fs.writeFileString(
+        path.join(cwd, "words.txt"),
+        "needleSuffix\n".repeat(1_000) + "needle\n",
+      );
+      yield* fs.writeFileString(
+        path.join(cwd, "capped.txt"),
+        "other\n" + "otherSuffix\n".repeat(10_001) + "other\n",
+      );
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
+      // Exercise retries through the allocation ceiling independently of machine load.
+      using _budget = vi.spyOn(performance, "now").mockReturnValue(0);
+
+      for (const caseSensitive of [true, false]) {
+        for (const limit of [1, 500]) {
+          const result = yield* searchIndex.searchContents({
+            query: "needle",
+            limit,
+            caseSensitive,
+            wholeWord: true,
+            useRegex: false,
+          });
+          expect(result).toEqual({
+            matches: [
+              {
+                path: "words.txt",
+                lineNumber: 1_001,
+                lineContent: "needle",
+                matchRanges: [{ start: 0, end: 6 }],
+              },
+            ],
+            truncated: false,
+          });
+        }
+      }
+      expect(
+        yield* searchIndex.searchContents({
+          query: "other",
+          limit: 500,
+          caseSensitive: false,
+          wholeWord: true,
+          useRegex: false,
+        }),
+      ).toEqual({
+        matches: [
+          {
+            path: "capped.txt",
+            lineNumber: 1,
+            lineContent: "other",
+            matchRanges: [{ start: 0, end: 5 }],
+          },
+        ],
+        truncated: true,
+      });
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "refuses to index a workspace rooted at the home directory",

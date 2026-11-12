@@ -38,6 +38,7 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+const CONTENT_SEARCH_MAX_CANDIDATES = 10_000;
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -481,22 +482,26 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   )(function* (input) {
     let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
-    // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
-    const rawPageSize = input.wholeWord
+    let rawPageSize = input.wholeWord
       ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
       : input.limit;
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     let nextCursor: GrepCursor | null = null;
     let regexFallbackError: string | undefined;
     let retryLiterally = false;
+    let retryCappedPage = false;
+    let cappedResults = false;
+    let maxMatchesPerFile = Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize);
 
     do {
+      retryCappedPage = false;
+      const previousMatchCount = matches.length;
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
       const result = yield* runSearch(input.query, input.limit, "grep", () =>
         finder.grep(searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
-          maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
+          maxMatchesPerFile,
           pageSize: rawPageSize,
           cursor: nextCursor,
           timeBudgetMs: remainingTimeBudgetMs,
@@ -510,7 +515,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         continue;
       }
 
+      const candidatesPerFile = new Map<string, number>();
       for (const match of result.items) {
+        if (input.wholeWord) {
+          candidatesPerFile.set(
+            match.relativePath,
+            (candidatesPerFile.get(match.relativePath) ?? 0) + 1,
+          );
+        }
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
@@ -523,16 +535,35 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           matchRanges,
         });
       }
+      const cappedPage =
+        input.wholeWord &&
+        (result.items.length >= rawPageSize ||
+          [...candidatesPerFile.values()].some((count) => count >= maxMatchesPerFile));
+      // Native cursors skip the rest of a capped file, so retry this page before advancing.
+      if (
+        cappedPage &&
+        matches.length < input.limit &&
+        rawPageSize < CONTENT_SEARCH_MAX_CANDIDATES &&
+        performance.now() < deadline
+      ) {
+        matches.length = previousMatchCount;
+        rawPageSize = Math.min(rawPageSize * 2, CONTENT_SEARCH_MAX_CANDIDATES);
+        maxMatchesPerFile = rawPageSize;
+        retryCappedPage = true;
+        continue;
+      }
+      cappedResults ||= cappedPage;
       nextCursor = result.nextCursor;
       regexFallbackError ??= result.regexFallbackError;
     } while (
       retryLiterally ||
+      retryCappedPage ||
       (matches.length < input.limit && nextCursor !== null && performance.now() < deadline)
     );
 
     return {
       matches: matches.slice(0, input.limit),
-      truncated: matches.length > input.limit || nextCursor !== null,
+      truncated: cappedResults || matches.length > input.limit || nextCursor !== null,
       ...(regexFallbackError !== undefined ? { regexFallbackError } : {}),
     };
   });
