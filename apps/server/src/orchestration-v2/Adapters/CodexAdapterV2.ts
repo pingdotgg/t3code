@@ -4859,7 +4859,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("hook/completed", (payload) =>
           Effect.gen(function* () {
-            if (payload.turnId == null || payload.run.status !== "stopped") return;
+            if (payload.turnId == null) return;
+            // Codex runs preCompact only for compaction, and can stop it before any item.
+            if (payload.run.eventName === "preCompact" && heldTurnStarts.has(payload.turnId))
+              yield* classifyHeldTurnStart({
+                turnId: payload.turnId,
+                isCompactionItem: true,
+              }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1));
+            if (payload.run.status !== "stopped") return;
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context?.providerThread.nativeThreadRef?.nativeId !== payload.threadId) return;
             const reason = payload.run.entries
