@@ -4893,6 +4893,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 ),
               ),
             );
+          if (
+            state.active === turn &&
+            !turn.interrupted &&
+            [...state.calls.values()].some(
+              (call) => !call.background && isOrchestrationV2WorkActive(call.status),
+            )
+          ) {
+            // Steers enter the inbox; release foreground observation so the parent can read them.
+            yield* client.session
+              .background({ sessionID: Session.ID.make(sessionId) })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    "Could not background OpenCode tools for an accepted steer.",
+                    cause,
+                  ),
+                ),
+              );
+          }
         },
         (effect, steerInput) =>
           effect.pipe(

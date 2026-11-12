@@ -112,6 +112,7 @@ const operationOf = (
     if (method === "POST" && rest === "/command") return { type: "session.command", input };
     if (method === "POST" && rest === "/compact") return { type: "session.compact", input };
     if (method === "POST" && rest === "/interrupt") return { type: "session.interrupt", input };
+    if (method === "POST" && rest === "/background") return { type: "session.background", input };
     if (method === "POST" && rest === "/model") return { type: "session.switchModel", input };
     if (method === "POST" && rest === "/agent") return { type: "session.switchAgent", input };
     if (method === "POST" && rest === "/move") return { type: "session.move", input };

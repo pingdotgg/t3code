@@ -1273,6 +1273,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it.effect.each([
     "parent completion",
+    "caller steering",
     "nested child completion",
     "child run completion",
     "child question",
@@ -1285,15 +1286,19 @@ describe("OrchestratorMcpService provider resolution", () => {
       const nestedId = NodeId.make("node:mcp-wait-nested");
       const childRunId = RunId.make("run:mcp-wait-child");
       const childRootId = NodeId.make("node:mcp-wait-child-root");
-      const eventThreadId = wake === "parent completion" ? parentThreadId : childThreadId;
+      const eventThreadId =
+        wake === "parent completion" || wake === "caller steering" ? parentThreadId : childThreadId;
       const eventType =
-        wake === "child run completion"
-          ? "run.updated"
-          : wake === "child question" || wake === "child approval"
-            ? "runtime-request.updated"
-            : "subagent.updated";
+        wake === "caller steering"
+          ? "turn-item.updated"
+          : wake === "child run completion"
+            ? "run.updated"
+            : wake === "child question" || wake === "child approval"
+              ? "runtime-request.updated"
+              : "subagent.updated";
       const terminal = wake.endsWith("completion");
       let ready = false;
+      const commands: Array<OrchestrationV2ServerCommand> = [];
       const task = () => ({
         id: taskId,
         threadId: parentThreadId,
@@ -1326,7 +1331,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               : [],
           nodes: [{ id: childRootId, runId: childRunId }],
           runtimeRequests:
-            ready && !terminal
+            ready && !terminal && wake !== "caller steering"
               ? [
                   {
                     id: "request:mcp-wait-answer",
@@ -1357,11 +1362,13 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Stream.concat(Stream.fromQueue(events)),
                 )
               : Stream.never,
-          dispatch: () =>
-            Effect.succeed({
+          dispatch: (command) => {
+            commands.push(command);
+            return Effect.succeed({
               sequence: 1,
               storedEvents: [{ event: { type: "subagent.updated", payload: task() } }],
-            } as never),
+            } as never);
+          },
         }),
         ServerSettings.layerTest(),
         providerRegistryLayer([
@@ -1417,7 +1424,15 @@ describe("OrchestratorMcpService provider resolution", () => {
           event: {
             type: eventType,
             threadId: eventThreadId,
-            payload: { id: wake === "parent completion" ? taskId : nestedId },
+            payload:
+              wake === "caller steering"
+                ? {
+                    type: "user_message",
+                    runId: parentRunId,
+                    messageId: MessageId.make("message:mcp-wait-steer"),
+                    inputIntent: "steer",
+                  }
+                : { id: wake === "parent completion" ? taskId : nestedId },
           },
         } as unknown as OrchestrationV2StoredEvent);
         const result = yield* Fiber.join(waiting);
@@ -1427,7 +1442,17 @@ describe("OrchestratorMcpService provider resolution", () => {
           if (wake === "parent completion") assert.equal(result.summary, "done");
         } else {
           assert.equal(result.status, "running");
-          if (wake === "child question") assert.isTrue(result.hasPendingQuestion);
+          if (wake === "caller steering") {
+            assert.equal(result.interruptedByMessageId, "message:mcp-wait-steer");
+            assert.notProperty(result, "next");
+            assert.isTrue(
+              commands.some(
+                (command) =>
+                  command.type === "delegated_task.wake-policy" &&
+                  command.completionWake === "always",
+              ),
+            );
+          } else if (wake === "child question") assert.isTrue(result.hasPendingQuestion);
           else {
             assert.deepEqual(result.pendingApproval, {
               requestId: "request:mcp-wait-answer",
