@@ -14,6 +14,8 @@ const decode = <S extends Schema.Top>(
     never
   >;
 
+const encodeResolvedKeybindings = Schema.encodeEffect(ResolvedKeybindingsConfig);
+
 const shortcut = {
   key: "p",
   metaKey: false,
@@ -39,14 +41,21 @@ it.effect("drops resolved rules with commands this build does not know", () =>
 
 it.effect("drops malformed resolved rule entries", () =>
   Effect.gen(function* () {
+    const validRules = [
+      { command: "terminal.toggle" as const, shortcut },
+      { command: "terminal.split" as const, shortcut: { ...shortcut, key: " " } },
+    ];
     const parsed = yield* decode(ResolvedKeybindingsConfig, [
       "garbage",
-      { command: "terminal.toggle", shortcut },
+      ...validRules,
+      ...["", "\t", " a", "a "].map((key) => ({
+        command: "terminal.toggle",
+        shortcut: { ...shortcut, key },
+      })),
+      { command: "terminal.toggle", shortcut: { ...shortcut, key: "x".repeat(65) } },
       null,
     ]);
-    assert.deepEqual(
-      parsed.map((rule) => rule.command),
-      ["terminal.toggle"],
-    );
+    assert.deepEqual(parsed, validRules);
+    assert.deepEqual(yield* encodeResolvedKeybindings(parsed), validRules);
   }),
 );
