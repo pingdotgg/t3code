@@ -29,6 +29,8 @@ function setup() {
     isEnvironmentUnavailable: false,
     isPreparingWorktree: false,
     hasSendableContent: false,
+    compactBeforeSendTokens: 436_000,
+    onToggleKeepFullHistory: vi.fn(),
     onPreviousPendingQuestion: vi.fn(),
     onInterrupt: vi.fn(),
     onResume: vi.fn(),
@@ -83,6 +85,8 @@ it.each([false, true])(
     expect(props.onInterrupt).not.toHaveBeenCalled();
     for (const phase of ["recording", "preparing", "transcribing", "post-processing"] as const) {
       await screen.rerender(controls(phase));
+      expect(screen.container.querySelector('[aria-label^="Compact 436k"]')).toBeNull();
+      expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
       await act(() =>
         (
           screen.getByRole("button", { name: "Cancel voice input" }).element() as HTMLButtonElement
@@ -178,7 +182,7 @@ it.each(["resume", "draft", "question"] as const)(
         hasSendableContent: mode === "draft",
       }),
     );
-    const action = { resume: "Resume thread", draft: "Submit message", question: "Submit" }[mode];
+    const action = { resume: "Resume thread", draft: "Compact and send", question: "Submit" }[mode];
     expect(screen.getByRole("button", { name: "Stop generation" }).query()).toBeNull();
     expect(target()).toBe(screen.getByRole("button", { name: action, exact: true }).element());
     await act(() => {
@@ -188,6 +192,22 @@ it.each(["resume", "draft", "question"] as const)(
     await act(() => target()?.click());
     expect(props.onResume).not.toHaveBeenCalled();
     expect(props.onSubmitMessage).not.toHaveBeenCalled();
+    if (mode !== "question") {
+      expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
+      const compactToggle = screen.container.querySelector<HTMLButtonElement>(
+        '[aria-label="Compact 436k tokens of history before sending"]',
+      );
+      if (mode === "draft") {
+        expect(compactToggle).toHaveAttribute("aria-pressed", "true");
+        expect(compactToggle?.closest("[data-composer-send-pill]")).toContainElement(
+          screen.getByRole("button", { name: action, exact: true }).element(),
+        );
+        await act(() => compactToggle?.click());
+        expect(props.onToggleKeepFullHistory).toHaveBeenCalledOnce();
+      } else {
+        expect(compactToggle).toBeNull();
+      }
+    }
     expect(submit).not.toHaveBeenCalled();
     await act(() => vi.advanceTimersByTime(1));
     await act(() => target()?.click());
