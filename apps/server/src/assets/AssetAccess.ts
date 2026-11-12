@@ -938,7 +938,10 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
           ...(claims.renderIntent === "mcp-app" ? { renderIntent: "mcp-app" as const } : {}),
           // Shared bucketed URLs must not stay fresh in the browser after the token expires.
-          maxAgeSeconds: Math.min(3600, Math.floor((claims.expiresAt - now) / 1000)),
+          maxAgeSeconds: Math.min(
+            ASSET_TOKEN_TTL_MS / 1000,
+            Math.floor((claims.expiresAt - now) / 1000),
+          ),
         } satisfies ResolvedAsset)
       : null;
   }
