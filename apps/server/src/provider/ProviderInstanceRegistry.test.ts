@@ -1013,6 +1013,11 @@ describe("ProviderInstanceRegistry secret environment", () => {
       yield* mutator.reconcile({ ...fixture.configMap });
       expect(fixture.reads).toHaveLength(readsAtStartup);
       expect(yield* registry.listUnavailable).toHaveLength(1);
+
+      // Nor does a rebuild meant for live instances.
+      yield* mutator.rebuild(new Set([instanceId]));
+      expect(fixture.reads).toHaveLength(readsAtStartup);
+      expect(yield* registry.listUnavailable).toHaveLength(1);
     }).pipe(Effect.scoped);
   });
 
@@ -1048,6 +1053,12 @@ describe("ProviderInstanceRegistry secret environment", () => {
         "sk-live",
         "sk-rotated",
       ]);
+
+      // An explicit rebuild replaces the instance even though nothing in its entry changed.
+      const beforeRebuild = yield* registry.getInstance(instanceId);
+      yield* mutator.rebuild(new Set([instanceId]));
+      expect(fixture.created).toHaveLength(3);
+      expect(yield* registry.getInstance(instanceId)).not.toBe(beforeRebuild);
     }).pipe(Effect.scoped);
   });
 

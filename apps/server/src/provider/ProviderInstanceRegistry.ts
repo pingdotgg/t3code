@@ -542,6 +542,19 @@ export const makeProviderInstanceRegistry = Effect.fn(
       Effect.provideContext(driverContext),
     );
 
+  const rebuild: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["rebuild"] =
+    Effect.fn("ProviderInstanceRegistry.rebuild")(
+      function* (instanceIds) {
+        const live = yield* Ref.get(entries);
+        // An instance parked on unreadable secrets stays parked; rebuilding it would prompt a vault.
+        const targets = new Set([...instanceIds].filter((instanceId) => live.has(instanceId)));
+        if (targets.size === 0) return;
+        yield* reconcileWithR(yield* Ref.get(configMapRef), targets);
+      },
+      (effect) => semaphore.withPermits(1)(effect),
+      Effect.provideContext(driverContext),
+    );
+
   // Reading secrets can wait on a vault unlock, so the server does not wait for it to start.
   yield* semaphore.withPermits(1)(
     Ref.set(configMapRef, input.configMap).pipe(
@@ -592,6 +605,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
   const mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape = {
     reconcile,
     reloadSecrets,
+    rebuild,
   };
 
   return { registry, mutator };

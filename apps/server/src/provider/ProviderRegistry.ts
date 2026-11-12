@@ -11,6 +11,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Fiber from "effect/Fiber";
@@ -23,11 +24,14 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { refreshPathFromLoginShell } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -357,6 +361,10 @@ const correlateSnapshotWithSource = (
   return Effect.succeed(snapshot);
 };
 
+const MISSING_CLI_PATH_REFRESH_INTERVAL = Duration.seconds(60);
+
+const isCliMissing = (provider: ServerProvider) => provider.enabled && !provider.installed;
+
 const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
 };
@@ -382,6 +390,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
@@ -840,6 +849,48 @@ export const layer = Layer.effect(
       return yield* instance.snapshot.resolveMaintenance(options);
     });
 
+    // Drivers copy the host environment when created, so a missing CLI's instance must be
+    // rebuilt to see a PATH directory added since. One shell read serves every provider.
+    // Compared against the PATH this registry last checked, not the refresh's own state:
+    // source-control discovery refreshes the same PATH and must not consume the change.
+    const hostEnvironment = yield* HostProcess.Environment;
+    const checkedPathRef = yield* Ref.make(hostEnvironment.PATH);
+    // Instances listed when PATH last gained a folder, so built from the PATH before it.
+    const stalePathInstancesRef = yield* Ref.make(new WeakSet<ProviderInstance>());
+    const refreshPath = yield* Effect.cachedWithTTL(
+      Effect.gen(function* () {
+        yield* refreshPathFromLoginShell().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const checked = new Set(
+          (yield* Ref.getAndSet(checkedPathRef, hostEnvironment.PATH))?.split(":"),
+        );
+        const gained = (hostEnvironment.PATH ?? "")
+          .split(":")
+          .some((entry) => entry !== "" && !checked.has(entry));
+        if (!gained) return;
+        const instances = yield* instanceRegistry.listInstances;
+        yield* Ref.set(stalePathInstancesRef, new WeakSet(instances));
+      }).pipe(Effect.ignoreCause({ log: true })),
+      MISSING_CLI_PATH_REFRESH_INTERVAL,
+    );
+    // Read from the registry, not liveSubsRef: an instance reports before initial sync lists it.
+    // Every report checks, as an instance still probing when PATH changed reports after it.
+    const recoverMissingClis = Effect.gen(function* () {
+      yield* refreshPath;
+      const missing = new Set(
+        (yield* Ref.get(providersRef)).filter(isCliMissing).map((provider) => provider.instanceId),
+      );
+      const candidates = (yield* instanceRegistry.listInstances).filter((instance) =>
+        missing.has(instance.instanceId),
+      );
+      const targets = yield* Ref.modify(stalePathInstancesRef, (stale) => {
+        const taken = candidates.filter((instance) => stale.delete(instance));
+        return [new Set(taken.map((instance) => instance.instanceId)), stale] as const;
+      });
+      if (targets.size > 0) yield* instanceRegistryMutator.rebuild(targets);
+    }).pipe(Effect.ignoreCause({ log: true }));
+
     const syncLiveSources = syncSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const instances = yield* instanceRegistry.listInstances;
@@ -895,7 +946,15 @@ export const layer = Layer.effect(
         for (const [, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
-            correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+            correlateSnapshotWithSource(source, provider).pipe(
+              Effect.flatMap(syncProvider),
+              // Forked: the shell read must not hold up this instance's later snapshots.
+              Effect.andThen(
+                isCliMissing(provider)
+                  ? Effect.forkIn(recoverMissingClis, serviceScope)
+                  : Effect.void,
+              ),
+            ),
           ).pipe(Effect.forkScoped);
         }
         yield* Effect.yieldNow;

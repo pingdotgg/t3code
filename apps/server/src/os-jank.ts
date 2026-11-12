@@ -186,6 +186,10 @@ const readLoginShellOutput = Effect.fn("readLoginShellOutput")(
   Effect.timeoutOption(LOGIN_SHELL_TIMEOUT),
 );
 
+// Per environment: the PATH before the first refresh. Each refresh
+// rebuilds PATH from that baseline, so shells adding a fresh directory per login (fnm) cannot grow it.
+const pathBaselines = new WeakMap<NodeJS.ProcessEnv, string | undefined>();
+
 // Runs even when the desktop prepared the environment: that capture was taken
 // once at launch. Only the user's own shell counts; a fallback shell's PATH is
 // not their environment. Failure leaves PATH alone.
@@ -210,11 +214,16 @@ export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(
     return;
   }
   const shellEnvironment = extractEnvironmentValues(output.value, LOGIN_SHELL_ENV_NAMES);
-  if (shellEnvironment.PATH) {
-    applyLoginShellEnvironment(env, platform, shellEnvironment);
-  } else {
+  const shellPath = shellEnvironment.PATH;
+  if (!shellPath) {
     yield* Effect.logWarning(`Login shell ${shell} printed no PATH; PATH is unchanged.`);
+    return;
   }
+  if (!pathBaselines.has(env)) pathBaselines.set(env, env.PATH);
+  const baseline = pathBaselines.get(env);
+  if (baseline === undefined) delete env.PATH;
+  else env.PATH = baseline;
+  applyLoginShellEnvironment(env, platform, shellEnvironment);
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {

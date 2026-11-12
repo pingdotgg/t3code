@@ -7,6 +7,8 @@ export interface ProviderInstanceRegistryMutatorShape {
   readonly reconcile: (configMap: ProviderInstanceConfigMap) => Effect.Effect<void>;
   /** Re-reads the secrets of every instance, or one, and rebuilds those whose secrets changed. */
   readonly reloadSecrets: (instanceId?: ProviderInstanceId) => Effect.Effect<void>;
+  /** Rebuilds the given live instances, such as when the host environment they copied changed. */
+  readonly rebuild: (instanceIds: ReadonlySet<ProviderInstanceId>) => Effect.Effect<void>;
 }
 
 export class ProviderInstanceRegistryMutator extends Context.Service<
