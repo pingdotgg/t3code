@@ -51,6 +51,7 @@ import {
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
+  routesWithReportedLabel,
   routesAfterRemoving,
   upsertRoute,
   type ReportedEndpoint,
@@ -368,6 +369,7 @@ export const make = Effect.gen(function* () {
             // before an enabled, compatible environment starts connecting.
             initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
+            learnLabel: (label) => learnLabel(environmentId, label),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
             Effect.provideService(ConnectionDriver.ConnectionDriver, driver),
@@ -915,6 +917,48 @@ export const make = Effect.gen(function* () {
   const allowInsecureRoutes =
     typeof globalThis.location === "undefined" || globalThis.location.protocol !== "https:";
 
+  /** Saves what a connected server reported without restarting its supervisor. */
+  const saveLearnedEntryLocked = Effect.fn("EnvironmentRegistry.saveLearnedEntryLocked")(function* (
+    next: ConnectionCatalogEntry,
+  ) {
+    const environmentId = next.target.environmentId;
+    yield* registrations.setRoutes(environmentId, persistedRoutes(next));
+    const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+    if (lease !== undefined) {
+      yield* SubscriptionRef.update(serviceScopes, (current) =>
+        new Map(current).set(environmentId, { ...lease, entry: next }),
+      );
+    }
+    yield* SubscriptionRef.update(entries, (current) => new Map(current).set(environmentId, next));
+    return Option.some(next);
+  });
+
+  const learnLabel = Effect.fn("EnvironmentRegistry.learnLabel")(function* (
+    environmentId: EnvironmentId,
+    label: string,
+  ) {
+    return yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
+          return Option.none<ConnectionCatalogEntry>();
+        }
+        const entry = (yield* SubscriptionRef.get(entries)).get(environmentId);
+        if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
+        const routes = routesWithReportedLabel(connectionRoutes(entry), label);
+        if (routes === null) return Option.none<ConnectionCatalogEntry>();
+        return yield* saveLearnedEntryLocked(entryWithRoutes(entry, routes));
+      }),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not save the label the environment reported.", {
+          environmentId,
+          error,
+        }).pipe(Effect.as(Option.none<ConnectionCatalogEntry>())),
+      ),
+    );
+  });
+
   /**
    * Learned routes reuse the active route's credential, so they do not revoke pull request routing
    * trust the way a newly paired address does.
@@ -956,17 +1000,7 @@ export const make = Effect.gen(function* () {
           }
           yield* profiles.put(profile);
         }
-        yield* registrations.setRoutes(input.environmentId, persistedRoutes(next));
-        const lease = (yield* SubscriptionRef.get(serviceScopes)).get(input.environmentId);
-        if (lease !== undefined) {
-          yield* SubscriptionRef.update(serviceScopes, (current) =>
-            new Map(current).set(input.environmentId, { ...lease, entry: next }),
-          );
-        }
-        yield* SubscriptionRef.update(entries, (current) =>
-          new Map(current).set(input.environmentId, next),
-        );
-        return Option.some(next);
+        return yield* saveLearnedEntryLocked(next);
       }),
     ).pipe(
       Effect.catch((error) =>

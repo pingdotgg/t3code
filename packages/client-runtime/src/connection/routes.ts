@@ -12,7 +12,13 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import {
+  BearerConnectionTarget,
+  type ConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -311,6 +317,9 @@ export function mergeLearnedRoutes(input: {
       target: new BearerConnectionTarget({
         environmentId: entry.target.environmentId,
         label: entry.target.label,
+        ...(entry.target.reportedLabel === undefined
+          ? {}
+          : { reportedLabel: entry.target.reportedLabel }),
         connectionId,
       }),
       profile: Option.some(
@@ -335,6 +344,45 @@ export function mergeLearnedRoutes(input: {
       )
       .join("\n");
   return signature(saved) === signature(next) ? null : next;
+}
+
+function withLabel(target: ConnectionTarget, label: string, reportedLabel: string | undefined) {
+  const { reportedLabel: _previous, ...rest } = target;
+  const fields = { ...rest, label, ...(reportedLabel === undefined ? {} : { reportedLabel }) };
+  switch (fields._tag) {
+    case "PrimaryConnectionTarget":
+      return new PrimaryConnectionTarget(fields);
+    case "BearerConnectionTarget":
+      return new BearerConnectionTarget(fields);
+    case "RelayConnectionTarget":
+      return new RelayConnectionTarget(fields);
+    case "SshConnectionTarget":
+      return new SshConnectionTarget(fields);
+  }
+}
+
+/**
+ * Routes carrying the label the server now reports; null when nothing changes. A label the user chose
+ * is kept, with the server's label beside it in `reportedLabel` so a later report can tell them apart.
+ */
+export function routesWithReportedLabel(
+  routes: ReadonlyArray<ConnectionRoute>,
+  reportedLabel: string,
+): ReadonlyArray<ConnectionRoute> | null {
+  let changed = false;
+  const next = routes.map((route) => {
+    const { label, reportedLabel: previous } = route.target;
+    if ((previous ?? label) === reportedLabel) return route;
+    changed = true;
+    const chosen = previous !== undefined && label !== previous;
+    return {
+      ...route,
+      target: chosen
+        ? withLabel(route.target, label, reportedLabel)
+        : withLabel(route.target, reportedLabel, undefined),
+    };
+  });
+  return changed ? next : null;
 }
 
 // A paired token goes to a plain HTTP address outside the tailnet only when

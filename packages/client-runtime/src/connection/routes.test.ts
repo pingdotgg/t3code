@@ -22,6 +22,7 @@ import {
   removedWithRelay,
   routeKeepsItsHost,
   routesAfterRemoving,
+  routesWithReportedLabel,
   sendsTokenInClear,
   upsertRoute,
   usableRoutes,
@@ -137,6 +138,32 @@ describe("connection routes", () => {
     expect(pendingRouteOrder(dragged, ["tailnet", "lan"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "public"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "tailnet", "public"])).toBeNull();
+  });
+});
+
+describe("reported labels", () => {
+  it("follows the server's label unless the user chose another", () => {
+    const route = direct("lan", "http://192.168.1.5:3773/");
+    const renamed = {
+      ...route,
+      target: new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Mine",
+        reportedLabel: "Desk",
+        connectionId: "renamed",
+      }),
+    };
+    expect(routesWithReportedLabel([route], "Desk")).toBeNull();
+    expect(routesWithReportedLabel([renamed], "Desk")).toBeNull();
+    expect(
+      routesWithReportedLabel([route, renamed], "Laptop")?.map(({ target }) => [
+        target.label,
+        target.reportedLabel,
+      ]),
+    ).toEqual([
+      ["Laptop", undefined],
+      ["Mine", "Laptop"],
+    ]);
   });
 });
 
