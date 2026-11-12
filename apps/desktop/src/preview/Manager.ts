@@ -598,6 +598,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
+  // Server tabs the client paints for a capture; guarded by frameCaptureSessionsRef like sessions.
+  const paintingServerTabs = new Set<string>();
   let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
@@ -817,7 +819,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* restoreFrameCaptureWebContentsBackgroundThrottling(
           current.unthrottledWebContentsIds,
         );
-        if (remainingSessions.size === 0) {
+        if (remainingSessions.size === 0 && paintingServerTabs.size === 0) {
           yield* setFrameCaptureBackgroundThrottling(true).pipe(
             Effect.retry({ times: 2 }),
             Effect.catch((error) =>
@@ -1675,7 +1677,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.gen(function* () {
         // Cleanup or lock acquisition can outlive the replacement window.
         if (window.isDestroyed()) return [undefined, sessions] as const;
-        if (sessions.size > 0) {
+        if (sessions.size > 0 || paintingServerTabs.size > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }
         yield* Ref.set(mainWindowRef, Option.some(window));
@@ -2820,12 +2822,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               }),
             ] as const;
           }
-          if (sessions.size === 0) {
+          const mainWindowThrottled = sessions.size === 0 && paintingServerTabs.size === 0;
+          if (mainWindowThrottled) {
             yield* setFrameCaptureBackgroundThrottling(false);
           }
           yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
             Effect.onError(() =>
-              sessions.size === 0
+              mainWindowThrottled
                 ? setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore)
                 : Effect.void,
             ),
@@ -3428,6 +3431,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       readonly key: { readonly threadId: string; readonly tabId: string };
       readonly active: boolean;
     }) {
+      // A hidden, minimized or covered main window commits no frames while throttled.
+      yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+        Effect.gen(function* () {
+          const key = `${painting.key.threadId}\u0000${painting.key.tabId}`;
+          if (paintingServerTabs.has(key) === painting.active)
+            return [undefined, sessions] as const;
+          if (painting.active) paintingServerTabs.add(key);
+          else paintingServerTabs.delete(key);
+          if (sessions.size === 0 && paintingServerTabs.size === (painting.active ? 1 : 0)) {
+            yield* setFrameCaptureBackgroundThrottling(!painting.active).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Failed to update preview capture throttling.", { error }),
+              ),
+            );
+          }
+          return [undefined, sessions] as const;
+        }),
+      ).pipe(Effect.uninterruptible);
       const tab = [...(yield* SynchronizedRef.get(tabsRef)).values()].find(
         (candidate) =>
           candidate.serverTab?.threadId === painting.key.threadId &&
