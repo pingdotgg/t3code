@@ -28,6 +28,7 @@ import {
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
+import { collectComposerPromptInlineTokens } from "../../composer-editor-mentions";
 import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -469,7 +470,12 @@ export function useComposerStash(input: {
       return;
     }
     const replyTo = getComposerDraft(composerDraftTarget)?.replyTo;
-    const prompt = promptRef.current.trim();
+    const trimmedPrompt = promptRef.current.trim();
+    // A trailing chip only parses with whitespace after it, so keep one space to restore it.
+    const endsWithChip =
+      collectComposerPromptInlineTokens(promptRef.current).at(-1)?.end ===
+      promptRef.current.trimEnd().length;
+    const prompt = endsWithChip ? `${trimmedPrompt} ` : trimmedPrompt;
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
