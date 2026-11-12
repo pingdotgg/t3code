@@ -16,8 +16,10 @@ export function MiddleTruncate({
   showTitle?: boolean;
   variant?: "default" | "cap-aligned";
 }) {
-  // Collapse whitespace up front: the segments render pre so the space at the cut survives.
-  const split = splitForMiddleTruncate(value.replace(/\s+/g, " ").trim(), tail);
+  // The segments render pre so the space at the cut survives; collapse only what CSS
+  // would (not \s, which also eats em and no-break spaces that CSS keeps).
+  const collapsed = value.replace(/[ \t\n\r\f]+/g, " ").replace(/^ | $/g, "");
+  const split = splitForMiddleTruncate(collapsed, tail);
   const headRef = useRef<HTMLSpanElement>(null);
   const head = split?.head;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fits the head span's DOM text and refits it through a ResizeObserver

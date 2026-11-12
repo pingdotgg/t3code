@@ -24,12 +24,15 @@ describe("MiddleTruncate", () => {
     expect(label()).toHaveStyle({ clipPath: "none" });
   });
 
-  it("keeps the space where the head meets the tail", async () => {
+  it.each([
+    ["Fix the sidebar", 7],
+    ["report\u2003\u2003draft.txt", 9],
+  ])("renders %j split as wide as whole", async (value, tail) => {
     await using screen = await render(
       <div>
-        <MiddleTruncate value="Fix the sidebar" tail={7} data-testid="split" />
+        <MiddleTruncate value={value} tail={tail} data-testid="split" />
         <span data-testid="whole" className="whitespace-nowrap">
-          Fix the sidebar
+          {value}
         </span>
       </div>,
     );
