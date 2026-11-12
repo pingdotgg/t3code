@@ -1,19 +1,71 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-// Protocol 3 requires the standalone executable layout. Bump when runtimePaths
-// or the installed runtime tree changes incompatibly; launchers survive self-updates.
-export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
+// Protocol 4 launchers coordinate selection writes and reconcile the unit. A remote update
+// replaces only the child, so an installed protocol-3 launcher stays until a local update or
+// service install restarts the service.
+export const SERVICE_LAUNCHER_PROTOCOL = 4 as const;
+/** Launchers this runtime runs under. Protocol 3 has the same IPC and durable format, and
+    refusing it stops every remote update until someone opens a shell on the host. */
+export type SupportedLauncherProtocol = 3 | typeof SERVICE_LAUNCHER_PROTOCOL;
+export const isSupportedLauncherProtocol = (
+  protocol: unknown,
+): protocol is SupportedLauncherProtocol =>
+  protocol === 3 || protocol === SERVICE_LAUNCHER_PROTOCOL;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
+export const SERVICE_ENV_FILE = "service.env";
 export const SERVICE_STATE_FILE = "service-state.json";
-/** Written by the launcher just before an explicit stop kills its child, so
-    the child can tell "the service is going away" from "the launcher is about
-    to start my replacement" while a pending update is recorded. */
+/** Set by the unit or launch agent to its own file name, so the launcher can
+    find the definition that started it. */
+export const SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
+/** Written before explicit stop to distinguish shutdown from update handoff. */
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
-/** Written by `t3 update` when the unit was repointed at a new version but the
-    running service was deliberately left on the old one. The launcher removes
-    it when it starts (whoever restarted the service), so while it exists the
-    service is known to be behind its unit and status reports it that way. */
+/** Marks a repointed unit whose service still runs the old version; launcher startup clears it. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+/** Held by a Windows launcher while it runs: Task Scheduler tracks only the task's console host. */
+export const SERVICE_LAUNCHER_LOCK_FILE = "service-launcher.lock";
+
+const unquoteSystemdValue = (raw: string) =>
+  (raw.startsWith('"') && raw.endsWith('"')
+    ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
+    : raw
+  ).replaceAll("%%", "%");
+
+const unescapeXmlText = (value: string) =>
+  value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+
+const unquoteWindowsArgument = (raw: string) =>
+  unescapeXmlText(raw).replace(/(\\+)$/, (slashes) => slashes.slice(slashes.length / 2));
+
+/** Whether Task Scheduler's copy of a task is disabled as a whole, not one of its triggers. */
+export const serviceTaskIsDisabled = (taskXml: string): boolean =>
+  /<Settings>[\s\S]*?<\/Settings>/.exec(taskXml)?.[0].includes("<Enabled>false</Enabled>") === true;
+
+/** A task as Task Scheduler should hold it while its service must stay stopped. */
+export const disabledServiceTask = (taskXml: string): string =>
+  serviceTaskIsDisabled(taskXml)
+    ? taskXml
+    : taskXml.replace("  </Settings>", "    <Enabled>false</Enabled>\n  </Settings>");
+
+export function serviceUnitBaseDirOf(contents: string): string | undefined {
+  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
+  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  if (plist !== undefined) return unescapeXmlText(plist);
+  const task = /<Arguments>[^<]* "--base-dir" "([^"]*)"/.exec(contents)?.[1];
+  return task === undefined ? undefined : unquoteWindowsArgument(task);
+}
+
+/** The executable an installed unit, plist, or task starts: the launcher's runtime. */
+export function serviceUnitProgramOf(contents: string): string | undefined {
+  const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
+  if (systemd !== undefined) return unquoteSystemdValue(systemd);
+  const plist = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]*)<\/string>/.exec(
+    contents,
+  )?.[1];
+  if (plist !== undefined) return unescapeXmlText(plist);
+  const task = /<Arguments>--headless "([^"]*)"/.exec(contents)?.[1];
+  return task === undefined ? undefined : unquoteWindowsArgument(task);
+}
 
 export interface PendingServiceUpdate {
   readonly id: string;
@@ -32,7 +84,7 @@ export interface ServiceState {
 }
 
 export interface ServiceLauncherContext {
-  readonly protocol: typeof SERVICE_LAUNCHER_PROTOCOL;
+  readonly protocol: SupportedLauncherProtocol;
   readonly childVersion: string;
   readonly update?: ServiceUpdateRecord;
 }
@@ -60,6 +112,10 @@ export type ServiceLauncherParentMessage =
   | {
       readonly type: "committed";
       readonly updateId: string;
+    }
+  | {
+      /** Shut down as on SIGTERM, which Windows cannot deliver. */
+      readonly type: "stop";
     };
 
 const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
@@ -148,7 +204,8 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
   if (!isRecord(value)) return undefined;
   const update = value.update === undefined ? undefined : decodeServiceUpdate(value.update);
   if (
-    value.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
+    // A protocol-3 installer can select a protocol-4 runtime.
+    !isSupportedLauncherProtocol(value.protocol) ||
     typeof value.activeVersion !== "string" ||
     !isExactServiceVersion(value.activeVersion) ||
     (value.update !== undefined && update === undefined) ||
@@ -171,6 +228,24 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
 export function parseServiceState(value: string): ServiceState | undefined {
   try {
     return decodeServiceState(JSON.parse(value) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseLegacyServiceState(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !isRecord(parsed) ||
+      Object.keys(parsed).length !== 2 ||
+      parsed.protocol !== 2 ||
+      typeof parsed.activeVersion !== "string" ||
+      !isExactServiceVersion(parsed.activeVersion)
+    ) {
+      return undefined;
+    }
+    return { protocol: 2, activeVersion: parsed.activeVersion } as const;
   } catch {
     return undefined;
   }
@@ -207,7 +282,7 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
   }
   if (
     !isRecord(parsed) ||
-    parsed.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
+    !isSupportedLauncherProtocol(parsed.protocol) ||
     typeof parsed.childVersion !== "string" ||
     !isExactServiceVersion(parsed.childVersion)
   ) {
@@ -225,7 +300,7 @@ export function decodeServiceLauncherContext(value: string): ServiceLauncherCont
     return undefined;
   }
   return {
-    protocol: SERVICE_LAUNCHER_PROTOCOL,
+    protocol: parsed.protocol,
     childVersion: parsed.childVersion,
     ...(update === undefined ? {} : { update }),
   };
@@ -257,6 +332,7 @@ export function decodeServiceLauncherParentMessage(
   if (value.type === "update-accepted" && typeof value.updateId === "string") {
     return { type: value.type, updateId: value.updateId };
   }
+  if (value.type === "stop") return { type: value.type };
   return value.type === "committed" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }
     : undefined;

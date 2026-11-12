@@ -7,7 +7,12 @@ import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 
 export interface ComposerSendPresentation {
   readonly label: string;
-  readonly icon: "arrow.up" | "checkmark" | "list.number" | "arrow.turn.left.up";
+  readonly icon:
+    | "arrow.up"
+    | "tray.and.arrow.up"
+    | "checkmark"
+    | "list.number"
+    | "arrow.turn.left.up";
   readonly action: ActiveTurnComposerAction | null;
   readonly alternate: ActiveTurnComposerAction | null;
   readonly offersFollowUpChoice: boolean;
@@ -38,7 +43,7 @@ export function resolveComposerSendPresentation(input: {
   if (!input.running) {
     return {
       label: input.deliveryDeferred ? "Queue" : "Send",
-      icon: "arrow.up",
+      icon: input.deliveryDeferred ? "tray.and.arrow.up" : "arrow.up",
       action: null,
       alternate: null,
       offersFollowUpChoice: false,

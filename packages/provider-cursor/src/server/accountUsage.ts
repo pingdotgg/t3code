@@ -1,19 +1,17 @@
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
-import * as Hex from "effect/encoding/Hex";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import * as CursorKeychain from "./CursorKeychain.ts";
+import type { CursorCredentialSource } from "./accountCache.ts";
+import { DEFAULT_CURSOR_API_ENDPOINT, exchangeCursorApiKey } from "./apiKey.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -25,9 +23,7 @@ function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-/**
- * Grok resolves through xAI's first-party entry, which has no bare alias.
- */
+// Grok's xAI first-party rate entry has no bare alias.
 export function cursorRateModel(model: string): string {
   const base = model
     .replace(/^cursor-/, "")
@@ -58,11 +54,6 @@ const billedEventIdentity = (...fields: readonly unknown[]) => JSON.stringify(fi
 
 const textEncoder = new TextEncoder();
 
-const accountHash = Effect.fn("accountHash")(function* (value: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(yield* crypto.digest("SHA-256", textEncoder.encode(value)));
-});
-
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
@@ -86,75 +77,28 @@ function boundaryOverlap(previous: readonly string[], current: readonly string[]
   return lengths.at(-1) ?? 0;
 }
 
-const DASHBOARD_USAGE_URL = "https://cursor.com/api/dashboard/get-filtered-usage-events";
-
-/** The session cookie must never follow a redirect off cursor.com. */
+/** Never forward the access token through a redirect. */
 const NO_REDIRECT: RequestInit = { redirect: "error" };
 
 export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
-  credentialSource: string | { readonly kind: "keychain" },
+  credentialSource: CursorCredentialSource,
   sinceMs: number,
   endDate: number,
-  keychainToken: Effect.Effect<
-    string | null,
-    | CursorKeychain.CursorKeychainTimeoutError
-    | CursorKeychain.CursorKeychainReadError
-    | CursorAccountUsageInvalidError
-  > = invalid("No Keychain reader"),
-): Effect.fn.Return<
-  CursorAccountUsageReadResult,
-  never,
-  FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
-> {
-  const fileSystem = yield* FileSystem.FileSystem;
+): Effect.fn.Return<CursorAccountUsageReadResult, never, Digest.Digest | HttpClient.HttpClient> {
   const httpClient = yield* HttpClient.HttpClient;
-  const credential = yield* Effect.result<
-    unknown,
-    | PlatformError.PlatformError
-    | Schema.SchemaError
-    | CursorKeychain.CursorKeychainTimeoutError
-    | CursorKeychain.CursorKeychainReadError
-    | CursorAccountUsageInvalidError,
-    never
-  >(
-    typeof credentialSource === "string"
-      ? fileSystem.readFileString(credentialSource).pipe(
-          Effect.flatMap(decodeJson),
-          Effect.map((credentials) => object(credentials).accessToken),
-        )
-      : keychainToken,
-  );
+  const digest = yield* Digest.Digest;
+  // Per-event hashes share the scan span and use the native hex encoder.
+  const accountHash = (value: string) => digest.digestHex(Digest.sha256, textEncoder.encode(value));
+  const credential = yield* Effect.result(exchangeCursorApiKey(credentialSource.apiKey));
   if (Result.isFailure(credential)) {
-    const cause = credential.failure;
-    const missing =
-      typeof credentialSource === "string" &&
-      PlatformError.isPlatformError(cause) &&
-      cause.reason._tag === "NotFound";
     return {
       accountKey: null,
       records: [],
-      missing,
-      error: missing
-        ? null
-        : typeof credentialSource === "string"
-          ? "Cursor credentials could not be read."
-          : CursorKeychain.isCursorKeychainTimeoutError(cause)
-            ? "Allow Keychain access on the Mac running T3 Code, then refresh."
-            : "Cursor Keychain credentials could not be read.",
+      missing: false,
+      error: "Cursor account usage could not be read.",
     };
   }
   const accessToken = credential.success;
-  if (typeof accessToken !== "string" || !accessToken) {
-    return {
-      accountKey: null,
-      records: [],
-      missing: true,
-      error:
-        typeof credentialSource === "string"
-          ? null
-          : "Cursor account history needs a macOS Keychain CLI login on this server.",
-    };
-  }
   let accountKey: string | null = null;
   const read = Effect.gen(function* () {
     const payload = Base64Url.decodeString(accessToken.split(".")[1] ?? "");
@@ -165,19 +109,24 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       ),
     ).sub;
     if (typeof subject !== "string" || !subject) return yield* invalid("Invalid authentication");
-    const userId = subject.split("|").at(-1);
-    if (!userId) return yield* invalid("Invalid authentication");
     accountKey = yield* accountHash(subject);
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
       return yield* invalid("Invalid date window");
+    const pageRequest = HttpClientRequest.post(
+      `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
+    ).pipe(
+      HttpClientRequest.bearerToken(accessToken),
+      HttpClientRequest.setHeader("connect-protocol-version", "1"),
+    );
     const records: UsageRecord[] = [];
     const occurrences = new Map<string, number>();
-    const pages: unknown[][] = [];
-    let completed = false;
+    const normalized: Array<(Omit<UsageRecord, "dedupeKey"> & { dedupeKey: string }) | null> = [];
+    const pages: Array<{ start: number; end: number; overlap: number }> = [];
+    let previousEvents: unknown[] = [];
     const pageSize = 1000;
     let total: number | undefined;
-    const readPage = (page: number) =>
-      Effect.gen(function* () {
+    const readPage = Effect.fn("CursorAccountUsage.readPage")(
+      function* (page: number) {
         // A count can include overlapping page boundaries. Allow room to
         // reconcile them without imposing a fixed account-size limit.
         if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
@@ -185,11 +134,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         }
         const response = yield* httpClient
           .execute(
-            HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
-              HttpClientRequest.setHeaders({
-                Origin: "https://cursor.com",
-                Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
-              }),
+            pageRequest.pipe(
               HttpClientRequest.bodyText(
                 pageRequestBody(page, pageSize, sinceMs, endDate),
                 "application/json",
@@ -243,12 +188,12 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         }
         if (typeof count === "number") total = count;
         return events as unknown[];
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.seconds(10),
-          orElse: () => invalid("Account usage request timed out"),
-        }),
-      );
+      },
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(10),
+        orElse: () => invalid("Account usage request timed out"),
+      }),
+    );
     // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
     // the first one's count implies are requested up to six ahead and consumed in page order.
     const ahead: Fiber.Fiber<
@@ -262,30 +207,23 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       const next = ahead.shift();
       const events = yield* next === undefined ? readPage(page) : Fiber.join(next);
       if (!Array.isArray(events)) return events;
-      pages.push(events);
-      if (events.length < pageSize) {
-        completed = true;
-        break;
-      }
-    }
-    if (!completed) return yield* invalid("Account usage page limit exceeded");
-    const rawCount = pages.reduce((sum, page) => sum + page.length, 0);
-    if (total !== undefined && rawCount < total)
-      return yield* invalid("Incomplete account usage pages");
-    let removalsRemaining = total === undefined ? 0 : rawCount - total;
-    let previousKeys: string[] = [];
-    for (const events of pages) {
-      const eventKeys =
-        removalsRemaining > 0
-          ? yield* Effect.forEach(events, (event) => accountHash(canonicalJson(event)))
-          : [];
-      const removalCount = Math.min(removalsRemaining, boundaryOverlap(previousKeys, eventKeys));
-      removalsRemaining -= removalCount;
-      previousKeys = eventKeys;
-      for (const raw of events.slice(removalCount)) {
+      const start = normalized.length;
+      const firstTimestamp = object(events[0]).timestamp;
+      // Equal raw events must have equal timestamps; avoid canonicalizing disjoint pages.
+      const mayOverlap =
+        (typeof firstTimestamp !== "string" && typeof firstTimestamp !== "number") ||
+        previousEvents.some((event) => object(event).timestamp === firstTimestamp);
+      const overlap = mayOverlap
+        ? boundaryOverlap(previousEvents.map(canonicalJson), events.map(canonicalJson))
+        : 0;
+      previousEvents = events;
+      for (const raw of events) {
         const event = object(raw);
         const usage = object(event.tokenUsage);
-        if (event.tokenUsage === undefined || event.tokenUsage === null) continue;
+        if (event.tokenUsage === undefined || event.tokenUsage === null) {
+          normalized.push(null);
+          continue;
+        }
         for (const key of [
           "inputTokens",
           "outputTokens",
@@ -312,7 +250,10 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           !event.model
         )
           return yield* invalid("Invalid account usage event");
-        if (timestampMs < sinceMs || timestampMs > endDate) continue;
+        if (timestampMs < sinceMs || timestampMs > endDate) {
+          normalized.push(null);
+          continue;
+        }
         const totals = {
           uncachedInputTokens: tokens(usage.inputTokens),
           cachedInputTokens: tokens(usage.cacheReadTokens),
@@ -327,9 +268,7 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
         const key = yield* accountHash(
           billedEventIdentity(timestampMs, event.model, sessionId, totals, reportedCostUsd),
         );
-        const occurrence = occurrences.get(key) ?? 0;
-        occurrences.set(key, occurrence + 1);
-        records.push({
+        normalized.push({
           provider: "cursor",
           timestampMs,
           model: event.model,
@@ -338,12 +277,39 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
           totals,
           reportedCostUsd,
           speed: "standard",
-          dedupeKey: `cursor-account:${accountKey}:${key}:${occurrence}`,
+          dedupeKey: key,
         });
+      }
+      pages.push({ start, end: normalized.length, overlap });
+      if (events.length < pageSize) break;
+      yield* Effect.yieldNow;
+    }
+    const rawCount = normalized.length;
+    if (total !== undefined && rawCount < total)
+      return yield* invalid("Incomplete account usage pages");
+    let removalsRemaining = total === undefined ? 0 : rawCount - total;
+    // The final count proves which boundary copies to remove, including non-token events.
+    for (const page of pages) {
+      const removalCount = Math.min(removalsRemaining, page.overlap);
+      removalsRemaining -= removalCount;
+      for (let index = page.start; index < page.end; index++) {
+        const record = normalized[index];
+        normalized[index] = null;
+        if (index < page.start + removalCount || record == null) continue;
+        const key = record.dedupeKey;
+        const occurrence = occurrences.get(key) ?? 0;
+        occurrences.set(key, occurrence + 1);
+        record.dedupeKey = `cursor-account:${accountKey}:${key}:${occurrence}`;
+        records.push(record);
       }
       yield* Effect.yieldNow;
     }
     if (removalsRemaining !== 0) return yield* invalid("Inconsistent account usage boundaries");
+    yield* Effect.annotateCurrentSpan({
+      "cursor.usage.pages": pages.length,
+      "cursor.usage.events": rawCount,
+      "cursor.usage.records": records.length,
+    });
     return {
       accountKey,
       records,
@@ -357,13 +323,14 @@ export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(functi
       duration: Duration.seconds(60),
       orElse: () => invalid("Account usage read timed out"),
     }),
-    Effect.catch(() =>
-      Effect.succeed({
-        accountKey,
-        records: [],
-        missing: false,
-        error: "Cursor account usage could not be read.",
-      } satisfies CursorAccountUsageReadResult),
+    Effect.orElseSucceed(
+      () =>
+        ({
+          accountKey,
+          records: [],
+          missing: false,
+          error: "Cursor account usage could not be read.",
+        }) satisfies CursorAccountUsageReadResult,
     ),
   );
 });

@@ -1,0 +1,64 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+apply from: '../nitrogen/generated/android/t3highlights+autolinking.gradle'
+
+group = 'com.t3tools.highlights'
+version = '0.0.0'
+
+android {
+  namespace 'com.margelo.nitro.t3highlights'
+  ndkVersion rootProject.ext.ndkVersion
+  compileSdk rootProject.ext.compileSdkVersion
+
+  defaultConfig {
+    minSdkVersion rootProject.ext.minSdkVersion
+    targetSdkVersion rootProject.ext.targetSdkVersion
+
+    def requestedArchitectures = project.findProperty('reactNativeArchitectures')
+    if (requestedArchitectures) {
+      ndk {
+        abiFilters(*requestedArchitectures.split(','))
+      }
+    }
+
+    externalNativeBuild {
+      cmake {
+        cppFlags '-frtti -fexceptions -Wall -Wextra'
+        arguments '-DANDROID_STL=c++_shared', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
+      }
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path 'CMakeLists.txt'
+      version '3.22.1'
+    }
+  }
+
+  buildFeatures {
+    prefab true
+  }
+
+  packagingOptions {
+    excludes = [
+      '**/libc++_shared.so',
+      '**/libfbjni.so',
+      '**/libjsi.so',
+      '**/libreactnative.so',
+      '**/libNitroModules.so',
+    ]
+  }
+}
+
+dependencies {
+  implementation 'com.facebook.react:react-android'
+  implementation project(':react-native-nitro-modules')
+}
+
+// CMake reads Nitro's prefab headers, which its prepareHeaders task writes.
+tasks.configureEach { task ->
+  if (task.name.contains('configureCMake') || task.name.contains('buildCMake')) {
+    task.dependsOn(':react-native-nitro-modules:prepareHeaders')
+  }
+}

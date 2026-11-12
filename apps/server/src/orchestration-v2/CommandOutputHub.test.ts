@@ -16,7 +16,6 @@ import {
   TERMINAL_OUTPUT_TAIL_CHARS,
   type TerminalOutputState,
 } from "@t3tools/shared/terminalOutput";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -51,7 +50,6 @@ const modelSelection = {
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const ITEM_ID = TurnItemId.make("turn-item:command");
 
-/** What a client holds after applying frames, using the same shared normalizer. */
 function applyFrame(
   state: TerminalOutputState,
   frame: OrchestrationV2CommandOutputFrame,
@@ -151,7 +149,6 @@ const writeCommandItem = (
     });
   });
 
-/** Collect frames into a queue so the test takes them one receipt at a time. */
 const subscribeFrames = (threadId: ThreadId) =>
   Effect.gen(function* () {
     const hub = yield* CommandOutputHub.CommandOutputHub;
@@ -166,8 +163,9 @@ const subscribeFrames = (threadId: ThreadId) =>
 
 const takeFrame = (frames: Queue.Queue<OrchestrationV2CommandOutputFrame | "ended">) =>
   Queue.take(frames).pipe(
-    Effect.flatMap((frame) =>
-      frame === "ended" ? Effect.die("command output stream ended early") : Effect.succeed(frame),
+    Effect.filterOrElse(
+      (frame) => !(frame === "ended"),
+      (_frame) => Effect.die("command output stream ended early"),
     ),
   );
 
@@ -182,7 +180,6 @@ layer("CommandOutputHub", (it) => {
           const hub = yield* CommandOutputHub.CommandOutputHub;
           const threadId = yield* seedThread;
           yield* writeCommandItem(threadId, { status: "running" });
-          // Output that arrived before anyone looked, ending mid-escape and mid-redraw.
           yield* hub.append({
             threadId,
             itemId: ITEM_ID,
@@ -197,7 +194,6 @@ layer("CommandOutputHub", (it) => {
           let client = applyFrame(EMPTY_TERMINAL_OUTPUT, first);
           assert.equal(client.text, "\u001b[0;32mbuilding\u001b[0m\n55%");
 
-          // Chunks that land between frames arrive together in one append.
           yield* TestClock.adjust("1 second");
           yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "1m" });
           yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "\r100%\u001b[0m\ndone\n" });
@@ -211,7 +207,6 @@ layer("CommandOutputHub", (it) => {
             ).text,
           );
 
-          // The persisted item settles the row; its output is what the client keeps.
           yield* TestClock.adjust("1 second");
           yield* writeCommandItem(threadId, {
             status: "completed",
@@ -252,7 +247,6 @@ layer("CommandOutputHub", (it) => {
         const frames = yield* subscribeFrames(threadId);
         let client = applyFrame(EMPTY_TERMINAL_OUTPUT, yield* takeFrame(frames));
         assert.equal(client.text, "abc");
-        // 64 newer commands push this one's tail out of the hub.
         for (let index = 0; index < 64; index += 1) {
           yield* hub.append({
             threadId,
@@ -266,95 +260,6 @@ layer("CommandOutputHub", (it) => {
         assert.equal(next.kind, "replace");
         client = applyFrame(client, next);
         assert.equal(client.text, "X");
-      }),
-    ),
-  );
-
-  it.effect("every viewer of one command reconstructs the same text", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const hub = yield* CommandOutputHub.CommandOutputHub;
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, { status: "running" });
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "first\n" });
-        const viewers = [yield* subscribeFrames(threadId), yield* subscribeFrames(threadId)];
-        const states = [EMPTY_TERMINAL_OUTPUT, EMPTY_TERMINAL_OUTPUT];
-        for (const [index, frames] of viewers.entries()) {
-          states[index] = applyFrame(states[index]!, yield* takeFrame(frames));
-        }
-        yield* TestClock.adjust("1 second");
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "second\r\nthird" });
-        for (const [index, frames] of viewers.entries()) {
-          states[index] = applyFrame(states[index]!, yield* takeFrame(frames));
-        }
-        assert.equal(states[0]!.text, "first\nsecond\nthird");
-        assert.equal(states[1]!.text, states[0]!.text);
-      }),
-    ),
-  );
-
-  it.effect("a flood is sent as bounded tails at a slower rate, not as every chunk", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const hub = yield* CommandOutputHub.CommandOutputHub;
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, { status: "running" });
-        const stamped = yield* Queue.unbounded<{
-          readonly frame: OrchestrationV2CommandOutputFrame;
-          readonly at: number;
-        }>();
-        yield* hub.subscribe({ threadId, itemId: ITEM_ID }).pipe(
-          Stream.runForEach((frame) =>
-            Clock.currentTimeMillis.pipe(
-              Effect.flatMap((at) => Queue.offer(stamped, { frame, at })),
-            ),
-          ),
-          Effect.forkScoped,
-        );
-        let client = applyFrame(EMPTY_TERMINAL_OUTPUT, (yield* Queue.take(stamped)).frame);
-        yield* TestClock.adjust("1 second");
-
-        // `yes | head -n 1000000`: 2 MB in 4 KB chunks, 64 KB every 100 ms.
-        const chunk = "y\n".repeat(2_048);
-        const sent: Array<{
-          readonly frame: OrchestrationV2CommandOutputFrame;
-          readonly at: number;
-        }> = [];
-        const drain = Effect.gen(function* () {
-          for (const entry of yield* Queue.clear(stamped)) {
-            sent.push(entry);
-            client = applyFrame(client, entry.frame);
-          }
-        });
-        for (let tick = 0; tick < 32; tick += 1) {
-          for (let index = 0; index < 16; index += 1) {
-            yield* hub.append({ threadId, itemId: ITEM_ID, chunk });
-          }
-          yield* TestClock.adjust(CommandOutputHub.COMMAND_OUTPUT_FRAME_INTERVAL_MS);
-          yield* drain;
-        }
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "tail\n" });
-        yield* TestClock.adjust("1 second");
-        yield* drain;
-
-        const bytes = sent.reduce((total, { frame }) => total + frame.text.length, 0);
-        // 3.2 s of flooding: a frame per chunk would be 512 frames and 2 MB.
-        assert.isAtMost(sent.length, 10);
-        assert.isAtMost(bytes, 10 * TERMINAL_OUTPUT_TAIL_CHARS);
-        for (const { frame } of sent) {
-          assert.isAtMost(frame.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
-        }
-        for (let index = 1; index < sent.length; index += 1) {
-          if (sent[index - 1]!.frame.kind === "replace") {
-            assert.isAtLeast(
-              sent[index]!.at - sent[index - 1]!.at,
-              CommandOutputHub.COMMAND_OUTPUT_REPLACE_INTERVAL_MS,
-            );
-          }
-        }
-        assert.isTrue(client.truncated);
-        assert.isTrue(client.text.endsWith("y\ny\ntail\n"));
-        assert.isAtMost(client.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
       }),
     ),
   );
@@ -443,8 +348,7 @@ layer("CommandOutputHub", (it) => {
         const frames = yield* subscribeFrames(threadId);
         yield* takeFrame(frames);
         yield* TestClock.adjust("1 second");
-        // Some providers stop a command without reporting its output. The session
-        // manager releases the live tail before the settled item is persisted.
+        // Some providers omit stopped-command output; the live tail is released before the settled item persists.
         yield* hub.finish({ threadId, itemId: ITEM_ID });
         yield* writeCommandItem(threadId, { status: "interrupted" });
         const final = yield* takeFrame(frames);

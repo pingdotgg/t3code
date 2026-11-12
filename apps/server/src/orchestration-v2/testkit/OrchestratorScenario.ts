@@ -75,6 +75,10 @@ export type OrchestratorV2ScenarioStep =
       readonly threadId: ThreadId;
       readonly runId: OrchestrationV2Run["id"];
       readonly itemType: OrchestrationV2TurnItem["type"];
+      /** Wait until the item also has this status. */
+      readonly itemStatus?: OrchestrationV2TurnItem["status"];
+      /** Look in the threads of the run's provider subagents instead of the run itself. */
+      readonly inSubagentThreads?: boolean;
     }
   | {
       readonly type: "release_replay_gate_after_waiting";
@@ -131,9 +135,12 @@ export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<Orchestr
 function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
   switch (command.type) {
     case "thread.create":
+    case "thread.stop":
     case "thread.archive":
     case "thread.unarchive":
     case "thread.delete":
+    case "thread.guest-share.close":
+    case "thread.guest-message.dismiss":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -144,6 +151,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.unpin":
     case "thread.pin.reorder":
     case "thread.active.reorder":
+    case "thread.tag.set":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -166,6 +174,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "subagent.stop":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
+    case "queued-run.start":
     case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
@@ -215,10 +224,7 @@ const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
   );
 
 const SCENARIO_WAIT_ATTEMPTS = 10_000;
-// Iterations count event-loop turns, not time: while async work (git
-// subprocesses, fixture IO) is in flight the loop is idle and the counter
-// burns at full speed on slow runners. A wait is exhausted only once BOTH
-// the iteration budget and this wall-clock deadline are spent.
+// Iteration budgets burn through idle event-loop turns during async I/O; exhaust both iterations and wall-clock deadline.
 const SCENARIO_WAIT_DEADLINE_MS = 60_000;
 const scenarioWaitDeadline = () => performance.now() + SCENARIO_WAIT_DEADLINE_MS;
 const scenarioWaitExhausted = (attemptsRemaining: number, deadlineAt: number) =>
@@ -278,19 +284,18 @@ export function runOrchestratorV2Scenario(
       const capturedShellSnapshots = new Map<string, OrchestrationV2ThreadShellSnapshot>();
       let anonymousBackgroundDispatchIndex = 0;
 
-      const awaitDispatch = (key: string) =>
-        Effect.gen(function* () {
-          const fiber = backgroundDispatches.get(key);
-          if (!fiber) {
-            return yield* new OrchestratorV2ScenarioStepError({
-              scenario: scenario.name,
-              step: `await:${key}`,
-            });
-          }
-          const events = yield* Fiber.join(fiber);
-          backgroundDispatches.delete(key);
-          storedEventGroups.push(events);
-        });
+      const awaitDispatch = Effect.fn("awaitDispatch")(function* (key: string) {
+        const fiber = backgroundDispatches.get(key);
+        if (!fiber) {
+          return yield* new OrchestratorV2ScenarioStepError({
+            scenario: scenario.name,
+            step: `await:${key}`,
+          });
+        }
+        const events = yield* Fiber.join(fiber);
+        backgroundDispatches.delete(key);
+        storedEventGroups.push(events);
+      });
 
       const waitForPendingRuntimeRequest = (
         threadId: ThreadId,
@@ -445,6 +450,8 @@ export function runOrchestratorV2Scenario(
         threadId: ThreadId,
         runId: OrchestrationV2Run["id"],
         itemType: OrchestrationV2TurnItem["type"],
+        itemStatus: OrchestrationV2TurnItem["status"] | undefined,
+        inSubagentThreads: boolean,
         attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
         deadlineAt = scenarioWaitDeadline(),
       ): Effect.Effect<
@@ -454,16 +461,21 @@ export function runOrchestratorV2Scenario(
       > =>
         Effect.gen(function* () {
           const projection = yield* orchestrator.getThreadProjection(threadId);
-          const hasTurnItem = projection.turnItems.some(
-            (item) => item.runId === runId && item.type === itemType,
-          );
-          if (hasTurnItem) {
-            return;
+          const matches = (item: OrchestrationV2TurnItem) =>
+            item.type === itemType && (itemStatus === undefined || item.status === itemStatus);
+          if (!inSubagentThreads) {
+            if (projection.turnItems.some((item) => item.runId === runId && matches(item))) return;
+          } else {
+            for (const subagent of projection.subagents) {
+              if (subagent.runId !== runId || subagent.childThreadId === null) continue;
+              const child = yield* orchestrator.getThreadProjection(subagent.childThreadId);
+              if (child.turnItems.some(matches)) return;
+            }
           }
           if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
             return yield* new OrchestratorV2ScenarioStepError({
               scenario: scenario.name,
-              step: `await_run_turn_item:${runId}:${itemType}`,
+              step: `await_run_turn_item:${runId}:${itemType}${itemStatus === undefined ? "" : `:${itemStatus}`}`,
             });
           }
           yield* yieldToRuntime;
@@ -471,6 +483,8 @@ export function runOrchestratorV2Scenario(
             threadId,
             runId,
             itemType,
+            itemStatus,
+            inSubagentThreads,
             attemptsRemaining - 1,
             deadlineAt,
           );
@@ -570,8 +584,7 @@ export function runOrchestratorV2Scenario(
           });
         }
         while (true) {
-          // The run settles only through the latest armed debounce; a rearm (a
-          // late frame) supersedes it with a new receipt.
+          // Only the latest debounce receipt settles the run; late frames rearm it.
           const armed = yield* Effect.promise(() =>
             gate.waitForFinishArmed(consumedFinishReceipts),
           ).pipe(
@@ -661,7 +674,13 @@ export function runOrchestratorV2Scenario(
             yield* finishHeldRun(step);
             break;
           case "await_run_turn_item":
-            yield* waitForRunTurnItem(step.threadId, step.runId, step.itemType);
+            yield* waitForRunTurnItem(
+              step.threadId,
+              step.runId,
+              step.itemType,
+              step.itemStatus,
+              step.inSubagentThreads === true,
+            );
             break;
           case "release_replay_gate_after_waiting":
             yield* releaseReplayGateAfterWaiting(step.label, step.threadId, step.runId);
@@ -726,8 +745,7 @@ export function runOrchestratorV2Scenario(
       };
     }),
   ).pipe(
-    // A failed step can leave provider frames held at a gate. Release them
-    // before the harness shuts the provider down, or teardown waits on them.
+    // Release held provider frames before shutdown so teardown cannot block on gates.
     Effect.ensuring(Effect.sync(() => options.replayGate?.releaseAll())),
   );
 }

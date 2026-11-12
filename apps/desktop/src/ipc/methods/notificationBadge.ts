@@ -17,7 +17,7 @@ const NotificationBadge = Schema.Struct({
   ),
 });
 
-export function applyNotificationBadge(
+function applyNotificationBadge(
   platform: NodeJS.Platform,
   { count, image }: typeof NotificationBadge.Type,
 ): void {

@@ -1,6 +1,7 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, settingsSecretLiteral } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -15,6 +16,9 @@ import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -38,6 +42,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
   makeOpenCodeRuntimeProbe,
   probeOpenCodeRuntime,
+  probeOpenCodeBinary,
   type ProbedOpenCode,
 } from "./versionProbe.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -50,6 +55,7 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { providerProbeEnvironment } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -67,6 +73,18 @@ const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
 
+// A loopback server runs on this environment, but can outlive its CLI installation.
+// Its reported version may therefore differ from the installed executable after an update.
+export function isLocalOpenCodeServerUrl(serverUrl: string): boolean {
+  const url = URL.parse(serverUrl.trim());
+  if (url?.protocol !== "http:" && url?.protocol !== "https:") return false;
+  return (
+    url.hostname === "localhost" ||
+    url.hostname === "[::1]" ||
+    /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(url.hostname)
+  );
+}
+
 function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -75,19 +93,35 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
-/**
- * OpenCode 1.x ships as `opencode-ai` and 2.x as `@opencode/cli`. An install is
- * only ever updated within its own package: T3 never moves a 1.x install onto
- * 2.x or back, since 2.x converts the shared database in place.
- */
+function openCodeNativeHome(commandPath: string): string | null {
+  const slashed = commandPath.replaceAll("\\", "/");
+  const match = /\/\.opencode\/bin\/opencode(?:\.exe)?$/i.exec(slashed);
+  if (!match) return null;
+  return match.index === 0 ? "/" : slashed.slice(0, match.index);
+}
+
+/** Update only within the installed package generation; 2.x converts the shared database in place. */
 export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
   makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: generation === "v2" ? "@opencode/cli" : "opencode-ai",
     nativeUpdate: {
-      args: ["upgrade"],
+      // `isOpenCodeNativeCommandPath` is the curl installer's own binary. Name the
+      // method so OpenCode does not have to infer it from `process.execPath`, which
+      // fails when the binary is launched through a wrapper or shim.
+      args: ["upgrade", "--method", "curl"],
       isCommandPath: isOpenCodeNativeCommandPath,
+      requiresCommandPath: true,
+      // The curl installer writes to `$HOME/.opencode/bin`, so point HOME at the install it replaces.
+      env: (context) => {
+        const home =
+          openCodeNativeHome(context.realCommandPath) ??
+          openCodeNativeHome(context.resolvedCommandPath);
+        return home ? { HOME: home } : {};
+      },
     },
+    // mise's `opencode` follows releases into 2.x, so it would upgrade 1.x across that line.
+    mise: { tool: "opencode", upgrade: generation === "v2" },
   });
 
 type OpenCodeRuntimeProbe = Effect.Success<
@@ -104,13 +138,10 @@ function byOpenCodeRuntime<A, E, R, PE>(
   );
 }
 
-/**
- * Capability and selection reads are hot, so they use the last successful probe (1.x before one
- * lands) and never wait on a slow server. Opening a session waits for a probe, so each server is
- * spoken to in its own protocol.
- */
+// Hot reads use the last successful probe; session opens await it to select the correct protocol.
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
+  readonly resolve: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>;
   readonly v1: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly v2: ProviderAdapter.ProviderAdapterV2["Service"];
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
@@ -120,44 +151,62 @@ function selectOpenCodeRuntimeAdapter(input: {
   return {
     instanceId: input.v1.instanceId,
     driver: DRIVER_KIND,
-    getCapabilities: () => Effect.flatMap(hot, (adapter) => adapter.getCapabilities()),
+    getCapabilities: Effect.fn("OpenCodeDriver.getCapabilities")(function* () {
+      const probed = Option.getOrUndefined(yield* input.probe.lastSuccess);
+      const adapter = yield* pick(Effect.succeed(probed));
+      const capabilities = yield* adapter.getCapabilities();
+      return {
+        ...capabilities,
+        turns: {
+          ...capabilities.turns,
+          supportsNativeGoals:
+            capabilities.turns.supportsNativeGoals ??
+            (probed?.generation === "v2" && compareSemverVersions(probed.version, "2.2.5") >= 0),
+        },
+      };
+    }),
     planSelectionTransition: (transition) =>
       Effect.flatMap(hot, (adapter) => adapter.planSelectionTransition(transition)),
     openSession: (session) =>
-      Effect.flatMap(pick(input.probe.get), (adapter) => adapter.openSession(session)),
+      Effect.flatMap(pick(input.resolve), (adapter) => adapter.openSession(session)),
   };
 }
 
 function selectOpenCodeRuntimeTextGeneration(
-  probe: OpenCodeRuntimeProbe,
+  resolve: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>,
   v1: ProviderTextGeneration,
   v2: ProviderTextGeneration,
 ): ProviderTextGeneration {
   return {
     generateCommitMessage: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateCommitMessage(input),
         v2: v2.generateCommitMessage(input),
       }),
     generatePrContent: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generatePrContent(input),
         v2: v2.generatePrContent(input),
       }),
     generateBranchName: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateBranchName(input),
         v2: v2.generateBranchName(input),
       }),
     generateThreadTitle: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateThreadTitle(input),
         v2: v2.generateThreadTitle(input),
       }),
     generateReviewGuide: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
+      }),
+    generateTranscriptionPostProcessing: (input) =>
+      byOpenCodeRuntime(resolve, {
+        v1: v1.generateTranscriptionPostProcessing(input),
+        v2: v2.generateTranscriptionPostProcessing(input),
       }),
   };
 }
@@ -166,7 +215,8 @@ export type OpenCodeDriverEnv =
   | OpenCodeAdapterV2.OpenCodeAdapterV2DriverEnv
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -186,343 +236,432 @@ export const OpenCodeDriver: ProviderDriver<
   configSchema: OpenCodeSettings,
   defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
   usage: openCodeUsageReader,
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const pathService = yield* Path.Path;
-      const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
-      const httpClient = yield* HttpClient.HttpClient;
-      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-      const crypto = yield* Crypto.Crypto;
-      const host = yield* ProviderHost.ProviderHost;
-      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
-        instanceId,
-      });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
-      const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
-        probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
-        ),
-      );
-      const noUpdate = makeManualOnlyProviderMaintenanceCapabilities({
-        provider: DRIVER_KIND,
-        packageName: null,
-      });
-      const maintenanceFor = (probed: typeof runtimeProbe.get) =>
-        probed.pipe(
-          Effect.map((result) => result.generation),
-          Effect.option,
-          Effect.flatMap((generation) =>
-            Option.isNone(generation)
-              ? Effect.succeed(noUpdate)
-              : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
-                  binaryPath: effectiveConfig.binaryPath,
-                  env: processEnv,
-                }),
-          ),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, pathService),
-        );
-      const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        maintenanceFor(runtimeProbe.get),
-      );
-      const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
-        !effectiveConfig.enabled
-          ? Effect.succeed(noUpdate)
-          : options?.fresh === true
-            ? runtimeProbe.refresh.pipe(
-                Effect.ignore,
-                Effect.andThen(cachedMaintenance({ fresh: true })),
-              )
-            : cachedMaintenance();
-      const openCodeV1Adapter = yield* OpenCodeAdapterV2.OpenCodeAdapterV2Driver.create({
-        instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build OpenCode orchestration adapter.",
-              cause,
-            }),
-        ),
-      );
-      const openCode2Server = yield* OpenCode2Server.make({
-        binaryPath: effectiveConfig.binaryPath,
-        serverUrl: effectiveConfig.serverUrl,
-        serverPassword: effectiveConfig.serverPassword,
-        directory: host.paths.cwd,
-        environment: processEnv,
-      }).pipe(
+  create: Effect.fn("OpencodeDriver.create")(function* ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment,
+    enabled,
+    config,
+  }) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
+    const httpClient = yield* HttpClient.HttpClient;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const digest = yield* Digest.Digest;
+    const host = yield* ProviderHost.ProviderHost;
+    const processEnv = yield* mergeProviderInstanceEnvironment(environment);
+    const continuationIdentity = defaultProviderContinuationIdentity({
+      driverKind: DRIVER_KIND,
+      instanceId,
+    });
+    const stampIdentity = withInstanceIdentity({
+      instanceId,
+      driverKind: DRIVER_KIND,
+      displayName,
+      accentColor,
+      continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    const effectiveConfig = {
+      ...config,
+      enabled,
+      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+      // The instance registry has already read a referenced password from its secret provider.
+      serverPassword: settingsSecretLiteral(config.serverPassword),
+    } satisfies OpenCodeSettings;
+    const probeRuntime = (probeEnv: NodeJS.ProcessEnv) =>
+      probeOpenCodeRuntime(effectiveConfig, probeEnv).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
-        Effect.provideService(
-          OpenCode2Client.OpenCode2Client,
-          yield* OpenCode2Client.make.pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-          ),
-        ),
       );
-      const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
-        probe: runtimeProbe,
-        v1: openCodeV1Adapter,
-        v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
-          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+    const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
+      probeRuntime(providerProbeEnvironment(processEnv)),
+    );
+    // A mise shim cannot install OpenCode offline; a session or text generation the user started
+    // may, so without a cached result it probes once online and caches what mise installed.
+    const resolveRuntime =
+      effectiveConfig.serverUrl.trim().length > 0
+        ? runtimeProbe.get
+        : runtimeProbe.lastSuccess.pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: Effect.succeed,
+                onNone: () => probeRuntime(processEnv).pipe(Effect.tap(runtimeProbe.record)),
+              }),
+            ),
+          );
+    const noUpdate = makeManualOnlyProviderMaintenanceCapabilities({
+      provider: DRIVER_KIND,
+      packageName: null,
+    });
+    const maintenanceFor = (probed: typeof runtimeProbe.get) =>
+      probed.pipe(
+        Effect.map((result) => result.generation),
+        Effect.option,
+        Effect.flatMap((generation) =>
+          Option.isNone(generation)
+            ? Effect.succeed(noUpdate)
+            : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
+                binaryPath: effectiveConfig.binaryPath,
+                env: processEnv,
+              }),
         ),
-      });
-      const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-        openCode2Server.withConnection(({ client }) =>
-          loadOpenCode2Catalog(client, host.paths.cwd),
-        ),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
       );
-      const listOpenCode2Workspace = (cwd: string) =>
-        openCode2Server.withConnection(({ client, events }) =>
-          Effect.gen(function* () {
-            const location = { directory: cwd };
-            const scanned = yield* Deferred.make<void>();
-            const pending = new Set(["command.updated", "skill.updated"]);
-            const stream = yield* events.pipe(Effect.option);
-            if (stream._tag === "Some") {
-              yield* stream.value.pipe(
-                Stream.runForEach((event) =>
-                  "location" in event &&
-                  event.location?.directory === cwd &&
-                  pending.delete(event.type) &&
-                  pending.size === 0
-                    ? Deferred.succeed(scanned, undefined)
-                    : Effect.void,
-                ),
-                Effect.ignore,
-                Effect.forkScoped,
-              );
-            }
-            return yield* loadOpenCode2Workspace(
-              Effect.all(
-                {
-                  skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
-                  commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
-                },
-                { concurrency: "unbounded" },
-              ),
-              Deferred.await(scanned),
-            );
-          }).pipe(Effect.scoped),
-        );
-      const serverOwner = yield* OpenCodeServerOwner.make({
-        binaryPath: effectiveConfig.binaryPath,
-        directory: host.paths.cwd,
-        ...(effectiveConfig.serverPassword
-          ? { serverPassword: effectiveConfig.serverPassword }
-          : {}),
-        environment: processEnv,
-      });
-      const textGeneration = selectOpenCodeRuntimeTextGeneration(
-        runtimeProbe,
-        yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
-          Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-        ),
-        yield* OpenCode2TextGeneration.make().pipe(
-          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
-        ),
-      );
-
-      const checkProvider = Effect.all(
-        {
-          provider: checkOpenCodeProviderStatus(
-            effectiveConfig,
-            host.paths.cwd,
-            runtimeProbe.refresh,
-            loadOpenCode2Models,
-          ),
-          usageLimits: readOpenCodeGoUsageLimits({
-            enabled: effectiveConfig.enabled,
-            serverUrl: effectiveConfig.serverUrl,
-            environment: processEnv,
+    const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
+      maintenanceFor(
+        isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+          ? probeOpenCodeBinary(
+              effectiveConfig.binaryPath,
+              providerProbeEnvironment(processEnv),
+            ).pipe(
+              Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+              Effect.catch(() => runtimeProbe.get),
+            )
+          : runtimeProbe.get,
+      ),
+    );
+    const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
+      !effectiveConfig.enabled
+        ? Effect.succeed(noUpdate)
+        : options?.fresh === true
+          ? runtimeProbe.refresh.pipe(
+              Effect.ignore,
+              Effect.andThen(cachedMaintenance({ fresh: true })),
+            )
+          : cachedMaintenance();
+    const openCodeV1Adapter = yield* OpenCodeAdapterV2.OpenCodeAdapterV2Driver.create({
+      instanceId,
+      displayName,
+      accentColor,
+      environment,
+      enabled,
+      config: effectiveConfig,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Failed to build OpenCode orchestration adapter.",
+            cause,
           }),
+      ),
+    );
+    const openCode2Server = yield* OpenCode2Server.make({
+      binaryPath: effectiveConfig.binaryPath,
+      serverUrl: effectiveConfig.serverUrl,
+      serverPassword: effectiveConfig.serverPassword,
+      directory: host.paths.cwd,
+      environment: processEnv,
+    }).pipe(
+      Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+      Effect.provideService(
+        OpenCode2Client.OpenCode2Client,
+        yield* OpenCode2Client.make.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+      ),
+    );
+    const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
+      probe: runtimeProbe,
+      resolve: resolveRuntime,
+      v1: openCodeV1Adapter,
+      v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+      ),
+    });
+    const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
+      openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+    );
+    const listOpenCode2Workspace = (cwd: string) =>
+      openCode2Server.withConnection(({ client, events }) =>
+        Effect.gen(function* () {
+          // OpenCode names a location by its resolved path (no trailing slash or `..`).
+          const directory = pathService.resolve(cwd);
+          const location = { directory };
+          const scanned = yield* Deferred.make<void>();
+          const pending = new Set(["command.updated", "skill.updated"]);
+          const stream = yield* events.pipe(Effect.option);
+          if (stream._tag === "Some") {
+            yield* stream.value.pipe(
+              Stream.runForEach((event) =>
+                "location" in event &&
+                event.location?.directory === directory &&
+                pending.delete(event.type) &&
+                pending.size === 0
+                  ? Deferred.succeed(scanned, undefined)
+                  : Effect.void,
+              ),
+              Effect.ignore,
+              Effect.forkScoped,
+            );
+          }
+          return yield* loadOpenCode2Workspace(
+            Effect.all(
+              {
+                skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
+                commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
+              },
+              { concurrency: "unbounded" },
+            ),
+            Deferred.await(scanned),
+            // Without events no scan can be awaited, so trust the first read as before.
+            stream._tag === "None"
+              ? Effect.succeed(true)
+              : client.debug.location.list().pipe(
+                  Effect.map((loaded) => loaded.some((entry) => entry.directory === directory)),
+                  Effect.timeout("2 seconds"),
+                  Effect.orElseSucceed(() => true),
+                ),
+          );
+        }).pipe(Effect.scoped),
+      );
+    const serverOwner = yield* OpenCodeServerOwner.make({
+      binaryPath: effectiveConfig.binaryPath,
+      directory: host.paths.cwd,
+      ...(effectiveConfig.serverPassword ? { serverPassword: effectiveConfig.serverPassword } : {}),
+      environment: processEnv,
+    });
+    const textGeneration = selectOpenCodeRuntimeTextGeneration(
+      resolveRuntime,
+      yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
+        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+      ),
+      yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+      ),
+    );
+
+    const checkUsageLimits = readOpenCodeGoUsageLimits({
+      enabled: effectiveConfig.enabled,
+      serverUrl: effectiveConfig.serverUrl,
+      environment: processEnv,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Digest.Digest, digest),
+    );
+    const checkProvider = Effect.all(
+      {
+        // A configured loopback server reports its running version. Probe the local
+        // CLI separately so a completed npm update is not mistaken for a failure
+        // while that independently managed server still runs the previous binary.
+        installedVersion:
+          effectiveConfig.enabled && isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+            ? probeOpenCodeBinary(
+                effectiveConfig.binaryPath,
+                providerProbeEnvironment(processEnv),
+              ).pipe(
+                Effect.map((probed) => probed.version),
+                Effect.orElseSucceed(() => undefined),
+              )
+            : Effect.void,
+        provider: checkOpenCodeProviderStatus(
+          effectiveConfig,
+          host.paths.cwd,
+          runtimeProbe.refresh,
+          loadOpenCode2Models,
+        ).pipe(
+          Effect.annotateLogs({ providerInstanceId: instanceId }),
+          Effect.annotateSpans({ providerInstanceId: instanceId }),
+        ),
+        usageLimits: checkUsageLimits,
+      },
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(({ provider, usageLimits, installedVersion }) => ({
+        ...provider,
+        usageLimits,
+        ...(installedVersion === undefined ? {} : { installedVersion }),
+      })),
+      Effect.map(stampIdentity),
+      Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+      Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+    );
+    // The CLI writes its full JSON inventory to stdout, but the Bun-compiled binary does not
+    // flush more than one 64KB pipe buffer to a non-TTY stdout, so the piped output arrives
+    // truncated and unparseable — which degrades to an empty skill list and poisons the workspace
+    // snapshot the `$` picker reads.
+    const loadWorkspaceInventory = (
+      client: Parameters<typeof OpenCodeRuntime.loadOpenCodeCommands>[0],
+    ) =>
+      Effect.all(
+        {
+          skills: openCodeRuntime.loadOpenCodeSkills(client),
+          commandInventory: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
+            Effect.timeoutOption("10 seconds"),
+            Effect.map((commands) => ({
+              commands: Option.getOrElse(commands, () => []),
+              slashCommandsPending: Option.isNone(commands),
+            })),
+            // SDK errors leave command discovery to the provider's health.
+            Effect.orElseSucceed(() => ({
+              commands: [],
+              slashCommandsPending: undefined,
+            })),
+          ),
         },
         { concurrency: "unbounded" },
       ).pipe(
-        Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
-        Effect.map(stampIdentity),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, pathService),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.provideService(Crypto.Crypto, crypto),
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+        Effect.map(({ skills, commandInventory }) => ({
+          skills,
+          ...commandInventory,
+        })),
       );
-      // The CLI writes its full JSON inventory to stdout, but the Bun-compiled binary does not
-      // flush more than one 64KB pipe buffer to a non-TTY stdout, so the piped output arrives
-      // truncated and unparseable — which degrades to an empty skill list and poisons the workspace
-      // snapshot the `$` picker reads.
-      const loadWorkspaceInventory = (
-        client: Parameters<typeof OpenCodeRuntime.loadOpenCodeCommands>[0],
-      ) =>
-        Effect.all(
-          {
-            skills: openCodeRuntime.loadOpenCodeSkills(client),
-            commands: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
-              Effect.timeout("10 seconds"),
-              Effect.option,
-            ),
-          },
-          { concurrency: "unbounded" },
-        ).pipe(
-          // Only a finished lookup is reported as complete. A failed one leaves
-          // the flag unset, so the registry decides from the provider's health.
-          Effect.map(({ skills, commands }) => ({
-            skills,
-            commands: Option.getOrElse(commands, () => []),
-            slashCommandsPending: Option.isSome(commands) ? false : undefined,
-          })),
-        );
-      const loadWorkspaceForCwd = (cwd: string) =>
-        effectiveConfig.serverUrl.trim().length > 0
-          ? Effect.scoped(
-              Effect.gen(function* () {
-                const server = yield* openCodeRuntime.connectToOpenCodeServer({
-                  binaryPath: effectiveConfig.binaryPath,
-                  directory: cwd,
-                  serverUrl: effectiveConfig.serverUrl,
-                  ...(effectiveConfig.serverPassword
-                    ? { serverPassword: effectiveConfig.serverPassword }
-                    : {}),
-                  environment: processEnv,
-                });
-                const client = openCodeRuntime.createOpenCodeSdkClient({
-                  baseUrl: server.url,
-                  directory: cwd,
-                  ...(effectiveConfig.serverPassword
-                    ? { serverPassword: effectiveConfig.serverPassword }
-                    : {}),
-                });
-                return yield* loadWorkspaceInventory(client);
-              }),
-            )
-          : serverOwner.withServer((server) =>
-              loadWorkspaceInventory(
-                openCodeRuntime.createOpenCodeSdkClient({
-                  baseUrl: server.url,
-                  directory: cwd,
-                  ...(server.serverPassword !== undefined
-                    ? { serverPassword: server.serverPassword }
-                    : {}),
-                }),
-              ),
-            );
-
-      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
-        {
-          resolveMaintenance,
-          getSettings: snapshotSettings.getSettings,
-          streamSettings: snapshotSettings.streamSettings,
-          haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-          checkProviderOnSettingsChange: () => false,
-          refreshOnInterval: false,
-          initialSnapshot: (settings) =>
-            makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
-          checkProvider,
-          enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-            resolveMaintenance().pipe(
-              Effect.flatMap((maintenanceCapabilities) =>
-                enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
-                  enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-                }),
-              ),
-              Effect.provideService(HttpClient.HttpClient, httpClient),
-              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-              Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-            ),
-        },
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: `Failed to build OpenCode snapshot: ${cause.message ?? String(cause)}`,
-              cause,
+    const loadWorkspaceForCwd = (cwd: string) =>
+      effectiveConfig.serverUrl.trim().length > 0
+        ? Effect.scoped(
+            Effect.gen(function* () {
+              const server = yield* openCodeRuntime.connectToOpenCodeServer({
+                binaryPath: effectiveConfig.binaryPath,
+                directory: cwd,
+                serverUrl: effectiveConfig.serverUrl,
+                ...(effectiveConfig.serverPassword
+                  ? { serverPassword: effectiveConfig.serverPassword }
+                  : {}),
+                environment: processEnv,
+              });
+              const client = openCodeRuntime.createOpenCodeSdkClient({
+                baseUrl: server.url,
+                directory: cwd,
+                ...(effectiveConfig.serverPassword
+                  ? { serverPassword: effectiveConfig.serverPassword }
+                  : {}),
+              });
+              return yield* loadWorkspaceInventory(client);
             }),
-        ),
-      );
+          )
+        : serverOwner.withServer((server) =>
+            loadWorkspaceInventory(
+              openCodeRuntime.createOpenCodeSdkClient({
+                baseUrl: server.url,
+                directory: cwd,
+                ...(server.serverPassword !== undefined
+                  ? { serverPassword: server.serverPassword }
+                  : {}),
+              }),
+            ),
+          );
 
-      return {
-        instanceId,
-        driverKind: DRIVER_KIND,
-        continuationIdentity,
-        displayName,
-        accentColor,
-        enabled,
-        snapshot,
-        snapshotForCwd: (cwd) =>
-          !effectiveConfig.enabled
-            ? snapshot.getSnapshot
-            : byOpenCodeRuntime(runtimeProbe.get, {
-                v2: Effect.all([
-                  snapshot.getSnapshot,
-                  listOpenCode2Workspace(cwd).pipe(
-                    Effect.timeout("20 seconds"),
+    const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>({
+      resolveMaintenance,
+      getSettings: snapshotSettings.getSettings,
+      streamSettings: snapshotSettings.streamSettings,
+      haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      checkProviderOnSettingsChange: () => false,
+      // A failed or still-loading catalog must recover without a manual
+      // refresh. Healthy instances need no recurring server starts.
+      refreshOnInterval: (snapshot) =>
+        snapshot.enabled &&
+        snapshot.installed &&
+        snapshot.status !== "ready" &&
+        snapshot.auth.status === "unknown",
+      initialSnapshot: (settings) =>
+        makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+      checkProvider,
+      checkUsageLimits,
+      enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+        resolveMaintenance().pipe(
+          Effect.flatMap((maintenanceCapabilities) =>
+            enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+            }),
+          ),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+          Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+        ),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: `Failed to build OpenCode snapshot: ${cause.message ?? String(cause)}`,
+            cause,
+          }),
+      ),
+    );
+
+    return {
+      instanceId,
+      driverKind: DRIVER_KIND,
+      continuationIdentity,
+      displayName,
+      accentColor,
+      enabled,
+      snapshot,
+      // A scan never installs OpenCode: without an offline probe result it fails and keeps the
+      // last inventory rather than guessing 1.x.
+      snapshotForCwd: (cwd) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : runtimeProbe.get.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to probe OpenCode for '${cwd}'`,
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((probed) =>
+                byOpenCodeRuntime(Effect.succeed(probed), {
+                  v2: Effect.all([
+                    snapshot.getSnapshot,
+                    listOpenCode2Workspace(cwd).pipe(
+                      Effect.timeout("20 seconds"),
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderDriverError({
+                            driver: DRIVER_KIND,
+                            instanceId,
+                            detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
+                            cause,
+                          }),
+                      ),
+                    ),
+                  ]).pipe(
+                    Effect.map(([machineSnapshot, { skills, commands }]) => ({
+                      ...machineSnapshot,
+                      skills: openCode2SkillsToServerProviderSkills(skills),
+                      slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                      // A finished scan lists at least the built-ins. None means it
+                      // timed out, so the registry decides from the provider's health.
+                      slashCommandsPending: commands.length > 0 ? false : undefined,
+                    })),
+                  ),
+                  v1: Effect.all([
+                    snapshot.getSnapshot,
+                    loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
+                  ]).pipe(
+                    Effect.map(([machineSnapshot, { skills, commands, slashCommandsPending }]) => ({
+                      ...machineSnapshot,
+                      skills: openCodeSkillsToServerProviderSkills(skills),
+                      slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
+                      slashCommandsPending,
+                    })),
                     Effect.mapError(
                       (cause) =>
                         new ProviderDriverError({
                           driver: DRIVER_KIND,
                           instanceId,
-                          detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
+                          detail: `Failed to probe OpenCode commands and skills for '${cwd}'`,
                           cause,
                         }),
                     ),
                   ),
-                ]).pipe(
-                  Effect.map(([machineSnapshot, { skills, commands }]) => ({
-                    ...machineSnapshot,
-                    skills: openCode2SkillsToServerProviderSkills(skills),
-                    slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
-                    // A finished scan lists at least the built-ins. None means it
-                    // timed out, so the registry decides from the provider's health.
-                    slashCommandsPending: commands.length > 0 ? false : undefined,
-                  })),
-                ),
-                v1: Effect.all([
-                  snapshot.getSnapshot,
-                  loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
-                ]).pipe(
-                  Effect.map(([machineSnapshot, { skills, commands, slashCommandsPending }]) => ({
-                    ...machineSnapshot,
-                    skills: openCodeSkillsToServerProviderSkills(skills),
-                    slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
-                    slashCommandsPending,
-                  })),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderDriverError({
-                        driver: DRIVER_KIND,
-                        instanceId,
-                        detail: `Failed to probe OpenCode commands and skills for '${cwd}'`,
-                        cause,
-                      }),
-                  ),
-                ),
-              }),
-        orchestrationAdapter,
-        textGeneration,
-      } satisfies ProviderInstance;
-    }),
+                }),
+              ),
+            ),
+      orchestrationAdapter,
+      textGeneration,
+    } satisfies ProviderInstance;
+  }),
 };

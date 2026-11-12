@@ -7,12 +7,14 @@ import {
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   resolveProjectProviderInstanceEnabled,
+  resolveTextGenerationSelectionEnabled,
   type ResolvedServerSettings,
   type ServerSettings,
   type T3ProjectFile,
   type ThreadEnvMode,
   type WorktreeCleanupRules,
 } from "@t3tools/contracts";
+import { readCustomModelEntries } from "./model.ts";
 import { normalizeProjectPathForComparison } from "./path.ts";
 import { fallbackTextGenerationModelSelection } from "./serverSettings.ts";
 
@@ -38,19 +40,13 @@ export function hasProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
 ): boolean {
   for (const entry of Object.values(settings.projectSettingsOverrides)) {
-    // A forward-compatible decode can leave an unknown value as a present
-    // undefined; that is not an override.
+    // Forward-compatible decoding can leave a present undefined, which is not an override.
     if (Object.values(entry).some((value) => value !== undefined)) return true;
   }
   return false;
 }
 
-/**
- * The project aggregate's own model and workspace fields. They remain the
- * source of truth until the server has folded them into the override record;
- * after the fold the record alone decides, so a reset there cannot be undone
- * by a stale aggregate value.
- */
+/** Legacy aggregate fields apply only until folded into overrides, so stale values cannot undo later resets. */
 export interface LegacyProjectSettingsFields {
   readonly defaultModelSelection?: ModelSelection | null | undefined;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
@@ -139,45 +135,51 @@ function resolveProjectOverrides(
   for (const key of PROJECT_SCOPED_SERVER_SETTING_KEYS) {
     if (!Object.hasOwn(overrides, key)) continue;
     const value = overrides[key];
-    // A forward-compatible decode leaves an unknown value as a present
-    // undefined; that is not an override.
+    // Forward-compatible decoding can leave a present undefined, which is not an override.
     if (value === undefined) continue;
     if (
       (key === "textGenerationModelSelection" || key === "defaultModelSelection") &&
       value !== undefined &&
       value !== null &&
-      !resolveProjectProviderInstanceEnabled(
-        settings,
-        projectId,
-        (value as ModelSelection).instanceId,
-      )
+      !(
+        key === "textGenerationModelSelection"
+          ? resolveTextGenerationSelectionEnabled
+          : resolveProjectProviderInstanceEnabled
+      )(settings, projectId, (value as ModelSelection).instanceId)
     ) {
       continue;
+    }
+    // Clients resolve a hidden model to the catalog's first visible one, so a
+    // hidden project default would silently pick a model nobody chose.
+    // Custom models stay visible even when listed as hidden, as in the clients.
+    if (key === "defaultModelSelection" && value !== null) {
+      const { instanceId, model } = value as ModelSelection;
+      const config = settings.providerInstances[instanceId]?.config as
+        | { customModels?: unknown }
+        | undefined;
+      if (
+        settings.providerModelPreferences?.[instanceId]?.hiddenModels.includes(model) &&
+        !readCustomModelEntries(config?.customModels).some((entry) => entry.slug === model)
+      ) {
+        continue;
+      }
     }
     effective[key] = value;
     sources[key] = "project";
   }
   const textGeneration = effective.textGenerationModelSelection as ModelSelection;
-  if (!resolveProjectProviderInstanceEnabled(settings, projectId, textGeneration.instanceId)) {
+  if (!resolveTextGenerationSelectionEnabled(settings, projectId, textGeneration.instanceId)) {
     const fallback = fallbackTextGenerationModelSelection(
       settings.providerInstances,
       (instanceId) => resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
-      {
-        includeConfiguredInstances: true,
-        defaultModelSelection: effective.defaultModelSelection as ModelSelection | null,
-      },
+      { defaultModelSelection: effective.defaultModelSelection as ModelSelection | null },
     );
     if (fallback !== null) effective.textGenerationModelSelection = fallback;
   }
   return { settings: effective as ServerSettings, sources, overrides };
 }
 
-/**
- * A project the environment made from just a name (a folder directly inside
- * `ServerConfig.newProjectsRoot`) has only its first commit, so until it has a
- * thread, a new thread works in the project checkout even when the environment
- * default is a new worktree.
- */
+/** New name-only projects use their checkout until the first thread, even when the default is worktree. */
 export function resolveNewThreadEnvMode(input: {
   readonly projectSettings: ResolvedProjectSettings<ResolvedServerSettings>;
   readonly workspaceRoot: string | null;
@@ -205,13 +207,11 @@ export function resolveNewThreadEnvMode(input: {
   return isNewProjectFolder ? "local" : configured;
 }
 
-export function withProjectSettingsOverrides(
-  settings: Pick<ServerSettings, "projectSettingsOverrides">,
-  projectId: ProjectId,
-  next: ProjectSettingsOverrides | null,
-): ServerSettings["projectSettingsOverrides"] {
-  const { [projectId]: _removed, ...rest } = settings.projectSettingsOverrides;
-  return next === null || Object.keys(next).length === 0 ? rest : { ...rest, [projectId]: next };
+export function resolveSendEnvMode(input: {
+  readonly requestedEnvMode: ThreadEnvMode;
+  readonly isGitRepo: boolean;
+}): ThreadEnvMode {
+  return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
 export function clearProjectSettingsOverrides(

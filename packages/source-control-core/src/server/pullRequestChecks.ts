@@ -36,35 +36,56 @@ function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean 
   );
 }
 
+export function sortChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+): ReadonlyArray<PullRequestCheck> {
+  return checks.toSorted(
+    (a, b) =>
+      Number(b.status === "failure" || b.status === "cancelled") -
+      Number(a.status === "failure" || a.status === "cancelled"),
+  );
+}
+
 /**
- * A host's rollup is a list of runs, not a list of checks: while a workflow is being re-run — or
- * while a second run of it is already live — the same check arrives twice, and both copies reach
- * the reader as what looks like a duplicate. Nothing in a check carries an id, so the name is what
- * identifies it, qualified by the workflow it belongs to since two workflows are free to name a
- * job the same thing.
+ * Rollups repeat checks during reruns or overlapping runs, and checks carry no ids.
+ * Identify checks by workflow plus name because different workflows may share job names.
  */
 export function dedupeChecks(
   entries: ReadonlyArray<{
     readonly check: PullRequestCheck;
     readonly workflowName: string | null;
     readonly at: string | null;
+    // Hosts with one-second timestamps can date a final and an earlier status alike.
+    readonly sequence?: number;
   }>,
 ): ReadonlyArray<PullRequestCheck> {
   const newestByCheck = new Map<string, (typeof entries)[number]>();
   for (const entry of entries) {
     const key = JSON.stringify([entry.workflowName ?? "", entry.check.name]);
     const kept = newestByCheck.get(key);
-    if (kept === undefined || isAtLeastAsNew(entry.at, kept.at)) newestByCheck.set(key, entry);
+    if (kept !== undefined) {
+      if (!isAtLeastAsNew(entry.at, kept.at)) continue;
+      if (
+        entry.sequence !== undefined &&
+        kept.sequence !== undefined &&
+        entry.sequence < kept.sequence &&
+        isAtLeastAsNew(kept.at, entry.at)
+      )
+        continue;
+    }
+    newestByCheck.set(key, entry);
   }
   const survivors = [...newestByCheck.values()];
   const countsByName = new Map<string, number>();
   for (const entry of survivors) {
     countsByName.set(entry.check.name, (countsByName.get(entry.check.name) ?? 0) + 1);
   }
-  return survivors.map((entry) => {
-    const workflowName = entry.workflowName ?? "";
-    return workflowName.length > 0 && (countsByName.get(entry.check.name) ?? 0) > 1
-      ? { ...entry.check, name: `${workflowName} / ${entry.check.name}` }
-      : entry.check;
-  });
+  return sortChecks(
+    survivors.map((entry) => {
+      const workflowName = entry.workflowName ?? "";
+      return workflowName.length > 0 && (countsByName.get(entry.check.name) ?? 0) > 1
+        ? { ...entry.check, name: `${workflowName} / ${entry.check.name}` }
+        : entry.check;
+    }),
+  );
 }

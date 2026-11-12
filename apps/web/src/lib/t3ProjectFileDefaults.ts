@@ -23,6 +23,6 @@ export async function readT3ProjectFile(
     T3_PROJECT_FILE_NAME,
     result._tag === "Success" ? result.value : null,
   );
-  if (data === null || data.truncated) return null;
+  if (data === null || data.exists === false || data.truncated) return null;
   return parseT3ProjectFile(data.contents);
 }

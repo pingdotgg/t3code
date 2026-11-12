@@ -15,19 +15,19 @@ export function settingsScopeEnvironmentAddress(environment: ScopeEnvironment) {
 
 export function settingsScopeEnvironmentLabels(
   environment: ScopeEnvironment,
-  environments?: readonly ScopeEnvironment[],
+  environments: readonly ScopeEnvironment[],
 ) {
-  const duplicates = environments?.filter(
+  const duplicates = environments.filter(
     (other) =>
       other.environmentId !== environment.environmentId && other.label === environment.label,
   );
   const address = settingsScopeEnvironmentAddress(environment);
-  const secondary = duplicates?.some((other) => settingsScopeEnvironmentAddress(other) === address)
+  const secondary = duplicates.some((other) => settingsScopeEnvironmentAddress(other) === address)
     ? environment.displayUrl || environment.environmentId
     : address;
   return {
     primary: environment.label,
-    secondary: environments === undefined || duplicates?.length ? secondary : "",
+    secondary: duplicates.length ? secondary : "",
   };
 }
 
@@ -67,6 +67,17 @@ export function environmentAxisValue(
 
 export function projectAxisValue(search: SettingsScopeSearch): string {
   return search.project ?? ALL_PROJECTS_VALUE;
+}
+
+export function projectScopeMenuGroups(
+  groups: readonly SidebarProjectSnapshot[],
+  search: Pick<SettingsScopeSearch, "machine">,
+) {
+  const { machine } = search;
+  if (machine === undefined) return groups;
+  return groups.filter((group) =>
+    group.memberProjects.some((member) => member.environmentId === machine),
+  );
 }
 
 export function selectEnvironmentAxis(

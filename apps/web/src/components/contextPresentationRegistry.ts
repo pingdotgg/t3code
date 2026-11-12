@@ -48,6 +48,10 @@ const DEFINITIONS = [
     kind: "thread",
     capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
   },
+  {
+    kind: "environment",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
 ] as const satisfies ReadonlyArray<ContextPresentationDefinition>;
 
 function buildDefinitionRegistry(
@@ -68,9 +72,9 @@ function buildDefinitionRegistry(
   return registry;
 }
 
-export const CONTEXT_PRESENTATION_DEFINITIONS = buildDefinitionRegistry(DEFINITIONS);
+const CONTEXT_PRESENTATION_DEFINITIONS = buildDefinitionRegistry(DEFINITIONS);
 
-export function contextPresentationDefinition(
+function contextPresentationDefinition(
   kind: KnownComposerContextKind,
 ): ContextPresentationDefinition {
   return CONTEXT_PRESENTATION_DEFINITIONS.get(kind)!;

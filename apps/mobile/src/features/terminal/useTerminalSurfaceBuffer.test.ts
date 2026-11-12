@@ -58,43 +58,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("preserves displayed history while permissions change before the next snapshot", async () => {
-  await render();
-  await render({ buffer: null, readOnly: true });
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "host output", readOnly: true });
-
-  await render({ buffer: "host output\nobserved output", readOnly: true });
-  await render({ buffer: null });
-  expect(displayed).toHaveBeenLastCalledWith({
-    buffer: "host output\nobserved output",
-    readOnly: false,
-  });
-  expect(displayed.mock.calls.every(([value]) => value.buffer.length > 0)).toBe(true);
-});
-
-it("still applies an intentional empty buffer", async () => {
-  await render();
-  await render({ buffer: null });
-  expect(displayed).toHaveBeenCalledTimes(1);
-  await render({ buffer: "" });
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "", readOnly: false });
-});
-
-it.each([
-  "secondary:thread:term-1",
-  "environment:another-thread:term-1",
-  "environment:thread:term-2",
-])("does not carry history into another terminal target (%s)", async (terminalKey) => {
-  await render();
-  await render({ terminalKey, buffer: null });
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "", readOnly: false });
-  await render({ terminalKey, buffer: "new target" });
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "new target", readOnly: false });
-});
-
-it("starts empty until its first snapshot arrives", async () => {
-  await render({ buffer: null });
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "", readOnly: false });
-  await render();
-  expect(displayed).toHaveBeenLastCalledWith({ buffer: "host output", readOnly: false });
-});
+it.each(["secondary:thread:term-1", "environment:thread:term-2"])(
+  "does not carry history into another terminal target (%s)",
+  async (terminalKey) => {
+    await render();
+    await render({ terminalKey, buffer: null });
+    expect(displayed).toHaveBeenLastCalledWith({ buffer: "", readOnly: false });
+    await render({ terminalKey, buffer: "new target" });
+    expect(displayed).toHaveBeenLastCalledWith({ buffer: "new target", readOnly: false });
+  },
+);

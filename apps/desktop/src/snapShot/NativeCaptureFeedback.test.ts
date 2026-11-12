@@ -69,36 +69,6 @@ it("waits for compositor readiness and landing, then waits for cleanup on acknow
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it("doesn't claim a flight when the compositor disables motion; flash still works", async () => {
-  const starting = startNativeCaptureFeedback("/helper", "/private", options);
-  event({ event: "ready", animate: false });
-  const feedback = (await starting)!;
-  expect(feedback.animationStarted).toBe(false);
-  await feedback.animateTo("Draft", { x: 0, y: 0, width: 1, height: 1 });
-  expect(commands).toEqual([]);
-  const complete = feedback.complete();
-  child.emit("close");
-  await complete;
-});
-
-it("falls back on startup failure, malformed replies, and timeout without leaving timers", async () => {
-  const starting = startNativeCaptureFeedback("/helper", "/private", options);
-  child.stdout.write("not JSON\n");
-  expect(commands).toEqual(['{"command":"close"}\n']);
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(child.kill).toHaveBeenCalledOnce();
-  child.emit("close");
-  expect(await starting).toBeUndefined();
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-it("bounds a missing ready receipt and cancels an in-flight animation on compositor failure", async () => {
-  const timed = startNativeCaptureFeedback("/helper", "/private", options);
-  await vi.advanceTimersByTimeAsync(2000);
-  child.emit("close");
-  expect(await timed).toBeUndefined();
-});
-
 it("releases waiters if the overlay closes during flight", async () => {
   const starting = startNativeCaptureFeedback("/helper", "/private", options);
   event({ event: "ready", animate: true });

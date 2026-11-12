@@ -1,3 +1,5 @@
+import * as Path from "effect/Path";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import { OpenCode, type OpenCodeClient } from "@opencode/client/effect";
 import { OpenCodeEvent } from "@opencode/protocol/groups/event";
 import * as Context from "effect/Context";
@@ -50,12 +52,57 @@ export type OpenCode2StreamEvent =
   | OpenCode2UnreadableTerminal
   | OpenCode2UnreadableStart;
 
-/**
- * `events` succeeds once the server accepted the subscription: the stream is
- * volatile, so callers subscribe before they start work whose events they need.
- */
+const ShellJobs = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literal("shell"),
+      shellID: Schema.String,
+      sessionID: Schema.String,
+      command: Schema.String,
+      status: Schema.Literals(["running", "completed", "error", "cancelled"]),
+    }),
+  ),
+});
+export class OpenCode2ImageError extends Schema.TaggedError<OpenCode2ImageError>()(
+  "OpenCode2ImageError",
+  { cause: Schema.Defect() },
+) {}
+
+const IMAGE_MIME: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+export const imagePreviewMime = (extension: string) => IMAGE_MIME[extension.toLowerCase()];
+
+const NativeImageJob = Schema.Struct({
+  kind: Schema.Literal("image"),
+  id: Schema.String,
+  sessionID: Schema.String,
+  status: Schema.Literals(["running", "completed", "error", "cancelled"]),
+  path: Schema.String,
+  model: Schema.String,
+});
+const decodeJobs = Schema.decodeUnknownEffect(
+  Schema.Struct({ data: Schema.Array(Schema.Unknown) }),
+);
+const decodeImageJob = Schema.decodeUnknownOption(NativeImageJob);
+
+/** events resolves on subscription acceptance; subscribe before work because the stream is volatile. */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;
+  readonly shellJobs?: (
+    sessionID: string,
+  ) => Effect.Effect<typeof ShellJobs.Type, HttpClientError.HttpClientError | Schema.SchemaError>;
+  readonly imageJobs: (
+    sessionID: string,
+  ) => Effect.Effect<ReadonlyArray<typeof NativeImageJob.Type>, OpenCode2ImageError>;
+  readonly readImage: (
+    path: string,
+    directory: string,
+  ) => Effect.Effect<{ uri: string; mime: string }, OpenCode2ImageError>;
   readonly events: Effect.Effect<
     Stream.Stream<
       OpenCode2StreamEvent,
@@ -75,11 +122,9 @@ export class OpenCode2Client extends Context.Service<
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Client") {}
 
-/**
- * OpenCode writes a `: heartbeat` comment every 10 to 15 seconds, so this long
- * without a single byte means the server is stuck, not idle.
- */
+// Heartbeats arrive every 10-15 seconds; longer silence means stuck, not idle.
 const SILENT_STREAM_TIMEOUT = "45 seconds";
+const SUBSCRIPTION_TIMEOUT = "10 seconds";
 
 const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(OpenCodeEvent));
 const decodeEnvelope = Schema.decodeUnknownOption(
@@ -91,34 +136,34 @@ const decodeEnvelope = Schema.decodeUnknownOption(
   ),
 );
 
-const undecodable = (data: string) =>
-  Effect.gen(function* () {
-    const envelope = decodeEnvelope(data);
-    const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
-    const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
-    if (isExecutionEnd(type) && sessionID !== undefined) {
-      yield* Effect.logWarning(
-        "Ended an OpenCode execution from an event this build cannot decode.",
-        {
-          type,
-        },
-      );
-      return Result.succeed<OpenCode2StreamEvent>({
-        type: "unreadable.execution.ended",
-        executionType: type,
-        sessionID,
-      });
-    }
-    if (type === "session.execution.started" && sessionID !== undefined) {
-      yield* Effect.logDebug("Read an OpenCode execution start this build cannot decode.");
-      return Result.succeed<OpenCode2StreamEvent>({
-        type: "unreadable.execution.started",
-        sessionID,
-      });
-    }
-    yield* Effect.logDebug("Skipped an OpenCode event this build cannot decode.", { type });
-    return Result.failVoid;
-  });
+// Rejected stream frames can be frequent when the server introduces new event types.
+const undecodable = Effect.fnUntraced(function* (data: string) {
+  const envelope = decodeEnvelope(data);
+  const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
+  const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
+  if (isExecutionEnd(type) && sessionID !== undefined) {
+    yield* Effect.logWarning(
+      "Ended an OpenCode execution from an event this build cannot decode.",
+      {
+        type,
+      },
+    );
+    return Result.succeed<OpenCode2StreamEvent>({
+      type: "unreadable.execution.ended",
+      executionType: type,
+      sessionID,
+    });
+  }
+  if (type === "session.execution.started" && sessionID !== undefined) {
+    yield* Effect.logDebug("Read an OpenCode execution start this build cannot decode.");
+    return Result.succeed<OpenCode2StreamEvent>({
+      type: "unreadable.execution.started",
+      sessionID,
+    });
+  }
+  yield* Effect.logDebug("Skipped an OpenCode event this build cannot decode.", { type });
+  return Result.failVoid;
+});
 
 const readEvents = HttpClient.get("/api/event", {
   headers: { accept: "text/event-stream" },
@@ -142,47 +187,154 @@ const readEvents = HttpClient.get("/api/event", {
   ),
 );
 
-/**
- * OpenCode decodes Basic credentials as UTF-8. `HttpClientRequest.basicAuth`
- * encodes them as Latin-1 (`btoa`), which gets non-ASCII passwords rejected.
- */
+// OpenCode requires UTF-8 Basic credentials; HttpClientRequest.basicAuth uses Latin-1.
 const basicAuthorization = (password: string | Redacted.Redacted) => {
   const plain = Redacted.isRedacted(password) ? Redacted.value(password) : password;
   return `Basic ${Buffer.from(`${OPENCODE_USERNAME}:${plain}`, "utf8").toString("base64")}`;
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+const MESSAGE_LIST_URL = /\/api\/session\/[^/?#]+\/message(?:[?#]|$)/;
+
+/** Reads only the page's shape; each message stays opaque for the real schema to judge. */
+const MessagePage = Schema.fromJsonString(
+  Schema.StructWithRest(Schema.Struct({ data: Schema.Array(Schema.Unknown) }), [
+    Schema.Record(Schema.String, Schema.Unknown),
+  ]),
+);
+const decodePage = Schema.decodeUnknownOption(MessagePage);
+const encodePage = Schema.encodeSync(MessagePage);
+
+const CompactionWithRecent = Schema.Struct({
+  type: Schema.Literal("compaction"),
+  status: Schema.Literals(["running", "completed"]),
+  metadata: Schema.optionalKey(Schema.Unknown),
+});
+const isCompactionWithRecent = Schema.is(CompactionWithRecent);
+const isLegacyMetadata = Schema.is(Schema.Struct({ recent: Schema.String }));
+
+const fillCompactionRecent = (message: unknown) =>
+  isCompactionWithRecent(message) && !("recent" in message)
+    ? { ...message, recent: isLegacyMetadata(message.metadata) ? message.metadata.recent : "" }
+    : message;
+
+/**
+ * OpenCode 2.1 dropped a compaction's `recent`, which the bundled 2.0.28 schema requires.
+ * Migrated pre-2.1 compactions keep it under `metadata.recent`; native 2.1 ones have none.
+ * T3 never reads it, so fill the gap; every other field still validates downstream.
+ */
+const fillCompactionRecents = HttpClient.transformResponse(
+  Effect.fnUntraced(function* (
+    pending: Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
+  ) {
+    const response = yield* pending;
+    const { request } = response;
+    if (
+      request.method !== "GET" ||
+      response.status !== 200 ||
+      !MESSAGE_LIST_URL.test(request.url)
+    ) {
+      return response;
+    }
+    const text = yield* response.text;
+    const page = decodePage(text);
+    // The response caches its body, so the untouched one still decodes downstream.
+    if (Option.isNone(page)) return response;
+    const filled = encodePage({ ...page.value, data: page.value.data.map(fillCompactionRecent) });
+    // The filled body is longer than the one the server measured.
+    const { "content-length": _, ...headers } = response.headers;
+    return HttpClientResponse.fromWeb(
+      request,
+      new Response(filled, { status: response.status, headers }),
+    );
+  }),
+);
+
+/** @public */
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
+  const paths = yield* Path.Path.pipe(Effect.provide(Path.layer));
   return OpenCode2Client.of({
-    connect: ({ baseUrl, password }) => {
+    connect: Effect.fn("OpenCode2Client.connect")(function ({ baseUrl, password }) {
       const authenticated = HttpClient.mapRequest(
         httpClient,
         HttpClientRequest.setHeader("Authorization", basicAuthorization(password)),
       );
       return OpenCode.make({ baseUrl }).pipe(
-        Effect.provideService(HttpClient.HttpClient, authenticated),
+        Effect.provideService(HttpClient.HttpClient, fillCompactionRecents(authenticated)),
         Effect.map((client) => ({
           client,
+          shellJobs: Effect.fn("OpenCode2Client.shellJobs")(function (sessionID: string) {
+            return authenticated
+              .get(`${baseUrl}/api/experimental/job`, {
+                urlParams: { sessionID, kind: "shell", descendants: "true" },
+              })
+              .pipe(
+                Effect.flatMap(HttpClientResponse.filterStatusOk),
+                Effect.flatMap(HttpClientResponse.schemaBodyJson(ShellJobs)),
+              );
+          }),
+          imageJobs: (sessionID: string) =>
+            authenticated
+              .get(`${baseUrl}/api/experimental/job`, {
+                urlParams: { sessionID, kind: "image" },
+              })
+              .pipe(
+                Effect.flatMap(HttpClientResponse.filterStatusOk),
+                Effect.flatMap((response) => response.json),
+                Effect.flatMap(decodeJobs),
+                Effect.map((page) =>
+                  page.data.flatMap((item) => {
+                    const job = decodeImageJob(item);
+                    return Option.isSome(job) && job.value.sessionID === sessionID
+                      ? [job.value]
+                      : [];
+                  }),
+                ),
+                Effect.mapError((cause) => new OpenCode2ImageError({ cause })),
+              ),
+          readImage: Effect.fn("OpenCode2Client.readImage")(
+            function* (path: string, directory: string) {
+              const mime = imagePreviewMime(paths.extname(path));
+              if (mime === undefined)
+                return yield* new OpenCode2ImageError({ cause: "Unsupported image format" });
+              const relative = paths.relative(directory, path);
+              // OpenCode confines reads to the requested location, including its own temp images.
+              const outside =
+                relative === ".." ||
+                relative.startsWith(`..${paths.sep}`) ||
+                paths.isAbsolute(relative);
+              const location = outside ? paths.dirname(path) : directory;
+              const file = outside ? paths.basename(path) : relative;
+              const response = yield* authenticated
+                .get(`${baseUrl}/api/fs/read/${encodeURIComponent(file)}`, {
+                  urlParams: { "location[directory]": location },
+                })
+                .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+              const bytes = yield* response.arrayBuffer;
+              if (bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
+                return yield* new OpenCode2ImageError({ cause: "Image exceeds preview limit" });
+              return { uri: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`, mime };
+            },
+            Effect.timeout("10 seconds"),
+            Effect.mapError((cause) => new OpenCode2ImageError({ cause })),
+          ),
           events: readEvents.pipe(
             Effect.provideService(
               HttpClient.HttpClient,
-              HttpClient.mapRequest(authenticated, HttpClientRequest.prependUrl(baseUrl)),
+              HttpClient.mapRequest(authenticated, HttpClientRequest.prependUrl(baseUrl)).pipe(
+                HttpClient.timeout(SUBSCRIPTION_TIMEOUT),
+              ),
             ),
           ),
         })),
       );
-    },
+    }),
   });
 });
 
 export const layer = Layer.effect(OpenCode2Client, make);
 
-/**
- * The first request carries the caller's input (including `order`); later
- * requests send only the cursor, because OpenCode rejects a cursor combined
- * with `order`.
- */
+/** Send input only initially; cursor pages must omit order or OpenCode rejects them. */
 export const paginate = <Input extends { readonly cursor?: unknown }, Item, E, R>(
   input: Input,
   list: (

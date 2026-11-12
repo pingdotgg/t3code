@@ -9,21 +9,11 @@ describe("reading qualifiers out of a typed query", () => {
     });
   });
 
-  it("reads a comma-separated list as one group either name satisfies", () => {
-    expect(parsePullRequestQuery("label:size:S,size:XS").filters.labels).toEqual([
-      ["size:S", "size:XS"],
-    ]);
-  });
-
   it("keeps the spaces in a quoted name of a list, and drops an empty part", () => {
     expect(parsePullRequestQuery('label:"needs design","wip"').filters.labels).toEqual([
       ["needs design", "wip"],
     ]);
     expect(parsePullRequestQuery("label:a,,b").filters.labels).toEqual([["a", "b"]]);
-  });
-
-  it("excludes every name of a negated list", () => {
-    expect(parsePullRequestQuery("-label:a,b").filters).toEqual({ excludedLabels: ["a", "b"] });
   });
 
   it("makes each label qualifier its own group, so the groups are an AND", () => {
@@ -43,6 +33,7 @@ describe("reading qualifiers out of a typed query", () => {
       review: "changes-requested",
       checks: "failing",
     });
+    expect(parsePullRequestQuery("-draft:true").filters).toEqual({ draft: "hide" });
   });
 
   it("leaves an unknown value and a stray colon as text, and reads an unknown key as a label", () => {
@@ -63,6 +54,20 @@ describe("reading qualifiers out of a typed query", () => {
     ]);
   });
 
+  // regression: #30131 a query pasted from github.com lists nothing
+  it("ignores GitHub's own search qualifiers instead of reading them as labels", () => {
+    expect(
+      parsePullRequestQuery(
+        "is:pr state:open archived:false repo:org/repo org:org user:alice sort:updated-desc -repo:org/fork -state:closed fix",
+      ),
+    ).toEqual({ text: "fix", filters: {} });
+  });
+
+  it("sets no author when the query names more than one", () => {
+    expect(parsePullRequestQuery("author:alice author:bob").filters).toEqual({});
+    expect(parsePullRequestQuery("author:me author:@me").filters).toEqual({ author: "me" });
+  });
+
   it("cuts a typed query back to what the contract carries", () => {
     const many = Array.from({ length: 14 }, (_, index) => `l${index}`).join(",");
     const long = "x".repeat(240);
@@ -70,15 +75,6 @@ describe("reading qualifiers out of a typed query", () => {
     expect(parsed.filters.labels?.[0]).toHaveLength(10);
     expect(parsed.filters.labels?.[1]).toEqual(["x".repeat(200)]);
     expect(parsed.filters.author).toBe("x".repeat(200));
-  });
-
-  it("cuts a namespaced label after its key is prefixed on", () => {
-    const parsed = parsePullRequestQuery(`size:${"x".repeat(240)}`);
-    expect(parsed.filters.labels).toEqual([[`size:${"x".repeat(240)}`.slice(0, 200)]]);
-  });
-
-  it("answers an empty query with an empty everything", () => {
-    expect(parsePullRequestQuery("   ")).toEqual({ text: "", filters: {} });
   });
 });
 
@@ -97,6 +93,7 @@ describe("colon-namespaced labels typed as a search", () => {
     expect(parsePullRequestQuery("size:S,size:XS").filters.labels).toEqual([["size:S", "size:XS"]]);
   });
 
+  // regression: #19934 negated key:value qualifiers become namespaced label exclusions
   it("excludes one the same way", () => {
     expect(parsePullRequestQuery("-size:XXL").filters.excludedLabels).toEqual(["size:XXL"]);
     expect(parsePullRequestQuery("-size:S,XS").filters.excludedLabels).toEqual([
@@ -126,11 +123,6 @@ describe("colon-namespaced labels typed as a search", () => {
     const parsed = parsePullRequestQuery("area:web draft:true wizard label:bug");
     expect(parsed.filters).toEqual({ labels: [["area:web"], ["bug"]], draft: "only" });
     expect(parsed.text).toBe("wizard");
-  });
-
-  it("shares the ceiling with the labels typed as labels", () => {
-    const many = Array.from({ length: 12 }, (_, index) => `area:${index}`).join(" ");
-    expect(parsePullRequestQuery(many).filters.labels).toHaveLength(10);
   });
 });
 

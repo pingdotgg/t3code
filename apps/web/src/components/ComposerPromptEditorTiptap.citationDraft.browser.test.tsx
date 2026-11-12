@@ -3,22 +3,17 @@ import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { act, createRef, useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { createRef, useState } from "react";
+import { expect, it } from "vite-plus/test";
 
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-
-// No router is mounted; the citation chip only needs navigation to exist.
-vi.mock(import("@tanstack/react-router"), async (original) => ({
-  ...(await original()),
-  useNavigate: () => async () => {},
-  Link: (({ children }: { children: ReactNode }) => <a>{children}</a>) as never,
-}));
-
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import { act, render } from "../../test/render";
+import {
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "./ComposerPromptEditorTiptap";
 
 const citation = {
   version: 1 as const,
@@ -33,26 +28,14 @@ const citation = {
 };
 const promptBefore = `See ${serializeAssistantCitation(citation)} `;
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-});
-
 function Composer({
   question,
   editorRef,
+  send = "clears",
 }: {
   question: boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+  send?: "clears" | "blocked" | "refusedLater";
 }) {
   const [prompt, setPrompt] = useState(promptBefore);
   const [answer, setAnswer] = useState("");
@@ -80,6 +63,11 @@ function Composer({
         onCitationDraftSave={(replacedValue, savedValue) => {
           if (replacedValue === prompt) setPrompt(savedValue);
         }}
+        onCitationSubmitAndSend={() => {
+          if (send === "blocked") return false;
+          if (send === "clears") setPrompt("");
+          return true;
+        }}
         onPaste={() => {}}
       />
     </>
@@ -88,9 +76,9 @@ function Composer({
 
 it("keeps an unsaved citation comment when a question takes the composer", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
-  const drafts = () => container.querySelector("output")?.dataset;
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+  const drafts = () => screen.container.querySelector("output")?.dataset;
 
-  await act(async () => root.render(<Composer question={false} editorRef={editorRef} />));
   const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
   if (!sourceAnchor) throw new Error("Citation source did not resolve");
   await act(async () =>
@@ -107,12 +95,67 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   await comment.click();
   await userEvent.keyboard("check this");
 
-  await act(async () => root.render(<Composer question editorRef={editorRef} />));
+  await screen.rerender(<Composer question editorRef={editorRef} />);
   expect(drafts()?.answer).toBe("");
-  await act(async () => root.render(<Composer question={false} editorRef={editorRef} />));
+  await screen.rerender(<Composer question={false} editorRef={editorRef} />);
 
   expect(drafts()?.prompt).toBe(
     `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
   );
   await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });
+
+it("clears the sent prompt when an empty citation comment sends it", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  await using screen = await render(<Composer question={false} editorRef={editorRef} />);
+
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+  if (!sourceAnchor) throw new Error("Citation source did not resolve");
+  await act(async () =>
+    editorRef.current?.requestCitationComment({
+      previousValue: "See ",
+      value: promptBefore,
+      citationStart: "See ".length,
+      sourceAnchor,
+      insertedSpaces: { before: false, after: true },
+    }),
+  );
+  const comment = page.getByLabelText("Comment on selected text");
+  await expect.element(comment).toHaveFocus();
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+
+  await expect.element(comment).not.toBeInTheDocument();
+  await expect.element(page.getByTestId("composer-editor")).toHaveFocus();
+  await expect.element(screen.getByRole("status")).toHaveAttribute("data-prompt", "");
+});
+
+it.each(["blocked", "refusedLater"] as const)(
+  "keeps the caret after the citation when save-and-send is %s",
+  async (send) => {
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    await using screen = await render(
+      <Composer question={false} editorRef={editorRef} send={send} />,
+    );
+
+    const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+    if (!sourceAnchor) throw new Error("Citation source did not resolve");
+    await act(async () =>
+      editorRef.current?.requestCitationComment({
+        previousValue: "See ",
+        value: promptBefore,
+        citationStart: "See ".length,
+        sourceAnchor,
+        insertedSpaces: { before: false, after: true },
+      }),
+    );
+    const comment = page.getByLabelText("Comment on selected text");
+    await expect.element(comment).toHaveFocus();
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+    await expect.element(comment).not.toBeInTheDocument();
+    await userEvent.keyboard("x");
+
+    await expect
+      .element(screen.getByRole("status"))
+      .toHaveAttribute("data-prompt", `See ${serializeAssistantCitation(citation)}x `);
+  },
+);

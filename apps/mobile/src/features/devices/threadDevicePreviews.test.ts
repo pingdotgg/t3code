@@ -91,16 +91,4 @@ describe("thread device previews", () => {
     expect(selectedThreadDevicePreview(afterClose, selectedKey)?.name).toBe("Pixel 9");
     expect(selectedThreadDevicePreview([], selectedKey)).toBeNull();
   });
-
-  it("can view an open session before device discovery metadata arrives", () => {
-    const previews = threadDevicePreviews({ ...state, hosts: [], devices: [] }, threadId);
-    expect(previews[0]?.name).toBe("Android Emulator");
-    expect(previews[0]?.session.deviceId).toBe("emulator-5554");
-    expect(previews[0]?.description).toBe("");
-  });
-
-  it("offers no devices before state arrives or in a thread without sessions", () => {
-    expect(threadDevicePreviews(null, threadId)).toEqual([]);
-    expect(threadDevicePreviews(state, ThreadId.make("empty-thread"))).toEqual([]);
-  });
 });

@@ -4,6 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -94,7 +95,8 @@ export const makeDiscovery = Effect.gen(function* () {
         logins.find((entry) => entry.default === "true") ||
         logins[0];
       const fj = yield* probeSourceControlProvider({
-        cwd,
+        // fj reads the cwd repository even with --host and fails on an unborn branch.
+        cwd: yield* HostProcess.HomeDirectory,
         process,
         spec: {
           ...discovery,
@@ -141,7 +143,10 @@ export const makeDiscovery = Effect.gen(function* () {
         return fj;
       }
       const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
-      return tea.status === "available" || fj.status === "missing" ? tea : fj;
+      // Discovery keeps the install hint only for an absent executable; a slow or broken fj
+      // explains itself better than tea's install advice.
+      const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
+      return tea.status === "available" || fjAbsent ? tea : fj;
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {
@@ -193,10 +198,7 @@ export function repositoryNameFromRemoteUrl(url: string): string | null {
     : path.split("/").slice(-2).join("/");
 }
 
-/**
- * A Forgejo remote's URL can't say which server it belongs to (an SSH alias, an installation
- * mount), so the identity's browser URL comes from the login that serves it.
- */
+// Resolve browser URLs from the serving login to handle SSH aliases and mounts.
 const refineRepositoryIdentity: NonNullable<
   SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
 > = Effect.fn("ForgejoSourceControlProvider.refineRepositoryIdentity")(function* ({
@@ -232,6 +234,27 @@ const refineRepositoryIdentity: NonNullable<
     provider: SourceControlProviderKind.make("forgejo"),
     webUrl: `${baseUrl}/${path}`,
   };
+});
+
+// An SSH remote names an alias rather than the web server, so the login that serves it says which.
+const resolveRemoteWebHost: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["resolveRemoteWebHost"]
+> = Effect.fn("ForgejoSourceControlProvider.resolveRemoteWebHost")(function* ({
+  cwd,
+  context,
+  resolveContext,
+}) {
+  if (!ForgejoCli.parseForgejoRemote(context.remoteUrl)?.ssh) return null;
+  const resolved = yield* resolveContext({
+    cwd,
+    context: {
+      ...context,
+      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+    },
+  });
+  return resolved?.provider.kind === "forgejo"
+    ? new URL(resolved.provider.baseUrl).host.toLowerCase()
+    : null;
 });
 
 const RepositorySchema = Schema.Struct({
@@ -306,8 +329,9 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
-    listChangeRequests: (input) =>
-      Effect.gen(function* () {
+    resolveRemoteWebHost,
+    listChangeRequests: Effect.fn("ForgejoSourceControlProvider.listChangeRequests")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const branch = SourceControlProvider.sourceBranch(input);
@@ -322,26 +346,29 @@ export const make = Effect.gen(function* () {
             Schema.Array(ForgejoPullRequestSchema),
           );
           for (const item of items) {
+            const normalized = toForgejoChangeRequest(item);
             if (
-              item.head.ref !== branch ||
+              normalized.headRefName !== branch ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
               (source?.owner && item.head.repo?.owner.login !== source.owner)
             )
               continue;
-            const normalized = toForgejoChangeRequest(item);
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
           if (items.length === 0) break;
         }
         return results.slice(0, limit);
-      }).pipe(mapError("listChangeRequests", input.cwd)),
-    getChangeRequest: (input) =>
-      getPull(input).pipe(
+      },
+      (effect, input) => effect.pipe(mapError("listChangeRequests", input.cwd)),
+    ),
+    getChangeRequest: Effect.fn("ForgejoSourceControlProvider.getChangeRequest")(function (input) {
+      return getPull(input).pipe(
         Effect.map(toForgejoChangeRequest),
         mapError("getChangeRequest", input.cwd),
-      ),
-    createChangeRequest: (input) =>
-      Effect.gen(function* () {
+      );
+    }),
+    createChangeRequest: Effect.fn("ForgejoSourceControlProvider.createChangeRequest")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const source = SourceControlProvider.sourceControlRefFromInput(input);
         const owner = source?.owner ?? source?.repository?.split("/")[0];
@@ -357,16 +384,20 @@ export const make = Effect.gen(function* () {
             body: yield* fs.readFileString(input.bodyFile),
           },
         });
-      }).pipe(mapError("createChangeRequest", input.cwd)),
-    getRepositoryCloneUrls: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("createChangeRequest", input.cwd)),
+    ),
+    getRepositoryCloneUrls: Effect.fn("ForgejoSourceControlProvider.getRepositoryCloneUrls")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         return cloneUrls(
           yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
         );
-      }).pipe(mapError("getRepositoryCloneUrls", input.cwd)),
-    createRepository: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("getRepositoryCloneUrls", input.cwd)),
+    ),
+    createRepository: Effect.fn("ForgejoSourceControlProvider.createRepository")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const user = yield* request(
           { ...input, path: "user" },
@@ -387,17 +418,21 @@ export const make = Effect.gen(function* () {
             RepositorySchema,
           ),
         );
-      }).pipe(mapError("createRepository", input.cwd)),
-    getDefaultBranch: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("createRepository", input.cwd)),
+    ),
+    getDefaultBranch: Effect.fn("ForgejoSourceControlProvider.getDefaultBranch")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         return (
           (yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema))
             .default_branch ?? null
         );
-      }).pipe(mapError("getDefaultBranch", input.cwd)),
-    checkoutChangeRequest: (input) =>
-      Effect.gen(function* () {
+      },
+      (effect, input) => effect.pipe(mapError("getDefaultBranch", input.cwd)),
+    ),
+    checkoutChangeRequest: Effect.fn("ForgejoSourceControlProvider.checkoutChangeRequest")(
+      function* (input) {
         const repo = yield* cli.resolveRepository(input);
         const pull = yield* getPull(input);
         if (repo.command === "fj") {
@@ -451,7 +486,7 @@ export const make = Effect.gen(function* () {
             ],
           });
         if (input.force) {
-          // The sha comes from the server and git would read anything but a commit as an option.
+          // Non-commit server input could become git options.
           if (!/^[0-9a-f]{7,64}$/i.test(pull.head.sha))
             return yield* new ForgejoCli.ForgejoCliError({
               command: repo.command ?? "tea",
@@ -459,8 +494,7 @@ export const make = Effect.gen(function* () {
               detail: "Forgejo reported a pull request head that is not a commit.",
               reason: "invalid-response",
             });
-          // tea leaves an existing PR branch at its old tip. Keep dirty files safe
-          // while bringing the selected branch to the PR revision we fetched.
+          // tea leaves PR branches stale; `--keep` updates them without discarding dirty files.
           yield* process.run({
             operation: "ForgejoSourceControlProvider.checkoutChangeRequest",
             command: "git",
@@ -468,6 +502,8 @@ export const make = Effect.gen(function* () {
             args: ["reset", "--keep", pull.head.sha],
           });
         }
-      }).pipe(mapError("checkoutChangeRequest", input.cwd)),
+      },
+      (effect, input) => effect.pipe(mapError("checkoutChangeRequest", input.cwd)),
+    ),
   });
 });

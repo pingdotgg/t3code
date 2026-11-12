@@ -1,7 +1,4 @@
-/**
- * Shared by the server driver and the client settings form, so it holds only browser-safe schema
- * code.
- */
+// Shared with the client settings form; keep schema code browser-safe.
 import {
   CustomModelSetting,
   makeBinaryPathSetting,
