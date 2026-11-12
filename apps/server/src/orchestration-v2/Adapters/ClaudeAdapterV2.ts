@@ -1852,7 +1852,8 @@ function canApplyClaudeSelectionLive(
 ): boolean {
   return (
     live.settings.alwaysThinkingEnabled === next.settings.alwaysThinkingEnabled &&
-    (next.effort !== undefined || live.effort === undefined)
+    (next.effort !== undefined || live.effort === undefined) &&
+    live.pinnedAlias === next.pinnedAlias
   );
 }
 
@@ -1940,8 +1941,6 @@ const subagentDeviceInstructions: HookCallback = () =>
     },
   });
 
-const CLAUDE_CODE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
-
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly modelCatalog?: ClaudeModelCatalog;
@@ -2019,12 +2018,13 @@ export function makeClaudeQueryOptions(input: {
         } as ClaudeSdkSettings);
   // Claude Code expands a bare alias to its own model, so a custom model with an alias's name
   // pins the alias to itself.
-  const aliasOverrideEnv = CLAUDE_CODE_MODEL_ALIASES.has(compiledSelection.apiModelId)
-    ? {
-        [`ANTHROPIC_DEFAULT_${compiledSelection.apiModelId.toUpperCase()}_MODEL`]:
-          compiledSelection.apiModelId,
-      }
-    : undefined;
+  const aliasOverrideEnv =
+    compiledSelection.pinnedAlias === undefined
+      ? undefined
+      : {
+          [`ANTHROPIC_DEFAULT_${compiledSelection.pinnedAlias.toUpperCase()}_MODEL`]:
+            compiledSelection.pinnedAlias,
+        };
   // A settings file path cannot take extra keys, so it goes through unchanged.
   const effectiveQuerySettings =
     (input.toolSearchOverride === undefined && aliasOverrideEnv === undefined) ||

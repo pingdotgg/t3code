@@ -167,6 +167,9 @@ const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
     },
   ],
 });
+const ALIAS_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: ["haiku", "sonnet"],
+});
 const ULTRACODE_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   customModels: [
     {
@@ -6170,6 +6173,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const modelCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
         const harness = yield* makeWakeHarnessWithOptions({
           modelCatalog: Ref.get(modelCatalog),
+          settings: ALIAS_CUSTOM_MODEL_CLAUDE_SETTINGS,
+          close: Queue.shutdown,
+          freshQueueOnReopen: true,
           // Bedrock with ANTHROPIC_DEFAULT_*_MODEL set, as the probe reports it.
           routeModelCatalog: (catalog) =>
             Effect.succeed(
@@ -6213,13 +6219,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Ref.set(modelCatalog, manifestCatalog);
 
+        const openedPins = () => {
+          const env = (
+            harness.getOpenedOptions()?.settings as { env?: Record<string, string> } | undefined
+          )?.env;
+          return [env?.ANTHROPIC_DEFAULT_HAIKU_MODEL, env?.ANTHROPIC_DEFAULT_SONNET_MODEL];
+        };
         yield* harness.runtime.startTurn(turn(1, "claude-haiku-6"));
         assert.equal(harness.getOpenedOptions()?.model, "haiku");
+        // The user's ANTHROPIC_DEFAULT_HAIKU_MODEL maps the routed alias to the Bedrock id.
+        assert.deepEqual(openedPins(), [undefined, undefined]);
         yield* harness.offerAndWait(turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
 
         yield* harness.runtime.startTurn(turn(2, "claude-sonnet-6"));
         assert.deepEqual(harness.liveSelectionChanges[0], { model: "sonnet" });
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b02", result: "Two." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        // Custom models named like an alias pin it, so a change of pin reopens Claude Code.
+        yield* harness.runtime.startTurn(turn(3, "haiku"));
+        assert.deepEqual(openedPins(), ["haiku", undefined]);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b03", result: "Three." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(turn(4, "sonnet"));
+        assert.deepEqual(openedPins(), [undefined, "sonnet"]);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000b04", result: "Four." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.runtime.startTurn(turn(5, "claude-haiku-6"));
+        assert.deepEqual(openedPins(), [undefined, undefined]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
