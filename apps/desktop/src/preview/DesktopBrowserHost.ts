@@ -153,8 +153,6 @@ interface AttachedTab {
    * turn's start can reach us after its first command, so this holds focus once it does.
    */
   agentUsed: boolean;
-  /** Whether the agent owns this tab, so a turn paints it before that turn's first command. */
-  agentOwned: boolean;
   focusReleasing: boolean;
   /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
   readonly screencasts: Map<string | undefined, { started: boolean; pending: number }>;
@@ -312,25 +310,25 @@ export const make = Effect.gen(function* () {
         // The agent pauses to think between steps; its tab stays focused until the turn ends.
         if (tab.agentUsed && agentTurns.has(tab.key.threadId)) return;
         tab.agentUsed = false;
+        syncPainting(tab);
         if (tabs.get(keyOf(tab.key)) === tab) setFocusEmulation(tab, false);
       }),
     );
   };
 
   /**
-   * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
-   * that never comes, and an agent command reaches a hidden page that drops its input. The
-   * client paints the guest behind the app while one is pending or while the agent owns the
-   * tab and its thread runs; the guest goes back offscreen once nothing needs it.
+   * Electron composites no offscreen guest, so a capture, or agent input that waits on the
+   * next frame, waits forever. The client paints the guest behind the app while one is pending
+   * or the agent drives it, and the guest goes back offscreen once neither holds.
    */
   const syncPainting = (tab: AttachedTab) => {
     const active =
       tabs.get(keyOf(tab.key)) === tab &&
-      (tab.screencasts.size > 0 ||
+      (tab.agentUsed ||
+        tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
         tab.frameStalled ||
-        tab.waitingScreenshots.some((waiting) => waiting.live()) ||
-        (tab.agentOwned && agentTurns.has(tab.key.threadId)));
+        tab.waitingScreenshots.some((waiting) => waiting.live()));
     if (tab.painting === active) return;
     tab.painting = active;
     runFork(PubSub.publish(painting, { key: tab.key, active }));
@@ -555,7 +553,6 @@ export const make = Effect.gen(function* () {
           if (AGENT_INPUT_METHOD.test(method)) {
             if (owner === undefined || !streamingOwners.has(owner)) {
               tab.agentUsed = true;
-              tab.agentOwned = true;
               tab.agentLedAt = performance.now();
               syncPainting(tab);
             } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
@@ -721,8 +718,6 @@ export const make = Effect.gen(function* () {
       frameStalled: false,
       painting: false,
       agentUsed: false,
-      // A tab that appears while the thread's agent runs is the agent's own.
-      agentOwned: agentTurns.has(key.threadId),
       focusReleasing: false,
       screencasts: new Map(),
       onMessage: (_event, method, params, sessionId) => {
@@ -744,8 +739,6 @@ export const make = Effect.gen(function* () {
       stopWaiting: null,
     };
     tabs.set(id, tab);
-    // A tab the agent opened during its turn paints from the start, before its first command.
-    syncPainting(tab);
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
     const announce = () => {
@@ -823,13 +816,8 @@ export const make = Effect.gen(function* () {
       const command = decodeCommand(line);
       if (Option.isNone(command)) return;
       if (command.value.type === "turn") {
-        if (command.value.active) {
-          agentTurns.add(command.value.threadId);
-          // A command may arrive before the server announces the turn; its tab paints on the announcement.
-          for (const tab of tabs.values()) {
-            if (tab.key.threadId === command.value.threadId) syncPainting(tab);
-          }
-        } else endAgentTurn(command.value.threadId);
+        if (command.value.active) agentTurns.add(command.value.threadId);
+        else endAgentTurn(command.value.threadId);
         return;
       }
       const tab = tabs.get(keyOf(command.value));
