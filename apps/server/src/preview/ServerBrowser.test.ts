@@ -799,6 +799,44 @@ it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop"
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a viewer still that never answers does not block the agent's snapshot", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const stalled = Promise.withResolvers<void>();
+      const newCDPSession = context.newCDPSession;
+      context.newCDPSession = async (target) => {
+        const session = await newCDPSession(target);
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation((method, input) => {
+          if (method !== "Page.captureScreenshot") return send(method, input);
+          stalled.resolve();
+          return new Promise<never>(() => {});
+        });
+        return session;
+      };
+      yield* browser.attachViewer(viewerInput(tabId, false)).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => stalled.promise);
+
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* TestClock.adjust("20 seconds");
+      const snapshot = yield* Fiber.join(snapshotting);
+      const evaluating = yield* broker
+        .invoke({ scope, tabId, operation: "evaluate", input: { expression: "document.title" } })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* TestClock.adjust("20 seconds");
+      const evaluated = yield* Fiber.join(evaluating);
+      expect({ snapshot: snapshot._tag, evaluated: evaluated._tag }).toEqual({
+        snapshot: "Success",
+        evaluated: "Success",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a desktop page that loaded before the server attached reports its loaded title", () =>
   Effect.scoped(
     Effect.gen(function* () {
