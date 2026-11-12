@@ -10,22 +10,62 @@ import {
   ReceivedProjectIcon,
   StoredProjectIcon,
   ProjectReadFileError,
+  ProjectReadFileInput,
+  ProjectReadFileResult,
   ProjectCreatePayload,
   ProjectUpdatePayload,
   ProjectMutation,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
 } from "./project.ts";
 
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
-const fileErrorSchema = Schema.Union([ProjectReadFileError, ProjectWriteFileError]);
-const encodeFileError = Schema.encodeSync(fileErrorSchema);
-const decodeFileError = Schema.decodeUnknownSync(fileErrorSchema);
 
 describe("project RPC errors", () => {
+  it("keeps whitespace in file paths across the wire", () => {
+    const roundTrip = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: S["Type"]) =>
+      Schema.decodeUnknownSync(schema)(Schema.encodeSync(schema)(value));
+
+    for (const relativePath of [" ", " report.txt", "report.txt\t"]) {
+      const cwd = "/workspace";
+      const resolvedPath = `${cwd}/${relativePath}`;
+      expect(roundTrip(ProjectReadFileInput, { cwd, relativePath }).relativePath).toBe(
+        relativePath,
+      );
+      expect(
+        roundTrip(ProjectWriteFileInput, { cwd, relativePath, contents: "" }).relativePath,
+      ).toBe(relativePath);
+      expect(
+        roundTrip(ProjectReadFileResult, {
+          relativePath,
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+        }).relativePath,
+      ).toBe(relativePath);
+      expect(roundTrip(ProjectWriteFileResult, { relativePath }).relativePath).toBe(relativePath);
+      for (const FileError of [ProjectReadFileError, ProjectWriteFileError]) {
+        const error = new FileError({
+          cwd,
+          relativePath,
+          failure: "operation_failed",
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+        expect(roundTrip(FileError, error)).toMatchObject({
+          relativePath,
+          resolvedPath,
+          operationPath: resolvedPath,
+        });
+      }
+    }
+  });
+
   it("derives stable messages from structured request context while retaining causes", () => {
     const cause = new Error("sensitive platform detail");
     const searchError = new ProjectSearchEntriesError({
@@ -57,24 +97,6 @@ describe("project RPC errors", () => {
     expect(readError.message).toBe("Failed to read workspace file 'src/index.ts' in '/workspace'.");
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
-
-    for (const relativePath of [" ", " report.txt "]) {
-      const resolvedPath = `/workspace/${relativePath}`;
-      for (const FileError of [ProjectReadFileError, ProjectWriteFileError]) {
-        const error = new FileError({
-          cwd: "/workspace",
-          relativePath,
-          failure: "operation_failed",
-          resolvedPath,
-          operationPath: resolvedPath,
-        });
-        expect(decodeFileError(encodeFileError(error))).toMatchObject({
-          relativePath,
-          resolvedPath,
-          operationPath: resolvedPath,
-        });
-      }
-    }
 
     const contentSearchError = new ProjectSearchContentsError({
       cwd: "/workspace",

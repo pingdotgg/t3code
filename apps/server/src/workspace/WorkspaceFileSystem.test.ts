@@ -2,12 +2,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 
-import {
-  ProjectReadFileInput,
-  ProjectReadFileResult,
-  ProjectWriteFileInput,
-  ProjectWriteFileResult,
-} from "@t3tools/contracts";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -16,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -49,15 +42,6 @@ const injectShortReads = Effect.fn("injectShortReads")(function* (target: string
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => open.mockImplementation(native.open)));
 });
-
-const decodeReadFileInput = Schema.decodeUnknownSync(ProjectReadFileInput);
-const encodeReadFileInput = Schema.encodeSync(ProjectReadFileInput);
-const decodeReadFileResult = Schema.decodeUnknownSync(ProjectReadFileResult);
-const encodeReadFileResult = Schema.encodeSync(ProjectReadFileResult);
-const decodeWriteFileInput = Schema.decodeUnknownSync(ProjectWriteFileInput);
-const encodeWriteFileInput = Schema.encodeSync(ProjectWriteFileInput);
-const decodeWriteFileResult = Schema.decodeUnknownSync(ProjectWriteFileResult);
-const encodeWriteFileResult = Schema.encodeSync(ProjectWriteFileResult);
 
 const whitespaceFilePaths =
   HostProcess.Platform.defaultValue() === "win32"
@@ -221,10 +205,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         yield* writeTextFile(cwd, "report.txt", "ordinary file");
         for (const relativePath of whitespaceFilePaths) {
           yield* writeTextFile(cwd, relativePath, "whitespace file");
-          const input = decodeReadFileInput(encodeReadFileInput({ cwd, relativePath }));
-          const read = decodeReadFileResult(
-            encodeReadFileResult(yield* workspaceFileSystem.readFile(input)),
-          );
+          const read = yield* workspaceFileSystem.readFile({ cwd, relativePath });
           expect(read.contents).toBe("whitespace file");
           expect(read.relativePath).toBe(relativePath);
         }
@@ -604,12 +585,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         yield* writeTextFile(cwd, "report.txt", "ordinary file");
         for (const relativePath of whitespaceFilePaths) {
           yield* writeTextFile(cwd, relativePath, "whitespace file");
-          const input = decodeWriteFileInput(
-            encodeWriteFileInput({ cwd, relativePath, contents: "edited" }),
-          );
-          const written = decodeWriteFileResult(
-            encodeWriteFileResult(yield* workspaceFileSystem.writeFile(input)),
-          );
+          const written = yield* workspaceFileSystem.writeFile({
+            cwd,
+            relativePath,
+            contents: "edited",
+          });
           expect(yield* fileSystem.readFileString(path.join(cwd, "report.txt"))).toBe(
             "ordinary file",
           );
