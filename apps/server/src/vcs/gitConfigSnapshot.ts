@@ -382,7 +382,7 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
       ],
       { concurrency: "unbounded" },
     );
-    // A directory outside the work tree (GIT_WORK_TREE elsewhere) has no prefix to walk.
+    // A directory outside the work tree (core.worktree elsewhere) has no prefix to walk.
     if (locations === null || !insideTopLevel) return null;
 
     // Discovery: the directory, what would make Git stop below the top level (a `.git`, or HEAD of a

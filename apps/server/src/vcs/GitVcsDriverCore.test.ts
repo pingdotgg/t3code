@@ -870,29 +870,24 @@ describe("config reads", () => {
       ).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("sees a repository initialised below a directory outside GIT_WORK_TREE", () =>
+  it.effect("sees a repository initialised below a directory outside core.worktree", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { driver } = yield* makeCountingDriver;
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         yield* git(cwd, ["config", "t3.value", "parent"]);
+        yield* git(cwd, ["config", "core.worktree", yield* makeTmpDir("git-work-tree-")]);
         const sub = NodePath.join(cwd, "sub");
         NodeFS.mkdirSync(sub);
-        const workTree = yield* makeTmpDir("git-work-tree-");
-        const readWithWorkTree = driver.readConfigValue(sub, "t3.value").pipe(
-          Effect.provideService(HostProcess.Environment, {
-            ...(yield* HostProcess.Environment),
-            GIT_WORK_TREE: workTree,
-          }),
-        );
-        assert.equal(yield* readWithWorkTree, "parent");
-        assert.equal(yield* readWithWorkTree, "parent");
+        const read = driver.readConfigValue(sub, "t3.value");
+        assert.equal(yield* read, "parent");
+        assert.equal(yield* read, "parent");
 
         yield* git(cwd, ["init", "-q", "sub"]);
         yield* git(sub, ["config", "t3.value", "nested"]);
 
-        assert.equal(yield* readWithWorkTree, "nested");
+        assert.equal(yield* read, "nested");
       }),
     ).pipe(Effect.provide(layerTest)),
   );
