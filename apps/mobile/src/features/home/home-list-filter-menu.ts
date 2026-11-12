@@ -1,6 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
+import type { HomeProjectScope } from "./homeThreadList";
+
+const projectLabelCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 export interface HomeListFilterMenuEnvironment {
   readonly environmentId: EnvironmentId;
@@ -10,6 +13,30 @@ export interface HomeListFilterMenuEnvironment {
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+  readonly pinned: boolean;
+  readonly project: HomeProjectScope["representative"];
+  readonly members: HomeProjectScope["projects"];
+}
+
+export function filterProjectOptions(
+  projects: ReadonlyArray<HomeListFilterMenuProject>,
+  query: string,
+) {
+  const search = query.trim().toLocaleLowerCase();
+  return projects
+    .filter(
+      (project) =>
+        project.label.toLocaleLowerCase().includes(search) ||
+        project.members.some((member) =>
+          `${member.title} ${member.workspaceRoot}`.toLocaleLowerCase().includes(search),
+        ),
+    )
+    .sort(
+      (a, b) =>
+        Number(b.pinned) - Number(a.pinned) ||
+        projectLabelCollator.compare(a.label, b.label) ||
+        a.key.localeCompare(b.key),
+    );
 }
 
 export function buildHomeListFilterMenuItems(props: {
@@ -18,7 +45,7 @@ export function buildHomeListFilterMenuItems(props: {
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
-  readonly onProjectChange: (projectKey: string | null) => void;
+  readonly onOpenProjectPicker: () => void;
 }): AppBarMenuItem[] {
   const items: AppBarMenuItem[] = [
     {
@@ -46,21 +73,11 @@ export function buildHomeListFilterMenuItems(props: {
     items.push({
       id: "project",
       title: "Project",
-      items: [
-        {
-          id: "project:all",
-          title: "All projects",
-          subtitle: "Show threads from every project",
-          selected: props.selectedProjectKey === null,
-          onPress: () => props.onProjectChange(null),
-        },
-        ...props.projects.map((project) => ({
-          id: `project:${project.key}`,
-          title: project.label,
-          selected: props.selectedProjectKey === project.key,
-          onPress: () => props.onProjectChange(project.key),
-        })),
-      ],
+      icon: "folder",
+      subtitle:
+        props.projects.find((project) => project.key === props.selectedProjectKey)?.label ??
+        "All projects",
+      onPress: props.onOpenProjectPicker,
     });
   }
 
