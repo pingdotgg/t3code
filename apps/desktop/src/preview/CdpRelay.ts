@@ -18,9 +18,29 @@ export interface CdpRelayTarget {
   readonly setDownloadDirectory: (directory: string | null) => void;
 }
 
+/** A native window the page opened; it runs on its own debugger. */
+export interface CdpRelayPopupTarget {
+  readonly send: (
+    method: string,
+    params: Record<string, unknown>,
+    sessionId: string | undefined,
+  ) => Promise<unknown>;
+  readonly targetId: () => Promise<string>;
+  readonly url: () => string;
+  readonly title: () => string;
+  readonly close: () => void;
+}
+
+type CdpRelayEvent = (method: string, params: unknown, sessionId: string | undefined) => void;
+
 export interface CdpRelayConnection {
   readonly receive: (raw: string) => void;
-  readonly event: (method: string, params: unknown, sessionId: string | undefined) => void;
+  readonly event: CdpRelayEvent;
+  /** Announces the window as the page's popup; `remove` once it closes. */
+  readonly addPopup: (target: CdpRelayPopupTarget) => {
+    readonly event: CdpRelayEvent;
+    readonly remove: () => void;
+  };
 }
 
 interface CdpCommand {
@@ -70,6 +90,14 @@ const ACKNOWLEDGED = new Set([
   "Browser.cancelDownload",
 ]);
 
+interface Popup {
+  readonly target: CdpRelayPopupTarget;
+  /** Set once announced to Playwright; a closed window cannot be asked for its id. */
+  sessionId: string | null;
+  targetId: string | null;
+  runtimeReset?: Promise<unknown>;
+}
+
 export function createCdpRelayConnection(
   target: CdpRelayTarget,
   write: (message: string) => void,
@@ -99,11 +127,14 @@ export function createCdpRelayConnection(
   };
   let attached = false;
   let downloadEventsEnabled = false;
-  /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
-  const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
+  /** Relay-created page sessions of one page share its debugger; child frame sessions retain their own ids. */
+  const sessions = new Map<string, "browser" | "page" | Popup>([[PAGE_SESSION_ID, "page"]]);
+  /** Frame and worker sessions of popups; any other child session is the page's. */
+  const popupChildren = new Map<string, Popup>();
+  const popups = new Set<Popup>();
   let sessionSequence = 0;
-  const newSession = (kind: "browser" | "page") => {
-    const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
+  const newSession = (kind: "browser" | "page" | Popup) => {
+    const sessionId = `t3-preview-${typeof kind === "string" ? kind : "popup"}-${++sessionSequence}`;
     sessions.set(sessionId, kind);
     return sessionId;
   };
@@ -116,6 +147,38 @@ export function createCdpRelayConnection(
     canAccessOpener: false,
     browserContextId: BROWSER_CONTEXT_ID,
   });
+  const popupInfo = async (popup: Popup) => ({
+    targetId: await popup.target.targetId(),
+    type: "page",
+    title: popup.target.title(),
+    url: popup.target.url(),
+    attached: true,
+    canAccessOpener: true,
+    openerId: await target.targetId(),
+    browserContextId: BROWSER_CONTEXT_ID,
+  });
+  const findPopup = async (targetId: unknown) => {
+    for (const popup of popups) if (popup.targetId === targetId) return popup;
+    return undefined;
+  };
+  /** In order, after the page itself, so Playwright already knows each popup's opener. */
+  let announcing = Promise.resolve();
+  const announcePopup = (popup: Popup) => {
+    announcing = announcing.then(() =>
+      popupInfo(popup).then(
+        (info) => {
+          if (!popups.has(popup) || popup.sessionId !== null) return;
+          popup.sessionId = newSession(popup);
+          popup.targetId = info.targetId;
+          send({
+            method: "Target.attachedToTarget",
+            params: { sessionId: popup.sessionId, targetInfo: info, waitingForDebugger: false },
+          });
+        },
+        () => undefined,
+      ),
+    );
+  };
 
   const browserCommand = async (command: CdpCommand): Promise<unknown> => {
     if (ACKNOWLEDGED.has(command.method)) return {};
@@ -155,22 +218,37 @@ export function createCdpRelayConnection(
       case "Target.getBrowserContexts":
         return { browserContextIds: [] };
       case "Target.getTargets":
-        return { targetInfos: [await targetInfo()] };
+        return {
+          targetInfos: [
+            await targetInfo(),
+            ...(await Promise.all(
+              [...popups].filter((popup) => popup.sessionId !== null).map(popupInfo),
+            )),
+          ],
+        };
       case "Target.attachToBrowserTarget":
         return { sessionId: newSession("browser") };
       case "Target.attachToTarget": {
         const targetId = command.params?.["targetId"];
-        if (targetId !== (await target.targetId()))
-          throw new Error("Only this preview tab's page can be attached.");
-        return { sessionId: newSession("page") };
+        if (targetId === (await target.targetId())) return { sessionId: newSession("page") };
+        const popup = await findPopup(targetId);
+        if (!popup) throw new Error("Only this preview tab's page and its popups can be attached.");
+        return { sessionId: newSession(popup) };
       }
       case "Target.detachFromTarget": {
         const sessionId = command.params?.["sessionId"];
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
+          const kind = sessions.get(sessionId);
           sessions.delete(sessionId);
-          target.sessionDetached?.(sessionId);
+          if (kind === "page") target.sessionDetached?.(sessionId);
         }
         return {};
+      }
+      case "Target.closeTarget": {
+        const popup = await findPopup(command.params?.["targetId"]);
+        if (!popup) throw new Error("Only a preview tab's popup can be closed this way.");
+        popup.target.close();
+        return { success: true };
       }
       case "Target.setAutoAttach": {
         if (attached) return {};
@@ -190,7 +268,24 @@ export function createCdpRelayConnection(
 
   let runtimeReset: Promise<unknown> | undefined;
 
+  const popupCommand = (popup: Popup, command: CdpCommand): Promise<unknown> => {
+    const child = sessions.get(command.sessionId!) === popup ? undefined : command.sessionId;
+    if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
+      return Promise.resolve({});
+    }
+    // Its debugger outlives a connection too, so its execution contexts need the same reset.
+    if (command.method === "Runtime.enable" && child === undefined) {
+      popup.runtimeReset ??= popup.target.send("Runtime.disable", {}, undefined).catch(() => {});
+      return popup.runtimeReset.then(() =>
+        popup.target.send(command.method, command.params ?? {}, undefined),
+      );
+    }
+    return popup.target.send(command.method, command.params ?? {}, child);
+  };
+
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
+    const popup = sessions.get(command.sessionId!) ?? popupChildren.get(command.sessionId!);
+    if (typeof popup === "object") return popupCommand(popup, command);
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
     const owner =
       child === undefined && command.sessionId !== PAGE_SESSION_ID ? command.sessionId : undefined;
@@ -234,7 +329,9 @@ export function createCdpRelayConnection(
               ? (value as { [ANNOUNCE]: Record<string, unknown> })[ANNOUNCE]
               : undefined;
           send({ id: command.id, result: announce ? {} : (value ?? {}), ...route });
-          if (announce) send(announce);
+          if (!announce) return;
+          send(announce);
+          for (const popup of popups) announcePopup(popup);
         },
         (cause: unknown) =>
           send({
@@ -262,6 +359,39 @@ export function createCdpRelayConnection(
       }
       for (const [id, kind] of sessions)
         if (kind === "page") send({ method, params, sessionId: id });
+    },
+    addPopup: (popupTarget) => {
+      const popup: Popup = { target: popupTarget, sessionId: null, targetId: null };
+      popups.add(popup);
+      if (attached) announcePopup(popup);
+      return {
+        event: (method, params, sessionId) => {
+          if (popup.sessionId === null || !popups.has(popup)) return;
+          const child = (params as { sessionId?: unknown } | null | undefined)?.sessionId;
+          if (method === "Target.attachedToTarget" && typeof child === "string")
+            popupChildren.set(child, popup);
+          else if (method === "Target.detachedFromTarget" && typeof child === "string")
+            popupChildren.delete(child);
+          // Downloads stay the page's; a popup's would need its own will-download placement.
+          if (method.startsWith("Page.download")) return;
+          if (sessionId) {
+            send({ method, params, sessionId });
+            return;
+          }
+          for (const [id, kind] of sessions)
+            if (kind === popup) send({ method, params, sessionId: id });
+        },
+        remove: () => {
+          if (!popups.delete(popup)) return;
+          for (const [id, owner] of popupChildren) if (owner === popup) popupChildren.delete(id);
+          const { targetId } = popup;
+          for (const [id, kind] of sessions) {
+            if (kind !== popup) continue;
+            sessions.delete(id);
+            send({ method: "Target.detachedFromTarget", params: { sessionId: id, targetId } });
+          }
+        },
+      };
     },
   };
 }

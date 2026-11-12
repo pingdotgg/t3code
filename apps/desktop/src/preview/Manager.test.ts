@@ -615,6 +615,7 @@ describe("PreviewManager", () => {
               Layer.mock(DesktopBrowserHost.DesktopBrowserHost)({
                 attach: () => {},
                 detach: () => {},
+                openedPopup: () => {},
                 setShown: () => {},
                 loadFailed: () => {},
                 humanStartedDownload: () => true,

@@ -398,3 +398,54 @@ describe("CDP relay reconnects", () => {
     expect(await connect()).toEqual(expected);
   });
 });
+
+describe("CDP relay popups", () => {
+  it("announces a native popup with its opener, drives it, and detaches it once it closes", async () => {
+    const written: Array<Record<string, unknown>> = [];
+    const relay = makeRelay(makeTarget(vi.fn()), (raw) => written.push(JSON.parse(raw)));
+    const popupSend = vi.fn(async (method: string) => ({ method }));
+    const close = vi.fn();
+    const popup = relay.addPopup({
+      send: popupSend,
+      targetId: async () => "POPUP-TARGET",
+      url: () => "http://localhost:4719/popup",
+      title: () => "Sign in",
+      close,
+    });
+    relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+    await settle();
+    const announced = written.filter((message) => message["method"] === "Target.attachedToTarget");
+    expect(announced.map((message) => message["params"])).toEqual([
+      expect.objectContaining({ sessionId: "t3-preview-page" }),
+      expect.objectContaining({
+        targetInfo: expect.objectContaining({
+          targetId: "POPUP-TARGET",
+          openerId: "GUEST-TARGET",
+          canAccessOpener: true,
+        }),
+      }),
+    ]);
+    const sessionId = (announced[1]!["params"] as { sessionId: string }).sessionId;
+
+    relay.receive(JSON.stringify({ id: 2, method: "DOM.enable", sessionId }));
+    popup.event("Page.loadEventFired", { timestamp: 1 }, "");
+    relay.receive(
+      JSON.stringify({ id: 3, method: "Target.closeTarget", params: { targetId: "POPUP-TARGET" } }),
+    );
+    await settle();
+    expect(popupSend).toHaveBeenCalledWith("DOM.enable", {}, undefined);
+    expect(written).toContainEqual({ id: 2, result: { method: "DOM.enable" }, sessionId });
+    expect(written).toContainEqual({
+      method: "Page.loadEventFired",
+      params: { timestamp: 1 },
+      sessionId,
+    });
+    expect(close).toHaveBeenCalledOnce();
+
+    popup.remove();
+    expect(written.at(-1)).toEqual({
+      method: "Target.detachedFromTarget",
+      params: { sessionId, targetId: "POPUP-TARGET" },
+    });
+  });
+});
