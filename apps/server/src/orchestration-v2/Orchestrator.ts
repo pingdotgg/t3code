@@ -11192,6 +11192,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     const editedAttachments =
       command.attachments === undefined ? {} : { attachments: command.attachments };
+    // An older client or MCP caller can edit without capturing new recall provenance.
+    // Keep its context records, but never recall the previous draft after a text edit.
+    const editedContext =
+      command.context ??
+      (command.text === queuedMessage.text || queuedMessage.context === undefined
+        ? queuedMessage.context
+        : { version: 1 as const, records: queuedMessage.context.records });
     yield* emitEvent({
       type: "message.updated",
       threadId: command.threadId,
@@ -11203,7 +11210,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...queuedMessage,
         text: command.text,
         ...editedAttachments,
-        ...(command.context ? { context: command.context } : {}),
+        ...(editedContext ? { context: editedContext } : {}),
         updatedAt: now,
       }),
     });
@@ -11219,7 +11226,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...queuedTurnItem,
           text: command.text,
           ...editedAttachments,
-          ...(command.context ? { context: command.context } : {}),
+          ...(editedContext ? { context: editedContext } : {}),
           updatedAt: now,
         }),
       });

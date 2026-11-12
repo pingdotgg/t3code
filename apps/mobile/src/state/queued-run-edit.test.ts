@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { Atom } from "effect/reactivity";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  restoreAttachmentOnlyBootstrapPrompt,
+  recallComposerText,
 } from "@t3tools/shared/composerContextReferences";
 import {
   ChatAttachmentId,
@@ -80,6 +80,8 @@ function context(attachmentIds: ReadonlyArray<string>): OrchestrationMessageCont
 describe("resolveQueuedEditPayload", () => {
   it("resends the kept server attachments ahead of the newly uploaded ones", () => {
     const payload = resolveQueuedEditPayload({
+      text: "original",
+      draftText: "original",
       edit: edit([image("kept")]),
       draftContext: undefined,
       draftAttachments: [{ id: "draft-1" }],
@@ -91,6 +93,8 @@ describe("resolveQueuedEditPayload", () => {
 
   it("rebinds context records from the draft's ids to the uploaded ones", () => {
     const payload = resolveQueuedEditPayload({
+      text: "original",
+      draftText: "original",
       edit: edit([]),
       draftContext: context(["draft-1"]),
       draftAttachments: [{ id: "draft-1" }],
@@ -104,6 +108,8 @@ describe("resolveQueuedEditPayload", () => {
 
   it("drops the record of an attachment the user removed", () => {
     const payload = resolveQueuedEditPayload({
+      text: "original",
+      draftText: "original",
       edit: edit([image("kept")]),
       draftContext: context(["kept", "gone"]),
       draftAttachments: [],
@@ -113,6 +119,58 @@ describe("resolveQueuedEditPayload", () => {
     expect(payload.attachments.map((attachment) => attachment.id)).toEqual(["kept"]);
     expect(payload.context?.records).toEqual([expect.objectContaining({ attachmentId: "kept" })]);
   });
+
+  it("keeps the authored prompt bytes when the edit is saved unchanged", () => {
+    const recalled = { version: 1, records: [], composerRecall: "  original\n" } as const;
+    const payload = resolveQueuedEditPayload({
+      edit: { ...edit([]), context: recalled },
+      text: "original",
+      draftText: "original",
+      draftContext: recalled,
+      draftAttachments: [],
+      uploaded: [],
+    });
+
+    expect(payload.context).toEqual(recalled);
+  });
+
+  it("keeps the effort prefix generated after typing cleared the draft's provenance", () => {
+    const originalText = "Ultrathink:\noriginal";
+    const revised = "Ultrathink:\noriginal revised";
+    const payload = resolveQueuedEditPayload({
+      edit: {
+        ...edit([]),
+        originalText,
+        context: { version: 1, records: [], composerRecall: [12, originalText.length] },
+      },
+      text: revised,
+      draftText: revised,
+      draftContext: undefined,
+      draftAttachments: [],
+      uploaded: [],
+    });
+
+    expect(recallComposerText(payload.text, payload.context)).toBe("original revised");
+  });
+
+  it.each(["", "Ultrathink:"])(
+    "omits the generated bootstrap when an attachment remains after editing to %j",
+    (draftText) => {
+      const payload = resolveQueuedEditPayload({
+        edit: edit([image("kept")]),
+        text: draftText,
+        draftText,
+        draftContext: context(["kept"]),
+        draftAttachments: [],
+        uploaded: [],
+      });
+
+      expect(payload.text).toBe(
+        (draftText ? `${draftText}\n` : "") + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      );
+      expect(recallComposerText(payload.text, payload.context)).toBe(draftText);
+    },
+  );
 });
 
 describe("beginQueuedRunEdit", () => {
@@ -120,9 +178,11 @@ describe("beginQueuedRunEdit", () => {
     "opens attachment-only edits without the placeholder and treats them as untouched (%j)",
     (prefix) => {
       const threadKey = `env-exit:attachment-only-${prefix.length}`;
+      const recall = { version: 1, records: [], composerRecall: " \n " } as const;
       const original = {
         ...edit([image("kept")]),
         originalText: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        context: recall,
       };
       const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>(
         [{ id: original.runId, status: "queued" }],
@@ -130,10 +190,18 @@ describe("beginQueuedRunEdit", () => {
       beginQueuedRunEdit(threadKey, original, runs);
       const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, original.runId));
       expect(draft.text).toBe(prefix.trimEnd());
-      expect(
-        restoreAttachmentOnlyBootstrapPrompt(draft.text, original.existingAttachments.length > 0),
-      ).toBe(original.originalText);
-      expect(getQueuedRunEdit(threadKey)).toEqual({ ...original, originalText: prefix.trimEnd() });
+      const editing = getQueuedRunEdit(threadKey);
+      if (editing === null) throw new Error("Expected an open queued edit");
+      const payload = resolveQueuedEditPayload({
+        edit: editing,
+        text: draft.text.trim(),
+        draftText: draft.text,
+        draftContext: draft.context,
+        draftAttachments: [],
+        uploaded: [],
+      });
+      expect(payload.text).toBe(original.originalText);
+      expect(payload.context).toEqual(recall);
       appAtomRegistry.set(runs, [{ id: original.runId, status: "running" }]);
       expect(getQueuedRunEdit(threadKey)).toBeNull();
       expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBeUndefined();

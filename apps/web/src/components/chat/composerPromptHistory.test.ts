@@ -1,7 +1,9 @@
 import { ScheduledTaskId } from "@t3tools/contracts";
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  appendRewoundPrompt,
   buildComposerPromptHistoryEntries,
   recallableComposerPrompt,
   stepComposerPromptHistory,
@@ -22,6 +24,17 @@ function backward(position: ComposerPromptHistoryPosition | null, currentPrompt:
 function forward(position: ComposerPromptHistoryPosition | null, currentPrompt: string) {
   return stepComposerPromptHistory({ direction: "forward", entries, position, currentPrompt });
 }
+
+describe("appendRewoundPrompt", () => {
+  it("restores the authored prompt rather than the generated wire text", () => {
+    const message = {
+      text: "Ultrathink:\n  keep this\n",
+      context: { version: 1, records: [], composerRecall: [12, 24] },
+    } as const;
+    expect(appendRewoundPrompt("", message)).toBe("  keep this\n");
+    expect(appendRewoundPrompt("draft", message)).toBe("draft\n\n  keep this\n");
+  });
+});
 
 describe("recallableComposerPrompt", () => {
   it.each([
@@ -83,6 +96,32 @@ describe("recallableComposerPrompt", () => {
       "Look at [Terminal](t3-context://v1/terminal/term-1) please\n    indented  code\n![image](t3-context://v1/image/img-1)";
     expect(recallableComposerPrompt(sent)).toBe("Look at please\n    indented  code");
     expect(recallableComposerPrompt("![image](t3-context://v1/image/img-1)")).toBe("");
+  });
+
+  it("uses send-time provenance, falling back to the heuristic without it", () => {
+    const text = "Ultrathink:\nKeep this prefix";
+    expect(
+      buildComposerPromptHistoryEntries([
+        { id: "literal", role: "user", text, context: composerRecallContext(text, text) },
+        {
+          id: "generated",
+          role: "user",
+          text,
+          context: composerRecallContext(text, "Keep this prefix"),
+        },
+        { id: "legacy", role: "user", text: "Ultrathink:\nSent before provenance" },
+        {
+          id: "plan",
+          role: "user",
+          text: "PLEASE IMPLEMENT THIS PLAN:\nplan",
+          context: { version: 1, records: [], composerRecall: "" },
+        },
+      ]),
+    ).toEqual([
+      { id: "literal", prompt: text },
+      { id: "generated", prompt: "Keep this prefix" },
+      { id: "legacy", prompt: "Sent before provenance" },
+    ]);
   });
 });
 

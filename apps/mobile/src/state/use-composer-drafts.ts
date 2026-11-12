@@ -37,7 +37,9 @@ import { createComposerContextHistory, referencedComposerContext } from "../lib/
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   collectComposerContextReferences,
+  composerRecallContext,
   formatComposerContextReference,
+  recallComposerText,
   sanitizeComposerContextLabel,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
@@ -465,6 +467,7 @@ const ComposerDraftProjectSchema = Schema.Struct({
 // Recovery can exceed send limits; keep payloads reloadable and let send guards request trimming.
 const PersistedComposerContextSchema = Schema.Struct({
   version: Schema.Literal(1),
+  composerRecall: OrchestrationMessageContext.fields.composerRecall,
   records: ForwardCompatibleArray(ComposerContextRecord),
 });
 
@@ -627,7 +630,18 @@ function restoreMissingComposerFileReferences(
     referenced.add(key);
     changed = true;
   }
-  return changed ? { ...draft, text, context: { version: 1, records } } : draft;
+  const composerRecall = draft.context?.composerRecall;
+  return changed
+    ? {
+        ...draft,
+        text,
+        context: {
+          version: 1,
+          records,
+          ...(composerRecall === undefined ? {} : { composerRecall }),
+        },
+      }
+    : draft;
 }
 
 function normalizeDraft(draft: ComposerDraft | undefined): ComposerDraft {
@@ -1286,12 +1300,7 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
           ? {
               ...draft,
               ...existing,
-              text: mergeComposerDraftText(existing.text, draft.text),
-              context: mergeReferencedComposerContext(
-                mergeComposerDraftText(existing.text, draft.text),
-                draft.context,
-                existing.context,
-              ),
+              ...mergeComposerDraftPrompt(existing, draft, { preferExistingRecords: true }),
               // A concurrent import must not lose files, even above the send limit.
               attachments: [
                 ...existing.attachments,
@@ -1337,7 +1346,11 @@ export function setComposerDraftText(draftKey: string, value: string): void {
   let removed: ReadonlyArray<DraftComposerAttachment> = [];
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
-    const context = referencedComposerContext(value, existing.context);
+    let context = referencedComposerContext(value, existing.context);
+    if (value !== existing.text && context?.composerRecall !== undefined) {
+      const { composerRecall: _previousRecall, ...editedContext } = context;
+      context = editedContext;
+    }
     const draft = withReferencedContextFiles(existing, value, context);
     removed = existing.attachments.filter((attachment) => !draft.attachments.includes(attachment));
     return withComposerDraft(current, draftKey, draft);
@@ -1692,28 +1705,44 @@ function stripAttachmentUploadReference(
   return rest;
 }
 
-function mergeComposerDraftText(existing: string, incoming: string): string {
-  if (incoming.length === 0) {
-    return existing;
-  }
-  if (existing.length === 0) {
-    return incoming;
-  }
-  if (existing === incoming || existing.endsWith(`\n\n${incoming}`)) {
-    return existing;
-  }
-  return `${existing}\n\n${incoming}`;
-}
-
-function mergeReferencedComposerContext(
-  text: string,
-  first?: OrchestrationMessageContext,
-  second?: OrchestrationMessageContext,
+function mergeComposerDraftPrompt(
+  existing: Pick<ComposerDraft, "text" | "context">,
+  incoming: Pick<ComposerDraftContent, "text" | "context">,
+  options?: { readonly preferExistingRecords?: boolean },
 ) {
+  const suffix = `\n\n${incoming.text}`;
+  const deduplicatedSuffix = incoming.text.length > 0 && existing.text.endsWith(suffix);
+  let text = existing.text;
+  if (text.length === 0) {
+    text = incoming.text;
+  } else if (incoming.text.length > 0 && text !== incoming.text && !deduplicatedSuffix) {
+    text += suffix;
+  }
+  const [first, second] = options?.preferExistingRecords
+    ? [incoming.context, existing.context]
+    : [existing.context, incoming.context];
   const records = new Map((first?.records ?? []).map((record) => [record.contextId, record]));
   for (const record of second?.records ?? []) records.set(record.contextId, record);
-  if (records.size === 0) return undefined;
-  return referencedComposerContext(text, { version: 1, records: [...records.values()] });
+  const context =
+    records.size === 0
+      ? undefined
+      : referencedComposerContext(text, { version: 1, records: [...records.values()] });
+  const previousRecall = existing.context?.composerRecall;
+  if (previousRecall === undefined && incoming.context?.composerRecall === undefined) {
+    return { text, context };
+  }
+
+  const previous = recallComposerText(existing.text, existing.context);
+  const added = recallComposerText(incoming.text, incoming.context);
+  // Keep recall aligned with the text merge, including a retried restoration of the same text.
+  let recalled = previous;
+  if (text === incoming.text && (text !== existing.text || previousRecall === undefined)) {
+    recalled = added;
+  } else if (text !== existing.text || (deduplicatedSuffix && previousRecall === undefined)) {
+    const prefix = deduplicatedSuffix ? existing.text.slice(0, -suffix.length) : previous;
+    recalled = [prefix, added].filter((part) => part.length > 0).join("\n\n");
+  }
+  return { text, context: composerRecallContext(text, recalled, context) };
 }
 
 export function mergeComposerDraftContentState(
@@ -1737,8 +1766,7 @@ export function mergeComposerDraftContentState(
     0,
     PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   );
-  const text = mergeComposerDraftText(existing.text, content.text);
-  const context = mergeReferencedComposerContext(text, existing.context, content.context);
+  const { text, context } = mergeComposerDraftPrompt(existing, content);
   const importedShareIds = content.sourceShareId
     ? [...(existing.importedShareIds ?? []), content.sourceShareId]
     : existing.importedShareIds;
@@ -1755,7 +1783,7 @@ export function mergeComposerDraftContentState(
     // The composer shows non-image files only as inline chips, so a shared file
     // merged without one would be attached but invisible until sent. Other
     // merges carry their own text, and appending chips to it would defeat
-    // mergeComposerDraftText's duplicate check on a retried merge.
+    // the duplicate text check on a retried merge.
     [draftKey]: restoreMissingComposerFileReferences(
       {
         ...existing,

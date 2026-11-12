@@ -168,8 +168,11 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import {
   collectComposerContextReferences,
+  composerRecallContext,
   formatComposerContextReference,
+  recallComposerText,
 } from "@t3tools/shared/composerContextReferences";
+import { serializeComposerMessageForServer } from "../lib/composerContext";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
 import { threadOutboxManager } from "./thread-outbox";
@@ -476,6 +479,69 @@ describe("mobile composer drafts", () => {
       }
       await releaseUnusedComposerAttachmentFiles([file]);
       expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
+    },
+  );
+
+  it.each([0, 1])(
+    "keeps recall provenance only through a recovered draft's unchanged save (%s records)",
+    (recordCount) => {
+      const referenceDraft = contextDraft(0, recordCount);
+      const references = referenceDraft.text ? ` ${referenceDraft.text}` : "";
+      const text = `original${references}`;
+      const context = { ...referenceDraft.context!, composerRecall: "  original\n" };
+      const restored = decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: { thread: { text, attachments: [], context } },
+      }).drafts.thread!;
+      const recovered = mergeComposerDraftContentState({}, "thread", restored);
+      const existing = {
+        text: "another draft",
+        context: { version: 1, records: [], composerRecall: " another draft " } as const,
+        attachments: [],
+      };
+      const combined = mergeComposerDraftContentState(
+        { thread: existing },
+        "thread",
+        restored,
+      ).thread!;
+      const combinedMessage = serializeComposerMessageForServer(combined.text, combined.context);
+      expect(recallComposerText(combinedMessage.text, combinedMessage.context)).toBe(
+        " another draft \n\n  original\n",
+      );
+      const legacy = { text: combined.text, attachments: [] };
+      const deduplicated = mergeComposerDraftContentState(
+        { thread: legacy },
+        "thread",
+        restored,
+      ).thread!;
+      const retriedMessage = serializeComposerMessageForServer(
+        deduplicated.text,
+        deduplicated.context,
+      );
+      expect(deduplicated.text).toBe(legacy.text);
+      expect(recallComposerText(retriedMessage.text, retriedMessage.context)).toBe(
+        "another draft\n\n  original\n",
+      );
+      appAtomRegistry.set(composerDraftsAtom, recovered);
+      setComposerDraftText("thread", text);
+      const unchanged = getComposerDraftSnapshot("thread");
+      expect(
+        composerRecallContext(text, unchanged.text, unchanged.context, text)?.composerRecall,
+      ).toBe("  original\n");
+      const unchangedMessage = serializeComposerMessageForServer(unchanged.text, unchanged.context);
+      expect(recallComposerText(unchangedMessage.text, unchangedMessage.context)).toBe(
+        "  original\n",
+      );
+
+      const editedAuthored = "  changed after recovery\n ";
+      setComposerDraftText("thread", editedAuthored + referenceDraft.text);
+      const edited = decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: { thread: getComposerDraftSnapshot("thread") },
+      }).drafts.thread!;
+      const sent = serializeComposerMessageForServer(edited.text, edited.context);
+      expect(recallComposerText(sent.text, sent.context)).toBe(editedAuthored);
+      expect(edited.context?.records).toEqual(context.records);
     },
   );
 

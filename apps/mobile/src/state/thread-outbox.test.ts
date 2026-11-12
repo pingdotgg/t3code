@@ -1,3 +1,5 @@
+import { serializeComposerMessageForServer } from "../lib/composerContext";
+import { recallComposerText } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentNotRegisteredError } from "@t3tools/client-runtime/connection";
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
@@ -115,7 +117,7 @@ describe("thread outbox", () => {
   it("retains structured context through a persisted offline queue round trip", () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "context-message", createdAt: "2026-09-06T12:00:00.000Z" }),
-      text: "[Build](t3-context://v1/terminal/build-output)",
+      text: "  inspect [Build](t3-context://v1/terminal/build-output) now\n",
       context: {
         version: 1,
         records: [
@@ -133,9 +135,13 @@ describe("thread outbox", () => {
         ],
       },
     };
-    expect(
-      decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
-    ).toEqual(message);
+    const recovered = decodeQueuedThreadMessage(
+      JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message))),
+    );
+    expect(recovered).toEqual(message);
+    const sent = serializeComposerMessageForServer(recovered.text, recovered.context);
+    expect(sent.text).toBe(message.text.trim());
+    expect(recallComposerText(sent.text, sent.context)).toBe("  inspect now\n");
   });
   it.each(["read", "json", "schema"] as const)(
     "recovers usable messages without permitting cleanup after a record %s failure",

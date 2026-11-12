@@ -80,6 +80,7 @@ export function appendInlineContextReference(
 export function removeInlineContextReference(
   prompt: string,
   contextId: string,
+  options: { preserveTrailingWhitespace?: boolean } = {},
 ): { prompt: string; cursor: number } {
   const occurrences = collectComposerContextReferences(prompt).filter(
     (candidate) => candidate.contextId === contextId,
@@ -94,7 +95,7 @@ export function removeInlineContextReference(
     result = `${result.slice(0, start)}${result.slice(end)}`;
     cursor = start;
   }
-  if (cursor >= result.length) {
+  if (cursor >= result.length && !options.preserveTrailingWhitespace) {
     result = result.trimEnd();
     cursor = result.length;
   }

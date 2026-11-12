@@ -7,7 +7,6 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
-  type ComposerContextRecord,
   type EnvironmentContextRecord,
   type ResponseContextRecord,
   type EnvironmentId,
@@ -60,7 +59,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
+import {
+  prepareQueuedEditAttachments,
+  queuedEditContext,
+  recoverQueuedMessageEdit,
+} from "./queuedMessageEdit";
 import type { EditQueuedRunRequest } from "./QueuedRunsControl";
 
 interface EditingQueuedRun {
@@ -68,6 +71,8 @@ interface EditingQueuedRun {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  /** The queued message's text as sent, which recall provenance is relative to. */
+  readonly queuedText: string;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
@@ -91,9 +96,6 @@ interface QueuedRunEditContent {
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
   readonly replyTo?: ResponseContextRecord | null;
 }
-
-const isDraftOwnedRecord = (record: ComposerContextRecord) =>
-  record.kind === "thread" || record.kind === "environment";
 
 function queuedEditDraftTarget(routeThreadRef: ScopedThreadRef, runId: RunId) {
   return DraftId.make(`queued-edit:${scopedThreadKey(routeThreadRef)}:${runId}`);
@@ -137,13 +139,6 @@ async function submitQueuedRunEdit(input: {
       readImage: readFileAsDataUrl,
       uploadFiles,
     });
-    // The edit draft owns thread and machine mentions, so a chip removed while editing is dropped.
-    const keptRecords = (editing.context?.records ?? []).filter(
-      (record) =>
-        !isDraftOwnedRecord(record) &&
-        (!("attachmentId" in record) ||
-          editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId)),
-    );
     const newRecords =
       buildMessageContext({
         terminalContexts: content.terminalContexts.filter(
@@ -159,25 +154,22 @@ async function submitQueuedRunEdit(input: {
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,
         })),
       })?.records ?? [];
+    const sentText = restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0);
     const result = await input.editQueuedRun({
       environmentId,
       input: {
         threadId: editing.threadId,
         runId: editing.runId,
-        text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
+        text: sentText,
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
-          context: {
-            version: 1,
-            records: [
-              ...new Map(
-                [...keptRecords, ...newRecords].map(
-                  (record) => [record.contextId, record] as const,
-                ),
-              ).values(),
-            ],
-          },
+          context: queuedEditContext({
+            editing,
+            sentText,
+            composerText: content.prompt,
+            newRecords,
+          }),
         },
       },
     });
@@ -275,6 +267,7 @@ export function useQueuedRunEdit(input: {
         runId: request.runId,
         messageId: request.messageId,
         originalText: text,
+        queuedText: request.text,
         existingAttachments: request.attachments,
         context,
       },

@@ -8,7 +8,11 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
 } from "../../composerDraftStore";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
+import {
+  prepareQueuedEditAttachments,
+  queuedEditContext,
+  recoverQueuedMessageEdit,
+} from "./queuedMessageEdit";
 
 const environmentId = EnvironmentId.make("remote-environment");
 const threadTarget = scopeThreadRef(environmentId, ThreadId.make("thread:edit"));
@@ -133,5 +137,19 @@ describe("queued message file edits", () => {
     );
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Separate draft");
     expect(store.getComposerDraft(editTarget)).toBeNull();
+  });
+});
+
+describe("queuedEditContext", () => {
+  it("keeps the authored prompt bytes when the edit is saved unchanged", () => {
+    const context = { version: 1, records: [], composerRecall: "  original draft\n" } as const;
+    expect(
+      queuedEditContext({
+        editing: { queuedText: "original draft", existingAttachments: [], context },
+        sentText: "original draft",
+        composerText: "original draft",
+        newRecords: [],
+      }),
+    ).toEqual(context);
   });
 });

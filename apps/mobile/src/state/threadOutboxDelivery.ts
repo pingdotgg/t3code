@@ -1105,7 +1105,7 @@ export function createThreadOutboxDelivery(): {
         createdAt: queuedMessage.createdAt,
         titleText: queuedMessage.text,
         ...serializeComposerMessageForServer(
-          queuedMessage.text.trim(),
+          queuedMessage.text,
           uploadedComposerContext(
             queuedMessage.context,
             queuedMessage.attachments,

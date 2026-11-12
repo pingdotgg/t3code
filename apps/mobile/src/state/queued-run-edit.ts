@@ -6,7 +6,11 @@ import type {
   UploadChatAttachment,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { stripAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import {
+  composerRecallContext,
+  restoreAttachmentOnlyBootstrapPrompt,
+  stripAttachmentOnlyBootstrapPrompt,
+} from "@t3tools/shared/composerContextReferences";
 import {
   makeQueuedRunEditStore,
   resolveQueuedEditExit,
@@ -77,7 +81,7 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
   const editRestorable = editDraft.text.trim().length > 0 || editDraft.attachments.length > 0;
   const recovery = resolveQueuedEditExit({
     editChanged:
-      editDraft.text !== edit.originalText ||
+      editDraft.text !== stripAttachmentOnlyBootstrapPrompt(edit.originalText) ||
       editDraft.attachments.length > 0 ||
       edit.removedExistingAttachment === true,
     // A cleared edit has nothing to put back, so it can only be discarded.
@@ -119,15 +123,10 @@ export function beginQueuedRunEdit(
   // The composer moves off the thread draft, so a paste or pick still running for it is dropped.
   abortComposerDraftOperations(threadKey);
   const draftKey = queuedEditDraftKey(threadKey, edit.runId);
-  const originalText = stripAttachmentOnlyBootstrapPrompt(edit.originalText);
   clearComposerDraft(draftKey);
-  setComposerDraftText(draftKey, originalText);
+  setComposerDraftText(draftKey, stripAttachmentOnlyBootstrapPrompt(edit.originalText));
   setComposerDraftContext(draftKey, edit.context);
-  queuedRunEdits.begin(
-    threadKey,
-    { ...edit, originalText },
-    { runs, onRunLeftQueue: exitQueuedRunEdit },
-  );
+  queuedRunEdits.begin(threadKey, edit, { runs, onRunLeftQueue: exitQueuedRunEdit });
 }
 
 export function removeQueuedRunEditAttachment(threadKey: string, attachmentId: string): void {
@@ -159,20 +158,38 @@ export const startQueuedRunEditSave = queuedRunEdits.startSave;
 /** Attachments replace wholesale; resend kept server attachments with uploads in composer order. */
 export function resolveQueuedEditPayload(input: {
   readonly edit: QueuedRunEdit;
+  readonly text: string;
+  readonly draftText: string;
   readonly draftContext: OrchestrationMessageContext | undefined;
   readonly draftAttachments: ReadonlyArray<{ readonly id: string }>;
   readonly uploaded: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
 }): {
+  readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
-  readonly context: OrchestrationMessageContext | undefined;
+  readonly context: OrchestrationMessageContext;
 } {
   const attachments = [...input.edit.existingAttachments, ...input.uploaded];
+  const text = restoreAttachmentOnlyBootstrapPrompt(input.text, attachments.length > 0);
   const rebound = uploadedComposerContext(
     input.draftContext,
     input.draftAttachments,
     input.uploaded,
   );
-  if (rebound === undefined) return { attachments, context: undefined };
+  // Typing clears the draft's provenance; the edit's original provenance locates the effort prefix.
+  const originalRecall = input.edit.context?.composerRecall;
+  const recall = (context: OrchestrationMessageContext | undefined) =>
+    composerRecallContext(
+      text,
+      input.draftText,
+      originalRecall === undefined
+        ? context
+        : { ...(context ?? { version: 1, records: [] }), composerRecall: originalRecall },
+      input.edit.originalText,
+    ) ?? {
+      version: 1,
+      records: [],
+    };
+  if (rebound === undefined) return { text, attachments, context: recall(undefined) };
   const liveIds = new Set(
     attachments.flatMap((attachment) =>
       "id" in attachment && attachment.id ? [attachment.id] : [],
@@ -182,7 +199,8 @@ export function resolveQueuedEditPayload(input: {
     (record) => !("attachmentId" in record) || liveIds.has(record.attachmentId),
   );
   return {
+    text,
     attachments,
-    context: records.length > 0 ? { version: 1, records } : undefined,
+    context: recall({ ...rebound, records }),
   };
 }

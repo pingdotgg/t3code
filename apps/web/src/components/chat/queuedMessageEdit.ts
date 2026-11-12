@@ -1,5 +1,9 @@
+import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
+import {
+  composerRecallContext,
+  stripAttachmentOnlyBootstrapPrompt,
+} from "@t3tools/shared/composerContextReferences";
 import { resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
-import type { ChatAttachment } from "@t3tools/contracts";
 import {
   composerDraftHasUserContent,
   useComposerDraftStore,
@@ -20,7 +24,9 @@ export function recoverQueuedMessageEdit(input: {
     editChanged:
       input.removedExistingAttachment === true ||
       (draft !== null &&
-        (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0)),
+        (draft.prompt !== stripAttachmentOnlyBootstrapPrompt(input.originalText) ||
+          draft.images.length > 0 ||
+          draft.files.length > 0)),
     // A cleared edit has nothing to put back, so it can only be discarded.
     threadDraftEmpty:
       composerDraftHasUserContent(draft) &&
@@ -57,4 +63,43 @@ export async function prepareQueuedEditAttachments(input: {
     })),
   );
   return [...input.existingAttachments, ...images, ...files];
+}
+
+export function queuedEditContext(input: {
+  readonly editing: {
+    readonly queuedText: string;
+    readonly existingAttachments: ReadonlyArray<ChatAttachment>;
+    readonly context?: OrchestrationMessageContext | undefined;
+  };
+  readonly sentText: string;
+  readonly composerText: string;
+  readonly newRecords: OrchestrationMessageContext["records"];
+}): OrchestrationMessageContext {
+  const { editing } = input;
+  // The draft owns thread and environment mentions. Retain only attachments that survived the edit.
+  const keptRecords = (editing.context?.records ?? []).filter(
+    (record) =>
+      record.kind !== "thread" &&
+      record.kind !== "environment" &&
+      (!("attachmentId" in record) ||
+        editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId)),
+  );
+  return (
+    composerRecallContext(
+      input.sentText,
+      input.composerText,
+      {
+        ...editing.context,
+        version: 1,
+        records: [
+          ...new Map(
+            [...keptRecords, ...input.newRecords].map(
+              (record) => [record.contextId, record] as const,
+            ),
+          ).values(),
+        ],
+      },
+      editing.queuedText,
+    ) ?? { version: 1, records: [] }
+  );
 }

@@ -1263,14 +1263,16 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
   const images = [...contents.images];
   const files = [...contents.files];
   const terminalContexts = [...contents.sendableTerminalContexts];
-  const messageText = contents.terminalContexts
+  const composerText = contents.terminalContexts
     .filter((context) => !terminalContexts.includes(context))
     .reduce(
       (text, context) =>
-        removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+        removeInlineContextReference(text, terminalContextReference(context).contextId, {
+          preserveTrailingWhitespace: true,
+        }).prompt,
       contents.prompt,
-    )
-    .trim();
+    );
+  const messageText = composerText.trim();
   return {
     images,
     files,
@@ -1281,6 +1283,7 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
     replyTo: contents.replyTo,
+    composerText,
     messageText,
     /** What a failed send puts back in the composer: the reply returns above it, not in the text. */
     draftText: contents.replyTo

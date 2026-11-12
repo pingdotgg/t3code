@@ -44,7 +44,6 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
-import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 import { useNowMinuteMs } from "../lib/clock";
@@ -526,6 +525,8 @@ export function useThreadComposerState(input: {
     }
     const payload = resolveQueuedEditPayload({
       edit,
+      text,
+      draftText: draft.text,
       draftContext: draft.context,
       draftAttachments: draft.attachments,
       uploaded: prepared.value.attachments,
@@ -535,11 +536,11 @@ export function useThreadComposerState(input: {
       input: {
         threadId: thread.id,
         runId: edit.runId,
-        text: restoreAttachmentOnlyBootstrapPrompt(text, payload.attachments.length > 0),
+        text: payload.text,
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
-          ...(payload.context ? { context: payload.context } : {}),
+          context: payload.context,
         },
       },
     });
@@ -804,7 +805,7 @@ export function useThreadComposerState(input: {
       threadId: selectedThreadShell.id,
       messageId,
       commandId: CommandId.make(metadata.commandId),
-      text,
+      text: draft.text,
       attachments,
       context: draft.context,
       modelSelection,
@@ -828,7 +829,7 @@ export function useThreadComposerState(input: {
       (error: unknown) => {
         // Restore with uncapped append; capped merge could drop attachments added during the failed write.
         void mergeComposerDraftContent(threadKey, {
-          text,
+          text: draft.text,
           context: draft.context,
           attachments: [],
         });
