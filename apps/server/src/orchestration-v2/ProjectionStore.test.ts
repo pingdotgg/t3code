@@ -762,6 +762,52 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each([
+  { name: "no user messages", messages: [], expected: false },
+  { name: "assistant messages only", messages: [["assistant", "/compact"]], expected: false },
+  {
+    name: "maintenance commands in any case and spacing",
+    messages: [
+      ["user", " /Compact\n"],
+      ["user", "/LOGOUT"],
+    ],
+    expected: true,
+  },
+  {
+    name: "a maintenance command followed by a prompt",
+    messages: [
+      ["user", "/compact"],
+      ["user", "hello"],
+    ],
+    expected: false,
+  },
+  {
+    name: "a maintenance command with an attachment",
+    messages: [["user", "/compact", [{ type: "image" }]]],
+    expected: false,
+  },
+] as const)(
+  "hasOnlyMaintenanceUserMessages is $expected for $name",
+  ({ messages, expected }, ctx) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make(`thread:maintenance:${ctx.task.id}`);
+      yield* Effect.forEach(messages, ([role, text, attachments], index) => {
+        const messageId = `message:maintenance:${ctx.task.id}:${index}`;
+        return sql`
+        INSERT INTO orchestration_v2_projection_messages (
+          message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+        ) VALUES (
+          ${messageId}, ${threadId}, ${role}, 0, '', '',
+          ${JSON.stringify({ text, attachments: attachments ?? [] })}
+        )
+      `;
+      });
+      assert.equal(yield* store.hasOnlyMaintenanceUserMessages(threadId), expected);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("a compacted thread reads its recent runs, live runs, fresh starts and named runs", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -769,7 +815,7 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
     const now = yield* DateTime.now;
     const nodeId = NodeId.make("node:compacted");
     const runId = (ordinal: number) => RunId.make(`run:compacted:${ordinal}`);
-    // Run 7 answers an async question, which the timeline folds into its question.
+    // Run 7 answers an async question, which the timeline folds into its question; run 5 is a wake.
     const messageId = (ordinal: number) =>
       MessageId.make(ordinal === 7 ? "async-answer:compacted:7" : `message:compacted:${ordinal}`);
     const read = (keepRunIds: ReadonlyArray<RunId>) =>
@@ -835,6 +881,15 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
           creationSource: "web",
           role: "user",
           text: [6, 8, 9].includes(ordinal) ? "/compact" : `Prompt ${ordinal}`,
+          ...(ordinal === 5
+            ? {
+                notification: {
+                  source: { kind: "monitor" as const },
+                  outcome: "updated" as const,
+                  summary: "Background notification",
+                },
+              }
+            : {}),
           attachments: [],
           streaming: false,
           createdAt: now,
@@ -885,19 +940,25 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
       VALUES ('run:compacted:legacy', ${threadId}, 0, 'codex', 'completed', '', '{')
     `;
     const runIdsOf = (ordinals: ReadonlyArray<number>) => ordinals.map(runId);
-    // The window starts at run 5, the prompt before the compaction.
+    // The window starts at run 4: run 5 is a wake, which the timeline does not show as a prompt.
     const recent = yield* read([rolledBackId]);
-    assert.deepEqual(ids(recent.runs), [rolledBackId, ...runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11])]);
-    assert.deepEqual(ids(recent.messages), [2, 3, 5, 6, 7, 8, 9, 10, 11].map(messageId).toSorted());
-    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11]));
+    assert.deepEqual(ids(recent.runs), [
+      rolledBackId,
+      ...runIdsOf([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+    ]);
+    assert.deepEqual(
+      ids(recent.messages),
+      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(messageId).toSorted(),
+    );
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
 
-    // Runs 8 and 7 are not shown (`/compact`, async answer), so the baseline is run 5.
+    // Runs 8 and 7 are not shown (`/compact`, async answer), and run 5 is a wake, so the baseline stays run 4.
     yield* compact(9);
-    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11]));
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
 
     // The rolled-back run's later compaction is ignored.
     yield* compact(11);
-    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9, 10, 11]));
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]));
 
     // The search for a prompt before the compaction may walk past an unreadable run.
     const legacyThreadId = yield* addRolledBackRecoveryCandidate("compacted-legacy");

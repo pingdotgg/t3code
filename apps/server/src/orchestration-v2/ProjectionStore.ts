@@ -3363,7 +3363,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       keepRunIds: ReadonlyArray<RunId>,
     ) {
       // Starts at the last prompt before the compaction: a model switch is measured from the
-      // last run `modelSwitchSince` counts, so `/compact` and async-answer runs are skipped
+      // last run `modelSwitchSince` counts, so `/compact`, async-answer and notification runs are skipped
       // unless a context handoff shows them.
       const [compaction] = yield* sql<{ readonly from_ordinal: number }>`
           SELECT COALESCE(
@@ -3374,6 +3374,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                  json_extract(previous.payload_json, '$.contextHandoffId') IS NOT NULL
                  OR NOT (
                    json_extract(previous.payload_json, '$.userMessageId') LIKE 'async-answer:%'
+                   OR EXISTS (
+                     SELECT 1 FROM orchestration_v2_projection_messages AS wake
+                     WHERE wake.message_id = json_extract(previous.payload_json, '$.userMessageId')
+                       AND json_extract(wake.payload_json, '$.notification') IS NOT NULL
+                   )
                    OR EXISTS (
                      SELECT 1 FROM orchestration_v2_projection_messages AS prompt
                      WHERE prompt.message_id = json_extract(previous.payload_json, '$.userMessageId')
