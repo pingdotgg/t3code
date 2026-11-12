@@ -31,7 +31,7 @@ import * as ServerConfig from "../config.ts";
 import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { expandHomePath } from "../os-jank.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -211,7 +211,7 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
   return yield* Effect.gen(function* () {
-    const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
       return yield* new ThreadServerNotRunningError({ baseDir: config.baseDir });
     }

@@ -136,6 +136,45 @@ it.effect(
     ),
 );
 
+it.effect("does not sign in to whatever took over a dead server's port", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-thread-dead-server-" });
+    const state = yield* makePersistedServerRuntimeState({
+      config: { host: "127.0.0.1", devUrl: undefined },
+      port: 3_773,
+    });
+    yield* persistServerRuntimeState({
+      path: path.join(baseDir, "userdata", "server-runtime.json"),
+      // Above Linux's PID ceiling, as in pair.test.ts: no process can hold it.
+      state: { ...state, pid: 4_194_305 },
+    });
+    using session = vi
+      .spyOn(McpBridge, "mcpToolSession")
+      .mockReturnValue(Effect.die("no session should open"));
+
+    const error = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+      "list",
+      "--base-dir",
+      baseDir,
+    ]).pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "ThreadServerNotRunningError");
+    assert.strictEqual(session.mock.calls.length, 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+      ),
+    ),
+  ),
+);
+
 /** Answers each tool call with the next scripted response for that tool. */
 const scriptedTools = (script: Record<string, Array<unknown>>) => {
   const calls: Array<{ readonly tool: string; readonly args: unknown }> = [];
