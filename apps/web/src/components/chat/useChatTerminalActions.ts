@@ -28,8 +28,8 @@ import {
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
-import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import { openUrlInPreview } from "../../browser/openFileInPreview";
+import { isPreviewAvailableFor } from "../../browser/previewRuntime";
 import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { cycleThreadTerminal } from "../../lib/cycleThreadTerminal";
@@ -291,7 +291,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       }
       return;
     }
-    if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
+    if (
+      script.autoOpenPreview &&
+      script.previewUrl &&
+      isPreviewAvailableFor(activeThreadRef.environmentId)
+    ) {
       const previewResult = await openUrlInPreview({
         threadRef: activeThreadRef,
         url: resolveDiscoveredServerUrl(activeThreadRef.environmentId, script.previewUrl),
