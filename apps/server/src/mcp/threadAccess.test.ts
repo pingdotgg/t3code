@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
-import { readThread } from "./threadAccess.ts";
+import { assertTargetWithinLimits, readThread } from "./threadAccess.ts";
 
 const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
 const client: McpInvocationContext.McpInvocationScope = {
@@ -36,5 +36,19 @@ it.effect("points a bare uuid at the mcp: thread it belongs to", () =>
 
     expect(error.code).toBe("thread_not_found");
     expect(error.message).toBe(`The thread was not found. Did you mean \`mcp:${bareId}\`?`);
+  }),
+);
+
+it.effect("refuses a write to a broader thread without calling it a child of the caller", () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(
+      assertTargetWithinLimits(
+        { runtimeMode: "auto", interactionMode: "default" },
+        { runtimeMode: "full-access", interactionMode: "default" },
+      ),
+    );
+
+    expect(error.code).toBe("runtime_mode_escalation_denied");
+    expect(error.message).not.toMatch(/child|parent/i);
   }),
 );
