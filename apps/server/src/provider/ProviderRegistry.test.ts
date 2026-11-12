@@ -179,6 +179,7 @@ type TestClaudeCapabilities = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ModelInfo>;
+  readonly usage?: { readonly rate_limits_available: boolean; readonly rate_limits: null };
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -3610,6 +3611,34 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("names CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC when it blocks the limits read", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            subscriptionType: "pro",
+            tokenSource: "claude.ai",
+            apiProvider: "firstParty",
+            usage: { rate_limits_available: true, rate_limits: null },
+          }),
+          { ANTHROPIC_BASE_URL: "", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "0" },
+        );
+        assert.strictEqual(status.usageLimits?.unavailable?.reason, "probeFailed");
+        assert.include(
+          status.usageLimits?.unavailable?.message ?? "",
+          "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "2.1.318\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
