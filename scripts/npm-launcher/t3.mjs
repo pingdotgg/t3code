@@ -20,8 +20,20 @@ function t3Home() {
   return path.resolve(raw);
 }
 
+const isTransient = (status) => status === 408 || status === 429 || status >= 500;
+
 async function get(url) {
-  const response = await fetch(url);
+  let response;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      response = await fetch(url);
+      if (attempt === 4 || !isTransient(response.status)) break;
+      await response.body?.cancel();
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
+  }
   if (response.status === 404) {
     throw new Error(
       `${url} does not exist yet. If ${version} was just released, try again in a few minutes.`,
@@ -90,6 +102,24 @@ async function install(dir, key) {
     });
     if (extract.status !== 0) throw new Error(`could not extract ${archive}`);
     fs.rmSync(file);
+    const validate = spawnSync(
+      path.join(staging, process.platform === "win32" ? "t3.exe" : "t3"),
+      ["--version"],
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+        encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      },
+    );
+    if (validate.status !== 0) {
+      throw executableError(
+        key,
+        validate.error?.message ||
+          validate.stderr?.trim() ||
+          `--version exited with ${validate.signal || validate.status}`,
+      );
+    }
     fs.writeFileSync(path.join(staging, ".install-complete"), `${version}\n`);
     publish(staging, dir);
   } finally {
@@ -109,11 +139,36 @@ const isComplete = (dir) => {
 function publish(staging, dir) {
   try {
     fs.renameSync(staging, dir);
+    return;
   } catch (error) {
     if (isComplete(dir)) return;
     if (!fs.existsSync(dir)) throw error;
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.renameSync(staging, dir);
+  }
+  const lock = `${dir}.lock`;
+  try {
+    fs.mkdirSync(lock);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    throw new Error(
+      `another t3 is installing ${version}. If none is running, delete ${lock} and try again.`,
+      { cause: error },
+    );
+  }
+  const stale = `${staging}.stale`;
+  try {
+    // A peer may have published between our marker check and taking the lock.
+    if (isComplete(dir)) return;
+    // Move it aside rather than deleting in place: once the folder is empty, a
+    // peer's first rename can land in it.
+    fs.renameSync(dir, stale);
+    try {
+      fs.renameSync(staging, dir);
+    } catch (error) {
+      if (!isComplete(dir)) throw error;
+    }
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+    fs.rmSync(stale, { recursive: true, force: true });
   }
 }
 
@@ -147,9 +202,18 @@ async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => (ipc || signal !== "SIGINT") && child.kill(signal));
   }
-  child.on("error", (error) => fail(error));
+  child.on("error", (error) => fail(executableError(key, error.message)));
   child.on("exit", (code, signal) =>
     process.exit(code ?? 128 + (os.constants.signals[signal] || 1)),
+  );
+}
+
+function executableError(key, detail) {
+  return new Error(
+    `could not run T3 Code ${version} for ${key}: ${detail}` +
+      (process.platform === "linux"
+        ? "\nThe Linux release requires glibc; musl-based systems such as Alpine are not supported. Use a glibc-based Linux environment."
+        : ""),
   );
 }
 
