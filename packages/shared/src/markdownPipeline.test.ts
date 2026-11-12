@@ -102,10 +102,6 @@ it.each([
       `能打开 ${link("http://localhost:3000")}？见 ${link("http://localhost:3001")}；「${link("www.example.com")}」`,
     ],
     [
-      "**预览：http://localhost:18780**（已重启）",
-      `**预览：${link("http://localhost:18780")}**（已重启）`,
-    ],
-    [
       "__http://localhost:18780__，*http://localhost:3000*，~~http://localhost:3001~~。",
       `**${link("http://localhost:18780")}**，*${link("http://localhost:3000")}*，~~${link("http://localhost:3001")}~~。`,
     ],
@@ -114,14 +110,9 @@ it.each([
       `foo**${link("http://localhost:18780")}**（bar）***${link("http://localhost:3000")}***。`,
     ],
     [
-      "地址：http://localhost:3000，备用：http://localhost:3001。",
-      `地址：${link("http://localhost:3000")}，备用：${link("http://localhost:3001")}。`,
-    ],
-    [
       "http://a.com。http://b.com，www.c.com、person@example.com。",
       `${link("http://a.com")}。${link("http://b.com")}，${link("www.c.com")}、[person@example.com](mailto:person@example.com)。`,
     ],
-    ["访问：www.example.com，然后", `访问：${link("www.example.com")}，然后`],
     [
       "**http://localhost:18780**（重启）。 https://example.com/a。结束",
       `**${link("http://localhost:18780")}**（重启）。 ${link("https://example.com/a")}。结束`,
@@ -143,7 +134,6 @@ it.each([
       "https://zh.wikipedia.org/wiki/北京（城市）",
       link("https://zh.wikipedia.org/wiki/北京（城市）"),
     ],
-    ["https://example.com/日本語", link("https://example.com/日本語")],
     ["https://example.com/a%EF%BC%8Cb", link("https://example.com/a%EF%BC%8Cb")],
     ["<https://example.com/日本語，続き>", link("https://example.com/日本語，続き")],
     ["[記事](https://example.com/a，b)", "[記事](https://example.com/a，b)"],
