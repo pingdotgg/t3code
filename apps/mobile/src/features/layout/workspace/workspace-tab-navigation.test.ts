@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { restoreSettingsLinkState } from "../../settings/settings-navigation";
 import {
+  rememberedThreadReopens,
+  threadReopenedByTab,
   workspaceSelectionsIn,
   workspaceTabColumns,
   workspaceTabNavigationState,
@@ -45,6 +47,27 @@ describe("workspace tab selections", () => {
         undefined,
       );
     }
+  });
+});
+
+describe("reopening the remembered chat", () => {
+  it("reopens a chat the shell left out, and not one the shell removed", () => {
+    // An idle subagent or an older settled chat: no row, and nothing removed it.
+    expect(rememberedThreadReopens({ listed: false, removed: false })).toBe(true);
+    expect(rememberedThreadReopens({ listed: true, removed: false })).toBe(true);
+    // Archived or deleted in this session.
+    expect(rememberedThreadReopens({ listed: false, removed: true })).toBe(false);
+    // Archived, then restored: the row is back.
+    expect(rememberedThreadReopens({ listed: true, removed: true })).toBe(true);
+  });
+
+  it("marks the chat a tab switch put on screen, and not one that was already there", () => {
+    const selections = { threads: thread.params };
+    expect(threadReopenedByTab([home, pullRequest], [home, thread], selections)).toBe(
+      selections.threads,
+    );
+    expect(threadReopenedByTab([home, thread], [home, thread], selections)).toBe(undefined);
+    expect(threadReopenedByTab([home, pullRequest], [home], selections)).toBe(undefined);
   });
 });
 

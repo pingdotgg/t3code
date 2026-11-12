@@ -9,6 +9,7 @@ import {
   createOlderSettledThreadAtoms,
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
+  type ThreadFamilyRead,
 } from "@t3tools/client-runtime/state/threads";
 import { createSteadyShellAtoms } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
@@ -113,12 +114,15 @@ export function useEnvironmentThread(
   return state;
 }
 
+const NO_OPEN_FAMILY = Atom.make<ThreadFamilyRead>("settled");
+
 /**
  * Keeps the open thread's family in the shell rows until its screen leaves. Shells leave idle
  * subagents out, so the rows of the thread, of its parents and of its subagents may exist only
  * there. Pass the ref the detail is read by: a thread still being created has no family to read.
+ * Returns whether those rows can still arrive.
  */
-export function useOpenThreadFamily(ref: ScopedThreadRef | null) {
+export function useOpenThreadFamily(ref: ScopedThreadRef | null): boolean {
   const environmentId = ref?.environmentId ?? null;
   const threadId = ref?.threadId ?? null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the open thread's family in the thread family registry until the screen leaves it
@@ -126,4 +130,10 @@ export function useOpenThreadFamily(ref: ScopedThreadRef | null) {
     if (environmentId === null || threadId === null) return;
     return threadFamilies.mount(appAtomRegistry, environmentId, threadId);
   }, [environmentId, threadId]);
+  const read = useAtomValue(
+    environmentId === null || threadId === null
+      ? NO_OPEN_FAMILY
+      : threadFamilies.mountedReadAtom(environmentId, threadId),
+  );
+  return read === "pending";
 }

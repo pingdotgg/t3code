@@ -105,6 +105,7 @@ import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
 import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import type { InspectorContent } from "../layout/inspector-panes";
 import {
+  reopenedThreadIsGone,
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
@@ -126,6 +127,10 @@ import { useStartSideChat } from "./useStartSideChat";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import {
+  forgetWorkspaceThread,
+  workspaceThreadWasReopened,
+} from "../layout/workspace/workspace-selection-store";
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
@@ -225,6 +230,23 @@ function UnavailableThreadDraftRedirect(props: { readonly environmentId: Environ
   return <OpeningThreadLoadingScreen />;
 }
 
+/** A chat the workspace reopened by itself and that cannot open: back to the list, for good. */
+function ReopenedThreadClose(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const goBack = useWorkspaceBackNavigation("threads");
+  const close = useEffectEvent(() => {
+    forgetWorkspaceThread(props.environmentId, props.threadId);
+    goBack();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops this route off the navigation stack on mount, because its thread was archived or deleted
+  useEffect(() => {
+    close();
+  }, []);
+  return <OpeningThreadLoadingScreen />;
+}
+
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   return (
     <ThreadScreenHost>
@@ -244,8 +266,8 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   useAndroidWorkspaceBack("threads");
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
-  const { selectedThread, selectedThreadDetailRef } = useThreadSelection();
-  useOpenThreadFamily(selectedThreadDetailRef);
+  const { selectedThread, selectedThreadListed, selectedThreadDetailRef } = useThreadSelection();
+  const familyPending = useOpenThreadFamily(selectedThreadDetailRef);
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);
@@ -266,6 +288,18 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       ? null
       : scopedThreadKey(selectedThread.environmentId, selectedThread.id);
   const selectedThreadDetailState = useSelectedThreadDetailState();
+  // A shell row proves a reopened chat exists. Until one arrives, its detail can still close it.
+  const [listedThreadKey, setListedThreadKey] = useState<string | null>(null);
+  if (selectedThreadListed && routeThreadKey !== null && listedThreadKey !== routeThreadKey) {
+    setListedThreadKey(routeThreadKey);
+  }
+  const reopenedUnproven =
+    routeName === "Thread" &&
+    !props.inspectorPresentation &&
+    environmentId !== null &&
+    threadIdRaw !== null &&
+    listedThreadKey !== routeThreadKey &&
+    workspaceThreadWasReopened(environmentId, ThreadId.make(threadIdRaw));
   const detailError = selectedThreadDetailState.error;
   const [errorBeforeConnected, setErrorBeforeConnected] = useState(() =>
     routeConnectionState === "connected" ? Option.none<string>() : detailError,
@@ -290,6 +324,19 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
+  const closeReopened = (
+    <ReopenedThreadClose environmentId={environmentId} threadId={ThreadId.make(threadIdRaw)} />
+  );
+  if (
+    reopenedUnproven &&
+    reopenedThreadIsGone({
+      detailStatus: selectedThreadDetailState.status,
+      thread: selectedThreadKey === routeThreadKey ? selectedThread : null,
+    })
+  ) {
+    return closeReopened;
+  }
+
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
     return withInspectorHeader(
       <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />,
@@ -311,6 +358,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       error: detailError,
       errorBeforeConnected,
     }),
+    familyPending,
   });
 
   if (stillHydrating) {
@@ -325,7 +373,12 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
       detailStatus: selectedThreadDetailState.status,
     })
   ) {
-    return <UnavailableThreadDraftRedirect environmentId={environmentId} />;
+    // A draft nobody asked for must not take the place of a chat that only failed to reopen.
+    return reopenedUnproven ? (
+      closeReopened
+    ) : (
+      <UnavailableThreadDraftRedirect environmentId={environmentId} />
+    );
   }
 
   return withInspectorHeader(

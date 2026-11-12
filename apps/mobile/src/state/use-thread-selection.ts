@@ -122,6 +122,8 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
   return {
     selectedThreadRef,
     selectedThread,
+    /** Whether the shell rows hold the thread; `selectedThread` can also come from its detail. */
+    selectedThreadListed: selectedThreadShell !== null,
     selectedThreadCreation,
     selectedThreadDetailRef,
     selectedThreadProject,

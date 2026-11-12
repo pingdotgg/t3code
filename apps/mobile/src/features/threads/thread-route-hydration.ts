@@ -12,9 +12,14 @@ export function threadRouteIsHydrating(input: {
   readonly shellHasError: boolean;
   readonly detailStatus: EnvironmentThreadStatus;
   readonly detailHasError: boolean;
+  /** The open thread's family read can still bring the row of a thread the shell left out. */
+  readonly familyPending: boolean;
 }): boolean {
-  if (input.detailStatus === "deleted" || input.shellHasError || input.detailHasError) {
+  if (input.detailStatus === "deleted" || input.shellHasError) {
     return false;
+  }
+  if (input.detailHasError) {
+    return input.connectionState === "connected" && input.familyPending;
   }
   if (input.isLoadingConnections) {
     return true;
@@ -72,4 +77,20 @@ export function threadDetailErrorIsCurrent<E>(input: {
     Option.isSome(input.error) &&
     !(input.connectionState === "connected" && input.error === input.errorBeforeConnected)
   );
+}
+
+/**
+ * Whether a chat the workspace reopened by itself must close again. Shells leave idle subagents
+ * and older settled chats out, so the reopened chat may have no row; then only its detail can say
+ * that it was archived or deleted.
+ */
+export function reopenedThreadIsGone(input: {
+  readonly detailStatus: EnvironmentThreadStatus;
+  readonly thread: {
+    readonly archivedAt: string | null;
+    readonly deletedAt: string | null;
+  } | null;
+}): boolean {
+  if (input.thread === null) return input.detailStatus === "deleted";
+  return input.thread.archivedAt !== null || input.thread.deletedAt !== null;
 }

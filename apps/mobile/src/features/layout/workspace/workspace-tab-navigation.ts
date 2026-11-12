@@ -38,6 +38,37 @@ export function rememberedSettingsPage(selections: WorkspaceSelections): Setting
     : DEFAULT_SETTINGS_PAGE;
 }
 
+/**
+ * Whether a remembered chat is reopened. Shells leave idle subagents and older settled chats out,
+ * so a missing row does not say the chat is gone; a removal the shell applied does. A chat
+ * reopened without a row closes itself when its detail says it was archived or deleted.
+ */
+export function rememberedThreadReopens(input: {
+  readonly listed: boolean;
+  readonly removed: boolean;
+}) {
+  return input.listed || !input.removed;
+}
+
+function showsThread(route: RouteLike, thread: ThreadSelection) {
+  return (
+    route.name === "Thread" &&
+    stringParam(route.params, "environmentId") === thread.environmentId &&
+    stringParam(route.params, "threadId") === thread.threadId
+  );
+}
+
+/** The remembered chat, when opening a tab put it on screen and it was not there before. */
+export function threadReopenedByTab(
+  previous: readonly RouteLike[],
+  next: readonly RouteLike[],
+  selections: WorkspaceSelections,
+) {
+  const thread = selections.threads;
+  if (!thread || previous.some((route) => showsThread(route, thread))) return undefined;
+  return next.some((route) => showsThread(route, thread)) ? thread : undefined;
+}
+
 /** Whether a remembered chat or pull request can still be opened. */
 export interface WorkspaceSelectionCheck {
   readonly thread: (selection: ThreadSelection) => boolean;
@@ -167,12 +198,7 @@ function detailRoute(
     const thread = selections.threads;
     if (!thread || !check.thread(thread)) return undefined;
     return (
-      state.routes.find(
-        (route) =>
-          route.name === "Thread" &&
-          stringParam(route.params, "environmentId") === thread.environmentId &&
-          stringParam(route.params, "threadId") === thread.threadId,
-      ) ?? {
+      state.routes.find((route) => showsThread(route, thread)) ?? {
         key: thread.key,
         name: "Thread",
         params: { environmentId: thread.environmentId, threadId: thread.threadId },

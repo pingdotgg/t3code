@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  reopenedThreadIsGone,
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
@@ -16,9 +17,22 @@ const settled = {
   shellHasError: false,
   detailStatus: "live" as const,
   detailHasError: false,
+  familyPending: false,
 };
 
 describe("threadRouteIsHydrating", () => {
+  it("waits for the family read of a thread the shell left out when its detail fails", () => {
+    const failed = { ...settled, detailStatus: "empty" as const, detailHasError: true };
+    expect(threadRouteIsHydrating({ ...failed, familyPending: true })).toBe(true);
+    expect(threadRouteIsHydrating(failed)).toBe(false);
+    expect(
+      threadRouteIsHydrating({ ...failed, familyPending: true, connectionState: "reconnecting" }),
+    ).toBe(false);
+    expect(
+      threadRouteIsHydrating({ ...failed, familyPending: true, detailStatus: "deleted" }),
+    ).toBe(false);
+  });
+
   it("waits for shell and thread detail hydration", () => {
     expect(threadRouteIsHydrating({ ...settled, shellStatus: "synchronizing" })).toBe(true);
     expect(threadRouteIsHydrating({ ...settled, shellStatus: "empty" })).toBe(true);
@@ -151,5 +165,30 @@ describe("threadDetailErrorIsCurrent", () => {
         errorBeforeConnected: oldError,
       }),
     ).toBe(true);
+  });
+});
+
+describe("reopenedThreadIsGone", () => {
+  const open = { archivedAt: null, deletedAt: null };
+
+  it("closes a reopened chat only when its detail says it was archived or deleted", () => {
+    expect(reopenedThreadIsGone({ detailStatus: "deleted", thread: null })).toBe(true);
+    expect(
+      reopenedThreadIsGone({ detailStatus: "live", thread: { ...open, archivedAt: "2026-01-01" } }),
+    ).toBe(true);
+    expect(
+      reopenedThreadIsGone({
+        detailStatus: "cached",
+        thread: { ...open, deletedAt: "2026-01-01" },
+      }),
+    ).toBe(true);
+    expect(reopenedThreadIsGone({ detailStatus: "live", thread: open })).toBe(false);
+    for (const detailStatus of ["empty", "cached", "synchronizing", "live"] as const) {
+      expect(reopenedThreadIsGone({ detailStatus, thread: null })).toBe(false);
+    }
+  });
+
+  it("keeps a chat still being created, whose first read can miss", () => {
+    expect(reopenedThreadIsGone({ detailStatus: "deleted", thread: open })).toBe(false);
   });
 });
