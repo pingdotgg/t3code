@@ -9,30 +9,39 @@ import { NativeLayoutObserver } from "./NativeLayoutObserver";
 export function NativeColumnContent(props: {
   readonly children: ReactNode;
   readonly primary?: boolean;
+  readonly insetTop?: boolean;
   readonly insetHorizontally?: boolean;
   readonly backgroundColor?: ColorValue;
 }) {
   const [metrics, setMetrics] = useState<NativeLayoutMetrics | null>(null);
   return (
-    <View
-      className={props.primary ? "flex-1 bg-drawer" : "flex-1 bg-screen"}
-      style={
-        props.backgroundColor === undefined ? undefined : { backgroundColor: props.backgroundColor }
-      }
-    >
+    <View className={props.primary ? "flex-1 bg-drawer" : "flex-1 bg-header"}>
       <SafeAreaProvider style={{ flex: 1 }}>
         <SafeAreaView
-          edges={props.insetHorizontally === false ? [] : ["left", "right"]}
+          edges={{
+            top: props.insetTop === false ? "off" : "additive",
+            left: props.insetHorizontally === false ? "off" : "additive",
+            right: props.insetHorizontally === false ? "off" : "additive",
+          }}
           style={{ flex: 1 }}
         >
-          {/* Observe the inset body. UIKit can reserve other columns in its safe area. */}
-          <View style={{ flex: 1 }}>
-            <NativeLayoutObserver onChange={setMetrics} />
-            <NativeColumnLayoutMetricsContext value={metrics}>
-              <HeaderHeightContext value={metrics?.safeArea.top ?? undefined}>
-                {props.children}
-              </HeaderHeightContext>
-            </NativeColumnLayoutMetricsContext>
+          <View
+            className={`flex-1 overflow-hidden ${props.primary ? "bg-drawer" : "bg-screen"} ${props.insetTop === false ? "" : "rounded-t-[28px]"}`}
+            style={
+              props.backgroundColor === undefined
+                ? undefined
+                : { backgroundColor: props.backgroundColor }
+            }
+          >
+            {/* Descendants measure the inset body so they don't reserve the native bar twice. */}
+            <SafeAreaProvider style={{ flex: 1 }}>
+              <NativeLayoutObserver onChange={setMetrics} />
+              <NativeColumnLayoutMetricsContext value={metrics}>
+                <HeaderHeightContext value={metrics?.safeArea.top ?? undefined}>
+                  {props.children}
+                </HeaderHeightContext>
+              </NativeColumnLayoutMetricsContext>
+            </SafeAreaProvider>
           </View>
         </SafeAreaView>
       </SafeAreaProvider>

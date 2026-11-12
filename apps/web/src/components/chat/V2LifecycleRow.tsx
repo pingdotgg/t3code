@@ -706,7 +706,7 @@ export function FreshSessionRow() {
 }
 
 /** A same-harness model or effort change. Shows only what changed. */
-export function ModelSwitchRow(props: {
+export function ModelSwitchNote(props: {
   readonly environmentId: EnvironmentId;
   readonly modelSwitch: OrchestrationV2ModelSwitch;
 }) {
@@ -722,10 +722,73 @@ export function ModelSwitchRow(props: {
     return [change.modelChanged ? modelName : null, effort].filter(Boolean).join(" ");
   };
   const { from, to } = props.modelSwitch;
+  const label = `${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`;
+  return <SwitchNote label={label} />;
+}
+
+export function HandoffNote(props: {
+  readonly environmentId: EnvironmentId;
+  readonly item: Extract<OrchestrationV2TurnItem, { type: "handoff" }>;
+  readonly runs: ReadonlyArray<HandoffTimelineRun>;
+}) {
+  const providers =
+    useAtomValue(serverEnvironment.providersValueAtom(props.environmentId)) ??
+    EMPTY_SERVER_PROVIDERS;
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
+  const derived = deriveProviderInstanceEntries(providers);
+  const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+  const { from, to } = resolveHandoffEndpoints(props.item, props.runs);
+  const describe = (selection: HandoffEndpoints["from"][number]) => {
+    const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+    const model = provider?.models.find((candidate) => candidate.slug === selection.model);
+    const entry = entries.find((candidate) => candidate.instanceId === selection.instanceId);
+    return model
+      ? getTriggerDisplayModelName(model, provider?.driver)
+      : (selection.model ?? entry?.displayName ?? selection.instanceId);
+  };
+  const label = [...(from.length ? [from.map(describe).join(", ")] : []), describe(to)].join(" → ");
+  const providerName = (selection: HandoffEndpoints["from"][number]) =>
+    entries.find((candidate) => candidate.instanceId === selection.instanceId)?.displayName ??
+    selection.instanceId;
+  const detail = `${from.map(providerName).join(", ")} → ${providerName(to)}`;
   return (
-    <TimelineSystemDivider
-      label={`${describe(from, change.effort?.from)} → ${describe(to, change.effort?.to)}`}
+    <SwitchNote
+      label={label}
+      handoff
+      failed={props.item.status === "failed"}
+      detail={`Context handoff${props.item.status === "failed" ? " failed" : ""}: ${detail}`}
     />
+  );
+}
+
+function SwitchNote(props: {
+  readonly label: string;
+  readonly handoff?: boolean;
+  readonly detail?: string;
+  readonly failed?: boolean;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-model-switch-note
+            tabIndex={0}
+            className={cn(
+              "min-w-0 truncate text-muted-foreground",
+              props.handoff ? "text-label" : "text-meta",
+              props.failed && "text-error-foreground",
+            )}
+          />
+        }
+      >
+        {props.label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {props.detail ? <span className="block">{props.detail}</span> : null}
+        {props.label}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 

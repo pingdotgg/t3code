@@ -697,6 +697,7 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  steerWhenReadyRunId: Schema.optional(RunId),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1534,6 +1535,8 @@ export const OrchestrationV2ModelSwitch = Schema.Struct({
 });
 export type OrchestrationV2ModelSwitch = typeof OrchestrationV2ModelSwitch.Type;
 
+const AssistantMessagePhase = Schema.Literals(["commentary", "partial_answer", "final_answer"]);
+
 const OrchestrationV2TurnItemBaseFields = {
   /** Wire-only cursor for collapsed work; persisted items keep their complete history. */
   deferredWork: Schema.optionalKey(
@@ -1663,6 +1666,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
+    phase: Schema.optional(AssistantMessagePhase),
     messageId: MessageId,
     text: Schema.String,
     textOmitted: DedupedBodyMarker,
@@ -2514,6 +2518,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
+    phase: Schema.optional(AssistantMessagePhase),
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
