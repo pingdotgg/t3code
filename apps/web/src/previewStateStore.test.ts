@@ -127,9 +127,11 @@ describe("previewStateStore (single-tab)", () => {
   });
 
   it("treats a late server close event after optimistic removal as a no-op", () => {
-    const snapshot = makeSnapshot();
+    const snapshot = makeSnapshot({ runtime: "server" });
     applyPreviewServerSnapshot(ref, snapshot);
     beginPreviewSessionClose(ref, snapshot.tabId);
+    // The desktop keeps the webview until the server has unloaded the page.
+    expect(readThreadPreviewState(ref).closingSessions).toEqual({ [snapshot.tabId]: snapshot });
 
     applyPreviewServerEvent(ref, {
       type: "closed",
@@ -140,6 +142,7 @@ describe("previewStateStore (single-tab)", () => {
 
     const state = readThreadPreviewState(ref);
     expect(state.sessions).toEqual({});
+    expect(state.closingSessions).toEqual({});
     expect(state.snapshot).toBeNull();
   });
 

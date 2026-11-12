@@ -40,7 +40,7 @@ function hostedBrowserSessions(
   const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
     const threadRef = parseScopedThreadKey(threadKey);
     return threadRef
-      ? Object.values(previewState.sessions)
+      ? [...Object.values(previewState.sessions), ...Object.values(previewState.closingSessions)]
           .filter(
             (snapshot) =>
               snapshot.runtime !== "server" ||

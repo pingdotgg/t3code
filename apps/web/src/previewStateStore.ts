@@ -32,6 +32,8 @@ export interface ThreadPreviewState {
   sessions: Record<string, PreviewSessionSnapshot>;
   /** Tabs intentionally closed by this client. Stale list snapshots must not resurrect them. */
   suppressedTabIds: ReadonlySet<string>;
+  /** Server tabs closing from this client. The desktop keeps their webviews until the server unloads them. */
+  closingSessions: Record<string, PreviewSessionSnapshot>;
   activeTabId: string | null;
   desktopOverlay: DesktopPreviewOverlay | null;
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
@@ -45,6 +47,7 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   snapshot: null,
   sessions: {},
   suppressedTabIds: new Set<string>(),
+  closingSessions: {},
   activeTabId: null,
   desktopOverlay: null,
   desktopByTabId: {},
@@ -233,7 +236,8 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
           if (!closed.suppressedTabIds.has(event.tabId)) return closed;
           const suppressedTabIds = new Set(closed.suppressedTabIds);
           suppressedTabIds.delete(event.tabId);
-          return { ...closed, suppressedTabIds };
+          const { [event.tabId]: _unloaded, ...closingSessions } = closed.closingSessions;
+          return { ...closed, suppressedTabIds, closingSessions };
         }
       }
     })();
@@ -339,6 +343,9 @@ export function reconcilePreviewServerSessions(
         snapshots.some((snapshot) => snapshot.tabId === tabId),
       ),
     );
+    const closingSessions = Object.fromEntries(
+      Object.entries(current.closingSessions).filter(([tabId]) => suppressedTabIds.has(tabId)),
+    );
     const desktopOverlay = activeTabId ? (desktopByTabId[activeTabId] ?? null) : null;
     if (
       sameServer &&
@@ -350,7 +357,8 @@ export function reconcilePreviewServerSessions(
       current.recentlySeenUrls === recentlySeenUrls &&
       haveSameValues(current.sessions, sessions) &&
       haveSameValues(current.desktopByTabId, desktopByTabId) &&
-      current.suppressedTabIds.size === suppressedTabIds.size
+      current.suppressedTabIds.size === suppressedTabIds.size &&
+      haveSameValues(current.closingSessions, closingSessions)
     ) {
       return current;
     }
@@ -358,6 +366,7 @@ export function reconcilePreviewServerSessions(
       ...current,
       sessions,
       suppressedTabIds,
+      closingSessions,
       activeTabId,
       snapshot,
       desktopByTabId,
@@ -423,9 +432,14 @@ export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): v
   updateThreadPreviewState(ref, (current) => {
     const suppressedTabIds = new Set(current.suppressedTabIds);
     suppressedTabIds.add(tabId);
+    const closing = current.sessions[tabId];
     return {
       ...removeSession(current, tabId),
       suppressedTabIds,
+      closingSessions:
+        closing?.runtime === "server"
+          ? { ...current.closingSessions, [tabId]: closing }
+          : current.closingSessions,
     };
   });
 }
@@ -439,8 +453,9 @@ export function cancelPreviewSessionClose(
     if (!current.suppressedTabIds.has(tabId)) return current;
     const suppressedTabIds = new Set(current.suppressedTabIds);
     suppressedTabIds.delete(tabId);
+    const { [tabId]: _kept, ...closingSessions } = current.closingSessions;
     if (!snapshot) {
-      return { ...current, suppressedTabIds };
+      return { ...current, suppressedTabIds, closingSessions };
     }
     const recentlySeenUrls =
       snapshot.navStatus._tag !== "Idle"
@@ -451,6 +466,7 @@ export function cancelPreviewSessionClose(
       snapshot,
       sessions: { ...current.sessions, [snapshot.tabId]: snapshot },
       suppressedTabIds,
+      closingSessions,
       activeTabId: snapshot.tabId,
       desktopOverlay: current.desktopByTabId[snapshot.tabId] ?? null,
       recentlySeenUrls,
