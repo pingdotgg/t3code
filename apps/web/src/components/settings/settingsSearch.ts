@@ -564,7 +564,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "voice-microphone",
     title: "Microphone",
     to: "/settings/voice",
-    searchTerms: ["mic input audio device"],
+    searchTerms: ["mic input audio device order priority preferred"],
   },
   {
     id: "dictation-shortcut-mode",
