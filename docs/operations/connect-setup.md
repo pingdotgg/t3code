@@ -41,18 +41,8 @@ snapshot requests to a different relay while keeping environment discovery, link
 on `T3CODE_RELAY_URL`. Set `T3CODE_BACKGROUND_RELAY_URL` to the background relay's HTTPS origin
 before building the mobile app. Omit it to use the normal T3 Connect relay for everything.
 
-On each publishing server, supply these runtime environment variables through its service's secret
-configuration, then restart the server:
-
-- `T3CODE_BACKGROUND_RELAY_URL`: the same background relay origin.
-- `T3CODE_BACKGROUND_RELAY_ENVIRONMENT_CREDENTIAL`: that relay's environment credential.
-- `T3CODE_BACKGROUND_RELAY_ISSUER`: optional relay issuer origin used as the publish proof’s `aud`
-  claim; defaults to the background URL. The proof’s `iss` remains `t3-env:<environmentId>`.
-
-The environment's existing agent activity publishing switch still controls sharing. A configured
-background relay replaces the activity destination; it does not publish a second copy to T3 Connect.
-Remove the runtime overrides and rebuild the mobile app without the build override to restore the
-single-relay configuration. Existing T3 Connect credentials are not replaced.
+Configure each publishing server using the [background relay setup guide](../user/mobile-notifications.md#custom-background-relay).
+To restore the single-relay mobile build, remove the build override and rebuild the app.
 
 This only selects an already-provisioned relay. It must accept the mobile app's existing Clerk
 identity, link the environment's signing key to that account, and have push credentials for the app's
