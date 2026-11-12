@@ -306,6 +306,8 @@ function iso(value: DateTime.DateTime): string {
   return DateTime.formatIso(DateTime.toUtc(value));
 }
 
+const MAX_CONSECUTIVE_FAILED_RUNS = 5;
+
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 function nextRunAt(
@@ -544,7 +546,7 @@ export const layer = Layer.effect(
     });
 
     const getRows = (id: ScheduledTaskId) =>
-      sql<ScheduledTaskRow>`
+      sql<ScheduledTaskRow & { readonly consecutive_failures: number }>`
       SELECT
         task_id,
         title,
@@ -567,6 +569,7 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        consecutive_failures,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -769,11 +772,13 @@ export const layer = Layer.effect(
       readonly error: string | null;
       readonly startedAtIso: string;
       readonly pause: boolean;
+      readonly consecutiveFailures: number;
     }) =>
       sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
             enabled = CASE WHEN ${input.pause ? 1 : 0} = 1 THEN 0 ELSE enabled END,
+            consecutive_failures = ${input.consecutiveFailures},
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
@@ -1047,7 +1052,6 @@ export const layer = Layer.effect(
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
-        // An archived destination fails every later run too, so pause instead of retrying.
         const destinationArchived =
           !runSucceeded &&
           Option.exists(
@@ -1061,10 +1065,21 @@ export const layer = Layer.effect(
         const record = Effect.gen(function* () {
           const [row] = yield* getRows(task.id);
           const current = row === undefined ? null : yield* decodeRow(row, origin);
+          // A failure only counts against the task while it still posts where this run did.
+          const sameDestination = current !== null && current.threadId === active.threadId;
+          const failedInARow =
+            runSucceeded || !sameDestination ? 0 : (row?.consecutive_failures ?? 0) + 1;
+          // An archived destination fails every later run too; other failures get a few tries.
+          const pause =
+            sameDestination && (destinationArchived || failedInARow >= MAX_CONSECUTIVE_FAILED_RUNS);
           const scheduleSource = {
             ...(current ?? task),
-            ...(destinationArchived ? { enabled: false } : {}),
+            ...(pause ? { enabled: false } : {}),
           };
+          const recordedError =
+            pause && !destinationArchived
+              ? `${lastRunError} Paused after ${MAX_CONSECUTIVE_FAILED_RUNS} failed runs in a row.`
+              : lastRunError;
           const completed: ScheduledTask = {
             ...scheduleSource,
             updatedAt: iso(completedAt),
@@ -1075,7 +1090,7 @@ export const layer = Layer.effect(
               scheduleSource.schedule.type === "once" ? startedAt : completedAt,
             ),
             lastRunStatus,
-            lastRunError,
+            lastRunError: recordedError,
             runCount: scheduleSource.runCount + 1,
           };
           if (current === null) return { recorded: completed, written: false };
@@ -1087,9 +1102,11 @@ export const layer = Layer.effect(
             completedAtIso: completed.updatedAt,
             nextRunAtIso: completed.nextRunAt,
             status: lastRunStatus,
-            error: lastRunError,
+            error: recordedError,
             startedAtIso,
-            pause: destinationArchived,
+            pause,
+            // Reset on pause so re-enabling starts a fresh budget.
+            consecutiveFailures: pause ? 0 : failedInARow,
           });
           let written = false;
           if (webhook === undefined) written = yield* completion;

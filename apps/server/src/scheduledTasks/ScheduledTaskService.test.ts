@@ -916,29 +916,49 @@ it.effect("a run interrupted right after it reserves the task does not block the
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a run that finds its destination archived pauses the task instead of rescheduling", () =>
+const archived = (threadId: ThreadId) =>
+  Effect.fail(new ThreadManagementService.ThreadManagementThreadArchivedError({ threadId }));
+
+it.effect.each([
+  { name: "an archived destination pauses on the first failure", fail: "archived", runs: 1 },
+  { name: "an archived destination the task moved off keeps it running", fail: "moved", runs: 1 },
+  { name: "four other failures in a row keep it running", fail: "offline", runs: 4 },
+  { name: "the fifth other failure in a row pauses it", fail: "offline", runs: 5 },
+] as const)("a bound task's failed runs: $name", ({ fail, runs }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:archived-destination");
     const threadId = ThreadId.make("thread:archived-destination");
     const sends = yield* Ref.make(0);
+    const threadManagement = Layer.unwrap(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return Layer.mock(ThreadManagementService.ThreadManagementService)({
+          // Active when saved, unavailable by the time it runs.
+          getThreadShell: () => Effect.succeed(threadShell(projectId)),
+          getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
+          sendToThread: () =>
+            Ref.update(sends, (n) => n + 1).pipe(
+              Effect.andThen(
+                fail === "offline"
+                  ? Effect.die(new Error("delivery unavailable"))
+                  : fail === "moved"
+                    ? // The user points the task at another thread while this send is in flight.
+                      sql`UPDATE scheduled_tasks SET thread_id = 'thread:healthy'`.pipe(
+                        Effect.orDie,
+                        Effect.andThen(archived(threadId)),
+                      )
+                    : archived(threadId),
+              ),
+            ),
+        });
+      }),
+    );
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-          Layer.mock(ThreadManagementService.ThreadManagementService)({
-            // Active when saved, archived before the first occurrence.
-            getThreadShell: () => Effect.succeed(threadShell(projectId)),
-            getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
-            sendToThread: () =>
-              Ref.update(sends, (n) => n + 1).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ThreadManagementService.ThreadManagementThreadArchivedError({ threadId }),
-                  ),
-                ),
-              ),
-          }),
+          threadManagement,
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
@@ -965,12 +985,23 @@ it.effect("a run that finds its destination archived pauses the task instead of 
         interactionMode: "default",
       });
 
-      const result = yield* service.runNow({ id: task.id });
+      let result = yield* service.runNow({ id: task.id });
+      for (let run = 1; run < runs; run++) result = yield* service.runNow({ id: task.id });
 
-      assert.equal(yield* Ref.get(sends), 1);
+      const paused = fail === "archived" || runs === 5;
+      assert.equal(yield* Ref.get(sends), runs);
       assert.equal(result.task.lastRunStatus, "failed");
-      assert.isFalse(result.task.enabled);
-      assert.isNull(result.task.nextRunAt);
+      assert.equal(result.task.enabled, !paused);
+      assert.equal(result.task.nextRunAt === null, paused);
+      assert.equal(
+        result.task.lastRunError?.endsWith("Paused after 5 failed runs in a row."),
+        runs === 5,
+      );
+      if (runs === 5) {
+        // Re-enabling starts a fresh budget.
+        yield* service.setEnabled({ id: task.id, enabled: true });
+        assert.isTrue((yield* service.runNow({ id: task.id })).task.enabled);
+      }
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
