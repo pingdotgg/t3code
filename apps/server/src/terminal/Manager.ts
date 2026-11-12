@@ -75,6 +75,11 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
+import {
+  type ShellIntegrationPaths,
+  withShellIntegration,
+  writeShellIntegration,
+} from "./shellIntegration.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 export {
@@ -1422,6 +1427,7 @@ interface TerminalManagerOptions {
   env?: NodeJS.ProcessEnv;
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  shellIntegrationDir?: string;
   subprocessInspector?: TerminalSubprocessInspector;
   processTable?: Effect.Effect<
     ReadonlyArray<ResourceMonitorProcessTableEntry>,
@@ -1517,6 +1523,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
     ),
     managedBinaryCacheDir: providerStatusCacheDir,
     managedBinaryToolsDir: path.join(baseDir, "tools"),
+    shellIntegrationDir: path.join(baseDir, "shell-integration"),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
     resolveProviderInstanceEnvironment,
@@ -1639,6 +1646,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const unregisterTerminal = options.unregisterTerminal ?? (() => Effect.void);
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
+  const shellIntegration: ShellIntegrationPaths | null =
+    options.shellIntegrationDir === undefined
+      ? null
+      : yield* writeShellIntegration(options.shellIntegrationDir).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to write terminal shell integration", { cause }).pipe(
+              Effect.as(null),
+            ),
+          ),
+        );
 
   const managerStateRef = yield* SynchronizedRef.make<TerminalManagerState>({
     sessions: new Map(),
@@ -2382,11 +2399,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    const shell =
+      shellIntegration === null || platform === "win32"
+        ? { args: candidate.args ?? [], env: spawnEnv }
+        : withShellIntegration({
+            shellName: basenameForPlatform(candidate.shell, platform).toLowerCase(),
+            args: candidate.args ?? [],
+            env: spawnEnv,
+            paths: shellIntegration,
+          });
     const launch = yield* agentScope.wrap({
       command: candidate.shell,
-      args: candidate.args ?? [],
+      args: [...shell.args],
       name: "terminal",
-      env: spawnEnv,
+      env: shell.env,
       survivesRestart: true,
     });
     const attempt = yield* Effect.result(
@@ -2396,7 +2422,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         cwd: session.cwd,
         cols: session.cols,
         rows: session.rows,
-        env: spawnEnv,
+        env: shell.env,
       }),
     );
 
