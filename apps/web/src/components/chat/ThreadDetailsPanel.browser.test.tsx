@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   workspaceRoot: "",
   folder: "",
   pullRequests: [] as unknown[],
+  configLoaded: true,
 }));
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
@@ -42,15 +43,19 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
           pullRequests: state.pullRequests,
         }) as never,
   useServerConfigs: (() =>
-    new Map([
-      [
-        EnvironmentId.make("environment"),
-        {
-          scratchWorkspaceRoot: SCRATCH_ROOT,
-          environment: { capabilities: { pullRequests: true } },
-        },
-      ],
-    ])) as never,
+    new Map(
+      state.configLoaded
+        ? [
+            [
+              EnvironmentId.make("environment"),
+              {
+                scratchWorkspaceRoot: SCRATCH_ROOT,
+                environment: { capabilities: { pullRequests: true } },
+              },
+            ],
+          ]
+        : [],
+    )) as never,
 }));
 // Neither folder is a repository, which is what the server reports for both.
 vi.mock(import("~/state/vcs"), async (importOriginal) => {
@@ -104,7 +109,9 @@ function setup(input: {
   workspaceRoot: string;
   folder: string;
   pullRequests?: ThreadPullRequestLink[];
+  configLoaded?: boolean;
 }) {
+  state.configLoaded = input.configLoaded ?? true;
   state.workspaceRoot = input.workspaceRoot;
   state.folder = input.folder;
   state.pullRequests = input.pullRequests ?? [];
@@ -141,6 +148,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         environmentId={threadRef.environmentId}
         threadId={threadRef.threadId}
         projectId={ProjectId.make("project")}
+        composerDraftTarget={threadRef}
         worktreePath={state.folder}
         isServerThread
         activeProjectName={state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain"}
@@ -192,4 +200,18 @@ it("shows a linked pull request in a folder that is not a git repository", async
   await using _screen = await render(<Panel fixture={fixture} />);
   await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
   await expect.element(page.getByText("#27513")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
+});
+
+it("offers no Initialize Git before the server config says where No project lives", async () => {
+  using fixture = setup({
+    workspaceRoot: SCRATCH_ROOT,
+    folder: `${SCRATCH_ROOT}/thread`,
+    configLoaded: false,
+  });
+  await using _screen = await render(<Panel fixture={fixture} />);
+  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Initialize Git" }))
+    .not.toBeInTheDocument();
 });
