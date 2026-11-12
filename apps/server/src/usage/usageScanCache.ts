@@ -10,7 +10,7 @@ import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 12 as const;
+const USAGE_SCAN_CACHE_VERSION = 14 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -18,8 +18,10 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * the newer one; older files are removed once it is saved.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v12.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v14.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v13.json",
+  "usage-scan-cache-v12.json",
   "usage-scan-cache-v11.json",
   "usage-scan-cache-v10.json",
   "usage-scan-cache-v9.json",
@@ -59,7 +61,8 @@ type SerializedRecord = readonly [
   reportedCostUsd: number | null,
   speed: number,
   rateModelIndex?: number | null,
-  unresolvedServiceTierTurnId?: string,
+  unresolvedServiceTierTurnId?: string | null,
+  cacheCreation1hTokens?: number,
 ];
 
 interface SerializedFile {
@@ -118,9 +121,11 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.rateModel === undefined
       ? null
       : intern(tables.models, tables.modelIndex, record.rateModel),
-    ...(record.unresolvedServiceTierTurnId === undefined
-      ? ([] as const)
-      : ([record.unresolvedServiceTierTurnId] as const)),
+    ...(record.cacheCreation1hTokens !== undefined
+      ? ([record.unresolvedServiceTierTurnId ?? null, record.cacheCreation1hTokens] as const)
+      : record.unresolvedServiceTierTurnId !== undefined
+        ? ([record.unresolvedServiceTierTurnId] as const)
+        : ([] as const)),
   ];
   return {
     s: entry.size,
@@ -211,6 +216,7 @@ export function decodeScanCache(
         speedIndex,
         rateModelIndex,
         unresolvedServiceTierTurnId,
+        cacheCreation1h = 0,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -220,8 +226,8 @@ export function decodeScanCache(
         typeof timestampMs !== "number" ||
         !Number.isFinite(timestampMs) ||
         model === undefined ||
-        (unresolvedServiceTierTurnId !== undefined &&
-          typeof unresolvedServiceTierTurnId !== "string") ||
+        (unresolvedServiceTierTurnId != null && typeof unresolvedServiceTierTurnId !== "string") ||
+        !Number.isFinite(cacheCreation1h) ||
         (rateModelIndex != null && rateModel === undefined) ||
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
@@ -250,9 +256,10 @@ export function decodeScanCache(
           outputTokens: output,
           reasoningTokens: reasoning,
         },
+        ...(cacheCreation1h > 0 ? { cacheCreation1hTokens: cacheCreation1h } : {}),
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
-        ...(version >= 7 && unresolvedServiceTierTurnId !== undefined
+        ...(version >= 7 && unresolvedServiceTierTurnId != null
           ? { unresolvedServiceTierTurnId }
           : {}),
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
@@ -290,13 +297,12 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v9 and v11 repair skipped Codex requests; clean v8+ entries stay served while unchanged.
+    // v14 uses Codex request ledgers, including compaction spending omitted by context snapshots.
     // v10 adds Claude advisor calls; before v12 a repeated Claude key kept its first, possibly partial, copy.
+    // v13 adds Claude 1-hour cache writes.
     const legacy =
-      (entry.p === "claude" && version < 12) ||
-      (format.state !== undefined &&
-        (version < 6 ||
-          (entry.p === "codex" && (version < 8 || (version < 11 && malformedRecords > 0)))));
+      (entry.p === "claude" && version < 13) ||
+      (format.state !== undefined && (version < 6 || (entry.p === "codex" && version < 14)));
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
