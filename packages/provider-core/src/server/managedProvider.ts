@@ -52,6 +52,8 @@ function withWorkspaceCatalogRevision(
 }
 
 const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
+// Rebuilt providers share revision ordering for this server process; reconnects reset client caches.
+let workspaceCatalogRevision = 0;
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -267,7 +269,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       const next = yield* Ref.modify(snapshotStateRef, (state) => {
         const snapshot = {
           ...state.snapshot,
-          workspaceCatalogRevision: (state.snapshot.workspaceCatalogRevision ?? 0) + 1,
+          workspaceCatalogRevision: ++workspaceCatalogRevision,
         };
         return [snapshot, { ...state, snapshot }] as const;
       });

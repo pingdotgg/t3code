@@ -313,6 +313,7 @@ export const CodexDriver: ProviderDriver<
           }),
       ),
     );
+    yield* snapshot.invalidateWorkspaceCatalog ?? Effect.void;
     const textGeneration = yield* makeCodexTextGeneration(
       effectiveConfig,
       processEnv,

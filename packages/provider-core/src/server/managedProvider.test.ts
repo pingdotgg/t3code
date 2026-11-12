@@ -679,10 +679,24 @@ describe("makeManagedServerProvider", () => {
 
         assert.ok(provider.invalidateWorkspaceCatalog);
         yield* provider.invalidateWorkspaceCatalog;
+        const catalogRevision = (yield* provider.getSnapshot).workspaceCatalogRevision;
+        assert.ok(catalogRevision !== undefined);
         yield* publishCallbacks[1]!(enrichedSnapshotSecond);
-        assert.strictEqual((yield* provider.getSnapshot).workspaceCatalogRevision, 1);
+        assert.strictEqual((yield* provider.getSnapshot).workspaceCatalogRevision, catalogRevision);
         yield* provider.refresh;
-        assert.strictEqual((yield* provider.getSnapshot).workspaceCatalogRevision, 1);
+        assert.strictEqual((yield* provider.getSnapshot).workspaceCatalogRevision, catalogRevision);
+
+        const rebuilt = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed(refreshedSnapshot),
+        });
+        assert.ok(rebuilt.invalidateWorkspaceCatalog);
+        yield* rebuilt.invalidateWorkspaceCatalog;
+        assert.isAbove((yield* rebuilt.getSnapshot).workspaceCatalogRevision!, catalogRevision);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

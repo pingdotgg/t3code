@@ -1923,8 +1923,8 @@ it.layer(
       }),
     );
 
-    it.effect.each(["the first leaves", "the catalog changes"] as const)(
-      "a second workspace request gets the current result when %s",
+    it.effect.each(["owner leaves", "catalog changes", "initial changes"] as const)(
+      "workspace requests get the current result when %s",
       (scenario) =>
         Effect.gen(function* () {
           const driver = ProviderDriverKind.make("codex");
@@ -2016,7 +2016,7 @@ it.layer(
             const refresh = registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
             const first = yield* Effect.forkChild(refresh);
             yield* Deferred.await(scanStarted);
-            if (scenario === "the catalog changes") {
+            if (scenario !== "owner leaves") {
               const changed = yield* registry.streamChanges.pipe(
                 Stream.filter((providers) => providers[0]?.workspaceCatalogRevision === 1),
                 Stream.take(1),
@@ -2028,8 +2028,19 @@ it.layer(
               yield* PubSub.publish(updates, invalidated);
               yield* Fiber.join(changed);
             }
+            if (scenario === "initial changes") {
+              yield* Deferred.succeed(releaseScan, undefined);
+              assert.deepStrictEqual(
+                (yield* Fiber.join(first))[0]?.workspaceSnapshots?.[0]?.skills.map(
+                  (skill) => skill.name,
+                ),
+                ["fresh"],
+              );
+              assert.strictEqual(yield* Ref.get(scans), 2);
+              return;
+            }
             const second = yield* Effect.forkChild(refresh, { startImmediately: true });
-            if (scenario === "the first leaves") yield* Fiber.interrupt(first);
+            if (scenario === "owner leaves") yield* Fiber.interrupt(first);
             else {
               assert.deepStrictEqual(
                 (yield* Fiber.join(second))[0]?.workspaceSnapshots?.[0]?.skills.map(
@@ -2039,13 +2050,13 @@ it.layer(
               );
             }
             yield* Deferred.succeed(releaseScan, undefined);
-            if (scenario === "the catalog changes") yield* Fiber.join(first);
+            if (scenario === "catalog changes") yield* Fiber.join(first);
             assert.deepStrictEqual(
               (yield* Fiber.join(second))[0]?.workspaceSnapshots?.map((snapshot) => snapshot.cwd),
               ["/workspace"],
             );
-            assert.strictEqual(yield* Ref.get(scans), scenario === "the first leaves" ? 1 : 2);
-            if (scenario === "the catalog changes")
+            assert.strictEqual(yield* Ref.get(scans), scenario === "owner leaves" ? 1 : 2);
+            if (scenario === "catalog changes")
               assert.deepStrictEqual(
                 (yield* registry.getProviders)[0]?.workspaceSnapshots?.[0]?.skills.map(
                   (skill) => skill.name,

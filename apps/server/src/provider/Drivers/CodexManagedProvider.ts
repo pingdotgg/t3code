@@ -233,6 +233,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         }),
     ),
   );
+  yield* snapshot.invalidateWorkspaceCatalog ?? Effect.void;
   yield* runtime.auth.controller.subscribe("managed-codex-snapshot").pipe(
     Stream.filter((state) => ["idle", "succeeded", "failed", "cancelled"].includes(state.phase)),
     // Sign-out interrupts in-flight probes; keep listening for its subsequent idle refresh.

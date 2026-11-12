@@ -42,6 +42,7 @@ import type {
   ProviderInstance,
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
+import type { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
@@ -1028,12 +1029,9 @@ export const layer = Layer.effect(
         Effect.map(([, nextProviders]) => nextProviders),
       );
 
-    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
-      readonly instanceId: ProviderInstanceId;
-      readonly cwd: string;
-      readonly scanCwd?: string;
-      readonly fresh?: boolean;
-    }) {
+    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (
+      input: Parameters<ProviderRegistry["Service"]["refreshWorkspaceSnapshot"]>[0],
+    ): Effect.fn.Return<ReadonlyArray<ServerProvider>, ProviderDriverError> {
       if (input.fresh) {
         yield* updateProviders((providers) =>
           providers.map((candidate) =>
@@ -1143,10 +1141,19 @@ export const layer = Layer.effect(
         }),
       );
       // Wait for the running scan: on-demand clients get its result only in this reply.
-      if ("inFlight" in claim) {
-        return yield* Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)));
+      const result: ReadonlyArray<ServerProvider> = yield* "inFlight" in claim
+        ? Deferred.await(claim.inFlight).pipe(Effect.andThen(Ref.get(providersRef)))
+        : Fiber.join(claim.scan);
+      const refreshedProvider = result.find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (
+        refreshedProvider?.enabled &&
+        refreshedProvider.workspaceCatalogRevision !== provider.workspaceCatalogRevision
+      ) {
+        return yield* refreshWorkspaceSnapshot({ ...input, fresh: false });
       }
-      return yield* Fiber.join(claim.scan);
+      return result;
     });
 
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
