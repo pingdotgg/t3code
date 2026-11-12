@@ -16,6 +16,18 @@ const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestratorMcpF
 it.effect("returns extension reasons and bounded diagnostics through the MCP tools", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
+    const caller = yield* McpInvocationContext.McpInvocationContext;
+    const readOnly = yield* server.callTool({ name: "extensions_list", arguments: {} }).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...caller,
+        client: { sessionId: "reader", label: "Read-only fixture", access: "read-only" },
+      }),
+    );
+    expect(readOnly.isError).toBe(true);
+    expect(JSON.stringify(readOnly.content)).not.toContain("fixture-secret");
+    const listing = yield* server.callTool({ name: "extensions_list", arguments: {} });
+    expect(listing.isError).not.toBe(true);
+    expect(JSON.stringify(listing.content)).toContain("fixture-secret");
     for (const [name, args] of [
       ["extensions_invoke", { id: "test.example", kind: "command", name: "fail", input: {} }],
       ["extensions_install", { source: "missing-package", sourceType: "npm" }],
@@ -61,6 +73,23 @@ it.effect("returns extension reasons and bounded diagnostics through the MCP too
         Layer.provideMerge(liveThreadsLayer),
         Layer.provide(
           Layer.mock(ExtensionService.ExtensionService)({
+            list: Effect.succeed([
+              {
+                manifest: {
+                  id: "test.credentials",
+                  name: "Credentials",
+                  version: "1.0.0",
+                  apiVersion: 1,
+                  main: "extension.mjs",
+                  description: "Fixture",
+                },
+                source: "/extensions/credentials",
+                sourceType: "local",
+                enabled: true,
+                status: "running",
+                settings: { apiKey: "fixture-secret" },
+              },
+            ]),
             invoke: () =>
               Effect.fail(
                 new ExtensionError({

@@ -25,10 +25,13 @@ export const layer = McpToolAccess.toLayer(ExtensionsToolkit, {
   extensions_development: McpToolAccess.reads(() =>
     Effect.flatMap(ExtensionService.ExtensionService, (extensions) => extensions.developmentSkill),
   ),
-  extensions_list: McpToolAccess.reads(() =>
-    Effect.flatMap(ExtensionService.ExtensionService, (extensions) =>
-      extensions.list.pipe(Effect.mapError(extensionFailure)),
-    ),
+  // Listing includes stored settings, so it needs the same access as settings changes.
+  extensions_list: McpToolAccess.writesEnvironment((_input, check) =>
+    Effect.gen(function* () {
+      yield* check;
+      const extensions = yield* ExtensionService.ExtensionService;
+      return yield* extensions.list.pipe(Effect.mapError(extensionFailure));
+    }),
   ),
   extensions_invoke: McpToolAccess.writesEnvironment((input, check) =>
     Effect.gen(function* () {

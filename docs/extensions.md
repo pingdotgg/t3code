@@ -403,7 +403,7 @@ The registry and settings persist under the environment's state directory in `ex
 
 A crashed extension is marked failed; other extensions and T3 continue. Reload after fixing the extension. Activation and shutdown have deadlines; unresponsive subprocesses are terminated. The host owns ordinary helper processes with POSIX process groups or a Windows job, including after a crash. Trusted code can explicitly detach/break away and then owns that lifetime itself. Ordinary calls have a response deadline. A timed-out event hook fails and stops its extension, dropping queued notifications until reload; asynchronous work from that hook cannot overlap later delivery. Nested T3 service requests have a 30-second deadline and are cancelled when their owning invocation times out or the extension stops. Cleanup callbacks are best effort; do not depend on them for crash recovery. Failed npm activation restores the prior registration and working package. Action and schema errors appear in the invoking client. Activation and overload diagnostics appear in management, and extension stdout/stderr goes to the server logs.
 
-Existing environment authentication applies to clients invoking or managing trusted code. These checks protect access to the host; extensions do not have a restricted capability model or a permission manifest.
+Client connections need `environment:maintain` to read extension state, including saved settings, or to manage, invoke, or open extensions. MCP clients need `full-access` to list, manage, or invoke installed extensions. These checks protect access to the host; extensions do not have a restricted capability model or a permission manifest.
 
 ## Automatic development-skill installation
 

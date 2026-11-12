@@ -160,6 +160,8 @@ describe("command permissions", () => {
 
   it.effect.each([
     ...[
+      WS_METHODS.extensionsList,
+      WS_METHODS.extensionsSubscribe,
       WS_METHODS.extensionsInstall,
       WS_METHODS.extensionsManage,
       WS_METHODS.extensionsSettings,
