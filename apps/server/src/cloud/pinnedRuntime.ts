@@ -128,7 +128,6 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   step: string,
   onProgress?: (progress: PinnedRuntimeProgress) => void,
 ) {
-  let received = 0;
   // Bound stalls while holding the install lock, but allow transfers that keep
   // receiving bytes to finish regardless of their total duration.
   return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
@@ -138,6 +137,7 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
       Effect.fn(function* (response) {
         const length = Number(response.headers["content-length"]);
         const total = Number.isFinite(length) && length > 0 ? length : undefined;
+        let received = 0;
         onProgress?.({ stage: "download", received, total });
         const chunks = yield* response.stream.pipe(
           Stream.timeoutOrElse({
@@ -200,12 +200,16 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   input.onProgress?.({ stage: "download", received: 0, total: undefined });
   const { fileName, expected } = yield* publishedArchive(input, platformKey);
   const archiveUrl = cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl);
+  let archiveBytes = 0;
   const archiveResult = yield* Effect.gen(function* () {
     const result = yield* fetchReleaseAsset(
       httpClient,
       archiveUrl,
       "downloading the t3 release archive",
-      input.onProgress,
+      (progress) => {
+        if (progress.stage === "download") archiveBytes = progress.received;
+        input.onProgress?.(progress);
+      },
     );
     input.onProgress?.({ stage: "verify" });
     const digest = yield* Effect.tryPromise({
@@ -236,7 +240,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
       Effect.promise(() =>
         auditDownload(
           { stateDir: input.stateDir },
-          { url: archiveUrl, error: Cause.pretty(cause) },
+          { url: archiveUrl, bytes: archiveBytes, error: Cause.pretty(cause) },
         ),
       ),
     ),

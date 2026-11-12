@@ -342,9 +342,7 @@ const make = Effect.gen(function* () {
           );
           attemptBytes = result.bytes;
           if (result.downloaded >= 0) attempts.push(result);
-          if (result.downloaded === model.size) {
-            break;
-          }
+          if (result.downloaded === model.size) break;
         }
         progress.onVerificationStart?.();
         const complete = yield* expectedFile(model, partialPath);

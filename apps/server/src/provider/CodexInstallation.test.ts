@@ -409,7 +409,11 @@ it.effect("rejects corrupted downloads without publishing a runtime", () =>
     const audit = JSON.parse(
       yield* fs.readFileString(`${baseDir}/userdata/audit/${auditFiles[0]!}`),
     ) as { url: string; error?: string };
-    expect(audit).toMatchObject({ url: asset.url, error: expect.any(String) });
+    expect(audit).toMatchObject({
+      url: asset.url,
+      bytes: archive.length,
+      error: expect.any(String),
+    });
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

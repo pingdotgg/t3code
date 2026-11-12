@@ -274,10 +274,11 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       ))
         .split("\n")
         .filter(Boolean)
-        .map((line) => JSON.parse(line) as { url: string; error?: string });
+        .map((line) => JSON.parse(line) as { url: string; bytes: number; error?: string });
       const audit = auditLines.find((line) => line.url.endsWith(`/${archiveName}`));
       assert.isDefined(audit);
       assert.isString(audit.error);
+      assert.isAbove(audit.bytes, 0);
     }),
   );
 

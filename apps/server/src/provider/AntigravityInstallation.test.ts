@@ -370,11 +370,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         const auditFiles = yield* fs.readDirectory(`${baseDir}/userdata/audit`);
         const audit = JSON.parse(
           yield* fs.readFileString(`${baseDir}/userdata/audit/${auditFiles[0]!}`),
-        ) as { url: string; error?: string };
+        ) as { url: string; bytes: number; error?: string };
         expect(audit).toMatchObject({
           url: (yield* releaseAsset()).url,
           error: expect.any(String),
         });
+        if (name === "checksum mismatch") expect(audit.bytes).toBeGreaterThan(0);
       }
     }),
   );
