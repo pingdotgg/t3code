@@ -113,6 +113,13 @@ it("names a lost subagent by the id the agent resumes it with", () => {
     parentTaskId: "a".repeat(400),
   }).label;
   assert.lengthOf(longId, 160);
+  assert.isTrue(
+    cancelledRosterTaskWork({
+      kind: "command",
+      taskId: "shell-1",
+      description: `${"d".repeat(158)}🚀 deploy`,
+    }).label.isWellFormed(),
+  );
   assert.isFalse(isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "shell-2" })));
   assert.isTrue(
     isAwaitedWork(cancelledRosterTaskWork({ kind: "command", taskId: "tests", awaited: true })),
@@ -120,6 +127,11 @@ it("names a lost subagent by the id the agent resumes it with", () => {
   assert.isFalse(isAwaitedWork(cancelledRosterTaskWork({ kind: "monitor", taskId: "watchdog" })));
   assert.isTrue(
     isAwaitedWork(cancelledRosterTaskWork({ kind: "monitor", taskId: "ci", awaited: true })),
+  );
+  const codexCommand = { id: "item-2", type: "command_execution", input: "sleep 180" };
+  assert.isFalse(isAwaitedWork(cancelledTurnItemWork(codexCommand as never)!));
+  assert.isTrue(
+    isAwaitedWork(cancelledTurnItemWork({ ...codexCommand, completionWake: "always" } as never)!),
   );
   assert.equal(
     cancelledTurnItemWork({

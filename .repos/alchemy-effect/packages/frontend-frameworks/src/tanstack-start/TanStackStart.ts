@@ -24,12 +24,8 @@ import {
  */
 export interface TanStackStartViteModule {
   readonly version?: string;
-  readonly createBuilder: (
-    config: Record<string, unknown>,
-  ) => Promise<TanStackStartViteBuilder>;
-  readonly createServer: (
-    config: Record<string, unknown>,
-  ) => Promise<TanStackStartViteDevServer>;
+  readonly createBuilder: (config: Record<string, unknown>) => Promise<TanStackStartViteBuilder>;
+  readonly createServer: (config: Record<string, unknown>) => Promise<TanStackStartViteDevServer>;
 }
 
 /** The structural slice of a vite builder this package reads. */
@@ -41,10 +37,7 @@ export interface TanStackStartViteBuilder {
 export interface TanStackStartViteDevServer {
   readonly listen: () => Promise<unknown>;
   readonly close: () => Promise<void>;
-  readonly resolvedUrls?:
-    | { readonly local: ReadonlyArray<string> }
-    | null
-    | undefined;
+  readonly resolvedUrls?: { readonly local: ReadonlyArray<string> } | null | undefined;
 }
 
 /**
@@ -97,8 +90,7 @@ export type TanStackStartTargetInput = DeployTargetInput<
  * Start through its native Vite integration — `Cloudflare.Website.Vite` —
  * so no Cloudflare target exists here.)
  */
-export const DEFAULT_TARGET_SPECIFIER =
-  "@alchemy.run/frontend-frameworks/tanstack-start/aws";
+export const DEFAULT_TARGET_SPECIFIER = "@alchemy.run/frontend-frameworks/tanstack-start/aws";
 
 /** The vite plugin package a TanStack Start project must install. */
 export const TANSTACK_START_PLUGIN_SPECIFIER = "@tanstack/start-plugin-core";
@@ -189,34 +181,27 @@ export const inlineBuildConfig = (
  */
 export const make: (
   options?: TanStackStartOptions,
-) => Effect.Effect<
-  Framework["Service"],
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.fnUntraced(function* (options?: TanStackStartOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
+) => Effect.Effect<Framework["Service"], never, FileSystem.FileSystem | Path.Path> =
+  Effect.fnUntraced(function* (options?: TanStackStartOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseRoot = options?.root ?? (yield* Effect.sync(() => process.cwd()));
 
-  const targetConfig: TanStackStartTargetConfig = { outDir: options?.outDir };
+    const targetConfig: TanStackStartTargetConfig = { outDir: options?.outDir };
 
-  const resolveTarget = (root: string) =>
-    FrameworkCore.resolveDeployTarget<
-      TanStackStartTarget,
-      TanStackStartTargetConfig
-    >(root, options?.target ?? DEFAULT_TARGET_SPECIFIER, targetConfig).pipe(
-      Effect.mapError((error) => fail(error.message, error.cause)),
-    );
+    const resolveTarget = (root: string) =>
+      FrameworkCore.resolveDeployTarget<TanStackStartTarget, TanStackStartTargetConfig>(
+        root,
+        options?.target ?? DEFAULT_TARGET_SPECIFIER,
+        targetConfig,
+      ).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
 
-  const loadVite = (root: string) =>
-    FrameworkCore.loadProjectModule<TanStackStartViteModule>(root, "vite").pipe(
-      Effect.mapError((error) =>
-        fail("Failed to load the project's Vite install", error.cause),
-      ),
-    );
+    const loadVite = (root: string) =>
+      FrameworkCore.loadProjectModule<TanStackStartViteModule>(root, "vite").pipe(
+        Effect.mapError((error) => fail("Failed to load the project's Vite install", error.cause)),
+      );
 
-  const build: Framework["Service"]["build"] = Effect.fn(
-    function* (buildOptions) {
+    const build: Framework["Service"]["build"] = Effect.fn(function* (buildOptions) {
       const root = buildOptions?.root ?? baseRoot;
       const target = yield* resolveTarget(root);
       const targetContext = {
@@ -240,9 +225,7 @@ export const make: (
       const vite = yield* loadVite(root);
       yield* Effect.tryPromise({
         try: async () => {
-          const builder = await vite.createBuilder(
-            inlineBuildConfig(root, options?.outDir),
-          );
+          const builder = await vite.createBuilder(inlineBuildConfig(root, options?.outDir));
           return await builder.buildApp();
         },
         catch: (error) => fail("Failed to build", error),
@@ -259,80 +242,74 @@ export const make: (
       const entryName = output.serverModules?.[0]?.name;
       return yield* FrameworkCore.applyDeployTargetFinish(target, output, {
         ...targetContext,
-        ...(entryName !== undefined
-          ? { entry: path.join(dir, entryName) }
-          : undefined),
+        ...(entryName !== undefined ? { entry: path.join(dir, entryName) } : undefined),
       }).pipe(
         Effect.mapError((error) => fail(error.message, error.cause)),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-    },
-  );
+    });
 
-  const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
-    const root = devOptions?.root ?? baseRoot;
-    const vite = yield* loadVite(root);
-    // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
-    // on older Vite — see `resolveViteDevPort`.
-    const port = yield* FrameworkCore.resolveViteDevPort(
-      vite.version,
-      devOptions?.port ?? options?.dev?.port,
-    );
-    const host = devOptions?.host;
+    const dev: Framework["Service"]["dev"] = Effect.fn(function* (devOptions) {
+      const root = devOptions?.root ?? baseRoot;
+      const vite = yield* loadVite(root);
+      // `port: 0` (true OS-assigned) on Vite >= 8.2.1, probed ephemeral port
+      // on older Vite — see `resolveViteDevPort`.
+      const port = yield* FrameworkCore.resolveViteDevPort(
+        vite.version,
+        devOptions?.port ?? options?.dev?.port,
+      );
+      const host = devOptions?.host;
 
-    const server = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async () => {
-          const server = await vite.createServer({
-            root,
-            logLevel: "warn",
-            server: {
-              port,
-              ...(host !== undefined ? { host } : undefined),
-            },
-          });
-          await server.listen();
-          return server;
-        },
-        catch: (error) =>
-          fail("Failed to start the TanStack Start dev server", error),
-      }),
-      (server) =>
-        Effect.promise(async () => {
-          try {
-            await server.close();
-          } catch {
-            // teardown is best-effort
-          }
+      const server = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: async () => {
+            const server = await vite.createServer({
+              root,
+              logLevel: "warn",
+              server: {
+                port,
+                ...(host !== undefined ? { host } : undefined),
+              },
+            });
+            await server.listen();
+            return server;
+          },
+          catch: (error) => fail("Failed to start the TanStack Start dev server", error),
         }),
-    );
+        (server) =>
+          Effect.promise(async () => {
+            try {
+              await server.close();
+            } catch {
+              // teardown is best-effort
+            }
+          }),
+      );
 
-    const resolved = server.resolvedUrls?.local[0];
-    if (resolved === undefined) {
-      return yield* Effect.fail(fail("Could not determine the dev server URL"));
-    }
-    // Vite reports its local URL with a trailing slash; hand back an origin
-    // that concatenates correctly (`${url}/about`, not `//about`).
-    const url = resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
+      const resolved = server.resolvedUrls?.local[0];
+      if (resolved === undefined) {
+        return yield* fail("Could not determine the dev server URL");
+      }
+      // Vite reports its local URL with a trailing slash; hand back an origin
+      // that concatenates correctly (`${url}/about`, not `//about`).
+      const url = resolved.endsWith("/") ? resolved.slice(0, -1) : resolved;
 
-    // Bounded readiness probe: any HTTP response counts (vite serves
-    // lazily; we only need the listener to answer).
-    yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(url, { redirect: "manual" });
-        await response.arrayBuffer().catch(() => {});
-      },
-      catch: (error) => fail("The dev server did not become reachable", error),
-    }).pipe(
-      Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }),
-    );
+      // Bounded readiness probe: any HTTP response counts (vite serves
+      // lazily; we only need the listener to answer).
+      yield* Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(url, { redirect: "manual" });
+          await response.arrayBuffer().catch(() => {});
+        },
+        catch: (error) => fail("The dev server did not become reachable", error),
+      }).pipe(Effect.retry({ schedule: Schedule.spaced("250 millis"), times: 40 }));
 
-    return { url };
+      return { url };
+    });
+
+    return Framework.of({ build, dev });
   });
-
-  return Framework.of({ build, dev });
-});
 
 /** The resolved TanStack Start build output directories. */
 export interface TanStackStartOutputDirs {
@@ -380,11 +357,7 @@ export const selectServerEntryName = (
  */
 export const readTanStackStartOutput = (
   dirs: TanStackStartOutputDirs,
-): Effect.Effect<
-  FrameworkCore.BuildOutput,
-  FrameworkError,
-  FileSystem.FileSystem
-> =>
+): Effect.Effect<FrameworkCore.BuildOutput, FrameworkError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const expected = `server/${dirs.serverEntryFileName ?? DEFAULT_SERVER_ENTRY_FILE_NAME}`;
     const modules = yield* FrameworkCore.readServerModulesFromDisk({
@@ -392,10 +365,8 @@ export const readTanStackStartOutput = (
       prefix: "server",
     }).pipe(Effect.mapError((error) => fail(error.message, error.cause)));
     if (modules.length === 0) {
-      return yield* Effect.fail(
-        fail(
-          `The TanStack Start build produced no server modules in ${dirs.serverDir}`,
-        ),
+      return yield* fail(
+        `The TanStack Start build produced no server modules in ${dirs.serverDir}`,
       );
     }
     const entryName = selectServerEntryName(
@@ -403,11 +374,9 @@ export const readTanStackStartOutput = (
       expected,
     );
     if (entryName === undefined) {
-      return yield* Effect.fail(
-        fail(
-          `The TanStack Start build produced no "${expected}" entry in ${dirs.serverDir} — ` +
-            "is the SSR environment's rollup input the project's server entry?",
-        ),
+      return yield* fail(
+        `The TanStack Start build produced no "${expected}" entry in ${dirs.serverDir} — ` +
+          "is the SSR environment's rollup input the project's server entry?",
       );
     }
     return {
