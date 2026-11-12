@@ -13,6 +13,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -71,7 +72,7 @@ export function UsageProviderSettings({
                 />
                 <SettingsRow
                   title="Thread accounts"
-                  description="Show the limits of the hub account each thread uses. T3 reads the hub's usage queue, which removes those records for anything else reading it. The hub needs usage statistics and session affinity turned on."
+                  description="Show the limits of the hub account each thread uses. T3 reads the hub's usage queue, which removes those records for anything else reading it. The hub needs usage statistics and session affinity on."
                   control={
                     <Switch
                       aria-label={`Thread accounts for ${label}`}
