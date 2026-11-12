@@ -2139,15 +2139,6 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "event") {
-      const eventItem = timelineEntry.projectedItem.item;
-      if (
-        input.isWorking &&
-        isLiveSubagentTurnItem(eventItem) &&
-        eventItem.runId != null &&
-        eventItem.runId === unsettledRunId
-      ) {
-        hasActivityRow = true;
-      }
       const previous = nextRows.at(-1);
       if (
         timelineEntry.projectedItem.item.type === "subagent" &&
@@ -2276,6 +2267,19 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
+  // The open run is only waiting when its subagent group is the newest work in the timeline.
+  for (let index = timelineEntries.length - 1; input.isWorking && index >= 0; index -= 1) {
+    const entry = timelineEntries[index]!;
+    if (
+      entry.kind !== "event" ||
+      entry.projectedItem.item.type !== "subagent" ||
+      entry.projectedItem.item.runId == null ||
+      entry.projectedItem.item.runId !== unsettledRunId
+    ) {
+      break;
+    }
+    hasActivityRow ||= isLiveSubagentTurnItem(entry.projectedItem.item);
+  }
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();

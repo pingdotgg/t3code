@@ -4669,8 +4669,8 @@ describe("live subagents after their parent turn settles", () => {
     expect(rows.map((row) => row.id)).toEqual([`attempt-fold:${attempt.id}`, "child"]);
   });
 
-  it("does not show Thinking while the open turn only waits on a running foreground child", () => {
-    const rows = deriveMessagesTimelineRows({
+  const openTurnRows = (after: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    deriveMessagesTimelineRows({
       timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
         visibleTurnItems: (
           [
@@ -4686,6 +4686,7 @@ describe("live subagents after their parent turn settles", () => {
               attachments: [],
             },
             child("child", 3, "running", "provider_native"),
+            ...after,
           ] satisfies OrchestrationV2TurnItem[]
         ).map(projected),
         optimisticMessages: [],
@@ -4701,9 +4702,45 @@ describe("live subagents after their parent turn settles", () => {
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     });
+
+  it("does not show Thinking while the open turn only waits on a running foreground child", () => {
+    const rows = openTurnRows([]);
     expect(rows.find((row) => row.id === "child")).toBeDefined();
     expect(rows.filter((row) => row.kind === "thinking")).toEqual([]);
   });
+
+  it.each([
+    {
+      name: "a steer",
+      item: {
+        ...base("steer", 4),
+        status: "completed",
+        type: "user_message",
+        messageId: MessageId.make("steer"),
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "steer",
+        text: "Also check the docs",
+        attachments: [],
+      },
+    },
+    {
+      name: "more parent output",
+      item: {
+        ...base("assistant", 4),
+        status: "completed",
+        type: "assistant_message",
+        messageId: MessageId.make("assistant"),
+        text: "Children started; continuing.",
+        streaming: false,
+      },
+    },
+  ] satisfies ReadonlyArray<{ name: string; item: OrchestrationV2TurnItem }>)(
+    "still shows Thinking when $name follows the running child",
+    ({ item }) => {
+      expect(openTurnRows([item]).at(-1)?.kind).toBe("thinking");
+    },
+  );
 });
 
 describe("subagent continued by a later turn", () => {
