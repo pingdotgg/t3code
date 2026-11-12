@@ -92,6 +92,11 @@ const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment d
  */
 const CACHE_RESUME_MAX_AGE_MILLIS = 12 * 60 * 60 * 1000;
 
+// How long a ready socket waits for the early HTTP answer before it resumes held rows itself.
+// The supervisor's quick probe allows a live host the same time. A proxy that drops `/api`
+// without an answer would otherwise hold each connect for the full HTTP timeout.
+const EARLY_LOAD_GRACE = "3 seconds";
+
 type ShellOriginIdentity = Omit<Persistence.ShellCacheOrigin, "snapshotAt">;
 
 interface ShellSubscription {
@@ -572,6 +577,27 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         return [next, next] as const;
       }, Effect.uninterruptible),
     );
+  /**
+   * The subscription waits for the early load, so its answer is applied before the socket
+   * moves the rows on. Held rows that can resume wait a limited time only: after that the
+   * load is ended, so a late answer applies nothing, and the socket resumes them.
+   */
+  const awaitEarlyLoad = Effect.fnUntraced(function* (
+    early: EarlyShellLoad,
+    identity: ShellOriginIdentity | null,
+  ) {
+    const resumable =
+      Option.isSome((yield* SubscriptionRef.get(state)).snapshot) &&
+      canResumeFrom(yield* Ref.get(origin), identity, yield* Clock.currentTimeMillis);
+    if (!resumable) return yield* Fiber.await(early.fiber);
+    const answered = yield* Fiber.await(early.fiber).pipe(Effect.timeoutOption(EARLY_LOAD_GRACE));
+    if (Option.isSome(answered)) return answered.value;
+    // Returns after an answer that is being applied has finished, so the cursor below is read
+    // from rows that no longer change under it.
+    yield* Fiber.interrupt(early.fiber);
+    return yield* Fiber.await(early.fiber);
+  });
+
   yield* SubscriptionRef.changes(supervisor.prepared).pipe(
     // Reads the connection of this moment: a change handled late must not start a load for a
     // connection that ended, which would also drop the items of the session that replaced it.
@@ -609,7 +635,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           Option.getOrNull(yield* SubscriptionRef.get(supervisor.prepared)),
           true,
         );
-        const earlyExit = early === null ? null : yield* Fiber.await(early.fiber);
+        const earlyExit = early === null ? null : yield* awaitEarlyLoad(early, identity);
         // Rows the descriptor's flags or build loaded are not kept when the live config differs:
         // their origin then cannot resume, so the load below replaces them.
         let loaded =

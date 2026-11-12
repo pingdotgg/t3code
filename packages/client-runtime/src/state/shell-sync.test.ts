@@ -1460,6 +1460,46 @@ describe("environment shell cold start", () => {
     }),
   );
 
+  it.effect("resumes held rows on the socket when the HTTP answer does not come", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(
+        { ...RECENT_ORIGIN, ...FAMILY_FLAGS },
+        { serverResumes: false, holdLoads: true },
+      );
+      yield* Queue.take(h.loadOptions);
+      const claimed = yield* Deferred.make<void>();
+      yield* h.connect(FAMILY_CONFIG, claimed);
+      yield* Deferred.await(claimed);
+      // Lets the subscription run on from its config read to its wait for the load.
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Queue.size(h.subscriptions)).toBe(0);
+
+      yield* TestClock.adjust("3 seconds");
+      const first = yield* Queue.take(h.subscriptions);
+      expect(first.input).toMatchObject({
+        afterSequence: CACHED_SEQUENCE,
+        httpSnapshotFallback: true,
+      });
+      yield* Queue.offer(first.events, {
+        kind: "thread.removed",
+        sequence: HTTP_SEQUENCE + 1,
+        location: "active",
+        threadId: ThreadId.make("no-such-thread"),
+      });
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* h.liveAt(HTTP_SEQUENCE + 1);
+
+      // The late answer is an older snapshot. It must not replace the rows the socket moved on.
+      yield* h.releaseLoads;
+      yield* TestClock.adjust("1 millis");
+      expect(yield* Ref.get(h.httpLoads)).toBe(0);
+      expect(yield* SubscriptionRef.get(h.shellState)).toMatchObject({
+        status: "live",
+        snapshot: Option.some({ snapshotSequence: HTTP_SEQUENCE + 1 }),
+      });
+    }),
+  );
+
   it.effect("drops the load of a connection that ended and waits for the next one", () =>
     Effect.gen(function* () {
       const h = yield* makeColdStart(undefined, { serverResumes: false, holdLoads: true });

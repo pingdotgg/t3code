@@ -84,7 +84,11 @@ the server answers `resumable` instead of a snapshot when the socket can replay
 from them, so a cold start costs one shell request plus the subscription. The
 live config stays the authority: rows loaded for a build or with omissions it
 does not confirm are replaced, never resumed. A server whose descriptor does not
-name the flags is asked only after its config arrives.
+name the flags is asked only after its config arrives. The subscription waits
+for that answer, so a snapshot never lands on rows the socket has moved on. When
+held rows can resume, the wait ends 3 seconds after the socket is ready: the
+request is interrupted and the socket resumes the rows, so a proxy that drops
+`/api` without an answer does not hold the connect for the HTTP timeout.
 
 Shell snapshots can leave rows out when the client asks. Servers that advertise
 `shellThreadFamilies` leave out idle subagent children: a child stays while it
