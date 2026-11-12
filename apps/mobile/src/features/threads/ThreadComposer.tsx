@@ -584,6 +584,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });
+  // Hiding the focused editor doesn't reliably close the Android IME, which would cover the dictation bar.
+  const startDictation = () => {
+    inputRef.current?.blur();
+    voiceInput.start();
+  };
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const voicePresentation = resolveVoiceComposerPresentation(
@@ -1102,7 +1107,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   state={voiceInput.state}
                   isAvailable={voiceInput.isAvailable}
                   disabled={isSubmissionLocked}
-                  onStart={voiceInput.start}
+                  onStart={startDictation}
                   onCancel={voiceInput.cancel}
                 />
                 {showStopAction ? (
@@ -1169,7 +1174,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     presentation={voicePresentation}
                     isAvailable={voiceInput.isAvailable}
                     disabled={isSubmissionLocked}
-                    onStart={voiceInput.start}
+                    onStart={startDictation}
                     onConfirm={voiceInput.stop}
                     onCancel={voiceInput.cancel}
                   />
