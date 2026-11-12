@@ -78,6 +78,15 @@ describe("recallableComposerPrompt", () => {
     expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
   });
 
+  it.each([
+    "Ultrathink:\nKeep this prefix in my example",
+    'Example markup: <review_comment filePath="a.ts">literal</review_comment>',
+  ])("keeps user-authored text that resembles send-time context: %j", (typed) => {
+    expect(buildComposerPromptHistoryEntries([{ id: "m1", role: "user", text: typed }])).toEqual([
+      { id: "m1", prompt: typed },
+    ]);
+  });
+
   it("removes canonical references without restoring dangling chips", () => {
     const sent =
       "Look at [Terminal](t3-context://v1/terminal/term-1) please\n    indented  code\n![image](t3-context://v1/image/img-1)";
