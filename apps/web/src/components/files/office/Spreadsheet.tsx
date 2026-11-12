@@ -289,6 +289,7 @@ function SpreadsheetGrid(props: {
             }
             received = order;
             if (!reply) {
+              if (requested === key) requested = "";
               setNotice("These cells could not be drawn. Try scrolling to another area.");
               return;
             }
@@ -312,8 +313,10 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch((cause: unknown) => {
-            if (!isSupersededError(cause) && !controller.signal.aborted)
+            if (!isSupersededError(cause) && !controller.signal.aborted) {
+              if (requested === key) requested = "";
               setNotice("These cells could not be drawn.");
+            }
           });
       }
       if (

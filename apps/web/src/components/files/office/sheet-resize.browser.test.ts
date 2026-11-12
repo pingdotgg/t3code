@@ -214,12 +214,28 @@ it("requests current dimensions after resizing and scrolling away and back befor
   await vi.waitFor(() => expect(pending).toHaveLength(3));
   expect(pending[2]!.message).toMatchObject({ input: { x: 0, y: 0 } });
   const frame = pending[2]!;
-  Reflect.apply(postMessage, frame.worker, [frame.message, frame.options]);
+  if (typeof frame.message !== "object" || frame.message === null || !("id" in frame.message))
+    throw new Error("Missing frame request id");
+  frame.worker.dispatchEvent(
+    new MessageEvent("message", {
+      data: { id: frame.message.id, ok: false, superseded: false, message: "Frame failed" },
+    }),
+  );
+  await expect
+    .element(screen.getByRole("status"))
+    .toHaveTextContent("These cells could not be drawn.");
+  await act(() => root.dispatchEvent(new Event("scroll")));
+  await vi.waitFor(() => expect(pending).toHaveLength(4));
+  const retry = pending[3]!;
+  expect(retry.message).toMatchObject({ input: { x: 0, y: 0 } });
+  Reflect.apply(postMessage, retry.worker, [retry.message, retry.options]);
   await expect.element(screen.getByRole("status")).not.toBeInTheDocument();
   const ratio = window.devicePixelRatio || 1;
-  expect([
-    ...canvas.getContext("2d")!.getImageData(Math.round(140 * ratio), Math.round(5 * ratio), 1, 1)
-      .data,
-  ]).toEqual([211, 236, 221, 255]);
+  await vi.waitFor(() => {
+    expect([
+      ...canvas.getContext("2d")!.getImageData(Math.round(140 * ratio), Math.round(5 * ratio), 1, 1)
+        .data,
+    ]).toEqual([211, 236, 221, 255]);
+  });
   expect(onError).not.toHaveBeenCalled();
 });
