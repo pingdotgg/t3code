@@ -2107,6 +2107,27 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("removes an inactive No project thread's scratch folder", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const scratchRoot = `${fixture.config.baseDir}/scratch`;
+        const folder = `${scratchRoot}/2026-05-01-old-chat`;
+        yield* fixture.fs.makeDirectory(folder, { recursive: true });
+        yield* fixture.fs.writeFileString(`${folder}/notes.md`, "scratch\n");
+        fixture.setProjectRoots([fixture.repo, scratchRoot]);
+        fixture.setStoredWorktreePaths([]);
+        fixture.setThreads([
+          shell({ projectId: ProjectId.make("project-2"), worktreePath: folder, branch: null }),
+        ]);
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toEqual([
+          expect.objectContaining({ path: folder, outcome: "removed" }),
+        ]);
+        expect(yield* fixture.fs.exists(folder)).toBe(false);
+      }),
+    ),
+  );
   it.live("skips a stored worktree path whose parent is a regular file", () =>
     runCleanupTest(
       Effect.gen(function* () {
