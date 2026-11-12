@@ -54,7 +54,12 @@ export function createSidebarCollisionDetection(
       const previousY = previousPointerY ?? pointer.y;
       previousPointerY = pointer.y;
       if (pointer.x >= boundary.left && pointer.x <= boundary.right) {
-        if (pointer.y < previousY && pointer.y <= boundary.bottom) boundarySection = "pinned";
+        // Active refuses a Working row, so the label space opened below the pins must not pin it.
+        const reachesPinned =
+          source.section === "working"
+            ? pointer.y < (args.droppableRects.get(sidebarMarkerId("pinned-divider"))?.top ?? 0)
+            : pointer.y <= boundary.bottom;
+        if (pointer.y < previousY && reachesPinned) boundarySection = "pinned";
         else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
         const nextHeader = (["working-header", "snoozed-header", "settled-header"] as const)
           .map((marker) =>

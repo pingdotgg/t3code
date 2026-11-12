@@ -24,6 +24,7 @@ const marker = (marker: SidebarListMarker): SidebarListItem => ({ kind: "marker"
 const pinnedHeader = marker("pinned-header");
 const divider = marker("pinned-divider");
 const settledHeader = marker("settled-header");
+const workingHeader = marker("working-header");
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 
 function layout(
@@ -120,13 +121,15 @@ describe("sidebar collision detection", () => {
   );
 
   it.each([
-    { sourceSection: "active", pins: 0 },
-    { sourceSection: "active", pins: 1 },
-    { sourceSection: "pinned", pins: 1 },
-    { sourceSection: "settled", pins: 1 },
+    { sourceSection: "active", pins: 0, pinsAt: 316 },
+    { sourceSection: "active", pins: 1, pinsAt: 316 },
+    { sourceSection: "pinned", pins: 1, pinsAt: 316 },
+    { sourceSection: "settled", pins: 1, pinsAt: 316 },
+    // Active refuses a Working row, so it pins only above the divider, not on the label below.
+    { sourceSection: "working", pins: 1, pinsAt: 183 },
   ] as const)(
     "switches on crossing the divider row from $sourceSection with $pins pins",
-    ({ sourceSection, pins }) => {
+    ({ sourceSection, pins, pinsAt }) => {
       const items = [
         pinnedHeader,
         ...(pins ? [thread("p", "pinned")] : []),
@@ -134,6 +137,7 @@ describe("sidebar collision detection", () => {
         divider,
         thread("a", "active"),
         ...(sourceSection === "active" ? [thread("source", "active")] : []),
+        ...(sourceSection === "working" ? [workingHeader, thread("source", "working")] : []),
         settledHeader,
         ...(sourceSection === "settled" ? [thread("source", "settled")] : []),
       ];
@@ -181,7 +185,7 @@ describe("sidebar collision detection", () => {
               current:
                 item === divider
                   ? boundaryNode
-                  : item === settledHeader
+                  : item === settledHeader || item === workingHeader
                     ? ({ getBoundingClientRect: () => ({ top: 600 }) } as unknown as HTMLElement)
                     : null,
             },
@@ -192,16 +196,16 @@ describe("sidebar collision detection", () => {
         return over ? resolveSidebarDropTarget(items, "source", String(over.id))?.section : null;
       };
       expect(at(330)).toBe("active");
-      expect(at(317)).toBe("active");
-      expect(at(316)).toBe("pinned");
+      expect(at(pinsAt + 1)).toBe("active");
+      expect(at(pinsAt)).toBe("pinned");
       boundaryTop = 400;
       expect(at(316)).toBe("pinned");
       expect(at(399)).toBe("pinned");
       expect(at(400)).toBe("active");
       boundaryTop = 300;
       expect(at(400)).toBe("active");
-      expect(at(317)).toBe("active");
-      expect(at(316)).toBe("pinned");
+      expect(at(pinsAt + 1)).toBe("active");
+      expect(at(pinsAt)).toBe("pinned");
     },
   );
 
