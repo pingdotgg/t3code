@@ -116,6 +116,8 @@ it.effect(
         ),
       );
       const adapter = yield* registry.get(personalId);
+      // Session reuse compares adapters, so an unchanged instance must keep its identity.
+      assert.strictEqual(yield* registry.get(personalId), adapter);
       const error = yield* adapter
         .openSession({
           threadId: ThreadId.make("new-thread"),
