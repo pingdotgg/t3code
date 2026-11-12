@@ -308,6 +308,12 @@ function iso(value: DateTime.DateTime): string {
 }
 
 const RUN_OUTCOME_WAIT_MS = 24 * 60 * 60 * 1_000;
+const UNSUCCESSFUL_RUN_ERRORS = {
+  failed: "The run failed.",
+  interrupted: "The run was stopped.",
+  cancelled: "The run was cancelled.",
+  rolled_back: "The run was rolled back.",
+} as const;
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 function nextRunAt(
@@ -885,9 +891,24 @@ export const layer = Layer.effect(
         runId: dispatched.id,
         timeoutMs: RUN_OUTCOME_WAIT_MS,
       });
-      if (run?.status !== "failed") return;
-      const { turnItems } = yield* threadManagement.getProjectThreadRecords(thread, ["turnItems"]);
-      const error = latestRootProviderFailure(run, turnItems)?.message ?? "The run failed.";
+      if (
+        run === null ||
+        run.status === "completed" ||
+        !ThreadManagementService.isTerminalRunStatus(run.status)
+      )
+        return;
+      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(thread, [
+        "turnItems",
+        "messages",
+      ]);
+      // A queued message promoted to a steer cancels its run and joins the active one.
+      if (
+        run.status === "cancelled" &&
+        messages.find((message) => message.id === messageId)?.runId !== run.id
+      )
+        return;
+      const error =
+        latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
       const updated = yield* sql`
         UPDATE scheduled_tasks
         SET last_run_status = 'failed', last_run_error = ${error}

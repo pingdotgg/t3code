@@ -419,12 +419,16 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a run the provider fails after accepting its message records the failure", () =>
+it.effect.each([
+  { status: "failed", error: "Weekly usage limit reached" },
+  { status: "interrupted", error: "The run was stopped." },
+  { status: "cancelled", error: "The run was cancelled." },
+] as const)("a run that ends $status after its message was accepted records it", (outcome) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:test");
     const ended = yield* Deferred.make<void>();
     const sent = yield* Ref.make("");
-    const run = { id: "run:2", status: "failed", rootNodeId: "node:root" };
+    const run = { id: "run:2", status: outcome.status, rootNodeId: "node:root" };
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -442,6 +446,7 @@ it.effect("a run the provider fails after accepting its message records the fail
                       { id: "run:1", status: "completed", userMessageId: "message:earlier" },
                       { ...run, userMessageId },
                     ],
+                    messages: [{ id: userMessageId, runId: "run:2" }],
                     turnItems: [
                       {
                         type: "error",
@@ -496,7 +501,7 @@ it.effect("a run the provider fails after accepting its message records the fail
       );
       yield* Deferred.succeed(ended, undefined);
       const recorded = Option.getOrUndefined(yield* Fiber.join(failed));
-      assert.equal(recorded?.lastRunError, "Weekly usage limit reached");
+      assert.equal(recorded?.lastRunError, outcome.error);
       assert.equal(recorded?.runCount, 1);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
