@@ -54,6 +54,7 @@ import {
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   type ChangeRequestTerminology,
@@ -671,6 +672,7 @@ export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
@@ -2590,7 +2592,7 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.map((result) => result.stdout)),
     );
   // Git rewrites these through a lock and rename when the branch moves or a remote or upstream
-  // changes. Config files come from git itself, so included files are watched too.
+  // changes. Config files and include targets come from git itself.
   const readSettledPrLookupFiles = (cacheCwd: string, branch: string) =>
     Effect.all(
       [
@@ -2614,11 +2616,28 @@ export const make = Effect.gen(function* () {
           .split("\n");
         const commonDir = path.resolve(cacheCwd, commonDirOutput);
         const gitDir = path.resolve(cacheCwd, gitDirOutput);
-        // `-z` output alternates `<origin>` and `<key>\n<value>` fields.
-        const configFiles = config.stdout
-          .split("\u0000")
-          .filter((field, index) => index % 2 === 0 && field.startsWith("file:"))
-          .map((field) => path.resolve(cacheCwd, field.slice("file:".length)));
+        // `-z` output alternates `<origin>` and `<key>\n<value>` fields. Include targets are
+        // watched whether or not they exist or apply yet, so creating one forces a recheck.
+        const fields = config.stdout.split("\u0000");
+        const configFiles: string[] = [];
+        for (let index = 0; index + 1 < fields.length; index += 2) {
+          const origin = fields[index] ?? "";
+          if (!origin.startsWith("file:")) continue;
+          const file = path.resolve(cacheCwd, origin.slice("file:".length));
+          configFiles.push(file);
+          const entry = fields[index + 1] ?? "";
+          const newline = entry.indexOf("\n");
+          const key = newline < 0 ? entry : entry.slice(0, newline);
+          const isInclude =
+            key === "include.path" || (key.startsWith("includeif.") && key.endsWith(".path"));
+          if (!isInclude || newline < 0) continue;
+          const target = entry.slice(newline + 1);
+          configFiles.push(
+            target.startsWith("~/")
+              ? path.join(homeDirectory, target.slice(2))
+              : path.resolve(path.dirname(file), target),
+          );
+        }
         return [
           ...new Set([
             path.join(commonDir, "refs", "heads", branch),
@@ -2626,6 +2645,8 @@ export const make = Effect.gen(function* () {
             path.join(commonDir, "reftable", "tables.list"),
             path.join(commonDir, "config"),
             path.join(gitDir, "config.worktree"),
+            // `includeIf "onbranch:..."` follows the checked-out branch.
+            path.join(gitDir, "HEAD"),
             ...configFiles,
           ]),
         ];

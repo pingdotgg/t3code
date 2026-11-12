@@ -1152,40 +1152,48 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
   it.effect("a settled branch PR is rechecked when an included config file moves its remote", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/settled"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/settled"]);
-      const included = NodePath.join(repoDir, "remotes.gitconfig");
-      yield* runGit(repoDir, ["config", "--unset", "remote.origin.url"]);
-      yield* runGit(repoDir, ["config", "include.path", included]);
-      const setOriginUrl = (url: string) =>
-        runGit(repoDir, ["config", "--file", included, "remote.origin.url", url]);
-      yield* setOriginUrl("https://github.com/pingdotgg/codething-mvp.git");
-      const pullRequest = (number: number, state: "open" | "merged"): FakeChangeRequest => ({
-        number,
-        title: "Settled",
-        url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
-        baseRefName: "main",
-        headRefName: "feature/settled",
-        state,
-        updatedAt: `2026-04-0${number}T15:00:00Z`,
-      });
-      const { manager } = yield* makeManager({
-        providerScenario: {
-          prListSequence: [[pullRequest(1, "merged")]],
-          prListOtherwise: [pullRequest(2, "open")],
-        },
-      });
-      const lookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/settled" });
+      // An include target that is missing at confirmation is watched too.
+      for (const includedExists of [true, false]) {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/settled"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/settled"]);
+        const included = NodePath.join(repoDir, ".git", "remotes.gitconfig");
+        const setOriginUrl = (url: string) =>
+          runGit(repoDir, ["config", "--file", included, "remote.origin.url", url]);
+        yield* runGit(repoDir, [
+          "config",
+          "remote.origin.url",
+          "https://github.com/pingdotgg/codething-mvp.git",
+        ]);
+        // Relative include paths resolve against the including file's folder.
+        yield* runGit(repoDir, ["config", "include.path", "remotes.gitconfig"]);
+        if (includedExists) yield* setOriginUrl("https://github.com/pingdotgg/codething-mvp.git");
+        const pullRequest = (number: number, state: "open" | "merged"): FakeChangeRequest => ({
+          number,
+          title: "Settled",
+          url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+          baseRefName: "main",
+          headRefName: "feature/settled",
+          state,
+          updatedAt: `2026-04-0${number}T15:00:00Z`,
+        });
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            prListSequence: [[pullRequest(1, "merged")]],
+            prListOtherwise: [pullRequest(2, "open")],
+          },
+        });
+        const lookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/settled" });
 
-      expect((yield* lookup)?.number).toBe(1);
-      expect((yield* lookup)?.number).toBe(1);
-      yield* setOriginUrl("https://github.com/pingdotgg/other-repo.git");
-      expect((yield* lookup)?.number).toBe(2);
+        expect((yield* lookup)?.number).toBe(1);
+        expect((yield* lookup)?.number).toBe(1);
+        yield* setOriginUrl("https://github.com/pingdotgg/other-repo.git");
+        expect((yield* lookup)?.number).toBe(2);
+      }
     }),
   );
 
