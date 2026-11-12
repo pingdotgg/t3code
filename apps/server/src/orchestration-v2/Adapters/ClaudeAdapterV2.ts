@@ -12207,10 +12207,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(Path.Path, path),
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
-            // Only the spawn applies the `title` option; on resume the session's stored title wins
-            // (sdk.d.ts). Send the CLI's rename so `claude --resume` follows the thread title.
-            // Control requests have no deadline and turn startup awaits this, so bound it: a
-            // timed-out rename is skipped and retried next turn.
+            // Send the CLI's rename so `claude --resume` follows the thread title.
+            // Turn startup bounds the call with a 10s timeout; on failure/timeout,
+            // invalidate the tracked title so retries re-apply earlier titles too.
             if (appliedSessionTitles.get(nativeThreadId) !== turnInput.appThread.title) {
               yield* querySession.query.renameSession(turnInput.appThread.title).pipe(
                 Effect.timeout("10 seconds"),
@@ -12218,6 +12217,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   Effect.sync(() =>
                     appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title),
                   ),
+                ),
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    appliedSessionTitles.delete(nativeThreadId);
+                  }),
                 ),
                 Effect.ignore,
               );

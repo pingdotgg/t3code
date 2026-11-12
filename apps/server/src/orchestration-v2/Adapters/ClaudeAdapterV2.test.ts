@@ -3805,6 +3805,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     );
+
+    it.effect("renames when reverting to an earlier title after a failed or timed out update", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          renameSession: (title) =>
+            title === "Title B"
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "renameSession",
+                    cause: new Error("timed out or refused"),
+                  }),
+                )
+              : Effect.void,
+        });
+        yield* startTurn(harness, "Title A", 1, true);
+        yield* finishTurn(harness, 1);
+        assert.deepEqual(harness.renameCalls, ["Title A"]);
+
+        yield* startTurn(harness, "Title B", 2, true);
+        yield* finishTurn(harness, 2);
+        assert.deepEqual(harness.renameCalls, ["Title A", "Title B"]);
+
+        yield* startTurn(harness, "Title A", 3, true);
+        yield* finishTurn(harness, 3);
+        assert.deepEqual(harness.renameCalls, ["Title A", "Title B", "Title A"]);
+
+        yield* startTurn(harness, "Title A", 4, true);
+        yield* finishTurn(harness, 4);
+        assert.deepEqual(harness.renameCalls, ["Title A", "Title B", "Title A"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
   });
 
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
