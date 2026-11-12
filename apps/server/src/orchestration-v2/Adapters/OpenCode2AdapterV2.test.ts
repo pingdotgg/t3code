@@ -1638,7 +1638,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     (recoveredChild) =>
       Effect.gen(function* () {
         const ids = yield* IdAllocator.IdAllocatorV2.pipe(Effect.provide(IdAllocator.layer));
-        const childThreadId = ids.derive.threadFromProviderThread({
+        const childThreadId = ids.derive.subagentThread({
           driver: OPENCODE_PROVIDER,
           nativeThreadId: CHILD,
           providerInstanceId: instanceId,
