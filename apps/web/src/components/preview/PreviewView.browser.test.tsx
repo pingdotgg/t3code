@@ -257,6 +257,30 @@ describe("PreviewView", () => {
     },
   );
 
+  it("keeps the address in the bar when Enter commits an IME composition", async () => {
+    setup();
+    await using _screen = await render(view());
+    const input = page.getByPlaceholder("Search or enter URL");
+    await input.fill("https://example.com/pinyin");
+
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(enter, "keyCode", { value: 229 });
+    act(() => {
+      input.element().dispatchEvent(enter);
+    });
+
+    await expect.element(input).toHaveFocus();
+    await expect.element(input).toHaveValue("https://example.com/pinyin");
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(true);
+  });
+
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
     const picked = annotation("annotation-revoked");

@@ -27,6 +27,10 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import {
+  CLAUDE_PROVIDER,
+  CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
+} from "./Adapters/ClaudeAdapterV2.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -42,6 +46,7 @@ import {
   handoffTokenCapConfig,
   handoffBudget,
   attachmentTokenAllowance,
+  estimateTextTokens,
   contextUsageForHandoff,
   historicalMessage,
   latestNativeContextUsage,
@@ -96,6 +101,7 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
 }
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
@@ -103,7 +109,8 @@ const isProviderAdapterOpenSessionError = Schema.is(
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
  * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
- * that never answers while the query opens.
+ * that never answers while the query opens. A query that ends before the turn attaches (such as a
+ * rejected resume point) never received the prompt either.
  */
 const PROMPT_REFUSAL_TAGS = [
   "ClaudeBackgroundWorkBlocksQueryReplacementError",
@@ -115,7 +122,22 @@ const PROMPT_REFUSAL_TAGS = [
 
 const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (isProviderAdapterProtocolError(error) &&
+    error.driver === CLAUDE_PROVIDER &&
+    error.detail === CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+const startFailureMessage = (error: Error): string => {
+  const nestedCause = "cause" in error ? error.cause : undefined;
+  return (
+    knownProviderFailureMessage(error) ??
+    (nestedCause instanceof Error
+      ? nestedCause.message
+      : typeof nestedCause === "string"
+        ? nestedCause
+        : error.message)
+  );
+};
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
@@ -526,7 +548,6 @@ export const layer: Layer.Layer<
           readonly error: Error;
           readonly message?: string;
         }) {
-          const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
@@ -538,14 +559,7 @@ export const layer: Layer.Layer<
               title: failed.title,
               failure: makeProviderFailure({
                 cause: failed.error,
-                message:
-                  failed.message ??
-                  knownProviderFailureMessage(failed.error) ??
-                  (nestedCause instanceof Error
-                    ? nestedCause.message
-                    : typeof nestedCause === "string"
-                      ? nestedCause
-                      : failed.error.message),
+                message: failed.message ?? startFailureMessage(failed.error),
                 class: "provider_error",
               }),
             },
@@ -986,7 +1000,7 @@ export const layer: Layer.Layer<
                     : 0;
                 return (
                   sum +
-                  (historical === null ? 0 : Buffer.byteLength(historical.text)) +
+                  (historical === null ? 0 : estimateTextTokens(historical.text)) +
                   nativeAttachments
                 );
               }, 0)
@@ -1159,6 +1173,7 @@ export const layer: Layer.Layer<
           const sourceBusy = sourceProjection.runs.some(
             (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
           );
+          let nativeForkFailure: string | undefined;
           if (!sourceBusy) {
             // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
             const rolledBackAttemptIds = new Set(
@@ -1171,7 +1186,7 @@ export const layer: Layer.Layer<
                 )
                 .map((attempt) => attempt.id),
             );
-            return yield* loadFromProvider(
+            const forked = yield* Effect.result(
               session.forkThread({
                 sourceProviderThread,
                 sourceProviderTurns: sourceProjection.providerTurns.filter(
@@ -1186,7 +1201,24 @@ export const layer: Layer.Layer<
                   : { providerTurnId: sourceProviderTurn.id }),
               }),
             );
+            if (forked._tag === "Success") return forked.success;
+            if (input.willRetry === true) return yield* forked.failure;
+            if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
+            // Retries are spent (e.g. the source's native session is gone): start fresh with portable history.
+            yield* Effect.logWarning("Starting a native fork in a fresh native session", {
+              driver: session.driver,
+              providerThreadId: providerThread.id,
+              sourceProviderThreadId: sourceProviderThread.id,
+              runId,
+              errorTag: forked.failure._tag,
+            });
+            nativeForkFailure = makeProviderFailure({
+              cause: forked.failure,
+              message: startFailureMessage(forked.failure),
+              class: "provider_error",
+            }).message;
           }
+          const nativeForkFailed = nativeForkFailure !== undefined;
           const sourceItems = yield* ContextHandoffService.readForkHistoryItems(
             projectionStore,
             sourceProjection,
@@ -1217,7 +1249,11 @@ export const layer: Layer.Layer<
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               providerSessionId,
-              existingProviderThread: { ...providerThread, forkedFrom: null },
+              existingProviderThread: nativeForkFailed
+                ? { ...providerThread, nativeThreadRef: null, forkedFrom: null }
+                : { ...providerThread, forkedFrom: null },
+              // The failed fork may have left the adapter's session half-switched.
+              ...(nativeForkFailed ? { forceNewNativeThread: true } : {}),
             }),
           );
           if (loaded === undefined) return undefined;
@@ -1250,6 +1286,45 @@ export const layer: Layer.Layer<
                   updatedAt: createdAt,
                 },
               },
+              ...(nativeForkFailure === undefined
+                ? []
+                : [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                      type: "turn-item.updated" as const,
+                      threadId: projection.thread.id,
+                      runId: run.id,
+                      providerInstanceId: run.providerInstanceId,
+                      occurredAt: createdAt,
+                      payload: {
+                        id: idAllocator.derive.runSignalTurnItem({
+                          runId,
+                          signal: "native-fork-fallback",
+                        }),
+                        threadId: projection.thread.id,
+                        runId,
+                        nodeId: rootNode.id,
+                        providerThreadId: providerThread.id,
+                        providerTurnId: null,
+                        nativeItemRef: null,
+                        parentItemId: null,
+                        ordinal:
+                          Math.max(
+                            0,
+                            ...projection.turnItems
+                              .filter((item) => item.runId === runId)
+                              .map((item) => item.ordinal),
+                          ) + 1,
+                        status: "completed" as const,
+                        title: "Native fork failed",
+                        startedAt: createdAt,
+                        completedAt: createdAt,
+                        updatedAt: createdAt,
+                        type: "system_notice" as const,
+                        message: `Could not fork the source conversation natively (${nativeForkFailure}). Started a fresh session with its history.`,
+                      },
+                    },
+                  ]),
             ],
           });
           return loaded;

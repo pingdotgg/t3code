@@ -906,6 +906,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
             open: () => Effect.die("unused open"),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });

@@ -71,6 +71,9 @@ export const PreviewAutomationProfile = Schema.Struct({
 });
 export type PreviewAutomationProfile = typeof PreviewAutomationProfile.Type;
 
+const VISIBLE_DESCRIPTION =
+  "True while a client shows this tab: a streamed live view, or the desktop app's own browser panel.";
+
 /** Why the tab shows the browser's error page instead of the page it tried to load. */
 export const PreviewAutomationLoadError = Schema.Struct({
   url: Schema.String,
@@ -81,7 +84,7 @@ export type PreviewAutomationLoadError = typeof PreviewAutomationLoadError.Type;
 
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
-  visible: Schema.Boolean,
+  visible: Schema.Boolean.annotate({ description: VISIBLE_DESCRIPTION }),
   tabId: Schema.NullOr(PreviewTabId),
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
@@ -128,7 +131,7 @@ export const PreviewAutomationStatus = Schema.Struct({
         openerTabId: Schema.optional(PreviewTabId),
         owner: Schema.optional(PreviewAutomationTabOwner),
         ownedByCaller: Schema.optional(Schema.Boolean),
-        visible: Schema.optional(Schema.Boolean),
+        visible: Schema.optional(Schema.Boolean.annotate({ description: VISIBLE_DESCRIPTION })),
         profileId: Schema.optional(BrowserProfileId),
       }),
     ),
