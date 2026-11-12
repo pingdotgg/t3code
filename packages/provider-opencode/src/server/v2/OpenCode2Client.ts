@@ -54,6 +54,17 @@ export type OpenCode2StreamEvent =
   | OpenCode2UnreadableTerminal
   | OpenCode2UnreadableStart;
 
+const ShellJobs = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literal("shell"),
+      shellID: Schema.String,
+      sessionID: Schema.String,
+      command: Schema.String,
+      status: Schema.Literals(["running", "completed", "error", "cancelled"]),
+    }),
+  ),
+});
 export class OpenCode2ImageError extends Schema.TaggedError<OpenCode2ImageError>()(
   "OpenCode2ImageError",
   { cause: Schema.Defect() },
@@ -87,6 +98,9 @@ export interface OpenCode2Api {
   readonly usageLimits: (
     directory: string,
   ) => Effect.Effect<import("@t3tools/contracts").ServerProviderUsageLimits | undefined>;
+  readonly shellJobs?: (
+    sessionID: string,
+  ) => Effect.Effect<typeof ShellJobs.Type, HttpClientError.HttpClientError | Schema.SchemaError>;
   readonly imageJobs: (
     sessionID: string,
   ) => Effect.Effect<ReadonlyArray<typeof NativeImageJob.Type>, OpenCode2ImageError>;
@@ -261,6 +275,16 @@ export const make = Effect.gen(function* () {
                 HttpClient.mapRequest(authenticated, HttpClientRequest.prependUrl(baseUrl)),
               ),
             ),
+          shellJobs: Effect.fn("OpenCode2Client.shellJobs")(function (sessionID: string) {
+            return authenticated
+              .get(`${baseUrl}/api/experimental/job`, {
+                urlParams: { sessionID, kind: "shell", descendants: "true" },
+              })
+              .pipe(
+                Effect.flatMap(HttpClientResponse.filterStatusOk),
+                Effect.flatMap(HttpClientResponse.schemaBodyJson(ShellJobs)),
+              );
+          }),
           imageJobs: (sessionID: string) =>
             authenticated
               .get(`${baseUrl}/api/experimental/job`, {
