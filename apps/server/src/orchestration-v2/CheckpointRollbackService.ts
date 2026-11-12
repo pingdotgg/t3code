@@ -392,7 +392,13 @@ export const layer: Layer.Layer<
               checkpoint,
               checkpoints: planCheckpoints,
             },
-            { fileSystem, projections, projects, path },
+            {
+              fileSystem,
+              projections,
+              projects,
+              path,
+              workspaceChanged: checkpoints.workspaceChanged,
+            },
           )
         : null;
       if (plan?._tag === "shared-workspace") return yield* sharedWorkspace();

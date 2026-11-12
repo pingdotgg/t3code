@@ -2,7 +2,11 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { openDiffFilePrimaryAction, resolveDiffPathForWorkspace } from "./diffFileActions";
+import {
+  openDiffFilePrimaryAction,
+  resolveDiffPathForWorkspace,
+  resolveToolCallWorktreeFile,
+} from "./diffFileActions";
 import { selectThreadRightPanelState, useRightPanelStore } from "./rightPanelStore";
 
 const THREAD_REF = scopeThreadRef(
@@ -84,6 +88,24 @@ describe("openDiffFilePrimaryAction", () => {
       ).toBe(expected);
     },
   );
+
+  it.each([
+    { filePath: "/worktrees/service/feature/src/app.ts", expected: "src/app.ts" },
+    { filePath: "/worktrees/service/feature-2/src/app.ts", expected: null },
+    { filePath: "/worktrees/service/feature/../secret.ts", expected: null },
+    { filePath: "src/app.ts", expected: null },
+  ])("finds a tool call's file in an attached worktree: $filePath", ({ filePath, expected }) => {
+    expect(
+      resolveToolCallWorktreeFile(filePath, [
+        "/worktrees/web/feature",
+        "/worktrees/service/feature",
+      ]),
+    ).toEqual(
+      expected === null
+        ? null
+        : { filePath: expected, workspaceRoot: "/worktrees/service/feature" },
+    );
+  });
 
   it.each([
     "backend/server.ts",

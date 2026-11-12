@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import {
   type CheckpointRepositoryIdentity,
+  type CheckpointServiceV2Shape,
   checkpointWorkspaceFiles,
   checkpointWorkspaceStatus,
 } from "./CheckpointService.ts";
@@ -237,11 +238,20 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
     readonly checkpoints: ReadonlyArray<
       Pick<
         OrchestrationV2Checkpoint,
-        "scopeId" | "status" | "workspaceStatus" | "ordinalWithinScope" | "repositories" | "files"
+        | "scopeId"
+        | "status"
+        | "workspaceStatus"
+        | "ordinalWithinScope"
+        | "repositories"
+        | "files"
+        | "ref"
       >
     >;
   },
-  dependencies: RestoreSafetyDependencies,
+  dependencies: RestoreSafetyDependencies & {
+    /** Absent, an empty file list counts as no change; the rollback compares the snapshots. */
+    readonly workspaceChanged?: CheckpointServiceV2Shape["workspaceChanged"];
+  },
 ) {
   const targetOrdinal = input.checkpoint.ordinalWithinScope;
   // The workspace snapshot covers a checkout the thread attached under another spelling.
@@ -272,15 +282,35 @@ export const planCheckpointRestore = Effect.fn("orchestrationV2.planCheckpointRe
     dependencies,
   );
   if (workspaceReady && isolation.workspace !== true) {
-    const workspaceChangedLater = input.checkpoints.some(
+    const later = input.checkpoints
+      .filter(
+        (checkpoint) =>
+          checkpoint.scopeId === input.scope.id &&
+          checkpoint.status !== "stale" &&
+          checkpoint.ordinalWithinScope > targetOrdinal,
+      )
+      .toSorted((left, right) => left.ordinalWithinScope - right.ordinalWithinScope);
+    let workspaceChangedLater = later.some(
       (checkpoint) =>
-        checkpoint.scopeId === input.scope.id &&
-        checkpoint.status !== "stale" &&
-        checkpoint.ordinalWithinScope > targetOrdinal &&
         // Without a snapshot, a later turn may have changed the folder.
-        (checkpointWorkspaceStatus(checkpoint) !== "ready" ||
-          checkpointWorkspaceFiles(checkpoint).length > 0),
+        checkpointWorkspaceStatus(checkpoint) !== "ready" ||
+        checkpointWorkspaceFiles(checkpoint).length > 0,
     );
+    const latest = later.at(-1);
+    // An empty file list is not proof: its diff summary may have failed.
+    if (
+      !workspaceChangedLater &&
+      repositories.length > 0 &&
+      latest !== undefined &&
+      dependencies.workspaceChanged !== undefined
+    ) {
+      workspaceChangedLater = yield* dependencies.workspaceChanged({
+        scopeId: input.scope.id,
+        cwd: input.scope.cwd,
+        fromCheckpointRef: input.checkpoint.ref,
+        toCheckpointRef: latest.ref,
+      });
+    }
     if (repositories.length === 0 || workspaceChangedLater) {
       return { _tag: "shared-workspace" } satisfies CheckpointRestorePlan;
     }

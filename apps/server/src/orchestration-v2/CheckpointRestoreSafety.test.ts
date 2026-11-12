@@ -242,6 +242,15 @@ it.effect.each([
     expected: "shared-workspace",
   },
   {
+    refusal: "the project folder changed after the target but no later turn listed its files",
+    owner: "project folder",
+    target: "ready",
+    later: "ready",
+    otherAttached: false,
+    workspaceChanged: true,
+    expected: "shared-workspace",
+  },
+  {
     refusal: "another thread has the removed service worktree attached",
     owner: "project folder",
     target: "ready",
@@ -251,7 +260,7 @@ it.effect.each([
   },
 ] as const)(
   "refuses file restore when $refusal",
-  ({ owner, target: targetStatus, later, otherAttached, expected }) =>
+  ({ owner, target: targetStatus, later, otherAttached, expected, ...row }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -274,6 +283,7 @@ it.effect.each([
           status: "ready",
           workspaceStatus,
           ordinalWithinScope: ordinal,
+          ref: `refs/t3/test/workspace-${ordinal}`,
           repositories: [repository],
           files: [{ path: "service/index.ts", kind: "modified", additions: 1, deletions: 1 }],
         }) as never;
@@ -308,6 +318,7 @@ it.effect.each([
               ),
           } as never,
           projects: {} as never,
+          workspaceChanged: () => Effect.succeed("workspaceChanged" in row),
         },
       );
       assert.equal(plan._tag, expected);

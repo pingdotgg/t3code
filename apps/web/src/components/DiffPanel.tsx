@@ -31,7 +31,7 @@ import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
 import { type DraftId } from "../composerDraftStore";
-import { openDiffFilePrimaryAction } from "../diffFileActions";
+import { openDiffFilePrimaryAction, resolveToolCallWorktreeFile } from "../diffFileActions";
 import { toolCallDiff } from "../lib/toolCallDiff";
 import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
@@ -768,8 +768,13 @@ export default function DiffPanel({
   // A turn diff names repository files by their prefix; a repository's
   // Changes are relative to its worktree. Either way the file opens there.
   const repositoryFileTarget = (filePath: string) => {
-    // A tool call names files as the provider wrote them, not under the selected worktree.
-    if (toolCallSelection) return null;
+    // A tool call names files as the provider wrote them; an absolute one may be in any attached worktree.
+    if (toolCallSelection) {
+      return resolveToolCallWorktreeFile(
+        filePath,
+        repoTarget.repoWorktrees.map((worktree) => worktree.worktreePath),
+      );
+    }
     if (selectedTurn) {
       const target = resolveCheckpointFilePath(selectedTurn.repositories, filePath);
       return target === null

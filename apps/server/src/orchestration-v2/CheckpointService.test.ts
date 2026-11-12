@@ -424,6 +424,52 @@ it.effect("records a repository probe failure as an error checkpoint, not a miss
   }),
 );
 
+it.effect.each([
+  { diff: "is empty", failed: false, changed: false },
+  { diff: "fails", failed: true, changed: true },
+] as const)(
+  "counts the workspace as changed when its diff $diff: $changed",
+  ({ failed, changed }) =>
+    Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const result = yield* checkpoints.workspaceChanged({
+        scopeId: CheckpointScopeId.make("checkpoint-scope:workspace-changed"),
+        cwd: "/repo/project",
+        fromCheckpointRef: CheckpointRef.make("refs/t3/project/ordinal/1"),
+        toCheckpointRef: CheckpointRef.make("refs/t3/project/ordinal/2"),
+      });
+      assert.equal(result, changed);
+    }).pipe(
+      Effect.provide(
+        CheckpointService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              Layer.mock(CheckpointStore.CheckpointStore)({
+                diffCheckpoints: ({ cwd }) =>
+                  failed
+                    ? Effect.fail(
+                        new VcsProcessExitError({
+                          operation: "GitVcsDriver.diffCheckpoints",
+                          command: "git",
+                          cwd,
+                          exitCode: 128,
+                          detail: "fatal: bad object",
+                        }),
+                      )
+                    : Effect.succeed(""),
+                listAuthoredPaths: () => Effect.succeed(null),
+              }),
+              Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+            ),
+          ),
+          Layer.provideMerge(NodeCrypto.layer),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+);
+
 it.effect("finishes repository baselines when the workspace baseline fails", () =>
   Effect.gen(function* () {
     const scope: OrchestrationV2CheckpointScope = {

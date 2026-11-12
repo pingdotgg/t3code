@@ -89,6 +89,20 @@ export function resolveDiffPathForWorkspace(input: {
   return relativeSegments.length > 0 ? relativeSegments.join("/") : null;
 }
 
+/** The attached worktree holding a tool call's absolute file path, and the file's path in it. */
+export function resolveToolCallWorktreeFile(
+  filePath: string,
+  worktreePaths: ReadonlyArray<string>,
+): { readonly filePath: string; readonly workspaceRoot: string } | null {
+  if (!isAbsolutePath(filePath)) return null;
+  for (const workspaceRoot of worktreePaths) {
+    const relativePath = workspaceRelativeFilePath(filePath, workspaceRoot);
+    const segments = relativePath === null ? null : normalizedRelativePathSegments(relativePath);
+    if (segments) return { filePath: segments.join("/"), workspaceRoot };
+  }
+  return null;
+}
+
 export function openDiffFilePrimaryAction({
   threadRef,
   filePath,
