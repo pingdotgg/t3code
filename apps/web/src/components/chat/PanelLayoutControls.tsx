@@ -1,12 +1,17 @@
-import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
-import { Maximize2, Minimize2 } from "lucide";
-import { MorphIcon } from "~/components/MorphIcon";
+import {
+  PanelBottomIcon,
+  PanelRightIcon,
+  SquareMenuIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+} from "lucide-react";
 import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
+import { useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -152,7 +157,11 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
             variant="ghost"
             size="sm"
           >
-            <MorphIcon className="size-4" icon={maximized ? Minimize2 : Maximize2} />
+            {maximized ? (
+              <Minimize2Icon className="size-4" />
+            ) : (
+              <Maximize2Icon className="size-4" />
+            )}
           </Toggle>
         }
       />
@@ -163,9 +172,13 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
 
 /** The thread panel toggle on a header whose right side the inline right panel covers. */
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   return (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
+      className={cn(
+        "absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]",
+        mobileSidebarSheetMounted && "hidden",
+      )}
       data-workspace-titlebar-controls
     >
       <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
@@ -182,17 +195,23 @@ export function WorkspaceTitlebarControls(props: {
   readonly onToggleMaximized: () => void;
   readonly children: ReactNode;
 }) {
+  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   return (
     <div
-      className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]"
+      className={cn(
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        mobileSidebarSheetMounted && "hidden",
+      )}
       data-workspace-titlebar-controls
     >
       {props.showMaximizeControl ? (
         <span
           aria-hidden={!props.rightPanelOpen}
+          // Fading out on close would show it beside the thread details toggle that replaces it.
           className={cn(
             "flex shrink-0",
-            props.animationsActive &&
+            props.rightPanelOpen &&
+              props.animationsActive &&
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
             props.rightPanelOpen
               ? "pointer-events-auto opacity-100"

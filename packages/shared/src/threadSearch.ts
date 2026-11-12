@@ -1,10 +1,13 @@
+// A typed straight apostrophe finds a curly one: iOS keyboards type "’".
+const foldCharacters = (text: string) => text.replace(/ς/g, "σ").replace(/[‘’]/g, "'");
+
 function foldThreadSearchCase(text: string): string {
-  const lowered = text.toLowerCase().replace(/ς/g, "σ");
+  const lowered = foldCharacters(text.toLowerCase());
   if (lowered.length === text.length) return lowered;
 
   let folded = "";
   for (const character of text) {
-    const loweredCharacter = character.toLowerCase().replace(/ς/g, "σ");
+    const loweredCharacter = foldCharacters(character.toLowerCase());
     folded += loweredCharacter.length === character.length ? loweredCharacter : character;
   }
   return folded;

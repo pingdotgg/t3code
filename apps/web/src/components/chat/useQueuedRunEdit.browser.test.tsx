@@ -1,6 +1,7 @@
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
+  ChatAttachmentId,
   MessageId,
   RunId,
   ThreadId,
@@ -8,9 +9,22 @@ import {
 } from "@t3tools/contracts";
 import { useImperativeHandle, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextRecord,
+} from "@t3tools/shared/composerContextReferences";
+import { toastManager } from "../ui/toast";
 
 import { act, render } from "../../../test/render";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
+import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import {
+  environmentContextRecord,
+  environmentContextReference,
+  threadContextReference,
+} from "../../lib/composerContextRecords";
+import { deriveComposerSendState } from "../ChatView.logic";
+import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
 
@@ -32,6 +46,10 @@ const mocks = await vi.hoisted(async () => {
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.editQueuedRun,
+}));
+
+vi.mock("../../hooks/useSettings", () => ({
+  useEnvironmentIdentificationMode: () => "none",
 }));
 
 const runsKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
@@ -65,8 +83,8 @@ const RUN = RunId.make("run-1");
 
 type HookResult = ReturnType<typeof useQueuedRunEdit>;
 
-function projection(runs: ReadonlyArray<RunStatus>) {
-  return { runs, messages: [] } as unknown as ThreadStructure;
+function projection(runs: ReadonlyArray<RunStatus>, messages: ReadonlyArray<unknown>) {
+  return { runs, messages } as unknown as ThreadStructure;
 }
 
 function setRuns(ref: ScopedThreadRef, status: string) {
@@ -77,24 +95,54 @@ function Harness(props: {
   readonly threadRef: ScopedThreadRef;
   readonly runStatus: string;
   readonly hookRef: RefObject<HookResult | null>;
+  readonly messages: ReadonlyArray<unknown>;
 }) {
   const result = useQueuedRunEdit({
     environmentId: ENV,
     routeThreadRef: props.threadRef,
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
-    serverProjection: projection([{ id: RUN, status: props.runStatus }]),
+    serverProjection: projection([{ id: RUN, status: props.runStatus }], props.messages),
     promptRef: { current: "" },
     composerRef: { current: null },
   });
   useImperativeHandle(props.hookRef, () => result);
-  return null;
+  const draft = useComposerThreadDraft(result.draftTarget);
+  const sendState = deriveComposerSendState({
+    prompt: draft.prompt,
+    imageCount: draft.images.length + draft.files.length,
+    existingAttachmentCount: result.editingAttachments?.length ?? 0,
+    terminalContexts: draft.terminalContexts,
+  });
+  return result.isEditing ? (
+    <ComposerPrimaryActions
+      compact={false}
+      canOperateThread
+      pendingAction={null}
+      isRunning={false}
+      canInterrupt={false}
+      isSendBusy={result.isSaving}
+      sendDisabledReason={null}
+      isEnvironmentUnavailable={false}
+      isPreparingWorktree={false}
+      hasSendableContent={sendState.hasSendableContent}
+      isEditingQueuedMessage
+      onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}
+      onPreviousPendingQuestion={() => {}}
+      onInterrupt={() => {}}
+    />
+  ) : null;
 }
 
-function view(threadRef: ScopedThreadRef, runStatus: string, hook: { current: HookResult | null }) {
+function view(
+  threadRef: ScopedThreadRef,
+  runStatus: string,
+  hook: { current: HookResult | null },
+  messages: ReadonlyArray<unknown> = [],
+) {
   return (
     <AppAtomRegistryProvider>
-      <Harness threadRef={threadRef} runStatus={runStatus} hookRef={hook} />
+      <Harness threadRef={threadRef} runStatus={runStatus} hookRef={hook} messages={messages} />
     </AppAtomRegistryProvider>
   );
 }
@@ -141,6 +189,144 @@ const promptOf = (ref: ScopedThreadRef) =>
   useComposerDraftStore.getState().getComposerDraft(ref)?.prompt ?? "";
 
 describe("useQueuedRunEdit", () => {
+  it.each(["", "Ultrathink:\n"])(
+    "opens attachment-only edits without the placeholder and preserves effort on save (%j)",
+    async (prefix) => {
+      const { hook } = setup();
+      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      await using screen = await render(view(THREAD_A, "queued", hook));
+      using toast = vi.spyOn(toastManager, "add");
+      const attachments = [
+        {
+          type: "image" as const,
+          id: ChatAttachmentId.make("kept"),
+          name: "kept.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ];
+      const request = {
+        runId: RUN,
+        messageId: MessageId.make("message-1"),
+        text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        attachments,
+      };
+      await act(() => requireHook(hook).beginEdit(request));
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt ??
+          "",
+      ).toBe(prefix.trimEnd());
+      expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment)).toEqual(
+        attachments,
+      );
+      await act(() =>
+        useComposerDraftStore
+          .getState()
+          .setRuntimeMode(requireHook(hook).draftTarget, "full-access"),
+      );
+      await act(() => setRuns(THREAD_A, "running"));
+      expect(toast).not.toHaveBeenCalled();
+      expect(requireHook(hook).isEditing).toBe(false);
+      await act(() => setRuns(THREAD_A, "queued"));
+      await act(() => requireHook(hook).beginEdit(request));
+      const update = screen.getByRole("button", { name: "Update queued message" });
+      await expect.element(update).toBeEnabled();
+      await update.click();
+      await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+      expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+            edit: expect.objectContaining({ attachments }),
+          }),
+        }),
+      );
+    },
+  );
+
+  it("saves an effort-only prompt without claiming removed attachments remain", async () => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    await using screen = await render(view(THREAD_A, "queued", hook));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId: MessageId.make("message-1"),
+        text: `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        attachments: [
+          {
+            type: "image",
+            id: ChatAttachmentId.make("removed"),
+            name: "removed.png",
+            mimeType: "image/png",
+            sizeBytes: 10,
+          },
+        ],
+      }),
+    );
+    await act(() => requireHook(hook).removeEditingAttachment("removed"));
+    await screen.getByRole("button", { name: "Update queued message" }).click();
+    await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          text: "Ultrathink:",
+          edit: expect.objectContaining({ attachments: [] }),
+        }),
+      }),
+    );
+  });
+
+  it("opens an edit with only the thread and machine records its text still mentions", async () => {
+    const { hook } = setup();
+    const thread = threadContextRecord(THREAD_B, "Support Any File Uploads");
+    const machine = environmentContextRecord(ENV, "Build box");
+    const unreferenced = threadContextRecord(THREAD_A, "Removed earlier");
+    const messageId = MessageId.make("message-1");
+    const text = `wait for ${formatInlineContextReference(threadContextReference(thread))} on ${formatInlineContextReference(environmentContextReference(machine))}`;
+    const messages = [
+      { id: messageId, text, context: { version: 1, records: [thread, machine, unreferenced] } },
+    ];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+
+    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+
+    const draft = useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget);
+    expect(draft?.prompt).toBe(text);
+    expect(draft?.threadContexts).toEqual([thread]);
+    expect(draft?.environmentContexts).toEqual([machine]);
+  });
+
+  it("saves only the thread mentions still in the edited message", async () => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    const kept = threadContextRecord(THREAD_B, "Kept");
+    const removed = threadContextRecord(THREAD_A, "Removed");
+    const messageId = MessageId.make("message-1");
+    const text = [kept, removed]
+      .map((record) => formatInlineContextReference(threadContextReference(record)))
+      .join(" and ");
+    const messages = [{ id: messageId, text, context: { version: 1, records: [kept, removed] } }];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+    const target = requireHook(hook).draftTarget;
+    await act(() => useComposerDraftStore.getState().setThreadContexts(target, [kept]));
+
+    const draft = useComposerDraftStore.getState().getComposerDraft(target);
+    await requireHook(hook).saveEdit(
+      { ...savedContent(draft?.prompt ?? ""), threadContexts: draft?.threadContexts ?? [] },
+      () => {},
+    );
+
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          edit: expect.objectContaining({ context: { version: 1, records: [kept] } }),
+        }),
+      }),
+    );
+  });
+
   it("keeps an open edit when the user leaves the thread and comes back", async () => {
     const { hook } = setup();
     await using screen = await render(view(THREAD_A, "queued", hook));

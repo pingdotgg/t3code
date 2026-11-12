@@ -1,5 +1,5 @@
+import * as Neon from "@alchemy.run/neon";
 import * as Alchemy from "alchemy";
-import * as Neon from "alchemy/Neon";
 import * as Effect from "effect/Effect";
 import Api from "./src/Api.ts";
 import { features } from "./src/features.ts";
