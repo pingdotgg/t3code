@@ -33,7 +33,7 @@ To supply HTTP MCP servers that depend on the project or need short-lived creden
 executable and its arguments:
 
 ```sh
-T3CODE_CURSOR_MCP_CONFIG_COMMAND='["/absolute/path/to/mcp-config"]'
+export T3CODE_CURSOR_MCP_CONFIG_COMMAND='["/absolute/path/to/mcp-config"]'
 ```
 
 The command runs without a shell, in the thread's working directory, with `T3CODE_THREAD_ID` set.
