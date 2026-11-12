@@ -92,6 +92,15 @@ export const checkBrowserImportPolicy = Effect.fn("BrowserImport.checkPolicy")(f
   }
 });
 
+class BrowserCookieFlushError extends Schema.TaggedError<BrowserCookieFlushError>()(
+  "BrowserCookieFlushError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Imported cookies could not be flushed to disk.";
+  }
+}
+
 export class BrowserCookieWriteError extends Schema.TaggedError<BrowserCookieWriteError>()(
   "BrowserCookieWriteError",
   {
@@ -183,7 +192,10 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   }
   // Cookie writes settle in memory; flush to disk before reporting a durable import.
   if (imported > 0) {
-    yield* Effect.tryPromise(() => session.cookies.flushStore()).pipe(
+    yield* Effect.tryPromise({
+      try: () => session.cookies.flushStore(),
+      catch: (cause) => new BrowserCookieFlushError({ cause }),
+    }).pipe(
       Effect.tapError((error) =>
         Effect.logWarning("Imported cookies could not be flushed to disk", { cause: error.cause }),
       ),

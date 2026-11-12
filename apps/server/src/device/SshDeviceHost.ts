@@ -90,6 +90,8 @@ const bootstrap = (
     ),
   );
 
+const isSshCommandError = Schema.is(SshCommandError);
+
 // cmd expands only %OS% and PowerShell only $env:OS; POSIX shells expand neither to Windows_NT.
 const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(function* (
   config: SshDeviceHostConfig,
@@ -98,7 +100,7 @@ const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(functio
   const cause = error.cause;
   // Windows ssh.exe preserves full remote exit statuses such as 9009.
   if (
-    !(cause instanceof SshCommandError) ||
+    !isSshCommandError(cause) ||
     cause.exitCode === null ||
     cause.exitCode < 1 ||
     (cause.exitCode > 254 && cause.exitCode !== 9009)
@@ -377,14 +379,15 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        // Keep probing negative reports so an SDK installed after connecting is still found.
-        androidAvailable: Effect.suspend(() =>
-          summary.platforms.some((p) => p.platform === "android" && p.available)
-            ? Effect.succeed(true)
-            : platformAvailability("android").pipe(
-                Effect.map((availability) => availability.available),
-              ),
-        ),
+        // Keep probing negative reports so tooling installed after connecting is still found.
+        platformAvailable: (platform) =>
+          Effect.suspend(() =>
+            summary.platforms.some((p) => p.platform === platform && p.available)
+              ? Effect.succeed(true)
+              : platformAvailability(platform).pipe(
+                  Effect.map((availability) => availability.available),
+                ),
+          ),
       }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&
