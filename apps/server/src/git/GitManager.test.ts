@@ -1119,12 +1119,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       gitCommands.length = 0;
       expect((yield* lookup)?.state).toBe("merged");
       expect((yield* lookup)?.state).toBe("merged");
-      expect(gitCommands.map((args) => args.split(" ", 1)[0]).toSorted()).toEqual([
-        "config",
-        "config",
-        "for-each-ref",
-        "for-each-ref",
-      ]);
+      // Sweeps that only read a confirmed merged answer must not spawn git.
+      expect(gitCommands).toEqual([]);
       expect(freshLookups()).toBe(0);
 
       NodeFS.writeFileSync(NodePath.join(repoDir, "settled.txt"), "new work\n");
