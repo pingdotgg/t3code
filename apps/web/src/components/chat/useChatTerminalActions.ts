@@ -275,9 +275,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
 
-    // Older remote servers ignore the optional initialCommand field. Keep project
-    // actions working across version skew, even though only newer servers avoid the
-    // fresh-shell startup race.
+    // Older servers ignore initialCommand, so fall back to typing it into the shell.
     if (openResult.value.initialCommandHandled !== true) {
       const writeResult = await terminalActions.writeToTerminal(
         targetTerminalId,

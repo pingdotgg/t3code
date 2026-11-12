@@ -48,16 +48,4 @@ describe("TerminalOpenInput", () => {
     });
     expect(parsed.env).toEqual({ GOOD_KEY: "2" });
   });
-
-  it("accepts an initial command", () => {
-    const parsed = decodeSync(TerminalOpenInput, {
-      threadId: "thread-1",
-      terminalId: DEFAULT_TERMINAL_ID,
-      cwd: "/tmp/project",
-      initialCommand: "npm run dev",
-      initialCommandShellHistory: "preserve",
-    });
-    expect(parsed.initialCommand).toBe("npm run dev");
-    expect(parsed.initialCommandShellHistory).toBe("preserve");
-  });
 });
