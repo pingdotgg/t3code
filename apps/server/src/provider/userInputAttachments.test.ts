@@ -145,6 +145,58 @@ describe("question answer paths", () => {
       }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("retries a document while its cancelled extraction is still publishing", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = NodePath.join(config.attachmentsDir, "retried.rtf");
+      NodeFS.writeFileSync(path, String.raw`{\rtf1 Retried}`);
+      const writing = yield* Deferred.make<void>();
+      const writeReleased = yield* Deferred.make<void>();
+      const renaming = yield* Deferred.make<void>();
+      const renameReleased = yield* Deferred.make<void>();
+      let writes = 0;
+      let renames = 0;
+      yield* Effect.gen(function* () {
+        const documents = yield* DocumentText.DocumentText;
+        const cancelled = yield* documents.ensure(path).pipe(Effect.forkChild);
+        yield* Deferred.await(writing);
+        const interrupting = yield* Fiber.interrupt(cancelled).pipe(Effect.forkChild);
+        const retry = yield* documents.ensure(path).pipe(Effect.forkChild);
+        yield* Deferred.await(renaming);
+        yield* Deferred.succeed(writeReleased, undefined);
+        yield* Fiber.join(interrupting);
+        yield* Deferred.succeed(renameReleased, undefined);
+        expect(yield* Fiber.join(retry)).toBe(path + ".txt");
+        expect(NodeFS.readFileSync(path + ".txt", "utf8")).toBe("Retried");
+        expect(
+          NodeFS.readdirSync(config.attachmentsDir).filter((file) => file.endsWith(".part")),
+        ).toEqual([]);
+      }).pipe(
+        Effect.provide(Layer.fresh(DocumentText.layer)),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (file, data) =>
+            Effect.gen(function* () {
+              if (++writes === 1) {
+                yield* Deferred.succeed(writing, undefined);
+                yield* Deferred.await(writeReleased);
+              }
+              return yield* fs.writeFileString(file, data);
+            }),
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (++renames === 1) {
+                yield* Deferred.succeed(renaming, undefined);
+                yield* Deferred.await(renameReleased);
+              }
+              return yield* fs.rename(from, to);
+            }),
+        }),
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect.each(["spawn", "read"])("retries after a transient %s failure expires", (failure) =>
     Effect.acquireUseRelease(
       Effect.promise(async () => {

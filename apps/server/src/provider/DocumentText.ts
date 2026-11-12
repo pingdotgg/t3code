@@ -52,6 +52,8 @@ const make = Effect.gen(function* () {
   // A large DOCX worker peaks near 270 MiB RSS, so two slots bound parser memory near 540 MiB.
   const lock = yield* Semaphore.make(2);
   const failed = new Map<string, number>();
+  // A cancelled extraction can still be publishing while its retry runs in the other slot.
+  let attempt = 0;
   // In a bundle import.meta.url is bin.mjs; development and tests use this source module.
   const entry = NodeURL.fileURLToPath(
     new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
@@ -97,7 +99,7 @@ const make = Effect.gen(function* () {
         return Effect.logWarning("Document text extraction failed.", { extension });
       }),
     );
-    const pending = `${sidecar}.part`;
+    const pending = `${sidecar}.${attempt++}.part`;
     yield* fs
       .writeFileString(pending, content)
       .pipe(
