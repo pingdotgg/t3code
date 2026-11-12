@@ -2057,6 +2057,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const goalActivations = new Map<string, { stopped: boolean }>();
         // Held runs must not complete while Stop resolves its target.
         const goalStops = new Map<string, number>();
+        // Native turns whose Stop timed out unconfirmed; children they start are stopped on sight.
+        const unconfirmedStopTurns = new Set<string>();
         const holdGoalStop = <A, E, R>(
           providerThread: ProviderAdapter.ProviderAdapterV2TurnInput["providerThread"],
           effect: Effect.Effect<A, E, R>,
@@ -2860,7 +2862,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const terminalizedNativeTurns = yield* Ref.get(terminalizedNonCompletedNativeTurns);
             let ancestor: ActiveCodexTurnContext | undefined = subagent.parentContext;
             while (ancestor !== undefined) {
-              if (terminalizedNativeTurns.has(ancestor.nativeTurnId)) {
+              if (
+                terminalizedNativeTurns.has(ancestor.nativeTurnId) ||
+                unconfirmedStopTurns.has(ancestor.nativeTurnId)
+              ) {
                 const nativeThreadId = yield* getNativeThreadId(subagent.providerThread);
                 // Fork requests off the notification reader so it can read their responses.
                 yield* client
@@ -7963,8 +7968,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }
               }
 
-              // Settled targets keep their commands unless settleStop contained them.
-              const settledTargets = new Set(settledTurnContexts);
               const cleanupInterruptState = Effect.gen(function* () {
                 const waiters = yield* Ref.updateAndGet(turnWaiters, (current) => {
                   const updated = new Map(current);
@@ -7988,10 +7991,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }
                   return updated;
                 });
+                for (const target of releasedTargets) {
+                  unconfirmedStopTurns.delete(target.context.nativeTurnId);
+                }
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
                   const updated = new Map(current);
                   for (const target of releasedTargets) {
-                    if (settledTargets.has(target.context)) continue;
+                    if (settledTurnContexts.includes(target.context)) continue;
                     updated.delete(target.context.nativeTurnId);
                   }
                   return updated;
@@ -8084,20 +8090,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         inLineage(context) &&
                         !trackedInterruptNativeTurnIds.has(context.nativeTurnId),
                     );
-                    // Descendants that already settled need no interrupt, only containment.
-                    const settledLineage = Array.from(
-                      (yield* Ref.get(settledTurns)).values(),
-                    ).filter(
-                      (context) =>
-                        inLineage(context) &&
-                        !trackedInterruptNativeTurnIds.has(context.nativeTurnId),
-                    );
-                    for (const context of settledLineage) settledTargets.add(context);
-                    for (const context of [...lineage, ...settledLineage]) {
+                    for (const context of lineage) {
                       const completion = yield* Deferred.make<void>();
-                      if (settledLineage.includes(context)) {
-                        yield* Deferred.succeed(completion, undefined);
-                      }
                       interruptTargets.push({ context, completion });
                       trackedInterruptNativeTurnIds.add(context.nativeTurnId);
                       yield* addTurnWaiter(context.nativeTurnId, completion);
@@ -8308,6 +8302,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   });
                 }
                 if (!rootStillActive) return true;
+                for (const root of lineageRoots) unconfirmedStopTurns.add(root.nativeTurnId);
+                yield* interruptLateDescendants;
                 yield* terminateTrackedTerminals(interruptTargets);
                 return false;
               }).pipe(

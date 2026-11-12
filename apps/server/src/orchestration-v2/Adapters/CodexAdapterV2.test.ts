@@ -2351,7 +2351,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   it.effect(
-    "contains a descendant that settles after a timed-out Stop and before its root completes",
+    "interrupts a descendant that starts after a timed-out Stop and before its root completes",
     () =>
       Effect.gen(function* () {
         const nativeThreadId = "late-settled-root";
@@ -2360,7 +2360,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const childTurnId = "late-settled-child-turn";
         const prompt = "Keep working.";
         const interruptSent = yield* Deferred.make<void>();
-        const terminated: string[] = [];
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario: "late-settled-settled-descendant",
@@ -2405,28 +2404,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
               {
-                type: "emit_inbound",
+                type: "expect_outbound",
                 frame: {
-                  method: "item/started",
-                  params: {
-                    threadId: childThreadId,
-                    turnId: childTurnId,
-                    startedAtMs: 1782622442000,
-                    item: {
-                      ...interruptCommandItem("inProgress"),
-                      id: "late-settled-child-command",
-                      processId: "late-settled-child-process",
-                    },
-                  },
+                  id: 5,
+                  method: "turn/interrupt",
+                  params: { threadId: childThreadId, turnId: childTurnId },
                 },
               },
+              { type: "emit_inbound", frame: { id: 5, result: {} } },
               {
                 type: "emit_inbound",
                 frame: {
                   method: "turn/completed",
                   params: {
                     threadId: childThreadId,
-                    turn: makeCodexReplayTurn({ id: childTurnId, status: "completed" }),
+                    turn: makeCodexReplayTurn({ id: childTurnId, status: "interrupted" }),
                   },
                 },
               },
@@ -2441,24 +2433,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   },
                 },
               },
-              {
-                type: "expect_outbound",
-                frame: {
-                  id: 5,
-                  method: "thread/backgroundTerminals/terminate",
-                  params: { threadId: childThreadId, processId: "late-settled-child-process" },
-                },
-              },
-              { type: "emit_inbound", frame: { id: 5, result: { terminated: true } } },
             ],
           }),
           () => Effect.void,
-          (method, params) =>
-            Effect.gen(function* () {
-              if (method === "turn/interrupt") yield* Deferred.succeed(interruptSent, undefined);
-              if (method === "thread/backgroundTerminals/terminate")
-                terminated.push((params as { processId: string }).processId);
-            }),
+          (method) =>
+            method === "turn/interrupt" ? Deferred.succeed(interruptSent, undefined) : Effect.void,
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -2485,11 +2464,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isTrue(Exit.isFailure(yield* Fiber.join(interrupt)));
         yield* TestClock.adjust("5 seconds");
         yield* harness.awaitTerminal(1);
-        const pending = yield* harness.hasPendingBackgroundWork;
-        assert.deepEqual(
-          { terminated, pending },
-          { terminated: ["late-settled-child-process"], pending: false },
+        const childRunning = harness.events.some(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === childTurnId,
         );
+        assert.isFalse(childRunning);
       }).pipe(
         Effect.scoped,
         Effect.provide(
