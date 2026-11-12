@@ -1349,6 +1349,10 @@ export function createServerEnvironmentAtoms<R, E>(
       ),
     );
   });
+  const workflowsLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:workflows:live",
+    tag: WS_METHODS.workflowsSubscribe,
+  });
   const welcome = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -1494,6 +1498,13 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduledTaskWebhookDelivery: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
+    }),
+    workflowsLive,
+    // Steps are not in the live list, so a run's detail is read again whenever that list changes.
+    workflowRun: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:run",
+      tag: WS_METHODS.workflowsGet,
+      refreshTrigger: ({ environmentId }) => workflowsLive({ environmentId, input: {} }),
     }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
@@ -1784,6 +1795,18 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    answerWorkflowQuestion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:answer",
+      tag: WS_METHODS.workflowsAnswer,
+    }),
+    resumeWorkflowRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:resume",
+      tag: WS_METHODS.workflowsResume,
+    }),
+    cancelWorkflowRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:cancel",
+      tag: WS_METHODS.workflowsCancel,
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",

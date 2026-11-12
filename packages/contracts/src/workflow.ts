@@ -72,3 +72,32 @@ export const WorkflowRunsSnapshot = Schema.Struct({
 export type WorkflowRunsSnapshot = typeof WorkflowRunsSnapshot.Type;
 
 export const WorkflowRunsSubscribeInput = Schema.Struct({});
+
+export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
+
+/** One run with its steps, in the order they started. */
+export const WorkflowRunDetail = Schema.Struct({
+  run: WorkflowRun,
+  steps: Schema.Array(WorkflowStep),
+});
+export type WorkflowRunDetail = typeof WorkflowRunDetail.Type;
+
+/** A person's answer to a `WorkflowQuestion`: one of its choices and, if they gave one, why. */
+export const WorkflowAnswerInput = Schema.Struct({
+  runId: Schema.String,
+  name: Schema.String,
+  choice: Schema.String,
+  reason: Schema.optional(Schema.String),
+});
+
+export const WorkflowRunResumeInput = Schema.Struct({ runId: Schema.String });
+
+export const WorkflowRunCancelInput = Schema.Struct({
+  runId: Schema.String,
+  reason: Schema.optional(Schema.String),
+});
+
+export class WorkflowRequestError extends Schema.TaggedError<WorkflowRequestError>()(
+  "WorkflowRequestError",
+  { message: Schema.String },
+) {}

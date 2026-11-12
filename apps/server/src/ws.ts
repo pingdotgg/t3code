@@ -31,6 +31,7 @@ import {
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
+  WorkflowRequestError,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -1471,6 +1472,9 @@ export const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const workflows = yield* Workflows.Workflows;
+      // The service's messages are built from its own attributes, so they are safe to send.
+      const toWorkflowRequestError = (error: Workflows.WorkflowError) =>
+        new WorkflowRequestError({ message: error.message });
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2285,6 +2289,29 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
         [WS_METHODS.workflowsSubscribe]: (_input) => workflows.watch,
+        [WS_METHODS.workflowsGet]: (input) =>
+          workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsAnswer]: (input) =>
+          random.uuidV4().pipe(
+            Effect.flatMap((id) =>
+              workflows.signal(
+                { runId: input.runId, wait: input.name },
+                {
+                  choice: input.choice,
+                  ...(input.reason === undefined ? {} : { reason: input.reason }),
+                },
+                { id },
+              ),
+            ),
+            Effect.mapError(toWorkflowRequestError),
+            Effect.asVoid,
+          ),
+        [WS_METHODS.workflowsResume]: (input) =>
+          workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+        [WS_METHODS.workflowsCancel]: (input) =>
+          workflows
+            .cancel(input.runId, input.reason ?? "Cancelled")
+            .pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

@@ -3,8 +3,8 @@
 A workflow is a script that ties agents, plain code, schedules, webhooks and questions to you into
 one run that survives restarts. Each step's result is stored: a restart continues the run where it
 was, and a step that fails pauses the run until it is resumed, instead of losing the work before
-it. Workflows are an early feature with no screen of their own yet; you run them from the `t3`
-command.
+it. Workflows are an early feature: you start them from the `t3` command and follow them in
+Settings.
 
 For one prompt on a timer or from a webhook, use a scheduled task. Reach for a workflow when the
 work has stages, such as triage, then a fix, then your approval, then a release.
@@ -39,6 +39,14 @@ second one. A paused run names the step that failed and why; fix the cause and r
 that step runs again.
 
 Each agent step works in an ordinary thread. Open it to read what the agent did or to help it.
+
+## Follow runs in the app
+
+**Settings → Workflows** lists the runs of each connected environment, newest first, with the runs
+a workflow invoked under the run that invoked them. Questions waiting on you are at the top: pick
+a choice, with a reason if you want to give one, and the run goes on. Select a run to see its
+steps and open the thread of an agent step, to resume it when it is paused, or to cancel it.
+Answering, resuming and cancelling need a connection that may operate threads.
 
 An agent step can run on another machine: give it the id of a
 [linked environment](remote-access.md#link-another-environment) and a project there. The run itself stays on the
