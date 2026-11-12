@@ -96,11 +96,14 @@ export function revealAssistantCitationSource(anchor: AssistantCitationSourceAnc
   const rect = assistantCitationAnchorRect(anchor.range);
   // A range inside a hidden ancestor measures as zero; revealing it would scroll on every keystroke.
   if (rect.width === 0 && rect.height === 0) return;
-  const visible = anchor.viewport.getBoundingClientRect();
-  if (rect.top >= visible.top && rect.bottom <= visible.bottom) return;
   const scroller = findScrollableAncestor(anchor.source, anchor.viewport);
   if (!scroller) return;
   const bounds = scroller.getBoundingClientRect();
+  const visible = anchor.viewport.getBoundingClientRect();
+  // The viewport can extend past the list, so a quote in its padding is still clipped.
+  const top = Math.max(bounds.top, visible.top);
+  const bottom = Math.min(bounds.bottom, visible.bottom);
+  if (rect.top >= top && rect.bottom <= bottom) return;
   // Setting scrollTop avoids scrollIntoView, which also scrolls the page.
   scroller.scrollTop = citationRevealOffset({
     scroll: scroller.scrollTop,

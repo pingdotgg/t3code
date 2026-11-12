@@ -250,10 +250,12 @@ describe("citation comment reveal", () => {
       vi.fn(() => true),
     );
     const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
-    await vi.waitFor(() => expect(popup()?.getBoundingClientRect().width).toBeGreaterThan(0));
-    const clamped = popup()!.getBoundingClientRect();
-    expect(clamped.top).toBeGreaterThanOrEqual(0);
-    expect(clamped.bottom).toBeLessThanOrEqual(window.innerHeight);
+    await vi.waitFor(() => {
+      const clamped = popup()!.getBoundingClientRect();
+      expect(clamped.width).toBeGreaterThan(0);
+      expect(clamped.top).toBeGreaterThanOrEqual(0);
+      expect(clamped.bottom).toBeLessThanOrEqual(window.innerHeight);
+    });
   });
 
   it("scrolls the list to the quote without moving the page", async () => {
@@ -299,13 +301,28 @@ describe("citation comment reveal", () => {
     await vi.waitFor(() => expect(popup()?.getBoundingClientRect().width).toBeGreaterThan(0));
 
     await userEvent.keyboard("note");
-    expect(textarea()?.value).toBe("note");
-    expect(document.scrollingElement?.scrollTop ?? 0).toBe(pageScroll);
-    expect(scroller.scrollTop).toBeGreaterThan(0);
     const scrollerRect = scroller.getBoundingClientRect();
-    const revealed = source.sourceAnchor.source.getBoundingClientRect();
-    expect(revealed.top).toBeGreaterThanOrEqual(scrollerRect.top);
-    expect(revealed.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+    await vi.waitFor(() => {
+      expect(textarea()?.value).toBe("note");
+      expect(document.scrollingElement?.scrollTop ?? 0).toBe(pageScroll);
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+      const revealed = source.sourceAnchor.source.getBoundingClientRect();
+      expect(revealed.top).toBeGreaterThanOrEqual(scrollerRect.top);
+      expect(revealed.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+    });
+
+    // A quote in the viewport's padding is still clipped by the list.
+    const beforePadding = source.sourceAnchor.source.getBoundingClientRect();
+    scroller.scrollTop += beforePadding.top - scrollerRect.top + 30;
+    const clipped = source.sourceAnchor.source.getBoundingClientRect();
+    expect(clipped.bottom).toBeLessThan(scrollerRect.top);
+    expect(clipped.top).toBeGreaterThan(wrapper.getBoundingClientRect().top);
+    await userEvent.keyboard("s");
+    await vi.waitFor(() => {
+      const shown = source.sourceAnchor.source.getBoundingClientRect();
+      expect(shown.top).toBeGreaterThanOrEqual(scrollerRect.top);
+      expect(shown.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+    });
 
     // Scroll the quote above the list and type again.
     scroller.scrollTop = scroller.scrollHeight;
@@ -314,11 +331,13 @@ describe("citation comment reveal", () => {
       scrollerRect.top,
     );
     await userEvent.keyboard("!");
-    expect(document.scrollingElement?.scrollTop ?? 0).toBe(pageScroll);
-    expect(scroller.scrollTop).toBeLessThan(maxScroll);
-    const back = source.sourceAnchor.source.getBoundingClientRect();
-    expect(back.top).toBeGreaterThanOrEqual(scrollerRect.top);
-    expect(back.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+    await vi.waitFor(() => {
+      expect(document.scrollingElement?.scrollTop ?? 0).toBe(pageScroll);
+      expect(scroller.scrollTop).toBeLessThan(maxScroll);
+      const back = source.sourceAnchor.source.getBoundingClientRect();
+      expect(back.top).toBeGreaterThanOrEqual(scrollerRect.top);
+      expect(back.bottom).toBeLessThanOrEqual(scrollerRect.bottom);
+    });
   });
 
   it("leaves the list alone when the quote is already visible", async () => {
