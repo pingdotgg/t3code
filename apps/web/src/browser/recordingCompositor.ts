@@ -13,7 +13,6 @@ export async function createRecordingCompositor(
   options: RecordingDecorationOptions,
   subscribe: (listener: (input: DesktopPreviewRecordingInput) => void) => () => void,
 ) {
-  if (!options.showKeyPresses && !options.showMousePresses) return null;
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d", { alpha: false });
   if (!context) throw new Error("Recording canvas is unavailable.");
@@ -26,17 +25,35 @@ export async function createRecordingCompositor(
   canvas.height = settings?.height ?? 1080;
   const decorations = new RecordingDecorations(options, readPreviewAnnotationTheme().primary);
   let disposed = false;
+  let sized = false;
   let frameId: number | undefined;
   let timer: number | undefined;
   const draw = () => {
     if (disposed || video.readyState < 2) return;
-    const width = video.videoWidth || canvas.width;
-    const height = video.videoHeight || canvas.height;
-    if (canvas.width !== width) canvas.width = width;
-    if (canvas.height !== height) canvas.height = height;
-    context.drawImage(video, 0, 0, width, height);
+    // The encoded size stays at the first frame's: avc1 MP4 stores one set of decoder
+    // parameters, so a resized source is letterboxed instead of changing the stream size.
+    if (!sized) {
+      canvas.width = video.videoWidth || canvas.width;
+      canvas.height = video.videoHeight || canvas.height;
+      sized = true;
+    }
+    const sourceWidth = video.videoWidth || canvas.width;
+    const sourceHeight = video.videoHeight || canvas.height;
+    const fit = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
+    const width = Math.round(sourceWidth * fit);
+    const height = Math.round(sourceHeight * fit);
+    const left = Math.floor((canvas.width - width) / 2);
+    const top = Math.floor((canvas.height - height) / 2);
+    if (width < canvas.width || height < canvas.height) {
+      context.fillStyle = "#000";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    context.drawImage(video, left, top, width, height);
     const now = performance.now();
+    context.save();
+    context.translate(left, top);
     decorations.draw(context, width, height, now);
+    context.restore();
     window.clearTimeout(timer);
     const next = decorations.nextRedraw(now);
     if (next !== null) timer = window.setTimeout(draw, next);
