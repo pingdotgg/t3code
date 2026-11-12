@@ -24,6 +24,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         const workflows = yield* Workflows.Workflows;
         if (input.action === "questions") return { questions: yield* workflows.questions };
         if (input.action === "hooks") return { hooks: yield* workflows.hooks };
+        if (input.action === "store") return { entries: yield* workflows.stored(input.key ?? "") };
         if (input.action === "list") {
           return {
             runs: yield* workflows.list(input.status === undefined ? {} : { status: input.status }),
@@ -63,6 +64,15 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
             .signal(address, value, { id })
             .pipe(Effect.mapError(refused));
           return { delivery };
+        }
+        if (input.action === "store_set" || input.action === "store_delete") {
+          const key = yield* required(input.key, "key");
+          const value =
+            input.action === "store_set" ? yield* required(input.value, "value") : undefined;
+          yield* (
+            value === undefined ? workflows.storeDelete(key) : workflows.storeSet(key, value)
+          ).pipe(Effect.mapError(refused));
+          return { entries: yield* workflows.stored(key) };
         }
         const runId = yield* required(input.runId, "runId");
         yield* (
