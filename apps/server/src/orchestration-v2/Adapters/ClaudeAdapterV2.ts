@@ -4360,6 +4360,19 @@ function isClaudeEmptyTaskNotificationSuccess(message: SDKMessage): boolean {
   );
 }
 
+// Whether the wake that ends with the result at `resultIndex` reported a sign-in failure.
+function claudeWakeSignedOut(frames: ReadonlyArray<SDKMessage>, resultIndex: number): boolean {
+  const wakeStart = frames.slice(0, resultIndex).findLastIndex(isClaudeTurnStartMessage);
+  return frames
+    .slice(wakeStart + 1, resultIndex)
+    .some(
+      (frame) =>
+        frame.type === "assistant" &&
+        frame.parent_tool_use_id === null &&
+        frame.error === "authentication_failed",
+    );
+}
+
 // The CLI throttles unchanged rate_limit_event frames, but repeats this
 // undeclared payload on each blocked assistant response.
 const isClaudeBlockedAssistantRateLimit = Schema.is(
@@ -9061,7 +9074,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         // Assistant frames carry the earlier wake's text; its result only adds usage and errors.
         const recordEarlierWakeResult = Effect.fn("ClaudeAdapter.recordEarlierWakeResult")(
-          function* (context: ActiveClaudeTurnContext, result: SDKResultMessage) {
+          function* (
+            context: ActiveClaudeTurnContext,
+            result: SDKResultMessage,
+            signedOut: boolean,
+          ) {
             if (isClaudeEmptyTaskNotificationSuccess(result)) return;
             context.earlierSegmentUsage.push(result.usage);
             context.earlierLedgerUsage = addClaudeLedgerUsage(
@@ -9069,7 +9086,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultLedgerUsage.get(result),
             );
             const now = yield* DateTime.now;
-            const failure = providerFailureFromResult(result, now);
+            // As for a live result: a 403 shows its text, and this wake's sign-in failure gives sign-in advice.
+            const permissionDenied =
+              result.subtype === "success" && result.api_error_status === 403;
+            const failure = providerFailureFromResult(
+              result,
+              now,
+              permissionDenied
+                ? result.result
+                : signedOut
+                  ? context.authenticationFailureMessage
+                  : undefined,
+            );
             if (failure !== null) {
               yield* emitProviderEvent({
                 type: "turn_item.updated",
@@ -12588,7 +12616,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   if (entry.type !== "result") {
                     yield* handleSdkMessage({ query: querySession.query, message: entry });
                   } else if (index < lastTurnStartIndex && entry !== lastResult) {
-                    yield* recordEarlierWakeResult(context, entry);
+                    yield* recordEarlierWakeResult(
+                      context,
+                      entry,
+                      claudeWakeSignedOut(drained, index),
+                    );
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
                     const buffered = current.get(nativeThreadId);

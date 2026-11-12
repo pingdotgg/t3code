@@ -96,6 +96,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { claudeSignedOutMessage } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -15560,6 +15561,95 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       openOnAttach: false,
     },
     {
+      label: "an earlier wake without a ledger total leaves other usage unknown",
+      // The earlier result has no modelUsage, so its growth is unknown; the prompt
+      // re-anchors the ledger and the successor grows 30/40. As zero, other work would be 19/19.
+      ledger: { turnOne: ledgerTotal(100, 200), prompt: ledgerTotal(120, 230) },
+      before: replayWake("unknown-ledger-older", "", {
+        result: "Earlier A.",
+        origin: { kind: "task-notification" },
+        usage: {
+          input_tokens: 10,
+          output_tokens: 20,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      }),
+      after: [
+        wakeTurnInit,
+        makeResultFrame({
+          uuid: "unknown-ledger-successor-result",
+          result: "Successor text.",
+          origin: { kind: "task-notification" },
+          modelUsage: ledgerTotal(150, 270),
+        }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: ["Successor text."],
+      inputTokens: 11,
+      outputTokens: 21,
+      notices: [],
+      openOnAttach: false,
+    },
+    {
+      label: "each earlier wake's failure notice follows that wake's own sign-in state",
+      before: [
+        claudeSdkFrame({ ...wakeTurnInit, uuid: "signed-out-init" }),
+        makeAssistantErrorFrame({ uuid: "signed-out-assistant", error: "authentication_failed" }),
+        makeResultFrame({
+          uuid: "signed-out-result",
+          result: "",
+          origin: { kind: "task-notification" },
+          isError: true,
+          terminalReason: "api_error",
+        }),
+        claudeSdkFrame({ ...wakeTurnInit, uuid: "api-error-init" }),
+        makeResultFrame({
+          uuid: "api-error-result",
+          result: "",
+          origin: { kind: "task-notification" },
+          isError: true,
+          terminalReason: "api_error",
+        }),
+        claudeSdkFrame({ ...wakeTurnInit, uuid: "denied-init" }),
+        makeAssistantErrorFrame({ uuid: "denied-assistant", error: "authentication_failed" }),
+        makeResultFrame({
+          uuid: "denied-result",
+          result:
+            "Failed to authenticate. API Error: 403 Your organization does not have access to this model.",
+          origin: { kind: "task-notification" },
+          isError: true,
+          apiErrorStatus: 403,
+          terminalReason: "api_error",
+        }),
+      ],
+      after: [
+        wakeTurnInit,
+        makeAssistantTextFrame({ uuid: "signed-in-successor-assistant", text: "Successor text." }),
+        makeResultFrame({
+          uuid: "signed-in-successor-result",
+          result: "Successor text.",
+          origin: { kind: "task-notification" },
+        }),
+      ],
+      beforeCheck: [],
+      live: [],
+      texts: [
+        "Claude could not complete this request.",
+        "Claude could not complete this request.",
+        "Successor text.",
+      ],
+      inputTokens: 4,
+      outputTokens: 4,
+      notices: [
+        claudeSignedOutMessage({ configDir: undefined, cwd: "/workspace" }),
+        "Claude gave up after repeated API errors.",
+        "Failed to authenticate. API Error: 403 Your organization does not have access to this model.",
+      ],
+      openOnAttach: false,
+    },
+    {
       label: "two older results and latest empty successes keep base text fallback",
       before: [
         ...replayWake("fallback-x", "", {
@@ -15766,7 +15856,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               cachedInputTokens: 0,
               cacheCreationTokens: 0,
               models: ["claude-sonnet-4-6"],
-              ...(ledger === undefined ? {} : { otherUsage: ledger.otherUsage }),
+              ...(ledger?.otherUsage === undefined ? {} : { otherUsage: ledger.otherUsage }),
             },
             notices: scenario.notices,
           },
