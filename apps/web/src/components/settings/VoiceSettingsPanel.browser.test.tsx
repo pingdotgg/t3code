@@ -1,4 +1,9 @@
-import { PrimaryConnectionTarget, RelayConnectionTarget } from "@t3tools/client-runtime/connection";
+import {
+  BearerConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  type PreparedConnection,
+} from "@t3tools/client-runtime/connection";
 import type * as Effect from "effect/Effect";
 import {
   EnvironmentId,
@@ -9,6 +14,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
+import { chooseRecordingMicrophone } from "../../speech/browserMicrophones";
 import {
   useEnvironmentSpeechInput,
   useVoiceTranscriptionDestination,
@@ -71,6 +77,128 @@ vi.mock("../../connection/runtime", async () => {
   };
 });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accelerated: 2.1 }])(
+  "uses the destination environment's benchmark tier across switches with measurements %j",
+  async (secondsPer30s) => {
+    const target = new PrimaryConnectionTarget({
+      environmentId: EnvironmentId.make("voice-local"),
+      label: "Local CPU",
+      httpBaseUrl: window.location.origin,
+      wsBaseUrl: "ws://localhost",
+    });
+    const local: PreparedConnection = {
+      ...target,
+      target,
+      socketUrl: target.wsBaseUrl,
+      httpAuthorization: null,
+    };
+    const remote: PreparedConnection = {
+      environmentId: EnvironmentId.make("voice-remote"),
+      label: "Remote GPU",
+      httpBaseUrl: "https://voice.example.test",
+      socketUrl: "wss://voice.example.test/ws",
+      httpAuthorization: { _tag: "Bearer", token: "test-token" },
+      target: new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("voice-remote"),
+        label: "Remote GPU",
+        connectionId: "remote",
+      }),
+    };
+    let prepared = local;
+    const remoteStatus = deferred<Response>();
+    const remoteRequested = deferred<void>();
+    const status = {
+      supported: true,
+      state: "ready",
+      modelId: "both",
+      model: "Bilingual",
+      size: 100,
+      supportsStreaming: false,
+      supportsTranslation: false,
+      acceleration: "auto",
+      modelUnloadTimeout: "never",
+      gpuDevices: [],
+      benchmarkTier: "cpu",
+    } satisfies EnvironmentSpeechStatus;
+    const model: EnvironmentSpeechModel = {
+      id: "both",
+      name: "Bilingual",
+      description: "",
+      size: 100,
+      languages: ["en"],
+      accuracy: 1,
+      speed: 1,
+      recommended: true,
+      supportsStreaming: false,
+      supportsTranslation: false,
+      supportsLanguageDetection: false,
+      active: false,
+      state: "downloadable",
+      benchmark: {
+        accuracy: { en: { grade: "A-", errorPercent: 4 } },
+        secondsPer30s,
+      },
+    };
+    const cpuBenchmark = `Speed: ${secondsPer30s.cpu === undefined ? "update server" : secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s`}`;
+    const gpuBenchmark = `Speed: ${secondsPer30s.accelerated === null ? "not benchmarked" : `${secondsPer30s.accelerated} s / 30 s`}`;
+    const fetch = globalThis.fetch;
+    using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+      if (url.pathname === "/api/voice/status") {
+        if (url.origin === remote.httpBaseUrl) {
+          remoteRequested.resolve();
+          return remoteStatus.promise;
+        }
+        return Promise.resolve(Response.json(status));
+      }
+      if (url.pathname === "/api/voice/models")
+        return Promise.resolve(Response.json({ models: [model] }));
+      return fetch(input, init);
+    });
+    await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
+      () => ({
+        environmentId: prepared.environmentId,
+        label: prepared.label,
+        grantId: "test",
+        prepared,
+      }),
+      async () => {
+        const panel = () => (
+          <SettingsScopeProvider search={{}} onChange={() => {}}>
+            <VoiceSettingsPanel />
+          </SettingsScopeProvider>
+        );
+        await using screen = await render(panel());
+        await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        prepared = remote;
+        await screen.rerender(panel());
+        await remoteRequested.promise;
+        await expect.element(screen.getByText(cpuBenchmark)).not.toBeInTheDocument();
+        remoteStatus.resolve(
+          Response.json({
+            ...status,
+            benchmarkTier: "accelerated",
+            gpuDevices: [{ id: "gpu", name: "Remote GPU" }],
+          }),
+        );
+        await expect.element(screen.getByText(gpuBenchmark)).toBeVisible();
+        prepared = local;
+        await screen.rerender(panel());
+        await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        await expect.element(screen.getByText(gpuBenchmark)).not.toBeInTheDocument();
+      },
+    );
+  },
+);
+
 it("tests the selected model after download and preserves its transcript across filters", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
@@ -105,6 +233,7 @@ it("tests the selected model after download and preserves its transcript across 
     acceleration: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
+    benchmarkTier: "cpu",
   } satisfies EnvironmentSpeechStatus;
   let installed = false;
   const fetch = globalThis.fetch;
@@ -136,7 +265,7 @@ it("tests the selected model after download and preserves its transcript across 
                         en: { grade: "A-", errorPercent: 4 },
                         fr: { grade: "B+", errorPercent: 5.5 },
                       },
-                      secondsPer30s: 2.1,
+                      secondsPer30s: { cpu: 5, accelerated: 2.1 },
                     },
                   }
                 : {}),
@@ -203,17 +332,23 @@ it("tests the selected model after download and preserves its transcript across 
           const result = screen.getByRole("status", { name: "Test transcript" });
           await expect.element(result).toHaveTextContent(transcript);
 
-          const search = screen.getByRole("textbox", { name: "Search transcription models" });
+          const search = screen.getByRole("searchbox", { name: "Search transcription models" });
           await userEvent.fill(search, "no matching model");
           await expect.element(screen.getByText("No models match.")).toBeVisible();
           await userEvent.clear(search);
+          const languages = screen.getByRole("button", { name: /^Filter by language/ });
+          await userEvent.click(languages);
           await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
-          const french = screen.getByRole("button", { name: "French", exact: true });
+          const french = screen.getByRole("menuitemcheckbox", { name: "French", exact: true });
           await userEvent.click(french);
+          await userEvent.keyboard("{Escape}");
           await expect.element(screen.getByText("Bilingual", { exact: true })).toBeVisible();
           await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
           expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
+          await userEvent.click(languages);
+          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
           await userEvent.click(french);
+          await userEvent.keyboard("{Escape}");
           await expect.element(result).toBeVisible();
           await vi.waitFor(() =>
             expect(
@@ -269,6 +404,7 @@ it("loads the models of a relay-connected destination", async () => {
     acceleration: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
+    benchmarkTier: "cpu",
   } satisfies EnvironmentSpeechStatus;
   const authorizations: Array<string | null> = [];
   const fetch = globalThis.fetch;
@@ -335,6 +471,7 @@ it("recovers from a failed download progress poll without notifying, but reports
     acceleration: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
+    benchmarkTier: "cpu",
   };
   const unavailable = () => new Response(null, { status: 503 });
   const readModels = vi
@@ -460,4 +597,78 @@ it("keeps punctuation in a saved dictionary term and its alias", async () => {
   expect(getClientSettings().speechCustomWords).toEqual([
     { term: "O'Reilly", aliases: ['"Oh Really"'] },
   ]);
+});
+
+it("keeps a dictionary term and alias draft on the Enter that confirms an IME candidate", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  __setClientSettingsForTests({
+    ...previous,
+    speechCustomWords: [{ term: "日本語", aliases: [] }],
+  });
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  const composingEnter = () =>
+    new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true });
+  const term = screen.getByRole("textbox", { name: "Add a word or phrase to the dictionary" });
+  await userEvent.fill(term, "にほん");
+  term.element().dispatchEvent(composingEnter());
+  await expect.element(term).toHaveValue("にほん");
+  await userEvent.click(screen.getByRole("button", { name: "Add an alias for 日本語" }));
+  const alias = screen.getByRole("textbox", { name: "Alias for 日本語" });
+  await userEvent.fill(alias, "にほん");
+  alias.element().dispatchEvent(composingEnter());
+  expect(getClientSettings().speechCustomWords).toEqual([{ term: "日本語", aliases: [] }]);
+  await expect.element(alias).toHaveValue("にほん");
+});
+
+it("records from the first connected microphone in the saved order", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  // A single saved microphone from before the order existed comes first.
+  __setClientSettingsForTests({ ...previous, voiceMicrophone: "yeti", voiceMicrophones: [] });
+  const input = (deviceId: string, label: string) =>
+    ({ deviceId, label, groupId: deviceId, kind: "audioinput" }) as MediaDeviceInfo;
+  const yeti = input("yeti", "Blue Yeti");
+  const airpods = input("airpods", "AirPods Pro");
+  using devices = vi
+    .spyOn(navigator.mediaDevices, "enumerateDevices")
+    .mockResolvedValue([yeti, airpods]);
+  const saved = () =>
+    getClientSettings().voiceMicrophones.map((entry) =>
+      entry.kind === "default" ? "System default" : entry.label,
+    );
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  const list = screen.getByRole("list", { name: "Microphones, preferred first" });
+  await expect.poll(saved).toEqual(["Blue Yeti", "System default", "AirPods Pro"]);
+  const row = (index: number) => list.getByRole("listitem").nth(index);
+  await expect.element(row(0)).toHaveTextContent("1Blue YetiIn use");
+  expect(await chooseRecordingMicrophone()).toBe("yeti");
+
+  devices.mockResolvedValue([airpods]);
+  await userEvent.click(screen.getByRole("button", { name: "Refresh microphones" }));
+  await expect.element(row(0)).toHaveTextContent("1Blue YetiNot connected");
+  await expect.element(row(1)).toHaveTextContent("2System defaultIn use");
+  expect(await chooseRecordingMicrophone()).toBe("");
+
+  await userEvent.click(screen.getByRole("button", { name: "Move AirPods Pro up" }));
+  await userEvent.click(screen.getByRole("button", { name: "Move AirPods Pro up" }));
+  expect(saved()).toEqual(["AirPods Pro", "Blue Yeti", "System default"]);
+  await expect.element(screen.getByRole("button", { name: "Move AirPods Pro up" })).toBeDisabled();
+  expect(await chooseRecordingMicrophone()).toBe("airpods");
+
+  await userEvent.click(screen.getByRole("button", { name: "Forget Blue Yeti" }));
+  expect(saved()).toEqual(["AirPods Pro", "System default"]);
+  await expect
+    .element(screen.getByRole("button", { name: "Forget System default" }))
+    .not.toBeInTheDocument();
 });
