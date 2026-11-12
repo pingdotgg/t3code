@@ -220,6 +220,31 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("names a not-found failure instead of the generic command failure", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "Merge request not found.",
+            failureKind: "not-found",
+          }),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .listMergeRequests({ cwd: "/repo", headSelector: "main", state: "open" })
+        .pipe(Effect.flip);
+
+      assert.notStrictEqual(error.detail, "GitLab CLI command failed.");
+      assert.match(error.message, /not found/i);
+    }),
+  );
+
   it.effect("preserves rate-limit failures as a distinct error", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
