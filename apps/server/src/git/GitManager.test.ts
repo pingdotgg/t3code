@@ -5341,6 +5341,56 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("keeps unpushed commits on an existing PR branch when preparing a worktree", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-local-work"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "pr\n");
+      yield* runGit(repoDir, ["add", "pr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "PR head"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-local-work"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "local.txt"), "local\n");
+      yield* runGit(repoDir, ["add", "local.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Local work, not pushed yet"]);
+      const localSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 82,
+            title: "PR with local work",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/82",
+            baseRefName: "main",
+            headRefName: "feature/pr-local-work",
+            state: "open",
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          repositoryCloneUrls: {
+            "pingdotgg/codething-mvp": { url: originDir, sshUrl: originDir },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "82",
+        mode: "worktree",
+      });
+
+      const containing = (yield* runGit(repoDir, ["branch", "--list", "--contains", localSha]))
+        .stdout;
+      expect(containing).toContain("feature/pr-local-work");
+      expect(result.isOnPullRequestHead).toBe(false);
+    }),
+  );
+
   it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
