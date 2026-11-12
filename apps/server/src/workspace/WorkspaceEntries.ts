@@ -205,9 +205,8 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const resolveBrowseLink = Effect.fn("WorkspaceEntries.resolveBrowseLink")(function* (
-    fullPath: string,
-  ) {
+  // Untraced: runs once per symlink child of a listed folder.
+  const resolveBrowseLink = Effect.fnUntraced(function* (fullPath: string) {
     if (isNetworkPath(fullPath)) return undefined;
     const separators = path.sep === "\\" ? /[\\/]+/ : /\/+/;
     let currentPath = path.parse(fullPath).root;
@@ -221,14 +220,20 @@ export const make = Effect.gen(function* () {
         continue;
       }
       const nextPath = path.join(currentPath, component);
-      const stats = yield* Effect.tryPromise(() => NodeFSP.lstat(nextPath));
+      const stats = yield* Effect.tryPromise({
+        try: () => NodeFSP.lstat(nextPath),
+        catch: () => undefined,
+      });
       if (!stats.isSymbolicLink()) {
         if (remaining.length > 0 && !stats.isDirectory()) return undefined;
         currentPath = nextPath;
         continue;
       }
       if (++hops > 40) return undefined;
-      const target = yield* Effect.tryPromise(() => NodeFSP.readlink(nextPath));
+      const target = yield* Effect.tryPromise({
+        try: () => NodeFSP.readlink(nextPath),
+        catch: () => undefined,
+      });
       // Inspect every link before following it: UNC paths can trigger Windows NTLM sign-in.
       if (isNetworkPath(target)) return undefined;
       const root = path.parse(target).root;
@@ -290,7 +295,10 @@ export const make = Effect.gen(function* () {
           return Effect.gen(function* () {
             const target = yield* resolveBrowseLink(path.join(readPath, dirent.name));
             if (target === undefined) return undefined;
-            const stats = yield* Effect.tryPromise(() => NodeFSP.stat(target));
+            const stats = yield* Effect.tryPromise({
+              try: () => NodeFSP.stat(target),
+              catch: () => undefined,
+            });
             return stats.isDirectory() ? entry : undefined;
           }).pipe(Effect.orElseSucceed(() => undefined));
         },
