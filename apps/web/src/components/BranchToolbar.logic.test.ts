@@ -10,7 +10,7 @@ import {
   resolveBranchToolbarPrBranch,
   resolveLocalCheckoutBranchMismatch,
   resolveLockedWorkspaceLabel,
-  resolveWorktreeBaseBranchCandidate,
+  resolveWorktreeBaseBranchSeed,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -256,26 +256,35 @@ describe("resolveBranchSelectionTarget", () => {
   });
 });
 
-describe("resolveWorktreeBaseBranchCandidate", () => {
+describe("resolveWorktreeBaseBranchSeed", () => {
   const ref = (name: string, flags: { current?: boolean; isDefault?: boolean }): VcsRef => ({
     name,
     current: flags.current ?? false,
     isDefault: flags.isDefault ?? false,
     worktreePath: null,
   });
+  const seed = (
+    refs: ReadonlyArray<VcsRef>,
+    activeThreadBranch: string | null = null,
+    activeThreadBranchListed: boolean | null = null,
+  ) => resolveWorktreeBaseBranchSeed({ activeThreadBranch, activeThreadBranchListed, refs });
 
   it("prefers the default branch, then the current listed branch", () => {
-    expect(
-      resolveWorktreeBaseBranchCandidate([
-        ref("feature", { current: true }),
-        ref("staging", { isDefault: true }),
-      ]),
-    ).toBe("staging");
-    expect(resolveWorktreeBaseBranchCandidate([ref("feature", { current: true })])).toBe("feature");
+    expect(seed([ref("feature", { current: true }), ref("staging", { isDefault: true })])).toBe(
+      "staging",
+    );
+    expect(seed([ref("feature", { current: true })])).toBe("feature");
   });
 
   it("has no candidate while the repository has no refs yet, such as mid-clone", () => {
-    expect(resolveWorktreeBaseBranchCandidate([])).toBeNull();
+    expect(seed([])).toBeNull();
+  });
+
+  it("replaces a base the repository does not list, such as an unborn main after a clone", () => {
+    const refs = [ref("staging", { current: true, isDefault: true })];
+    expect(seed(refs, "main", false)).toBe("staging");
+    expect(seed(refs, "main", null)).toBeNull();
+    expect(seed(refs, "feature", true)).toBeNull();
   });
 });
 

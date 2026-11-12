@@ -55,7 +55,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
-  resolveWorktreeBaseBranchCandidate,
+  resolveWorktreeBaseBranchSeed,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -548,9 +548,17 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
+  const activeThreadBranchListed =
+    activeThreadBranch === null || activeThreadBranch !== resolvedActiveBranch
+      ? null
+      : listedActiveBranch !== null || queriedActiveBranch !== undefined
+        ? true
+        : activeBranchRefQuery.data !== null
+          ? false
+          : null;
+  const worktreeBaseBranchSeed = isInitialBranchesLoadPending
     ? null
-    : resolveWorktreeBaseBranchCandidate(refs);
+    : resolveWorktreeBaseBranchSeed({ activeThreadBranch, activeThreadBranchListed, refs });
 
   // The server sets started threads' branches; defaulting here would detach the agent from its worktree.
   const threadStarted = serverSession !== null;
@@ -560,19 +568,17 @@ export function BranchToolbarBranchSelector({
       threadStarted ||
       effectiveEnvMode !== "worktree" ||
       activeWorktreePath ||
-      activeThreadBranch ||
-      !worktreeBaseBranchCandidate
+      !worktreeBaseBranchSeed
     ) {
       return;
     }
-    setThreadBranch(worktreeBaseBranchCandidate, null, true);
+    setThreadBranch(worktreeBaseBranchSeed, null, true);
   }, [
-    activeThreadBranch,
     activeWorktreePath,
     effectiveEnvMode,
     setThreadBranch,
     threadStarted,
-    worktreeBaseBranchCandidate,
+    worktreeBaseBranchSeed,
   ]);
 
   const handleOpenChange = (open: boolean) => {

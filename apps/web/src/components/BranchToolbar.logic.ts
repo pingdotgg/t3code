@@ -187,7 +187,15 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
 }
 
 // Only listed refs qualify: an unborn HEAD (e.g. mid-clone) names a branch that does not exist yet.
-export function resolveWorktreeBaseBranchCandidate(refs: ReadonlyArray<VcsRef>): string | null {
+// A base the repository confirms it does not list, such as that unborn HEAD synced from the current
+// checkout, yields to the listed candidate.
+export function resolveWorktreeBaseBranchSeed(input: {
+  activeThreadBranch: string | null;
+  activeThreadBranchListed: boolean | null;
+  refs: ReadonlyArray<VcsRef>;
+}): string | null {
+  if (input.activeThreadBranch !== null && input.activeThreadBranchListed !== false) return null;
+  const { refs } = input;
   return (refs.find((ref) => ref.isDefault) ?? refs.find((ref) => ref.current))?.name ?? null;
 }
 
