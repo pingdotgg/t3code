@@ -17,6 +17,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   RuntimeRequestId,
@@ -3742,6 +3743,30 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         commandId: CommandId.make("command:result-message-child-provider"),
         events: [
           {
+            id: EventId.make("event:result-message-child-session"),
+            type: "provider-session.attached",
+            threadId: child.childThreadId,
+            occurredAt: now,
+            payload: {
+              id: ProviderSessionId.make("provider-session:result-message-child"),
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "ready",
+              cwd: "/repo",
+              model: modelSelection.model,
+              capabilities: {
+                ...CodexProviderCapabilitiesV2,
+                sessions: {
+                  ...CodexProviderCapabilitiesV2.sessions,
+                  supportsMultipleProviderThreadsPerSession: false,
+                },
+              },
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          },
+          {
             id: EventId.make("event:result-message-child-provider"),
             type: "provider-thread.updated",
             threadId: child.childThreadId,
@@ -3770,6 +3795,10 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.isNotNull(task.result);
       assert.isEmpty(recovered.contextHandoffs);
       assert.equal(recovered.contextTransfers.length, 1);
+      // A one-process-per-thread child releases its process once its result is recorded.
+      assert.isEmpty(
+        (yield* orchestrator.getThreadProjection(child.childThreadId)).providerSessions,
+      );
 
       const delivery = recovered.runs.find((candidate) => candidate.id === runId)!
         .delegatedCompletion!.delivery!;
