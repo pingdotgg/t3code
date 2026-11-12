@@ -177,6 +177,10 @@ function resolveDeliveryIntent(
   ) {
     return { type: "queue_after_active" };
   }
+  // Steering can withdraw a question or approval the user is still answering.
+  if (projection.runtimeRequests.some((request) => request.status === "pending")) {
+    return { type: "queue_after_active" };
+  }
 
   const capabilities = providerTurnCapabilities(projection, activeRun);
   if (capabilities?.supportsActiveSteering === true) {

@@ -60,6 +60,7 @@ function dispatchProjection(
       sessionCapabilities === undefined
         ? []
         : [{ runAttemptId: activeAttemptId, status: "running" }],
+    runtimeRequests: [],
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
@@ -129,6 +130,29 @@ it.each(["preparing", "starting"] as const)(
         "auto",
       ),
       { type: "queue_after_active" },
+    );
+  },
+);
+
+// Claude's steer cancels an open question or approval.
+it.each(["user_input", "command"] as const)(
+  "queues only automatic delivery while a %s request waits on the user",
+  (kind) => {
+    const projection = {
+      ...dispatchProjection(baseCapabilities),
+      runtimeRequests: [{ kind, status: "pending" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+      { type: "queue_after_active" },
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        "steer",
+      ),
+      { type: "steer_active", targetRunId: activeRunId },
     );
   },
 );
