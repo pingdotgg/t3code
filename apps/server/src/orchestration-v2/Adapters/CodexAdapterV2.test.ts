@@ -9617,6 +9617,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               { threadId: nativeThreadId },
               { goal: codexGoal("active", 0) },
             ),
+            notification("goal complete", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              turnId: "native-goal-turn",
+              goal: codexGoal("complete", 10),
+            }),
             notification("native goal turn done", "turn/completed", {
               threadId: nativeThreadId,
               turn: makeCodexReplayTurn({ id: "native-goal-turn", status: "completed" }),
