@@ -2025,14 +2025,21 @@ export function makeClaudeQueryOptions(input: {
       }
     : undefined;
   // A settings file path cannot take extra keys, so it goes through unchanged.
-  const effectiveQuerySettings =
-    (input.toolSearchOverride === undefined && aliasOverrideEnv === undefined) ||
+  const workflowSizeGuideline = input.settings?.workflowSizeGuideline;
+  const sizedQuerySettings =
+    workflowSizeGuideline === undefined ||
+    workflowSizeGuideline === "default" ||
     typeof compactQuerySettings === "string"
       ? compactQuerySettings
+      : ({ ...compactQuerySettings, workflowSizeGuideline } as ClaudeSdkSettings);
+  const effectiveQuerySettings =
+    (input.toolSearchOverride === undefined && aliasOverrideEnv === undefined) ||
+    typeof sizedQuerySettings === "string"
+      ? sizedQuerySettings
       : ({
-          ...compactQuerySettings,
+          ...sizedQuerySettings,
           env: {
-            ...compactQuerySettings?.env,
+            ...sizedQuerySettings?.env,
             ...aliasOverrideEnv,
             ...(input.toolSearchOverride === undefined
               ? {}
