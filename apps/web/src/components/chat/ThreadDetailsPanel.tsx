@@ -10,7 +10,7 @@ import type {
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 
-import type { DraftId } from "../../composerDraftStore";
+import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
@@ -58,6 +58,7 @@ interface ThreadDetailsPanelProps extends Pick<
   worktreePath: string | null;
   isServerThread: boolean;
   draftId?: DraftId;
+  composerDraftTarget: ComposerThreadTarget;
   activeProjectName: string | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -101,9 +102,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
-  const scratchRoot = useServerConfigs().get(props.environmentId)?.scratchWorkspaceRoot ?? null;
+  const serverConfig = useServerConfigs().get(props.environmentId);
   // A No project thread's folder sits inside the shared scratch root, so it must never get git.
-  const offersGit = props.gitCwd !== null && !(project && isScratchProject(project, scratchRoot));
+  // Until the config and project load, a No project thread looks like any other folder.
+  const offersGit =
+    props.gitCwd !== null &&
+    serverConfig !== undefined &&
+    project !== null &&
+    !isScratchProject(project, serverConfig.scratchWorkspaceRoot);
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -236,7 +242,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
                     ) : null}
                     {show.pullRequests ? (
-                      <ThreadDetailsThreadPrRows threadRef={activeThreadRef} project={project} />
+                      <ThreadDetailsThreadPrRows
+                        threadRef={activeThreadRef}
+                        project={project}
+                        composerTarget={props.composerDraftTarget}
+                      />
                     ) : null}
                     {show.git && props.gitCwd ? (
                       <GitActionsControl
