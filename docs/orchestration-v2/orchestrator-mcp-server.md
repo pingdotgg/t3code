@@ -217,6 +217,16 @@ Returns:
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
 
+A provider instance whose latest finished run failed within the last day also
+carries `lastFailure` (time, model, class, a fixed summary, and any reset time).
+The summary is chosen from a small set, never the stored message, because that
+message can hold another project's paths or raw provider output. It is advisory
+and never clears `canRunChildTask`: a balance or limit is unknown until the next
+request, and one model's limit does not prove the whole account is unusable. A
+later successful run on that instance, or a passed `resetAt`, clears it. Runs
+that failed during workspace preparation never reached the provider, so they
+neither set nor clear it.
+
 The model list is short on purpose: catalogs such as OpenCode can hold hundreds
 of models, and every call lands in the agent's context. Each provider lists
 custom, favorite, and the caller's own models, plus all current (non-legacy)

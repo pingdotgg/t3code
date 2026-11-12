@@ -171,6 +171,7 @@ import {
   type ActiveShellIndexEntry,
   type OlderSettledThreadsQuery,
   type ShellSnapshotOptions,
+  type ProjectionProviderInstanceFailure,
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -485,6 +486,10 @@ export interface OrchestratorV2Shape {
     OrchestratorV2Error
   >;
   readonly countThreads: () => Effect.Effect<number, OrchestratorV2Error>;
+  readonly getProviderInstanceFailures: (input: {
+    readonly instanceIds: ReadonlyArray<ProviderInstanceId>;
+    readonly since: DateTime.Utc;
+  }) => Effect.Effect<ReadonlyArray<ProjectionProviderInstanceFailure>, OrchestratorV2Error>;
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
     OrchestratorV2Error
@@ -15420,6 +15425,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     countThreads: Effect.fn("OrchestratorV2.countThreads")(function () {
       return projectionStore.countThreads().pipe(Effect.mapError(shellProjectionError));
     }),
+    getProviderInstanceFailures: Effect.fn("OrchestratorV2.getProviderInstanceFailures")(
+      function (input) {
+        return projectionStore
+          .getProviderInstanceFailures(input)
+          .pipe(Effect.mapError(shellProjectionError));
+      },
+    ),
     listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function () {
       return projectionStore.listActiveShellIndex().pipe(Effect.mapError(shellProjectionError));
     }),

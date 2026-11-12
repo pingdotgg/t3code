@@ -627,6 +627,7 @@ describe("orchestrator MCP toolkit", () => {
           const runReads: Array<string> = [];
           const projectionTableReads: Array<string> = [];
           const acknowledgementReads: Array<string> = [];
+          const failureLookupReads: Array<string> = [];
           const tracer = Tracer.make({
             span(options) {
               const span = new Tracer.NativeSpan(options);
@@ -642,6 +643,10 @@ describe("orchestrator MCP toolkit", () => {
                   ) {
                     acknowledgementReads.push(query);
                     break;
+                  }
+                  if (parent.name === "ProjectionStore.getProviderInstanceFailures") {
+                    failureLookupReads.push(query);
+                    return;
                   }
                   parent = Option.getOrUndefined(parent.parent);
                 }
@@ -749,6 +754,7 @@ describe("orchestrator MCP toolkit", () => {
 
           const messageReadsBeforeCapabilities = messageReads.length;
           const tableReadsBeforeCapabilities = projectionTableReads.length;
+          const failureLookupReadsBeforeCapabilities = failureLookupReads.length;
           const capabilities = yield* invoke("orchestrator_capabilities", {}).pipe(
             Effect.withTracer(tracer),
           );
@@ -758,6 +764,14 @@ describe("orchestrator MCP toolkit", () => {
           expect(new Set(projectionTableReads.slice(tableReadsBeforeCapabilities))).toEqual(
             new Set(["threads"]),
           );
+          // The provider failure lookup reads each instance's latest finished run, never messages.
+          const failureLookup = failureLookupReads.slice(failureLookupReadsBeforeCapabilities);
+          expect(failureLookup.length).toBeGreaterThan(0);
+          for (const query of failureLookup) {
+            expect(query).toContain("WHERE r.provider_instance_id =");
+            expect(query).toContain("LIMIT 1");
+            expect(query).not.toMatch(/orchestration_v2_projection_messages/);
+          }
           const runReadsBeforeStatus = runReads.length;
           const transferReadsBeforeStatus = transferReads.length;
           const threadRecordReadsBeforeStatus = threadRecordReads.length;
