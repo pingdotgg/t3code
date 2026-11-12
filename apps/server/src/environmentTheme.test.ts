@@ -241,13 +241,16 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         assert.strictEqual(refused.reason, "not-published");
         assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
 
-        // A new theme that sorts first would be served and push the last one out.
+        // A new theme that sorts first fits, and the last large one no longer does.
+        const before = (yield* themes.current).map((theme) => theme.id);
         const displacing = yield* themes
-          .apply({ themeId: "ab-new", theme: large("Displacing") })
+          .apply({ themeId: "a0-first", theme: large("Displacing") })
           .pipe(Effect.flip);
         assert.strictEqual(displacing.reason, "not-published");
-        assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
-        assert.isFalse((yield* themes.current).some((theme) => theme.id === "ab-new"));
+        assert.deepEqual(
+          (yield* themes.current).map((theme) => theme.id),
+          before,
+        );
       }),
     );
   });
