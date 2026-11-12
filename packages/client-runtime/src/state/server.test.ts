@@ -73,6 +73,8 @@ import {
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
+import { environmentSessionGenerationAtom } from "./runtime.ts";
+import { createCommandPermissions } from "./commandPermissions.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -1355,6 +1357,127 @@ describe("server state projection", () => {
     // A fresh scan drops the cwd's other provider snapshots, as the server does.
     expect(record(fetched, claude, true, [])).toEqual([]);
   });
+
+  it.effect("accepts reset workspace revisions after reconnecting", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("codex");
+        const config = (workspaceCatalogRevision: number) =>
+          ({
+            ...CONFIG,
+            environment: { capabilities: { providerWorkspaceSnapshotsOnDemand: true } },
+            providers: [
+              {
+                instanceId,
+                enabled: true,
+                skills: [],
+                slashCommands: [],
+                workspaceCatalogRevision,
+              },
+            ],
+          }) as unknown as ServerConfig;
+        const before = config(2);
+        const after = config(0);
+        const clientFor = (value: ServerConfig, command: string) =>
+          ({
+            [WS_METHODS.subscribeServerConfig]: () =>
+              Stream.make(snapshotEvent(value)).pipe(Stream.concat(Stream.never)),
+            [WS_METHODS.serverRefreshProviders]: () =>
+              Effect.succeed({
+                providers: value.providers.map((provider) => ({
+                  ...provider,
+                  workspaceSnapshots: [
+                    {
+                      cwd: "/a",
+                      checkedAt: "2026-10-25T00:00:00.000Z",
+                      skills: [],
+                      slashCommands: [{ name: command }],
+                    },
+                  ],
+                })),
+              }),
+          }) as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+            ...AVAILABLE_CONNECTION_STATE,
+            phase: "connected",
+          }),
+          session: yield* SubscriptionRef.make(Option.some(session(clientFor(before, "before")))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+              run: (_id, effect) =>
+                Effect.provideService(
+                  effect,
+                  EnvironmentSupervisor.EnvironmentSupervisor,
+                  supervisor,
+                ),
+              followStream: (_id, stream) =>
+                Stream.provideService(
+                  stream,
+                  EnvironmentSupervisor.EnvironmentSupervisor,
+                  supervisor,
+                ),
+            } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            Layer.succeed(Persistence.EnvironmentCacheStore, {
+              loadServerConfig: () => Effect.succeedNone,
+              saveServerConfig: () => Effect.void,
+            } as unknown as Persistence.EnvironmentCacheStore["Service"]),
+          ),
+        );
+        const initialConfig = Atom.make(before);
+        using _authorize = vi
+          .spyOn(createCommandPermissions(runtime, WS_METHODS.serverRefreshProviders), "authorize")
+          .mockReturnValue(Effect.void);
+        const atoms = createServerEnvironmentAtoms(runtime, {
+          initialConfigValueAtom: () => initialConfig,
+        });
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
+          Effect.sync(() => value.dispose()),
+        );
+        const configAtom = atoms.configValueAtom(TARGET.environmentId);
+        yield* AtomRegistry.mount(registry, configAtom);
+        const generationAtom = environmentSessionGenerationAtom(runtime, TARGET.environmentId);
+        yield* AtomRegistry.mount(registry, generationAtom);
+        const connected = (generation: number) =>
+          AtomRegistry.toStream(registry, generationAtom).pipe(
+            Stream.filter((value) => value === generation),
+            Stream.runHead,
+          );
+        const refresh = () =>
+          Effect.promise(() =>
+            atoms.refreshProviders.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { instanceId, cwd: "/a" },
+            }),
+          );
+        const commands = () =>
+          registry.get(configAtom)?.providers[0]?.workspaceSnapshots?.[0]?.slashCommands;
+        expect((yield* refresh())._tag).toBe("Success");
+        yield* connected(1);
+        expect(commands()).toEqual([{ name: "before" }]);
+
+        registry.set(initialConfig, after);
+        yield* SubscriptionRef.set(
+          supervisor.session,
+          Option.some(session(clientFor(after, "after"))),
+        );
+        yield* connected(2);
+        yield* AtomRegistry.toStream(registry, configAtom).pipe(
+          Stream.filter((value) => value?.providers[0]?.workspaceCatalogRevision === 0),
+          Stream.runHead,
+        );
+        expect((yield* refresh())._tag).toBe("Success");
+        expect(commands()).toEqual([{ name: "after" }]);
+      }),
+    ),
+  );
 
   it.effect("starts from cached configuration and persists the live projection", () =>
     Effect.gen(function* () {

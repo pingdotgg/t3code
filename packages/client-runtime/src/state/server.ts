@@ -35,6 +35,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
+  environmentSessionGenerationAtom,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -764,6 +765,11 @@ interface FetchedWorkspaceSnapshot {
   readonly basis: ReturnType<typeof snapshotBasis>;
 }
 
+interface FetchedWorkspaceSnapshotCache {
+  readonly generation: number;
+  readonly snapshots: ReadonlyArray<FetchedWorkspaceSnapshot>;
+}
+
 const MAX_FETCHED_WORKSPACE_SNAPSHOTS = 32;
 
 /**
@@ -901,7 +907,21 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerConfig>;
   }) => configProjectionFamily(target.environmentId);
   const fetchedWorkspaceSnapshotsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make<ReadonlyArray<FetchedWorkspaceSnapshot>>([]).pipe(
+    Atom.writable(
+      (get): FetchedWorkspaceSnapshotCache => {
+        const generation = get(environmentSessionGenerationAtom(runtime, environmentId));
+        const previous = Option.getOrUndefined(get.self<FetchedWorkspaceSnapshotCache>());
+        // Generation zero has not observed the first connection yet; its RPC may already have replied.
+        return {
+          generation,
+          snapshots:
+            previous && (previous.generation === 0 || previous.generation === generation)
+              ? previous.snapshots
+              : [],
+        };
+      },
+      (ctx, cache: FetchedWorkspaceSnapshotCache) => ctx.setSelf(cache),
+    ).pipe(
       Atom.keepAlive,
       Atom.withLabel(`environment-data:server:fetched-workspace-snapshots:${environmentId}`),
     ),
@@ -926,7 +946,7 @@ export function createServerEnvironmentAtoms<R, E>(
       if (config === null) return null;
       const merged = withFetchedWorkspaceSnapshots(
         config,
-        get(fetchedWorkspaceSnapshotsAtom(environmentId)),
+        get(fetchedWorkspaceSnapshotsAtom(environmentId)).snapshots,
       );
       if (merged === config) return config;
       // Keep provider identities stable across config events; the projection already reuses the rest.
@@ -1616,16 +1636,17 @@ export function createServerEnvironmentAtoms<R, E>(
               catalog,
             ]);
           }
-          registry.update(fetchedWorkspaceSnapshotsAtom(environmentId), (current) =>
-            recordFetchedWorkspaceSnapshot(
-              current,
-              { instanceId, cwd, fresh: input.fresh === true },
-              result.providers,
-              registry
-                .get(configValueAtom(environmentId))
-                ?.providers.find((provider) => provider.instanceId === instanceId),
-            ),
+          const cache = fetchedWorkspaceSnapshotsAtom(environmentId);
+          const current = registry.get(cache);
+          const snapshots = recordFetchedWorkspaceSnapshot(
+            current.snapshots,
+            { instanceId, cwd, fresh: input.fresh === true },
+            result.providers,
+            registry
+              .get(configValueAtom(environmentId))
+              ?.providers.find((provider) => provider.instanceId === instanceId),
           );
+          if (snapshots !== current.snapshots) registry.set(cache, { ...current, snapshots });
         }),
       concurrency: {
         mode: "singleFlight",
