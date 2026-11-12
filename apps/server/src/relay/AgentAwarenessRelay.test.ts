@@ -161,7 +161,7 @@ describe("startup agent activity", () => {
     },
   );
 
-  it("publishes active work and only unread results inside the retention window", () => {
+  it("publishes active work, results since startup, and older unread results inside the retention window", () => {
     const startedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(NOW));
     const oldCompleted = ThreadId.make("old-completed");
     const newCompleted = ThreadId.make("new-completed");
@@ -169,7 +169,8 @@ describe("startup agent activity", () => {
     const newFailed = ThreadId.make("new-failed");
     const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
       environmentId: EnvironmentId.make("relay-env"),
-      now: startedAt,
+      startedAt,
+      now: startedAt + 60_000,
       projects: [{ id: PROJECT_ID, title: "Project" }],
       threads: [
         shell(),
@@ -208,9 +209,10 @@ describe("startup agent activity", () => {
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
       ],
     });
-    // Completions never visited count as read; failures stay unread until visited.
+    // Completions never visited count as read; one since startup still replaces a stale row.
     assert.deepStrictEqual(ids, [
       THREAD_ID,
+      newCompleted,
       oldFailed,
       newFailed,
       ThreadId.make("unread-completed"),

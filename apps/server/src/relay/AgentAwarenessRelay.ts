@@ -379,6 +379,7 @@ const RETAINED_RESULT_REPLAY_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly environmentId: EnvironmentId;
+  readonly startedAt: number;
   readonly now: number;
   readonly projects: ReadonlyArray<Pick<Project, "id" | "title">>;
   readonly threads: ReadonlyArray<AgentAwarenessThread>;
@@ -400,7 +401,9 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
       });
       if (state === null) return false;
       if (state.phase !== "completed" && state.phase !== "failed") return true;
-      // Catch-up runs on every restart and relink, so replay only results the phone still shows.
+      // A result since startup may replace a row published before a restart or while publishing was off.
+      if (terminalWorkSinceStart(thread, input.startedAt)) return true;
+      // Catch-up runs on every restart and relink, so replay older results only while the phone shows them.
       return (
         state.unread === true &&
         thread.latestRunCompletedAt != null &&
@@ -886,6 +889,7 @@ export const make = Effect.gen(function* () {
     );
     const activeThreadIds = resolveAgentAwarenessRelayActiveThreadIds({
       environmentId,
+      startedAt,
       now: nowMs,
       projects: projectSnapshot.projects,
       // Children first, so a parent's catch-up publish already sees its waiting child.
