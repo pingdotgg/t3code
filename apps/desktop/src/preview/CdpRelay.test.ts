@@ -169,8 +169,11 @@ describe("CDP relay extra sessions", () => {
     await settle();
     expect(send).toHaveBeenLastCalledWith("Page.startScreencast", {}, undefined, extra);
     written.length = 0;
-    relay.event("Page.screencastFrame", { data: "x" }, undefined);
-    expect(written.map((m) => m["sessionId"])).toEqual(["t3-preview-page", extra]);
+    // The desktop acks Chromium itself, so frames keep coming while the consumer has not
+    // acked; the relay must hold one unacked frame, only for the session that asked.
+    for (let frame = 0; frame < 100; frame++)
+      relay.event("Page.screencastFrame", { data: "x", sessionId: 7 }, undefined);
+    expect(written.map((m) => m["sessionId"])).toEqual([extra]);
   });
 });
 
