@@ -109,6 +109,12 @@ export const PullRequestCheck = Schema.Struct({
   status: PullRequestCheckStatus,
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
+  /**
+   * When the run started and finished, where the host reports them, so a finished check can say
+   * how long it took. Absent on a commit status, which is a verdict rather than a run.
+   */
+  startedAt: Schema.optional(IsoDateTime),
+  completedAt: Schema.optional(IsoDateTime),
   required: Schema.optional(Schema.Boolean),
   /**
    * Not a check: it stands for ones the host could not list, such as workflow runs awaiting
@@ -181,6 +187,15 @@ export const PullRequestThreadComment = Schema.Struct({
 });
 export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
 
+/** One numbered line of the code a review thread was written against. */
+export const PullRequestReviewThreadSnippetLine = Schema.Struct({
+  kind: Schema.Literals(["added", "deleted", "context"]),
+  /** The line's number on the side it belongs to: the old side for a deletion, else the new. */
+  line: Schema.NullOr(PositiveInt),
+  text: Schema.String,
+});
+export type PullRequestReviewThreadSnippetLine = typeof PullRequestReviewThreadSnippetLine.Type;
+
 export const PullRequestReviewThread = Schema.Struct({
   id: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
@@ -191,6 +206,8 @@ export const PullRequestReviewThread = Schema.Struct({
   comments: Schema.Array(PullRequestThreadComment),
   commentCount: Schema.optional(NonNegativeInt),
   nextCommentsCursor: Schema.optional(TrimmedNonEmptyString),
+  /** Last diff lines ending at the comment; absent when the host omits the hunk. */
+  snippet: Schema.optional(Schema.Array(PullRequestReviewThreadSnippetLine)),
   /** Can only narrow repository-wide resolve permission. Absent when unreported. */
   canResolve: Schema.optional(Schema.Boolean),
 });
@@ -214,6 +231,13 @@ export const PullRequestReviewerCandidate = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: PullRequestReviewerKind,
   isRequested: Schema.Boolean,
+  /**
+   * Why the host suggests this person, such as "wrote some of these lines". Present only on a
+   * suggestion, which is how the menu tells its suggested people from everyone else with access.
+   */
+  suggestion: Schema.optional(TrimmedNonEmptyString),
+  /** When the outstanding request was made, where the host keeps that event. */
+  requestedAt: Schema.optional(IsoDateTime),
 });
 export type PullRequestReviewerCandidate = typeof PullRequestReviewerCandidate.Type;
 
@@ -243,6 +267,14 @@ export const PullRequestCommit = Schema.Struct({
   additions: Schema.optional(NonNegativeInt),
   deletions: Schema.optional(NonNegativeInt),
   authors: Schema.optional(Schema.Array(PullRequestActor)),
+  /** How this commit's own checks came out, where the host rolls them up per commit. */
+  checks: Schema.optional(
+    Schema.Struct({
+      state: PullRequestChecksState,
+      passed: NonNegativeInt,
+      total: PositiveInt,
+    }),
+  ),
 });
 export type PullRequestCommit = typeof PullRequestCommit.Type;
 
@@ -669,6 +701,15 @@ export const PullRequestChecks = Schema.Struct({
 });
 export type PullRequestChecks = typeof PullRequestChecks.Type;
 
+export const PullRequestReviewRequestEvent = Schema.Struct({
+  /** Who asked, where the host still knows. */
+  actor: Schema.NullOr(PullRequestActor),
+  /** Who was asked. A team wears its slug as the login. */
+  reviewer: PullRequestActor,
+  createdAt: IsoDateTime,
+});
+export type PullRequestReviewRequestEvent = typeof PullRequestReviewRequestEvent.Type;
+
 export const PullRequestActivity = Schema.Struct({
   author: Schema.optional(Schema.NullOr(PullRequestActor)),
   reviewers: Schema.optional(Schema.Array(PullRequestActor)),
@@ -680,6 +721,11 @@ export const PullRequestActivity = Schema.Struct({
   // Apart from reviewThreads so clients that require a thread path still decode the activity.
   overviewThreads: Schema.optional(Schema.Array(PullRequestOverviewThread)),
   commits: Schema.Array(PullRequestCommit),
+  /**
+   * Each time somebody was asked for a review, oldest first, where the host keeps those events.
+   * A request made after that reviewer already reviewed is a re-request.
+   */
+  reviewRequests: Schema.optional(Schema.Array(PullRequestReviewRequestEvent)),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
 export type PullRequestActivity = typeof PullRequestActivity.Type;

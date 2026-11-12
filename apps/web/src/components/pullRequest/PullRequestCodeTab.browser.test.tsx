@@ -242,11 +242,15 @@ async function expectFileHeaderShown(
   container: HTMLElement,
   path: string,
 ) {
-  const header = screen.getByText(path, { exact: true }).first();
-  await expect.element(header).toBeInTheDocument();
+  await expect.element(screen.getByText(path, { exact: true }).first()).toBeInTheDocument();
   await vi.waitFor(() => {
+    const header = screen
+      .getByText(path, { exact: true })
+      .elements()
+      .find((element) => element.checkVisibility());
+    if (!header) throw new Error(`No visible file header for ${path}`);
     const bounds = container.querySelector(".diff-render-surface")!.getBoundingClientRect();
-    const { top, bottom } = header.element().getBoundingClientRect();
+    const { top, bottom } = header.getBoundingClientRect();
     expect(top).toBeGreaterThanOrEqual(bounds.top);
     expect(bottom).toBeLessThanOrEqual(bounds.bottom);
   });
@@ -269,10 +273,10 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
       __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
+  window.localStorage.setItem("t3code.diffHideTestFiles", "true");
   const container = pagedContainer();
   await using screen = await render(tab(0), { container });
-  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
-  await screen.getByRole("button", { name: "Hide test files" }).click();
+  await expectFileHeaderShown(screen, container, "early-0.ts");
 
   const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
   const settled = vi.fn();
@@ -425,7 +429,8 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   await marker.click();
   await expect.element(marker).toHaveAttribute("aria-expanded", "true");
   await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
-  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  // The redesigned card keeps a reply field open instead of a Reply button.
+  await reply().click();
   await reply().fill("Unsent");
 
   // Hidden conversations stay mounted, so the unsent reply is still there.
