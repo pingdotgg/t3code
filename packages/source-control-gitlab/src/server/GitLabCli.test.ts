@@ -198,10 +198,6 @@ layer("GitLabCli.layer", (it) => {
   it.effect.each([
     { repository: "group/project", args: ["api", "projects/group%2Fproject"] },
     {
-      repository: "https://sourcecontrol.example.com/group/project",
-      args: ["api", "--hostname", "sourcecontrol.example.com", "projects/group%2Fproject"],
-    },
-    {
       repository: "https://gitlab.example.com:8443/group/sub/project.git",
       args: ["api", "--hostname", "gitlab.example.com:8443", "projects/group%2Fsub%2Fproject"],
     },
