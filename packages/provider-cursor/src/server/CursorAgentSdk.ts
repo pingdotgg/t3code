@@ -5,6 +5,7 @@ import type {
   RunResult,
   SDKUserMessage,
   SendOptions,
+  SteerAckOutcome,
 } from "@cursor/sdk";
 import {
   type OrchestrationV2ProviderSession,
@@ -98,6 +99,8 @@ export interface CursorAgentSdkRun {
   readonly agentId: string;
   readonly wait: Effect.Effect<RunResult, CursorAgentSdkRunnerError>;
   readonly cancel: Effect.Effect<void, CursorAgentSdkRunnerError>;
+  /** Absent on test doubles that never steer. The live runner always sets it. */
+  readonly steer?: (text: string) => Effect.Effect<SteerAckOutcome, CursorAgentSdkRunnerError>;
 }
 
 export interface CursorAgentSdkSession {
@@ -202,6 +205,24 @@ export type CursorAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "run.completed";
         readonly result: RunResult;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.steer";
+        readonly runId: string;
+        readonly text: string;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.steered";
+        readonly runId: string;
+        readonly outcome: SteerAckOutcome;
       };
     }
   | {
@@ -561,6 +582,35 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                     result,
                   },
                 }),
+              ),
+            ),
+            steer: Effect.fn("CursorAgentSdkRun.steer")((text: string) =>
+              log({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: {
+                  type: "run.steer",
+                  runId: run.id,
+                  text,
+                },
+              }).pipe(
+                Effect.andThen(
+                  Effect.tryPromise({
+                    try: () => run.steer?.(text) ?? Promise.resolve("revert_to_followup" as const),
+                    catch: (cause) => runnerError(cause, "run.steer"),
+                  }),
+                ),
+                Effect.tap((outcome) =>
+                  log({
+                    direction: "incoming",
+                    stage: "decoded",
+                    payload: {
+                      type: "run.steered",
+                      runId: run.id,
+                      outcome,
+                    },
+                  }),
+                ),
               ),
             ),
             cancel: log({
