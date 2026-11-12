@@ -2275,98 +2275,99 @@ it.effect(
           providerSessionId: ProviderSessionId.make("session:subagent-interrupt-cascade"),
           session: {
             events: Stream.empty,
-            subscribeEvents: Effect.succeed({
-              events: Stream.fromIterable([
-                childThreadCreatedEvent(ids),
-                {
-                  type: "subagent.updated",
-                  driver,
-                  subagent: runningSubagent,
-                },
-                {
-                  type: "node.updated",
-                  driver,
-                  node: runningNode,
-                },
-                {
-                  type: "node.updated",
-                  driver,
-                  node: runningChildNode,
-                },
-                {
-                  type: "node.updated",
-                  driver,
-                  node: unrelatedChildNode,
-                },
-                {
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: runningTurnItem,
-                },
-                {
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: runningChildTurnItem,
-                },
-                {
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: suppressedChildAssistantTurnItem,
-                },
-                {
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: unrelatedChildTurnItem,
-                },
-                { type: "subagent.updated", driver, subagent: runningMember },
-                { type: "subagent.updated", driver, subagent: foreignSubagent },
-                { type: "node.updated", driver, node: runningMemberRoot },
-                { type: "node.updated", driver, node: foreignChildNode },
-                { type: "turn_item.updated", driver, turnItem: foreignChildTurnItem },
-                rootTerminalEvent(ids, "interrupted"),
-                {
-                  type: "subagent.updated",
-                  driver,
-                  subagent: {
-                    ...runningSubagent,
-                    status: "completed" as const,
-                    result: "should-not-apply",
-                    completedAt: runningSubagent.updatedAt,
+            subscribeEvents: () =>
+              Effect.succeed({
+                events: Stream.fromIterable([
+                  childThreadCreatedEvent(ids),
+                  {
+                    type: "subagent.updated",
+                    driver,
+                    subagent: runningSubagent,
                   },
-                },
-                {
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: {
-                    ...runningTurnItem,
-                    status: "completed" as const,
-                    result: "should-not-apply",
-                    completedAt: runningTurnItem.updatedAt,
-                    updatedAt: runningTurnItem.updatedAt,
+                  {
+                    type: "node.updated",
+                    driver,
+                    node: runningNode,
                   },
-                },
-                {
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: {
-                    ...runningChildTurnItem,
-                    status: "completed" as const,
-                    completedAt: runningChildTurnItem.updatedAt,
-                    updatedAt: runningChildTurnItem.updatedAt,
+                  {
+                    type: "node.updated",
+                    driver,
+                    node: runningChildNode,
                   },
-                },
-                {
-                  type: "node.updated",
-                  driver,
-                  node: {
-                    ...runningChildNode,
-                    status: "completed" as const,
-                    completedAt: runningChildNode.startedAt,
+                  {
+                    type: "node.updated",
+                    driver,
+                    node: unrelatedChildNode,
                   },
-                },
-              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
-              close: Deferred.succeed(ingestionDone, undefined),
-            }),
+                  {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: runningTurnItem,
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: runningChildTurnItem,
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: suppressedChildAssistantTurnItem,
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: unrelatedChildTurnItem,
+                  },
+                  { type: "subagent.updated", driver, subagent: runningMember },
+                  { type: "subagent.updated", driver, subagent: foreignSubagent },
+                  { type: "node.updated", driver, node: runningMemberRoot },
+                  { type: "node.updated", driver, node: foreignChildNode },
+                  { type: "turn_item.updated", driver, turnItem: foreignChildTurnItem },
+                  rootTerminalEvent(ids, "interrupted"),
+                  {
+                    type: "subagent.updated",
+                    driver,
+                    subagent: {
+                      ...runningSubagent,
+                      status: "completed" as const,
+                      result: "should-not-apply",
+                      completedAt: runningSubagent.updatedAt,
+                    },
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: {
+                      ...runningTurnItem,
+                      status: "completed" as const,
+                      result: "should-not-apply",
+                      completedAt: runningTurnItem.updatedAt,
+                      updatedAt: runningTurnItem.updatedAt,
+                    },
+                  },
+                  {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: {
+                      ...runningChildTurnItem,
+                      status: "completed" as const,
+                      completedAt: runningChildTurnItem.updatedAt,
+                      updatedAt: runningChildTurnItem.updatedAt,
+                    },
+                  },
+                  {
+                    type: "node.updated",
+                    driver,
+                    node: {
+                      ...runningChildNode,
+                      status: "completed" as const,
+                      completedAt: runningChildNode.startedAt,
+                    },
+                  },
+                ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
+                close: Deferred.succeed(ingestionDone, undefined),
+              }),
             startTurn: () => Effect.void,
           } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
           run: {
@@ -2642,21 +2643,22 @@ it.effect("settles native subagents when a workspace handoff completes the root 
         providerSessionId: ProviderSessionId.make("session:subagent-workspace-handoff"),
         session: {
           events: Stream.empty,
-          subscribeEvents: Effect.succeed({
-            // The provider event stream stays open: only settled children may end ingestion.
-            events: Stream.concat(
-              Stream.fromIterable([
-                childThreadCreatedEvent(ids),
-                { type: "subagent.updated", driver, subagent: runningSubagent },
-                { type: "node.updated", driver, node: runningNode },
-                { type: "node.updated", driver, node: runningChildNode },
-                { type: "turn_item.updated", driver, turnItem: runningTurnItem },
-                rootTerminalEvent(ids, "interrupted"),
-              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
-              Stream.never,
-            ),
-            close: Deferred.succeed(ingestionDone, undefined),
-          }),
+          subscribeEvents: () =>
+            Effect.succeed({
+              // The provider event stream stays open: only settled children may end ingestion.
+              events: Stream.concat(
+                Stream.fromIterable([
+                  childThreadCreatedEvent(ids),
+                  { type: "subagent.updated", driver, subagent: runningSubagent },
+                  { type: "node.updated", driver, node: runningNode },
+                  { type: "node.updated", driver, node: runningChildNode },
+                  { type: "turn_item.updated", driver, turnItem: runningTurnItem },
+                  rootTerminalEvent(ids, "interrupted"),
+                ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
+                Stream.never,
+              ),
+              close: Deferred.succeed(ingestionDone, undefined),
+            }),
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
@@ -2893,6 +2895,218 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
+it.effect.each(["pending", "running"] as const)(
+  "settles open tools after the session manager interrupts the buffered %s native turn",
+  (status) =>
+    Effect.gen(function* () {
+      const key = "workspace-detach-open-tools";
+      const ids = backgroundScenarioIds(key);
+      const runningId = TurnItemId.make(`${ids.itemId}:running`);
+      const completedId = TurnItemId.make(`${ids.itemId}:completed`);
+      const now = yield* DateTime.now;
+      const interrupted = yield* Ref.make<ReadonlyArray<ProviderTurnId | "terminal">>([]);
+      const node = (id: TurnItemId, status: "running" | "completed") => ({
+        type: "node.updated" as const,
+        driver,
+        node: {
+          id: NodeId.make(`node:${id}`),
+          threadId: ids.threadId,
+          runId: ids.runId,
+          parentNodeId: ids.rootNodeId,
+          rootNodeId: ids.rootNodeId,
+          kind: "tool_call" as const,
+          status,
+          countsForRun: true,
+          providerThreadId: ids.providerThreadId,
+          providerTurnId: ids.rootProviderTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: status === "completed" ? now : null,
+        },
+      });
+      const { ingested, observed } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        readAhead: true,
+        interruptTurn: ({ providerTurnId }) =>
+          Ref.update(interrupted, (current) => [...current, providerTurnId]).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterInterruptError({
+                  driver,
+                  providerThreadId: ids.providerThreadId,
+                  providerTurnId,
+                  cause: "native turn is already inactive after session-manager detach",
+                }),
+              ),
+            ),
+          ),
+        beforeTerminalWrite: () =>
+          Ref.update(interrupted, (current) => [...current, "terminal" as const]).pipe(
+            Effect.as(true),
+          ),
+        events: (ids) =>
+          Stream.concat(
+            Stream.fromIterable([
+              node(ids.itemId, "running"),
+              node(runningId, "running"),
+              node(completedId, "running"),
+              ...[ids.itemId, runningId, completedId].map((id, index) => {
+                const event = backgroundTurnItemEvent(
+                  ids,
+                  "dynamic_tool",
+                  "running",
+                  index + 1,
+                  id,
+                );
+                return event.type === "turn_item.updated"
+                  ? { ...event, turnItem: { ...event.turnItem, nodeId: NodeId.make(`node:${id}`) } }
+                  : event;
+              }),
+              {
+                type: "provider_turn.updated" as const,
+                driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
+                  providerThreadId: ids.providerThreadId,
+                  nodeId: ids.rootNodeId,
+                  runAttemptId: ids.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: 2,
+                  status,
+                  startedAt: now,
+                  completedAt: null,
+                },
+              },
+              node(completedId, "completed"),
+              backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 3, completedId),
+            ]),
+            Stream.unwrap(
+              Ref.update(interrupted, (current) => [
+                ...current,
+                ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
+              ]).pipe(
+                Effect.as(
+                  Stream.fail(
+                    new ProviderAdapter.ProviderAdapterSessionDetached({
+                      driver,
+                      providerSessionId: ProviderSessionId.make(`session:${key}`),
+                      threadId: ids.threadId,
+                      reason: "workspace_changed",
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      });
+      assert.deepEqual(
+        ingested.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.status === "interrupted"
+            ? [event.turnItem.id]
+            : [],
+        ),
+        [ids.itemId, runningId],
+      );
+      assert.deepEqual(yield* Ref.get(interrupted), [
+        ProviderTurnId.make(`${ids.rootProviderTurnId}:continuation`),
+        "terminal",
+      ]);
+      assert.deepEqual(
+        ingested.flatMap((event) =>
+          event.type === "node.updated" && event.node.status === "interrupted"
+            ? [event.node.id]
+            : [],
+        ),
+        [NodeId.make(`node:${ids.itemId}`), NodeId.make(`node:${runningId}`)],
+      );
+      assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    }),
+);
+
+it.effect("flushes the latest buffered assistant message on a planned detach", () =>
+  Effect.gen(function* () {
+    const key = "workspace-detach-message";
+    const now = yield* DateTime.now;
+    const { ingested } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.fromIterable(
+            ["partial", "partial final words"].map((text) => ({
+              type: "message.updated" as const,
+              driver,
+              message: {
+                id: MessageId.make(`message:${key}`),
+                threadId: ids.threadId,
+                runId: ids.runId,
+                nodeId: ids.rootNodeId,
+                role: "assistant" as const,
+                text,
+                attachments: [],
+                streaming: true,
+                createdBy: "agent" as const,
+                creationSource: "provider" as const,
+                createdAt: now,
+                updatedAt: now,
+              },
+            })),
+          ),
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterSessionDetached({
+              driver,
+              providerSessionId: ProviderSessionId.make(`session:${key}`),
+              threadId: ids.threadId,
+              reason: "workspace_changed",
+            }),
+          ),
+        ),
+    });
+    const messages = ingested.flatMap((event) =>
+      event.type === "message.updated" ? [event.message] : [],
+    );
+    assert.equal(messages.at(-1)?.text, "partial final words");
+    assert.equal(messages.at(-1)?.streaming, false);
+  }),
+);
+
+it.effect(
+  "ends background items detached after the root has finalized without finalizing twice",
+  () =>
+    Effect.gen(function* () {
+      const key = "workspace-detach-after-root";
+      const { ingested, observed } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.concat(
+            Stream.make(
+              backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+              rootTerminalEvent(ids, "completed"),
+            ),
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterSessionDetached({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                threadId: ids.threadId,
+                reason: "workspace_changed",
+              }),
+            ),
+          ),
+      });
+      assert.equal(
+        ingested.filter(
+          (event) => event.type === "turn_item.updated" && event.turnItem.status === "interrupted",
+        ).length,
+        1,
+      );
+      assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+    }),
+);
+
 it.effect("refreshes pull requests after a provider stream exits with an error", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
@@ -3039,10 +3253,6 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
           ),
         beforeTerminalWrite: () =>
           Effect.gen(function* () {
-            const calls = yield* Ref.get(interrupts);
-            assert.equal(calls.length, 1);
-            assert.equal(calls[0]?.providerTurnId, ids.rootProviderTurnId);
-            assert.equal(calls[0]?.providerThread.id, ids.providerThreadId);
             yield* Ref.set(backgroundWorkAtFinalization, yield* Ref.get(backgroundWorkRunning));
             return true;
           }),
@@ -3058,6 +3268,10 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
         assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
         const error = written.find((item) => item.type === "error");
         assert.include(error?.failure.message ?? "", "(SQLITE_CANTOPEN)");
+        const calls = yield* Ref.get(interrupts);
+        assert.equal(calls.length, 1);
+        assert.equal(calls.at(-1)?.providerTurnId, ids.rootProviderTurnId);
+        assert.isTrue(calls.at(-1)?.requestRuntimeRestart);
         const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
         if (failureMode === "interrupt-failure") {
           assert.isUndefined(repaired);
@@ -3454,6 +3668,8 @@ function captureRootRunTermination(input: {
   readonly afterStart?: (
     closed: Deferred.Deferred<void>,
   ) => Effect.Effect<void, never, PreviewAgentActivity.PreviewAgentActivity>;
+  // Pull the whole provider stream before processing, as the commit batcher may read ahead.
+  readonly readAhead?: boolean;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3467,6 +3683,7 @@ function captureRootRunTermination(input: {
     });
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
     const finalEvents = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const submittedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const committedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
@@ -3494,6 +3711,17 @@ function captureRootRunTermination(input: {
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
           mockEventSink({
+            ...(input.readAhead
+              ? {
+                  consumeProviderEvents: (source, process, after) =>
+                    Effect.gen(function* () {
+                      for (const event of yield* Stream.runCollect(source)) {
+                        yield* process(event);
+                        if (yield* after) return;
+                      }
+                    }),
+                }
+              : {}),
             write: (payload) =>
               Effect.gen(function* () {
                 for (const event of payload.events) {
@@ -3529,7 +3757,10 @@ function captureRootRunTermination(input: {
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
+            ingestNormalized:
+              input.ingestNormalized ??
+              (({ event }) =>
+                Ref.update(ingested, (current) => [...current, event]).pipe(Effect.as([]))),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3553,37 +3784,38 @@ function captureRootRunTermination(input: {
         session: {
           driver,
           events: Stream.empty,
-          subscribeEvents: Effect.succeed({
-            events:
-              input.events?.(ids) ??
-              Stream.fromIterable([
-                ...(input.seedOpenSubagent
-                  ? [
-                      { type: "subagent.updated", driver, subagent: runningSubagent } as const,
-                      {
-                        type: "node.updated",
-                        driver,
-                        node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
-                      } as const,
-                      {
-                        type: "turn_item.updated",
-                        driver,
-                        turnItem: makeRunOwnedSubagentTurnItemFixture({
-                          ids,
-                          providerInstanceId,
-                          childThreadId: ids.childThreadId,
+          subscribeEvents: () =>
+            Effect.succeed({
+              events:
+                input.events?.(ids) ??
+                Stream.fromIterable([
+                  ...(input.seedOpenSubagent
+                    ? [
+                        { type: "subagent.updated", driver, subagent: runningSubagent } as const,
+                        {
+                          type: "node.updated",
                           driver,
-                          status: "running",
-                        }),
-                      } as const,
-                    ]
-                  : []),
-                rootTerminalEvent(ids, "interrupted"),
-              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
-            close: Deferred.succeed(ingestionDone, undefined).pipe(
-              Effect.andThen(input.onSubscriptionClose ?? Effect.void),
-            ),
-          }),
+                          node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                        } as const,
+                        {
+                          type: "turn_item.updated",
+                          driver,
+                          turnItem: makeRunOwnedSubagentTurnItemFixture({
+                            ids,
+                            providerInstanceId,
+                            childThreadId: ids.childThreadId,
+                            driver,
+                            status: "running",
+                          }),
+                        } as const,
+                      ]
+                    : []),
+                  rootTerminalEvent(ids, "interrupted"),
+                ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
+              close: Deferred.succeed(ingestionDone, undefined).pipe(
+                Effect.andThen(input.onSubscriptionClose ?? Effect.void),
+              ),
+            }),
           startTurn: input.startTurn ?? (() => Effect.void),
           interruptTurn: input.interruptTurn ?? (() => Effect.void),
           hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread,
@@ -3662,6 +3894,7 @@ function captureRootRunTermination(input: {
       previewActivityEnded,
       written: yield* Ref.get(writtenItems),
       finalEvents: yield* Ref.get(finalEvents),
+      ingested: yield* Ref.get(ingested),
       observed: yield* Ref.get(observed),
       submittedEffects: yield* Ref.get(submittedEffects),
       committedEffects: yield* Ref.get(committedEffects),
@@ -3737,7 +3970,7 @@ function childBackgroundTurnItemEvent(
 function backgroundTurnItemEvent(
   ids: BackgroundScenarioIds,
   type: "command_execution" | "dynamic_tool" | "subagent",
-  status: "running" | "completed" | "idle",
+  status: "pending" | "running" | "completed" | "idle",
   ordinal: number,
   itemId?: TurnItemId,
 ): ProviderAdapter.ProviderAdapterV2Event {
@@ -4109,27 +4342,28 @@ function runBackgroundItemScenario(
           ...(options?.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : { hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread }),
-          subscribeEvents: Effect.gen(function* () {
-            yield* options?.onSubscribe ?? Effect.void;
-            const source = makeEvents(ids);
-            const events = (Stream.isStream(source) ? source : Stream.fromIterable(source)).pipe(
-              Stream.concat(
-                Stream.fromEffect(
-                  Effect.andThen(
-                    options?.onEventsConsumed ?? Effect.void,
-                    options?.afterEvents?.(previewActivity) ?? Effect.void,
-                  ),
-                ).pipe(Stream.drain),
-              ),
-            );
-            return {
-              events:
-                options?.keepEventStreamOpen === true
-                  ? events.pipe(Stream.concat(Stream.never))
-                  : events,
-              close: Deferred.succeed(ingestionDone, undefined),
-            };
-          }),
+          subscribeEvents: () =>
+            Effect.gen(function* () {
+              yield* options?.onSubscribe ?? Effect.void;
+              const source = makeEvents(ids);
+              const events = (Stream.isStream(source) ? source : Stream.fromIterable(source)).pipe(
+                Stream.concat(
+                  Stream.fromEffect(
+                    Effect.andThen(
+                      options?.onEventsConsumed ?? Effect.void,
+                      options?.afterEvents?.(previewActivity) ?? Effect.void,
+                    ),
+                  ).pipe(Stream.drain),
+                ),
+              );
+              return {
+                events:
+                  options?.keepEventStreamOpen === true
+                    ? events.pipe(Stream.concat(Stream.never))
+                    : events,
+                close: Deferred.succeed(ingestionDone, undefined),
+              };
+            }),
           startTurn: () => Effect.void,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {

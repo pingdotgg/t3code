@@ -3146,6 +3146,14 @@ export const OrchestrationV2Command = Schema.Union([
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    /** Record the next message atomically with a worktree handoff, before session detach. */
+    worktreeContinuation: Schema.optional(
+      Schema.Struct({
+        messageId: MessageId,
+        text: TrimmedNonEmptyString,
+        sourceRunId: Schema.optional(RunId),
+      }),
+    ),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),

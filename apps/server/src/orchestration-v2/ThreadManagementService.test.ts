@@ -111,7 +111,7 @@ const layerDispatchChokepointTest =
     );
 
 it.effect(
-  "the dispatch chokepoint refuses a continuation message.dispatch on a project-disabled instance before reaching the orchestrator",
+  "the dispatch chokepoint refuses continuation prompts on a project-disabled instance before reaching the orchestrator",
   () => {
     const projectId = ProjectId.make("project:thread-management:chokepoint");
     const threadId = ThreadId.make("thread:thread-management:chokepoint");
@@ -147,6 +147,20 @@ it.effect(
         ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
       );
       expect(error).toMatchObject({ projectId, instanceId });
+      const handoffError = yield* Effect.flip(
+        threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:thread-management:chokepoint-handoff"),
+          threadId,
+          worktreePath: "/worktrees/handoff",
+          expectedWorktreePath: null,
+          worktreeContinuation: {
+            messageId: MessageId.make("message:thread-management:chokepoint-handoff"),
+            text: "Keep going in the worktree.",
+          },
+        }),
+      );
+      expect(handoffError).toMatchObject({ projectId, instanceId });
       expect(dispatched).toEqual([]);
     }).pipe(Effect.provide(layerTest));
   },

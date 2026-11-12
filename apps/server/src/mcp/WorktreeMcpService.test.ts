@@ -4,7 +4,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   EnvironmentId,
+  EventId,
+  RunId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ServerCommand,
   type Project,
   ProjectId,
   ProviderInstanceId,
@@ -12,6 +15,7 @@ import {
   WorktreeMcpHandoffInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -28,6 +32,7 @@ import * as ServerConfig from "../config.ts";
 import {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
+  type OrchestratorV2DispatchResult,
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -64,8 +69,18 @@ interface ThreadFixture {
   readonly deletedAt?: string | null;
 }
 
-const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadProjection =>
+const makeProjection = (
+  overrides: ThreadFixture = {},
+  sourceRunId?: RunId,
+): OrchestrationV2ThreadProjection =>
   ({
+    runs:
+      sourceRunId === undefined
+        ? []
+        : [
+            { id: RunId.make("run:older-background-work"), ordinal: 1, status: "waiting" },
+            { id: sourceRunId, ordinal: 2, status: "running" },
+          ],
     thread: {
       id: threadId,
       projectId,
@@ -76,7 +91,7 @@ const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadPro
       deletedAt: null,
       ...overrides,
     },
-  }) as OrchestrationV2ThreadProjection;
+  }) as unknown as OrchestrationV2ThreadProjection;
 
 const project: Project = {
   id: projectId,
@@ -90,6 +105,7 @@ const project: Project = {
 } as Project;
 
 interface HarnessOptions {
+  readonly sourceRunId?: RunId;
   readonly git?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
   readonly thread?: ThreadFixture | null;
   readonly threadReadError?: "projection" | "dispatch";
@@ -106,7 +122,6 @@ interface HarnessOptions {
   readonly threadAttachedOnRecheck?: boolean;
   readonly threadArchivedOnRecheck?: boolean;
   readonly threadReadFailsOnRecheck?: boolean;
-  readonly continuation?: "queued" | "fails" | "dies";
   readonly projectMissing?: boolean;
   readonly projectReadFails?: boolean;
   readonly existingBranchWorktreePath?: string | null;
@@ -122,7 +137,7 @@ interface HarnessOptions {
 const makeHarness = (options: HarnessOptions = {}) => {
   const thread = options.thread === undefined ? {} : options.thread;
   const scope = makeScope(options.capabilities ?? new Set(["preview", "worktree"]));
-  const dispatch = vi.fn((_: unknown) =>
+  const dispatch = vi.fn((command: OrchestrationV2ServerCommand) =>
     (options.dispatchGate ?? Effect.void).pipe(
       Effect.andThen(
         options.dispatchInterrupts
@@ -131,7 +146,45 @@ const makeHarness = (options: HarnessOptions = {}) => {
             ? Effect.die(new Error("dispatch defect"))
             : options.dispatchFails
               ? (Effect.fail("simulated dispatch failure") as never)
-              : Effect.succeed({ sequence: 1, storedEvents: [] }),
+              : Effect.succeed({
+                  sequence: 1,
+                  storedEvents:
+                    command.type !== "thread.metadata.update" ||
+                    command.worktreeContinuation === undefined
+                      ? []
+                      : [
+                          {
+                            sequence: 1,
+                            commandId: command.commandId,
+                            event: {
+                              id: EventId.make("event-worktree-continuation"),
+                              type: "run.created",
+                              threadId,
+                              occurredAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                              payload: {
+                                id: RunId.make("run-worktree-continuation"),
+                                threadId,
+                                ordinal: 2,
+                                providerInstanceId: ProviderInstanceId.make("provider-test"),
+                                modelSelection: {
+                                  instanceId: ProviderInstanceId.make("provider-test"),
+                                  model: "test-model",
+                                },
+                                providerThreadId: null,
+                                userMessageId: command.worktreeContinuation.messageId,
+                                rootNodeId: null,
+                                activeAttemptId: null,
+                                status: "queued",
+                                requestedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                                startedAt: null,
+                                completedAt: null,
+                                checkpointId: null,
+                                contextHandoffId: null,
+                              },
+                            },
+                          },
+                        ],
+                } satisfies OrchestratorV2DispatchResult),
       ),
     ),
   );
@@ -176,25 +229,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
       return Effect.succeed(makeProjection({ ...thread, archivedAt: "2026-01-02T00:00:00.000Z" }));
     }
     return id === threadId && thread !== null
-      ? Effect.succeed(makeProjection(thread))
+      ? Effect.succeed(makeProjection(thread, options.sourceRunId))
       : Effect.fail(new OrchestratorProjectionError({ threadId: id }));
   });
-  const sendToThread = vi.fn((_: unknown) => {
-    switch (options.continuation ?? "queued") {
-      case "fails":
-        return Effect.fail(
-          new ThreadManagementService.ThreadManagementThreadArchivedError({
-            threadId,
-          }),
-        );
-      case "dies":
-        return Effect.die(new Error("send defect"));
-      default:
-        return Effect.succeed({
-          delivery: "queued",
-        } as ThreadManagementService.ThreadManagementSendResult);
-    }
-  });
+  const sendToThread = vi.fn(() =>
+    Effect.die(new Error("Standalone continuation dispatch is unsafe")),
+  );
   const getById = vi.fn((id: ProjectId) =>
     options.projectReadFails
       ? (Effect.fail("simulated project read failure") as never)
@@ -398,16 +438,33 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
 
 describe("t3_worktree_handoff", () => {
-  it.effect("reports a continuation failure without failing the handoff", () => {
-    const harness = makeHarness({ continuation: "fails" });
+  it.effect("queues the continuation prompt as the thread's next message", () => {
+    const sourceRunId = RunId.make("run:handoff-caller");
+    const harness = makeHarness({ sourceRunId });
     return Effect.gen(function* () {
       const result = yield* runHandoff(harness, {
-        branch: "feature/continue-fails",
-        continuationPrompt: "Keep going.",
+        branch: "feature/continue",
+        continuationPrompt: "Keep fixing the login bug in the new worktree.",
       });
-      expect(result.continuation).toMatchObject({ status: "failed" });
-      expect(result.worktreePath).toBe("/worktrees/project/feature/continue-fails");
-      expect(harness.dispatch).toHaveBeenCalled();
+
+      expect(result.continuation).toEqual({ status: "scheduled", delivery: "queued" });
+      expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          type: "thread.metadata.update",
+          threadId,
+          worktreePath: result.worktreePath,
+          expectedWorktreePath: null,
+          worktreeContinuation: {
+            messageId: expect.stringContaining("worktree-continuation"),
+            text: "Keep fixing the login bug in the new worktree.",
+            sourceRunId,
+          },
+        }),
+      );
+      expect(harness.sendToThread).not.toHaveBeenCalled();
+      expect(harness.dispatch.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.runForThread.mock.invocationCallOrder[0]!,
+      );
     });
   });
 
@@ -637,7 +694,12 @@ describe("t3_worktree_handoff", () => {
       yield* Fiber.join(interruption);
 
       expect(harness.dispatch).toHaveBeenCalledTimes(1);
-      expect(harness.sendToThread).toHaveBeenCalledTimes(1);
+      expect(harness.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          worktreeContinuation: expect.objectContaining({ text: "Keep going in the worktree." }),
+        }),
+      );
+      expect(harness.sendToThread).not.toHaveBeenCalled();
       expect(harness.runForThread).toHaveBeenCalledTimes(1);
     }),
   );

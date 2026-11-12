@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -96,21 +97,27 @@ const make = Effect.gen(function* () {
           failure("capability_denied", "This MCP credential does not grant worktree capabilities."),
         );
 
-  const loadThread = (scope: McpThreadInvocationScope) =>
-    threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
-      Effect.mapError((error) =>
-        error._tag === "OrchestratorProjectionError"
-          ? failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`)
-          : failure(
-              "operation_failed",
-              `Unable to read thread ${scope.thread.threadId}: ${errorMessage(error)}`,
-            ),
-      ),
-      Effect.filterOrFail(
-        (projection) => projection.thread.deletedAt === null,
-        () => failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`),
-      ),
-    );
+  const loadThread = (scope: McpThreadInvocationScope, includeRuns = false) =>
+    threadManagement
+      .getThreadRecords(
+        scope.thread.threadId,
+        includeRuns ? ["runs"] : [],
+        includeRuns ? { runStatuses: ["preparing", "starting", "running", "waiting"] } : undefined,
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "OrchestratorProjectionError"
+            ? failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`)
+            : failure(
+                "operation_failed",
+                `Unable to read thread ${scope.thread.threadId}: ${errorMessage(error)}`,
+              ),
+        ),
+        Effect.filterOrFail(
+          (projection) => projection.thread.deletedAt === null,
+          () => failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`),
+        ),
+      );
 
   const loadProject = (scope: McpThreadInvocationScope, projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -147,7 +154,6 @@ const make = Effect.gen(function* () {
           );
         return {
           commandId: CommandId.make(part("command", "worktree-handoff")),
-          continuationCommandId: CommandId.make(part("command", "worktree-continuation")),
           continuationMessageId: MessageId.make(part("message", "worktree-continuation")),
         };
       }),
@@ -164,7 +170,8 @@ const make = Effect.gen(function* () {
         `Thread '${scope.thread.threadId}' is already attached to worktree '${worktreePath}'.`,
       );
 
-    const projection = yield* loadThread(scope);
+    const projection = yield* loadThread(scope, true);
+    const sourceRun = followUpOwnerRun(projection.runs);
     if (projection.thread.worktreePath !== null) {
       return yield* alreadyInWorktree(projection.thread.worktreePath);
     }
@@ -293,7 +300,7 @@ const make = Effect.gen(function* () {
               `Thread '${scope.thread.threadId}' was archived while the worktree was being created; the handoff was rolled back.`,
             );
           }
-          yield* threadManagement
+          return yield* threadManagement
             .dispatch({
               type: "thread.metadata.update",
               commandId: ids.commandId,
@@ -301,6 +308,15 @@ const make = Effect.gen(function* () {
               branch: worktree.worktree.refName,
               worktreePath,
               expectedWorktreePath: null,
+              ...(input.continuationPrompt === undefined
+                ? {}
+                : {
+                    worktreeContinuation: {
+                      messageId: ids.continuationMessageId,
+                      text: input.continuationPrompt,
+                      ...(sourceRun === null ? {} : { sourceRunId: sourceRun.id }),
+                    },
+                  }),
             })
             .pipe(
               Effect.catchCause((cause) =>
@@ -321,33 +337,14 @@ const make = Effect.gen(function* () {
           ),
         );
 
-        // Queue continuation immediately after binding; detachment terminates the caller, so relaunch needs a durable message.
-        const queueContinuation: Effect.Effect<WorktreeMcpContinuationStatus, WorktreeMcpFailure> =
-          Effect.suspend(() =>
-            input.continuationPrompt === undefined
-              ? Effect.succeed<WorktreeMcpContinuationStatus>({ status: "skipped" })
-              : threadManagement
-                  .sendToThread({
-                    projectId: projection.thread.projectId,
-                    commandId: ids.continuationCommandId,
-                    threadId: scope.thread.threadId,
-                    messageId: ids.continuationMessageId,
-                    text: input.continuationPrompt,
-                    attachments: [],
-                    mode: "queue",
-                    createdBy: "agent",
-                    creationSource: "mcp",
-                  })
-                  .pipe(
-                    Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
-                      status: "scheduled",
-                      delivery: sendResult.delivery,
-                    })),
-                    reportFailed("worktree handoff continuation failed to queue"),
-                  ),
-          );
-
-        const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));
+        const bound = yield* recheckAndBind;
+        const queued = bound.storedEvents.some(
+          ({ event }) => event.type === "run.created" && event.payload.status === "queued",
+        );
+        const continuation: WorktreeMcpContinuationStatus =
+          input.continuationPrompt === undefined
+            ? { status: "skipped" }
+            : { status: "scheduled", delivery: queued ? "queued" : "started" };
 
         yield* vcsStatusBroadcaster
           .refreshStatus(worktreePath)
