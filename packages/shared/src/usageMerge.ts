@@ -187,9 +187,6 @@ function dayKey(bucket: UsageBucket): string {
   return JSON.stringify([bucket.day, bucket.provider, bucket.model]);
 }
 
-/** How much older than the newest scan of a folder its owner may be. */
-const ATTRIBUTION_MAX_AGE_MS = 10 * 60 * 1000;
-
 /**
  * How well an environment can attribute a source: -1 when its server cannot
  * split usage by thread at all, otherwise the records it placed in its own T3
@@ -207,7 +204,7 @@ function recordsInT3Threads(summary: UsageSummary, source: UsageSource): number 
   return records;
 }
 
-/** Claim shared physical folders once; prefer complete, attributed scans within the freshness bound.
+/** Claim shared physical folders once; prefer complete, fresh scans.
  * Claim whole summaries before narrowing buckets so slices retain the full merge's owners.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
@@ -251,21 +248,15 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       }
     }
     for (const [key, list] of candidates) {
-      if (list.length > 1) {
-        // `list` is newest first. A scan far older than the newest, such as a
-        // summary kept after a failed refresh, never wins on attribution.
-        const newest = Date.parse(list[0]!.environment.summary.readAt) || 0;
-        for (const entry of list) {
-          const readAt = Date.parse(entry.environment.summary.readAt) || 0;
-          entry.inThreads =
-            newest - readAt > ATTRIBUTION_MAX_AGE_MS
-              ? -2
-              : recordsInT3Threads(entry.environment.summary, entry.source);
-        }
+      for (const entry of list) {
+        entry.inThreads = recordsInT3Threads(entry.environment.summary, entry.source);
       }
-      // A stable sort keeps the read-time order among equals. A copy, not
-      // `toSorted`: this also runs on Hermes.
-      const [owner, ...rest] = [...list].sort((a, b) => b.inThreads - a.inThreads);
+      // Parsed timestamps in the same millisecond are equally fresh; attribution breaks only that tie.
+      const [owner, ...rest] = [...list].sort(
+        (a, b) =>
+          (Date.parse(b.environment.summary.readAt) || 0) -
+            (Date.parse(a.environment.summary.readAt) || 0) || b.inThreads - a.inThreads,
+      );
       if (owner === undefined) continue;
       ownerByFingerprint.set(key, owner.environment.environmentId);
       ownerScanByFingerprint.set(key, owner);

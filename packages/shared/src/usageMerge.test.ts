@@ -318,18 +318,13 @@ describe("mergeUsage", () => {
       ],
       projects: [],
     });
-    // Read later, but it only sees the session from outside, or (an older
-    // server) cannot split by thread at all.
+    // At the same read time, prefer the scan with stronger T3 attribution.
     const outside = environment("outside", {
       ...summary([bucket({ thread: 0 })], [source]),
-      readAt: "2026-08-07T00:01:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
-    const older = environment("older", {
-      ...summary([bucket()], [source], USAGE_MERGE_COMPATIBLE_SINCE),
-      readAt: "2026-08-07T00:02:00.000Z",
-    });
+    const older = environment("older", summary([bucket()], [source], USAGE_MERGE_COMPATIBLE_SINCE));
 
     for (const ordered of [
       [ran, outside, older],
@@ -341,23 +336,23 @@ describe("mergeUsage", () => {
     }
   });
 
-  it("keeps one complete scan per directory, even when a newer one differs", () => {
-    // Aliases or a later read can make the same records look like other cells.
+  it("uses the newest complete scan even when it has less T3 attribution", () => {
     const source = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
-    const ran = environment("ran", {
+    const older = environment("older", {
       ...summary([bucket({ thread: 0 })], [source]),
       threads: [{ key: "t3:ship", threadId: ThreadId.make("ship"), located: true }],
       projects: [],
     });
-    const later = environment("later", {
-      ...summary([bucket({ thread: 0, model: "fable-alias", costUsd: 15 })], [source]),
+    const newer = environment("newer", {
+      ...summary([bucket({ thread: 0, costUsd: 15, records: 6 })], [source]),
       readAt: "2026-08-07T00:05:00.000Z",
       threads: [{ key: "session:claude:s", located: true }],
       projects: [],
     });
-    const merged = mergeUsage([later, ran], USAGE_CONTRACT_VERSION);
-    expect(merged.costUsd).toBe(10);
-    expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["ran"]);
+    const merged = mergeUsage([newer, older], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(15);
+    expect(merged.records).toBe(6);
+    expect(merged.contributions.map((entry) => entry.environmentId)).toEqual(["newer"]);
   });
 
   it("does not let a scan kept from a failed refresh hold a directory", () => {
@@ -395,7 +390,6 @@ describe("mergeUsage", () => {
         [bucket({ records: 9 }), bucket({ model: "y", thread: 0, costUsd: 1, records: 1 })],
         [source],
       ),
-      readAt: "2026-08-07T00:01:00.000Z",
       threads,
       projects: [],
     });

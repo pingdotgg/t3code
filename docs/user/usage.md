@@ -75,8 +75,8 @@ results appear as each one responds, and figures still updating are dimmed. Curs
 saved totals first, then updates them when Cursor's API responds. When an environment is offline,
 Usage shows the usage it last reported to this browser, marked with the time it was read, and
 switches back to live usage when the environment reconnects. Environments on one machine that read
-the same history folder count it once, under the environment that ran most of that work in T3
-threads.
+the same history folder count its newest completed scan once. When scans were read at the same time,
+the environment that attributed more of the work to T3 threads is used.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
