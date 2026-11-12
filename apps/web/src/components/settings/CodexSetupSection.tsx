@@ -991,7 +991,7 @@ function ManagedCodexSetup({
                 {updateAvailable ? (
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     disabled={unavailable || busy}
                     onClick={() =>
                       void run(() => startInstall({ environmentId, input: { instanceId } }))
