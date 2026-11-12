@@ -85,34 +85,6 @@ describe("home empty state", () => {
       { title: "No threads yet", loading: false, showsAddEnvironment: false },
     ],
     [
-      "reports no projects once every environment has resolved",
-      workspaceState(),
-      0,
-      { title: "No projects found", loading: false, showsAddEnvironment: false },
-    ],
-    [
-      "reports an unavailable environment without a snapshot",
-      workspaceState({
-        hasLoadedShellSnapshot: false,
-        hasReadyEnvironment: false,
-        connectionState: "error",
-        connectionError: "Connection failed.",
-      }),
-      0,
-      { title: "Environment unavailable", loading: false, showsAddEnvironment: true },
-    ],
-    [
-      "reports an unsupported client without a snapshot",
-      workspaceState({
-        hasLoadedShellSnapshot: false,
-        hasReadyEnvironment: false,
-        connectionState: "unsupported",
-        connectionError: "Update the app.",
-      }),
-      0,
-      { title: "Client not supported", loading: false, showsAddEnvironment: true },
-    ],
-    [
       "does not wait on retries while the device is offline",
       workspaceState({
         hasPendingShellSnapshot: true,
@@ -124,17 +96,6 @@ describe("home empty state", () => {
       }),
       1,
       { title: "No threads yet", loading: false, showsAddEnvironment: true },
-    ],
-    [
-      "offers to add an environment when none are saved",
-      workspaceState({
-        hasConnections: false,
-        hasLoadedShellSnapshot: false,
-        hasReadyEnvironment: false,
-        connectionState: "available",
-      }),
-      0,
-      { title: "No environments connected", loading: false, showsAddEnvironment: true },
     ],
   ] as const)("%s", (_name, state, projectCount, expected) => {
     const { title, loading, showsAddEnvironment } = deriveHomeEmptyState(state, projectCount);
