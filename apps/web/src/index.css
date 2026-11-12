@@ -5649,6 +5649,55 @@ body {
   }
 }
 
+.surface-bubble .user-message-markdown {
+  --bubble-table-rule: color-mix(in srgb, var(--hairline) 60%, transparent);
+  --inline-code-fill: var(--hairline);
+}
+
+:root .surface-bubble .user-message-markdown .chat-markdown-table-container > .surface-well {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.surface-bubble .user-message-markdown .chat-markdown-table-container {
+  & :is(th, td):not(:last-child) {
+    border-inline-end-width: 0;
+  }
+
+  & :is(th, td):first-child {
+    padding-inline-start: 0;
+  }
+
+  & :is(th, td):last-child {
+    padding-inline-end: 0;
+  }
+
+  & thead th {
+    background: transparent;
+    border-bottom-color: var(--bubble-table-rule);
+    font-weight: 600;
+  }
+
+  & tbody tr:not(:last-child) td {
+    border-bottom-color: var(--bubble-table-rule);
+  }
+}
+
+:root .surface-bubble .user-message-markdown .chat-markdown-codeblock {
+  background: var(--inline-code-fill);
+  border-color: transparent;
+}
+
+:root .surface-bubble .user-message-markdown pre {
+  background: transparent;
+  border-color: transparent;
+}
+
+.surface-bubble .user-message-markdown .chat-markdown-codeblock-header {
+  background: transparent;
+}
+
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
