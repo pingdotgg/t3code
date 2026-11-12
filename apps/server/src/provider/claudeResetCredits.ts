@@ -312,7 +312,10 @@ export function claudeOrganizationHeader(header: unknown): string | null | undef
 export const claudeResetClaimOutcome = Effect.fn("claudeResetClaimOutcome")(function* (
   status: number,
   body: string,
-  receipt?: { readonly expected: string | undefined; readonly answeredFor: string | null | undefined },
+  receipt?: {
+    readonly expected: string | undefined;
+    readonly answeredFor: string | null | undefined;
+  },
 ) {
   if (status === 429) return yield* new ClaudeResetCreditError({ reason: "rateLimited" });
   if (status === 401 || status === 403) {

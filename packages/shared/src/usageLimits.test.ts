@@ -1559,16 +1559,18 @@ describe("resetCreditChoices", () => {
       { ...hub, creditId: "launch-2610-fable" },
     ]);
     // The same email can hold the same grant in another organization.
-    expect(choices.map(({ summary, confirmDescription }) => [summary, confirmDescription])).toEqual([
+    expect(choices.map(({ summary, confirmDescription }) => [summary, confirmDescription])).toEqual(
       [
-        "Weekly reset · Organization org-a · 1 left",
-        "Weekly reset in organization org-a: Weekly reset. This cannot be undone.",
+        [
+          "Weekly reset · Organization org-a · 1 left",
+          "Weekly reset in organization org-a: Weekly reset. This cannot be undone.",
+        ],
+        [
+          "Fable reset · Organization org-a · 1 left",
+          "Fable reset in organization org-a: Fable reset. This cannot be undone.",
+        ],
       ],
-      [
-        "Fable reset · Organization org-a · 1 left",
-        "Fable reset in organization org-a: Fable reset. This cannot be undone.",
-      ],
-    ]);
+    );
   });
 });
 

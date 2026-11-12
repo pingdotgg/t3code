@@ -600,7 +600,8 @@ export const makeCliproxyApi = Effect.gen(function* () {
       `${hub.url}#${account.id}`,
       (requestId) =>
         Effect.gen(function* () {
-          // Read under the account's lock, right before the claim the same token sends.
+          // Read under the account's lock, right before the claim. The hub cannot pin the login
+          // between calls, so the claim's answer is checked against the shown organization too.
           const organization = yield* readClaudeOrganization((url) =>
             apiCall(hub, account, header, url),
           );

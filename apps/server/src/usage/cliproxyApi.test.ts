@@ -449,8 +449,8 @@ describe("CLIProxyAPI built-in management API", () => {
                   },
                 },
         });
-        const [first, unnamed, malformed, withoutGrants, ambiguous] = yield* (yield* test.api)
-          .readAccounts(config);
+        const [first, unnamed, malformed, withoutGrants, ambiguous] =
+          yield* (yield* test.api).readAccounts(config);
         // Its organization is what joins an account to the same login elsewhere, grants or not.
         expect(withoutGrants?.workspaceId).toBe("org-d");
         expect(withoutGrants?.usageLimits.resetCredits).toBeUndefined();
@@ -477,7 +477,9 @@ describe("CLIProxyAPI built-in management API", () => {
           expect(account?.usageLimits.resetCredits).toBeUndefined();
           expect(account?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([90]);
         }
-        expect(test.requests.some((request) => request.body?.url?.includes("/profile"))).toBe(false);
+        expect(test.requests.some((request) => request.body?.url?.includes("/profile"))).toBe(
+          false,
+        );
         expect(test.requests[1]?.body?.url).toBe(
           "https://api.anthropic.com/api/oauth/usage?cedar_ember=1",
         );
@@ -626,7 +628,9 @@ describe("CLIProxyAPI built-in management API", () => {
       ];
       expect(sent).toEqual([toOrgA, toOrgA]);
       expect(answers.map((answer) => answer._tag)).toEqual(["Failure", "Success"]);
-      expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(1);
+      expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
+        1,
+      );
     }),
   );
 
