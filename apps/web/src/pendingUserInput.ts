@@ -1,5 +1,12 @@
-import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
-import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import type {
+  ReviewCommentContextRecord,
+  ThreadContextRecord,
+  UserInputQuestion,
+} from "@t3tools/contracts";
+import {
+  projectComposerContextForProvider,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   buildPendingUserInputAnswers,
@@ -13,13 +20,16 @@ import { collectInlineContextIds } from "./lib/composerContextReferences";
 
 export function projectPendingUserInputAnswer(
   answer: unknown,
-  threadContexts: ReadonlyArray<ThreadContextRecord>,
+  records: ReadonlyArray<ThreadContextRecord | ReviewCommentContextRecord>,
 ) {
-  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
-  const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
+  if (typeof answer !== "string" || records.length === 0) return answer;
+  const recordsById = new Map(records.map((record) => [record.contextId, record]));
   return replaceComposerContextReferences(answer, (reference) => {
-    const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
-    return record ? formatThreadLink(record, reference.label) : reference.source;
+    const record = recordsById.get(reference.contextId);
+    if (record?.kind !== reference.kind) return reference.source;
+    return record.kind === "thread"
+      ? formatThreadLink(record, reference.label)
+      : projectComposerContextForProvider({ text: reference.source, records: [record] });
   });
 }
 

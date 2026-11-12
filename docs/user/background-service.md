@@ -1,20 +1,22 @@
 # Running T3 Code in the background
 
-On Linux and macOS, T3 Code can run as a service for your user so you do not need
-to keep a terminal open.
+On Linux, macOS, and Windows, T3 Code can run as a service for your user so you
+do not need to keep a terminal open.
 
 ## Manage the service
 
 Install the `t3` CLI first ([Install T3 Code](./install.md#command-line)), then
 run these commands on the machine that will host T3 Code:
 
-| Task                            | Command                |
-| ------------------------------- | ---------------------- |
-| Install and start               | `t3 service install`   |
-| Inspect status and log location | `t3 service status`    |
-| Move to a newer release         | `t3 update`            |
-| Restart                         | `t3 service restart`   |
-| Stop and remove from startup    | `t3 service uninstall` |
+| Task                                  | Command                |
+| ------------------------------------- | ---------------------- |
+| Set up access from your other devices | `t3 up`                |
+| See how your other devices reach it   | `t3 status`            |
+| Install and start                     | `t3 service install`   |
+| Inspect status and log location       | `t3 service status`    |
+| Move to a newer release               | `t3 update`            |
+| Restart                               | `t3 service restart`   |
+| Stop and remove from startup          | `t3 service uninstall` |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
 Running `t3 service install` again repairs a service that `t3 service status`
@@ -42,13 +44,18 @@ under T3 home. Pass `--yes` from a script.
 
 ## Local network access
 
-The service listens on your local network and Tailscale addresses, so the
-desktop and mobile apps on the same network connect directly instead of through
-T3 Connect. The hosted web app at app.t3.codes stays on T3 Connect, because
-browsers block plain HTTP from an HTTPS page. The service does not answer on
-public addresses, and every device still needs to pair or sign in. To keep the service reachable from this machine only, set
-`T3CODE_HOST=127.0.0.1` in `service.env` (below). Any `T3CODE_HOST` value
-replaces this default.
+A new service answers only on this machine. Other devices reach it through
+T3 Connect, or directly once you choose the local network in `t3 up` (or run
+`t3 up --lan`, which sets `T3CODE_LAN=true` in `service.env`). It then listens on
+your local network and Tailscale addresses, so the desktop and mobile apps on
+the same network connect directly instead of through T3 Connect. It still does
+not answer on public addresses. Anyone on the same network can reach the port,
+so a pairing code is all that keeps them out. The hosted web app at app.t3.codes
+stays on T3 Connect, because browsers block plain HTTP from an HTTPS page.
+
+A service installed before `T3CODE_LAN` existed keeps listening on the local
+network. `t3 status` says so, and `t3 up --no-lan` turns it off. Any
+`T3CODE_HOST` value replaces this setting.
 
 ## Configure the service environment
 
@@ -85,9 +92,14 @@ Mac logged in and awake for unattended remote access. Installing over SSH while
 nobody is logged in at the Mac's screen can fail at the final start step; the
 service is still installed and will start at the next login.
 
-Windows background services are not supported.
+Windows starts the service when you log in and stops it when you sign out. It
+runs without a window as the `t3code-<domain>-<user name>` task in Task Scheduler, and Task
+Scheduler starts it again within a minute if it exits. Lock the screen instead
+of signing out, and keep the PC awake, for unattended remote access. Installing
+over SSH while nobody is signed in at the PC can fail at the final start step;
+the service is still installed and will start at the next sign-in.
 
-T3 Connect can offer service installation during setup, but the two are managed
+`t3 up` installs the service when you set up T3 Connect, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.
 
 ## Keep the server responsive when agents use all memory
@@ -136,7 +148,7 @@ that session open.
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                             |
 | `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support. |
-| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status t3code.service`, then use the repair command printed by T3 Code.                     |
+| `service-disabled` or `service-stopped` | Read the log and, on Linux, `systemctl --user status t3code.service`, then use the repair command printed by T3 Code.          |
 | `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `t3 service restart`.                            |
 
 On macOS, check **System Settings → General → Login Items** if the service no
@@ -150,15 +162,22 @@ For failures after signing in to T3 Connect, see
 
 ## Reclaim database space
 
-T3 Code removes superseded internal history on its own while it runs; your
-conversations are kept. Databases created before this shrank automatically
+T3 Code removes internal history older than a day on its own while it runs;
+your conversations are kept. Databases created before this shrank automatically
 still hold the freed space on disk until a one-time offline repair returns it
 and turns on automatic shrinking. Settings > Maintenance (web and desktop) or
 Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
 reclaimed.
 
-Run `t3 doctor` on the machine that hosts the environment. It reports the
-database size and the space it can reclaim, then asks which repairs to run;
+When the desktop app or the background service runs T3 Code on that machine,
+select **Reclaim** in Settings on web or desktop. T3 Code checks for free disk
+space, then stops, repairs the database, and starts again. It is offline while
+the repair runs, and running agents stop. If the repair fails, Settings shows
+why.
+
+In other cases, such as a server you started by hand, run `t3 doctor` on the
+machine that hosts the environment. It reports the database size and the
+space it can reclaim, then asks which repairs to run;
 pass `--fix` to run the recommended ones without a prompt (for scripts), or
 `--dry-run` to only report. An installed background service for the same data
 directory is stopped for the repair and started again afterwards, also when
@@ -166,11 +185,13 @@ the repair fails. Quit a server you started by hand, or the desktop app, first:
 the repair refuses to touch a database that is in use. Use `--base-dir` for a
 different data directory.
 
-The repair can take several minutes on a large database. It rebuilds the
-database through a temporary copy, so it needs free space of about the
-database's size twice over: once in the system temporary directory (`TMPDIR`
-or `/tmp` on Linux and macOS) and once next to the database for its
-write-ahead log.
+The repair's time grows with the size of the whole database, not only the
+space it reclaims, and can exceed an hour on a large database or a slow disk;
+`t3 doctor` shows each step as it runs. It rebuilds the database through a
+temporary copy, so it needs free space of about twice the data still in use
+(the database size minus the reclaimable space): once in the system temporary
+directory (on Linux and macOS, `TMPDIR`, or `/var/tmp` when it is not set) and
+once next to the database for its write-ahead log.
 
 If you upgraded from a version before 0.1.0, its database (`state.sqlite`) is
 still kept next to the current one so you can roll back. `t3 doctor` offers to

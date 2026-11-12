@@ -1,0 +1,41 @@
+import type * as entityresolution from "@distilled.cloud/aws/entityresolution";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+import type { IdMappingWorkflow } from "./IdMappingWorkflow.ts";
+
+/**
+ * Runtime binding for `entityresolution:StartIdMappingJob`.
+ *
+ * Starts an ID mapping job run of the bound workflow — a batch process over
+ * the workflow's full input that takes many minutes. Provide the
+ * implementation with `Effect.provide(AWS.EntityResolution.StartIdMappingJobHttp)`.
+ * ### Running ID Mapping Jobs
+ * **Example:** Start a Job
+ * ```typescript
+ * // init — bind the operation to the workflow
+ * const startIdMappingJob = yield* AWS.EntityResolution.StartIdMappingJob(workflow);
+ *
+ * // runtime
+ * const { jobId } = yield* startIdMappingJob({});
+ * ```
+ *
+ * @binding
+ */
+export interface StartIdMappingJob extends Binding.Service<
+  StartIdMappingJob,
+  "AWS.EntityResolution.StartIdMappingJob",
+  (
+    workflow: IdMappingWorkflow,
+  ) => Effect.Effect<
+    (
+      request: Omit<entityresolution.StartIdMappingJobInput, "workflowName">,
+    ) => Effect.Effect<
+      entityresolution.StartIdMappingJobOutput,
+      entityresolution.StartIdMappingJobError
+    >
+  >
+> {}
+
+export const StartIdMappingJob = Binding.Service<StartIdMappingJob>(
+  "AWS.EntityResolution.StartIdMappingJob",
+);

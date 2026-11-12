@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
-import { resolveVinextCli } from "../cli.ts";
+import { describe, expect, it } from "vitest";
 import { NODE_BUNDLE_CONDITIONS } from "../../core/NodeServe.ts";
+import { resolveVinextCli } from "../cli.ts";
 import {
   SERVER_ENTRY_NAME,
   VINEXT_NODE_INSTALL,
@@ -20,6 +20,7 @@ describe("makeNodeTarget", () => {
     { hybrid: false, inline: false },
     { hybrid: true, inline: false },
     { hybrid: false, inline: true },
+    { hybrid: true, inline: true },
   ])(
     "builds and serves without an Alchemy plugin (hybrid: $hybrid, inline config: $inline)",
     ({ hybrid, inline }) =>
@@ -29,40 +30,38 @@ describe("makeNodeTarget", () => {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const example = yield* path.fromFileUrl(
-              new URL(
-                "../../../../../examples/prisma-website-vinext/",
-                import.meta.url,
-              ),
+              new URL("../../../../../examples/prisma-website-vinext/", import.meta.url),
             );
             const root = yield* fs.makeTempDirectoryScoped({
               prefix: "vinext-node-",
             });
-            yield* fs.symlink(
-              path.join(example, "node_modules"),
-              path.join(root, "node_modules"),
-            );
-            yield* fs.writeFileString(
-              path.join(root, "package.json"),
-              '{"type":"module"}',
-            );
+            yield* fs.symlink(path.join(example, "node_modules"), path.join(root, "node_modules"));
+            yield* fs.writeFileString(path.join(root, "package.json"), '{"type":"module"}');
+            // Hybrid builds bundle Pages separately; it must still see the user's config.
+            const pageExtensions = inline && !hybrid ? ', pageExtensions: ["page.tsx"]' : "";
             if (inline) {
               yield* fs.writeFileString(
                 path.join(root, "vite.config.ts"),
                 `
+                import { fileURLToPath } from "node:url";
                 import vinext from "vinext";
-                export default { plugins: [vinext({ prerender: true, nextConfig: {
-                  basePath: "/nested", pageExtensions: ["page.tsx"],
-                } })] };
+                export default {
+                  resolve: { alias: { "@legacy-text": fileURLToPath(new URL("./legacy-text.ts", import.meta.url)) } },
+                  plugins: [vinext({ prerender: true, nextConfig: { basePath: "/nested"${pageExtensions} } })],
+                };
               `,
+              );
+              yield* fs.writeFileString(
+                path.join(root, "legacy-text.ts"),
+                'export const text = "Legacy page";',
               );
             }
             yield* fs.makeDirectory(path.join(root, "pages"));
             yield* fs.writeFileString(
-              path.join(
-                root,
-                inline ? "pages/legacy.page.tsx" : "pages/legacy.tsx",
-              ),
-              "export default function Page() { return <h1>Legacy page</h1>; }",
+              path.join(root, pageExtensions ? "pages/legacy.page.tsx" : "pages/legacy.tsx"),
+              inline
+                ? 'import { text } from "@legacy-text";\nexport default function Page() { return <h1>{text}</h1>; }'
+                : "export default function Page() { return <h1>Legacy page</h1>; }",
             );
             if (hybrid) {
               yield* fs.makeDirectory(path.join(root, "app"));
@@ -76,45 +75,30 @@ describe("makeNodeTarget", () => {
               );
             }
             yield* fs.makeDirectory(path.join(root, "dist"));
-            yield* fs.writeFileString(
-              path.join(root, "dist/stale.txt"),
-              "old build",
-            );
+            yield* fs.writeFileString(path.join(root, "dist/stale.txt"), "old build");
             const built = yield* makeNodeTarget().build!({
               root,
               framework: "vinext",
             });
-            expect(yield* fs.exists(path.join(root, "vite.config.ts"))).toBe(
-              inline,
-            );
+            expect(yield* fs.exists(path.join(root, "vite.config.ts"))).toBe(inline);
             if (inline) {
               expect(
-                yield* fs.readFileString(
-                  path.join(root, "dist/server/vinext-prerender.json"),
-                ),
+                yield* fs.readFileString(path.join(root, "dist/server/vinext-prerender.json")),
               ).toContain('"route": "/legacy"');
             }
             expect(
-              yield* fs.readFileString(
-                path.join(built.distDirectory!, "server/entry.js"),
-              ),
+              yield* fs.readFileString(path.join(built.distDirectory!, "server/entry.js")),
             ).toContain("REDIS_URL");
-            expect(yield* fs.exists(path.join(root, "dist/stale.txt"))).toBe(
-              false,
-            );
+            expect(yield* fs.exists(path.join(root, "dist/stale.txt"))).toBe(false);
             if (hybrid) {
               const buildId = (yield* fs.readFileString(
                 path.join(root, "dist/server/BUILD_ID"),
               )).trim();
               const manifest = JSON.parse(
-                yield* fs.readFileString(
-                  path.join(root, "dist/server/vinext-server.json"),
-                ),
+                yield* fs.readFileString(path.join(root, "dist/server/vinext-server.json")),
               );
               for (const entry of ["index.js", "entry.js"]) {
-                const code = yield* fs.readFileString(
-                  path.join(root, "dist/server", entry),
-                );
+                const code = yield* fs.readFileString(path.join(root, "dist/server", entry));
                 expect(code).toContain(buildId);
                 expect(code).toContain(manifest.prerenderSecret);
               }
@@ -137,12 +121,13 @@ describe("makeNodeTarget", () => {
         try {
           const base = "http://127.0.0.1:" + server.address().port;
           for (const [route, text] of ${JSON.stringify(
-            hybrid
+            (hybrid
               ? [
                   ["/legacy", "Legacy page"],
                   ["/", "App page"],
                 ]
-              : [[inline ? "/nested/legacy" : "/legacy", "Legacy page"]],
+              : [["/legacy", "Legacy page"]]
+            ).map(([route, text]) => [inline ? `/nested${route}` : route, text]),
           )}) {
             const response = await fetch(base + route);
             assert.equal(response.status, 200);
@@ -166,10 +151,7 @@ describe("makeNodeTarget", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* path.fromFileUrl(
-          new URL(
-            "../../../../../examples/prisma-website-vinext/",
-            import.meta.url,
-          ),
+          new URL("../../../../../examples/prisma-website-vinext/", import.meta.url),
         );
         const cli = yield* resolveVinextCli(root);
         expect(cli).toMatch(/vinext\/dist\/cli\.js$/);
