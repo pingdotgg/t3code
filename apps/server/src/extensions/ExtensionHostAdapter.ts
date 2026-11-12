@@ -108,14 +108,15 @@ export const layer = Layer.effect(
       },
       (effect, method) =>
         effect.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ExtensionError({
-                operation: method,
-                id: "host",
-                reason: "runtime-failed",
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isExtensionError(cause)
+              ? cause
+              : new ExtensionError({
+                  operation: method,
+                  id: "host",
+                  reason: "runtime-failed",
+                  cause,
+                }),
           ),
         ),
     );

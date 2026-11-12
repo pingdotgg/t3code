@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import { EXTENSION_DEVELOPMENT_REFERENCE } from "../../packages/provider-core/src/server/extensionDevelopmentSkill.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
@@ -871,6 +872,21 @@ it("tells the simulator that paths the case names exist, whatever the template's
   assert.include(line, "/tmp/acmeqa/run.mjs");
   assert.include(line, "/tmp/acmeqa/login.mjs");
   assert.notInclude(line, "src/a.ts");
+  const extension = makeSample(
+    { ...testCase, area: "extensions" },
+    buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false }),
+  );
+  const [machine] =
+    shellRequest(
+      extension,
+      {
+        tool: "Read",
+        input: { file_path: "/tmp/t3/skills/t3-extension-development/references/api.md" },
+      },
+      "claude-haiku-5-5",
+    ).messages[0]?.content ?? [];
+  assert.include(machine?.text, JSON.stringify(EXTENSION_DEVELOPMENT_REFERENCE));
+  assert.include(machine?.text, '"/tmp/t3/skills/t3-extension-development/references/api.md":');
   assert.deepEqual(
     namedPathsLine({ ...testCase, setup: { role: "top", context: "No paths here." } }),
     [],

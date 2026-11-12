@@ -113,9 +113,16 @@ it.live("publishes disable and uninstall changes to every connected client", () 
         const invalid = yield* Effect.flip(
           service.install({ source: path.join(source, "missing"), sourceType: "local" }),
         );
-        expect(invalid.reason).toBe("runtime-failed");
+        expect(invalid.reason).toBe("invalid-input");
         expect(invalid.detail).toBeUndefined();
         expect(invalid.cause).toMatchObject({ code: "ENOENT" });
+        const notDirectory = yield* Effect.flip(
+          service.install({ source: path.join(source, "main.mjs", "child"), sourceType: "local" }),
+        );
+        expect(notDirectory.reason).toBe("invalid-input");
+        expect(notDirectory.cause).toMatchObject({
+          code: expect.stringMatching(/^(ENOENT|ENOTDIR)$/),
+        });
         yield* service.install({ source, sourceType: "local" });
         yield* next((snapshot) => snapshot[0]?.status === "running");
         yield* service.manage({ id: "test.sync", action: "disable" });

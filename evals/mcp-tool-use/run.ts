@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import { EXTENSION_DEVELOPMENT_SKILL } from "../../packages/provider-core/src/server/extensionDevelopmentSkill.ts";
+import {
+  EXTENSION_DEVELOPMENT_SKILL,
+  EXTENSION_DEVELOPMENT_REFERENCE,
+} from "../../packages/provider-core/src/server/extensionDevelopmentSkill.ts";
 import { ExtensionsToolkit } from "../../apps/server/src/mcp/toolkits/extensions/tools.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 /**
@@ -117,6 +120,7 @@ const PROXY_SHELL_MODELS = ["gpt-6-luna", "gpt-6.1-terra"] as const;
 type ShellModel = PricedModel | (typeof PROXY_SHELL_MODELS)[number];
 const isPricedModel = (model: ShellModel): model is PricedModel => model in PRICES;
 const T3_PREFIX = "mcp__t3-code__";
+const EXTENSION_REFERENCE_PATH = "/tmp/t3/skills/t3-extension-development/references/api.md";
 const RUNTIME_MARKER = "<runtime_info>";
 const TOOL_LOADED = "Tool loaded.";
 
@@ -1467,7 +1471,17 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
   const machine = [
     `Working directory: ${cwd} on ${platform}, a git checkout of github.com/${repo}.${date ? ` Today is ${date}.` : ""}`,
     gitStatus(testCase),
-    `World: ${valueText(world ?? {})}`,
+    `World: ${valueText(
+      testCase.area === "extensions"
+        ? {
+            ...world,
+            files: {
+              ...(isRecord(world?.files) ? world.files : {}),
+              [EXTENSION_REFERENCE_PATH]: EXTENSION_DEVELOPMENT_REFERENCE,
+            },
+          }
+        : (world ?? {}),
+    )}`,
     ...(shellMocks.length > 0
       ? [`Commands that match these regexes print exactly this output: ${valueText(shellMocks)}`]
       : []),
@@ -1657,7 +1671,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     return toolResult(call.id, {
       path: "/tmp/t3/skills/t3-extension-development/SKILL.md",
       content: EXTENSION_DEVELOPMENT_SKILL,
-      referencePath: "/tmp/t3/skills/t3-extension-development/references/api.md",
+      referencePath: EXTENSION_REFERENCE_PATH,
     });
   if (isT3Name(call.name)) {
     // T3 refuses a watch from a delegated child.

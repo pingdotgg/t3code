@@ -231,7 +231,19 @@ export class ExtensionRegistry {
       const installed =
         sourceType === "npm"
           ? await this.npmPackage(source)
-          : { directory: await NodeFSP.realpath(source), stage: undefined };
+          : {
+              directory: await NodeFSP.realpath(source).catch((cause: unknown) => {
+                if (
+                  typeof cause === "object" &&
+                  cause !== null &&
+                  "code" in cause &&
+                  (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+                )
+                  throw error("install", source, "invalid-input", cause);
+                throw cause;
+              }),
+              stage: undefined,
+            };
       try {
         const manifest = await this.readManifest(installed.directory);
         if (this.registrations.has(manifest.id)) throw error("install", manifest.id, "conflict");
