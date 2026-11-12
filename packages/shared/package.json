@@ -415,6 +415,10 @@
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"
     },
+    "./usagePoolProjection": {
+      "types": "./src/usagePoolProjection.ts",
+      "import": "./src/usagePoolProjection.ts"
+    },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
