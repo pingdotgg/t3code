@@ -80,9 +80,12 @@ function runScope(scope: CommandScope, event: KeyboardEvent): boolean {
   return handler(event) !== false;
 }
 
-/** Whether a registered command is bound to this keydown, for widgets that would otherwise consume it. */
+/**
+ * Whether a bubble-phase command is bound to this keydown, for widgets that would otherwise
+ * consume it. Capture scopes have already run (and declined) by the time a widget sees it.
+ */
 export function hasCommandForKeyDown(event: KeyboardEvent): boolean {
-  return [...captureScopes, ...globalScopes].some(
+  return globalScopes.some(
     (scope) =>
       (!scope.options.when || scope.options.when(event)) &&
       scopeCommandHandler(scope, event) !== undefined,

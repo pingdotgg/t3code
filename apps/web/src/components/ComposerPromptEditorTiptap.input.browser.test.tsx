@@ -225,13 +225,15 @@ it.each([
 );
 
 it.each([
-  ["e", false],
-  ["i", false],
-  ["e", true],
+  ["e", false, false],
+  ["i", false, false],
+  ["e", true, false],
+  ["e", false, true],
 ])(
-  "leaves Mod+%s to an app command bound to it instead of formatting (composer command: %s)",
-  async (key, composerClaimsKey) => {
+  "leaves Mod+%s to an app command bound to it instead of formatting (composer command: %s, declined capture command: %s)",
+  async (key, composerClaimsKey, declinedCapture) => {
     const openUsage = vi.fn((event: KeyboardEvent) => {
+      if (declinedCapture) return false;
       event.preventDefault();
     });
     using _commands = {
@@ -251,6 +253,7 @@ it.each([
               },
             },
           ],
+          capture: declinedCapture,
         },
       ),
     };
@@ -266,7 +269,7 @@ it.each([
     await userEvent.keyboard(`{${modifier}>}${key}{/${modifier}}`);
     expect(composerCommand).toHaveBeenCalled();
     expect(openUsage).toHaveBeenCalledTimes(composerClaimsKey ? 0 : 1);
-    expect(serializeEditorDoc(editor.state.doc).value).toBe("word");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(declinedCapture ? "`word`" : "word");
   },
 );
 
