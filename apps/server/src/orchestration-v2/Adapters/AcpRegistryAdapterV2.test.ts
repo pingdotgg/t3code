@@ -17,6 +17,7 @@ import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2Pendi
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -276,7 +277,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled) {
+  if (continuationEnabled && agentId === "claude-acp") {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
       "Claude ACP v2 must report background work after foreground idle",
@@ -380,6 +381,29 @@ const claudeMarker = (title: string) =>
     sessionUpdate: "session_info_update",
     title,
   });
+// Factory Droid speaks ACP v1, so its prompt ends with a `session/prompt` response.
+const droidFirstTurn = (...frames: ReadonlyArray<unknown>) => [
+  ...claudeFrames.open.map((entry) =>
+    entry.frame.method === "initialize" && entry.type === "emit_inbound"
+      ? {
+          ...entry,
+          frame: {
+            ...entry.frame,
+            result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+          },
+        }
+      : entry,
+  ),
+  {
+    type: "expect_outbound",
+    frame: { kind: "request", method: "session/prompt", params: "<any>" },
+  },
+  ...frames,
+  {
+    type: "emit_inbound",
+    frame: { kind: "response", method: "session/prompt", result: { stopReason: "end_turn" } },
+  },
+];
 const claudeChild = [
   claudeFrames.update(CLAUDE_ROOT_SESSION, {
     sessionUpdate: "tool_call_update",
@@ -2233,6 +2257,385 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(tools.at(-1)?.output, [
         { type: "content", content: { type: "text", text: "late" } },
       ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("continues Factory Droid when its background Task finishes after end_turn", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const gate = makeProviderReplayGate(["task-completed", "answer"]);
+      const launchTask = (toolCallId: string) =>
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Task",
+          kind: "other",
+          status: "completed",
+          rawInput: { subagent_type: "explorer", prompt: `sleep 20; echo ${toolCallId}` },
+          rawOutput: { type: "Text", text: "Task launched in background" },
+        });
+      // A Task the previous run never saw must still merge with the run that launched it.
+      const assertTaskCard = (
+        events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+        toolCallId: string,
+      ) => {
+        const task = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === toolCallId,
+        );
+        if (task?.type !== "turn_item.updated") throw new Error(`Missing ${toolCallId} update`);
+        assert.include(task.turnItem, { title: "Task", status: "completed" });
+        assert.deepInclude(task.turnItem, {
+          input: { subagent_type: "explorer", prompt: `sleep 20; echo ${toolCallId}` },
+        });
+      };
+      const session = yield* openClaudeReplaySession(
+        [
+          ...droidFirstTurn(
+            launchTask("task-1"),
+            launchTask("task-2"),
+            update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "waiting" },
+            }),
+          ),
+          {
+            ...update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "task-1",
+              status: "completed",
+              rawOutput: { type: "Text", text: "The command ran and exited with code 0." },
+            }),
+            label: "task-completed",
+          },
+          claudeMarker("task done"),
+          {
+            ...update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "task-2",
+              status: "completed",
+              rawOutput: { type: "Text", text: "The second task exited with code 0." },
+            }),
+            label: "answer",
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "usage_update",
+            used: 2_000,
+            size: 10_000,
+          }),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "The background task exited with code 0." },
+          }),
+          claudeMarker("late answer"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        gate,
+        true,
+        "factory-droid",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      assert.equal((yield* session.terminal).status, "completed");
+      gate.release("task-completed");
+      yield* session.throughMarker("task done");
+      assert.lengthOf(session.offers, 1, "Droid's Task completion must offer a continuation run");
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const taskSettled = yield* Effect.forkScoped(
+        session.until((event) => event.type === "turn.terminal"),
+      );
+      yield* TestClock.adjust("3 seconds");
+      const taskRun = yield* Fiber.join(taskSettled);
+      assert.include(taskRun.at(-1), { runOrdinal: 2, status: "completed" });
+      assertTaskCard(taskRun, "task-1");
+      // Droid answers ~4 s after the Task result, past the quiet window.
+      gate.release("answer");
+      yield* session.throughMarker("late answer");
+      assert.lengthOf(session.offers, 2, "Droid's late answer must offer another continuation");
+      yield* session.offers[1]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(3, { continuation: true }));
+      const answerRun = yield* session.until(
+        (event) =>
+          event.type === "message.updated" &&
+          event.message.text === "The background task exited with code 0.",
+      );
+      assertTaskCard(answerRun, "task-2");
+      const answer = answerRun.at(-1);
+      if (answer?.type !== "message.updated") throw new Error("Missing late answer");
+      assert.equal(answer.message.runId, session.turnInput(3).runId);
+      const answerSettled = yield* Effect.forkScoped(session.terminal);
+      yield* TestClock.adjust("3 seconds");
+      assert.include(yield* Fiber.join(answerSettled), { runOrdinal: 3, status: "completed" });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      blocker: "an unanswered question",
+      frames: [
+        {
+          type: "emit_inbound",
+          label: "blocker",
+          frame: {
+            kind: "request",
+            method: "elicitation/create",
+            params: {
+              sessionId: CLAUDE_ROOT_SESSION,
+              mode: "form",
+              message: "Which file?",
+              requestedSchema: {
+                type: "object",
+                properties: {
+                  question_1: {
+                    type: "string",
+                    title: "File",
+                    description: "Which file should I inspect?",
+                    oneOf: [
+                      { const: "option_0", title: "a.ts" },
+                      { const: "other", title: "Other" },
+                    ],
+                  },
+                  question_1_other: { type: "string" },
+                },
+                required: ["question_1"],
+              },
+            },
+          },
+        },
+        { ...claudeMarker("still waiting"), label: "check" },
+        {
+          type: "expect_outbound",
+          frame: {
+            kind: "response",
+            method: "elicitation/create",
+            result: { action: "accept", content: { question_1: "option_0" } },
+          },
+        },
+      ],
+      response: { answers: { question_1: "option_0" } },
+    },
+    {
+      blocker: "an unanswered approval",
+      frames: [
+        {
+          type: "emit_inbound",
+          label: "blocker",
+          frame: {
+            kind: "request",
+            method: "session/request_permission",
+            params: {
+              sessionId: CLAUDE_ROOT_SESSION,
+              toolCall: {
+                toolCallId: "approve-command",
+                title: "Run tests",
+                kind: "execute",
+                status: "pending",
+                rawInput: { command: "vp test run" },
+              },
+              options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+            },
+          },
+        },
+        { ...claudeMarker("still waiting"), label: "check" },
+        {
+          type: "expect_outbound",
+          frame: {
+            kind: "response",
+            method: "session/request_permission",
+            result: { outcome: { outcome: "selected", optionId: "allow" } },
+          },
+        },
+      ],
+      response: { decision: "accept" as const },
+    },
+    {
+      blocker: "a running tool",
+      frames: [
+        {
+          ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "slow-tool",
+            title: "Execute",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: "sleep 20; echo done" },
+          }),
+          label: "blocker",
+        },
+        claudeMarker("blocked"),
+        { ...claudeMarker("still waiting"), label: "check" },
+        {
+          ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "slow-tool",
+            status: "completed",
+            rawOutput: { type: "Text", text: "done" },
+          }),
+          label: "resolve",
+        },
+        claudeMarker("resolved"),
+      ],
+      response: undefined,
+    },
+  ])(
+    "keeps a Factory Droid continuation open past the quiet window for $blocker",
+    ({ frames, response }) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["wake", "blocker", "check", "resolve"]);
+        const session = yield* openClaudeReplaySession(
+          [
+            ...droidFirstTurn(),
+            {
+              ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Checking the background result" },
+              }),
+              label: "wake",
+            },
+            claudeMarker("woke"),
+            ...frames,
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          gate,
+          true,
+          "factory-droid",
+        );
+        yield* session.runtime.startTurn(session.turnInput(1));
+        assert.equal((yield* session.terminal).status, "completed");
+        gate.release("wake");
+        yield* session.throughMarker("woke");
+        yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+        gate.release("blocker");
+        const blocked = (yield* session.until(
+          (event) =>
+            (event.type === "runtime_request.updated" &&
+              event.runtimeRequest.status === "pending") ||
+            (event.type === "provider_thread.updated" &&
+              event.providerThread.nativeMetadata?.title === "blocked"),
+        )).at(-1)!;
+        yield* TestClock.adjust("3 seconds");
+        gate.release("check");
+        assert.notInclude(
+          (yield* session.throughMarker("still waiting")).map((event) => event.type),
+          "turn.terminal",
+          "the continuation must not settle while Droid still waits",
+        );
+        // Requests are answered with no later update, so only their resolution rearms the finalize.
+        if (blocked.type === "runtime_request.updated" && response !== undefined) {
+          yield* session.runtime.respondToRuntimeRequest({
+            requestId: blocked.runtimeRequest.id,
+            ...response,
+          });
+        } else {
+          gate.release("resolve");
+          yield* session.throughMarker("resolved");
+        }
+        const settled = yield* Effect.forkScoped(session.terminal);
+        yield* TestClock.adjust("3 seconds");
+        assert.include(yield* Fiber.join(settled), { runOrdinal: 2, status: "completed" });
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  const permissionRequest = (toolCallId: string, kind: string) => ({
+    kind: "request",
+    method: "session/request_permission",
+    params: {
+      sessionId: CLAUDE_ROOT_SESSION,
+      toolCall: { toolCallId, title: toolCallId, kind, status: "pending", rawInput: {} },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    },
+  });
+  it.effect.each([
+    {
+      request: "a question",
+      frame: {
+        kind: "request",
+        method: "elicitation/create",
+        params: {
+          sessionId: CLAUDE_ROOT_SESSION,
+          mode: "form",
+          message: "Which file?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              question_1: {
+                type: "string",
+                title: "File",
+                oneOf: [{ const: "option_0", title: "a.ts" }],
+              },
+            },
+            required: ["question_1"],
+          },
+        },
+      },
+      reply: {
+        method: "elicitation/create",
+        result: { action: "accept", content: { question_1: "option_0" } },
+      },
+      response: { answers: { question_1: "option_0" } },
+    },
+    {
+      request: "an approval",
+      frame: permissionRequest("run-tests", "execute"),
+      reply: {
+        method: "session/request_permission",
+        result: { outcome: { outcome: "selected", optionId: "allow" } },
+      },
+      response: { decision: "accept" as const },
+    },
+    {
+      request: "an auto-approved read",
+      frame: permissionRequest("read-file", "read"),
+      reply: {
+        method: "session/request_permission",
+        result: { outcome: { outcome: "selected", optionId: "allow" } },
+      },
+      response: undefined,
+    },
+  ])("admits $request Factory Droid sends after its run settled", ({ frame, reply, response }) =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["request"]);
+      const session = yield* openClaudeReplaySession(
+        [
+          ...droidFirstTurn(),
+          { type: "emit_inbound", label: "request", frame },
+          { type: "expect_outbound", frame: { kind: "response", ...reply } },
+          claudeMarker("answered"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        gate,
+        true,
+        "factory-droid",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      assert.equal((yield* session.terminal).status, "completed");
+      gate.release("request");
+      if (response === undefined) {
+        yield* session.throughMarker("answered");
+        assert.lengthOf(session.offers, 0, "an automatic decision needs no continuation");
+        return;
+      }
+      yield* Queue.take(session.offered);
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const pending = (yield* session.until(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      )).at(-1);
+      if (pending?.type !== "runtime_request.updated") throw new Error("Missing request");
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        ...response,
+      });
+      yield* session.throughMarker("answered");
+      const settled = yield* Effect.forkScoped(session.terminal);
+      yield* TestClock.adjust("3 seconds");
+      assert.include(yield* Fiber.join(settled), { runOrdinal: 2, status: "completed" });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

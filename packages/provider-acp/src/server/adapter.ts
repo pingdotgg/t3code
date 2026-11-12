@@ -1413,6 +1413,8 @@ interface ActiveAcpTurn {
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  /** A continuation's sparse tool updates merge from the finalized run before it. */
+  readonly precedingRunTools: AcpRunTools | null;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
@@ -1655,6 +1657,8 @@ function acpSubagentHasPendingBackgroundWork(subagent: ActiveAcpSubagent): boole
     acpSubagentStatusBlocksTurnSettlement(subagent.task.status) || !subagent.terminalStatusProjected
   );
 }
+
+type AcpRunTools = Pick<ActiveAcpTurn, "tools" | "toolStartedAt">;
 
 type AcpCarryoverSubagents = {
   readonly sessionId: string;
@@ -2272,6 +2276,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        const finalizedRunTools = yield* Ref.make<
+          (AcpRunTools & { readonly sessionId: string }) | null
+        >(null);
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -3846,6 +3853,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
 
+        const awaitsRequestOrTool = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          countsTool: (tool: AcpToolCallState) => boolean,
+        ) {
+          if (openAgentRequests.size > 0) return true;
+          if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) return true;
+          for (const tool of context.tools.values()) {
+            const status = toolStatus(tool.status);
+            if (status !== "pending" && status !== "running" && status !== "waiting") continue;
+            if (countsTool(tool)) return true;
+          }
+          return false;
+        });
+
+        // Background tools and subagents are `hasDeferredBackgroundWork`'s, which skips
+        // persistent tasks that never end.
+        const isForegroundTool = (tool: AcpToolCallState) =>
+          flavor.extractBackgroundTaskId?.(tool) === undefined &&
+          extractSubagentUpdate(tool) === undefined;
+
+        const blocksDeferredFinalize = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          if (hasDeferredBackgroundWork(context)) return true;
+          return yield* awaitsRequestOrTool(context, isForegroundTool);
+        });
+
         const rearmDeferredFinalize =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveAcpTurn) {
@@ -3854,6 +3886,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (hasDeferredBackgroundWork(context)) return;
             yield* scheduleDeferredFinalize(context);
           });
+        const rearmActiveDeferredFinalize = Ref.get(activeTurn).pipe(
+          Effect.flatMap((context) =>
+            context === null ? Effect.void : rearmDeferredFinalize(context),
+          ),
+        );
+        const forgetPendingRuntimeRequest = (requestId: string) =>
+          Ref.update(pendingRuntimeRequests, (current) => {
+            const updated = new Map(current);
+            updated.delete(requestId);
+            return updated;
+          }).pipe(Effect.andThen(rearmActiveDeferredFinalize));
 
         // let breaks circular inference from monitor hydration re-entry.
         let emitTool: (
@@ -3918,7 +3961,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (context.reasoning.current?.sourceMessageId == null)
             yield* closeTextStream(context, "reasoning");
           yield* closeTextStream(context, "user");
-          const previous = context.tools.get(incoming.toolCallId);
+          const previous =
+            context.tools.get(incoming.toolCallId) ??
+            context.precedingRunTools?.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
@@ -4088,7 +4133,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeId: toolCall.toolCallId,
             strength: "strong" as const,
           };
-          const startedAt = context.toolStartedAt.get(toolCall.toolCallId) ?? now;
+          const startedAt =
+            context.toolStartedAt.get(toolCall.toolCallId) ??
+            context.precedingRunTools?.toolStartedAt.get(toolCall.toolCallId) ??
+            now;
           context.toolStartedAt.set(toolCall.toolCallId, startedAt);
           const completedAt = completedAtForStatus(status, now);
           const title = toolCall.title ?? null;
@@ -5000,8 +5048,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        // A post-settle agent can ask after its run settled; the request opens a continuation.
+        const admitsRequestsOutsideTurn = () =>
+          followsAgentWorkState || postSettleContinuationEnabled;
+
         const awaitRequestTurn = Effect.fnUntraced(function* (generation: number) {
-          if (!followsAgentWorkState) return true;
+          if (!admitsRequestsOutsideTurn()) return true;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
@@ -5947,11 +5999,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.ensuring(
                     runRuntimeCallbackAtGeneration(
                       generation,
-                      Ref.update(pendingRuntimeRequests, (current) => {
-                        const updated = new Map(current);
-                        updated.delete(String(requestId));
-                        return updated;
-                      }),
+                      forgetPendingRuntimeRequest(String(requestId)),
                     ).pipe(Effect.asVoid),
                   ),
                 );
@@ -6603,14 +6651,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
-              if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
+              if (admitsRequestsOutsideTurn() && dispositionFor(latestRuntimePolicy) === "ask") {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
                   return { outcome: { outcome: "cancelled" } } as const;
               }
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = followsAgentWorkState
+                  const context = admitsRequestsOutsideTurn()
                     ? yield* Ref.get(activeTurn)
                     : yield* activeContext;
                   // Kiro sends the tool's kind on its `tool_call` and leaves it
@@ -6688,11 +6736,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.ensuring(
                   runRuntimeCallbackAtGeneration(
                     handlerGeneration,
-                    Ref.update(pendingRuntimeRequests, (current) => {
-                      const updated = new Map(current);
-                      updated.delete(String(requestId));
-                      return updated;
-                    }),
+                    forgetPendingRuntimeRequest(String(requestId)),
                   ).pipe(Effect.asVoid),
                 ),
               );
@@ -7650,7 +7694,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
-            yield* emitTool(context, tool, status);
+            // Store the status too, so the deferred finalize stops counting the tool as open.
+            yield* emitTool(context, { ...tool, status }, status);
           }
         });
 
@@ -7855,6 +7900,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
+          if (postSettleContinuationEnabled && settledStatus === "completed") {
+            yield* Ref.set(finalizedRunTools, {
+              sessionId: context.nativeThreadId,
+              tools: new Map([...(context.precedingRunTools?.tools ?? []), ...context.tools]),
+              toolStartedAt: new Map([
+                ...(context.precedingRunTools?.toolStartedAt ?? []),
+                ...context.toolStartedAt,
+              ]),
+            });
+          }
           yield* Ref.set(activeTurn, null);
           steerInjections.clear();
           if (
@@ -7882,7 +7937,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         scheduleDeferredFinalize = Effect.fn("scheduleDeferredFinalize")(function* (context) {
           if (!flavor.deferFinalizeForBackgroundWork) return;
           if (!context.promptSettled || context.finalized || context.interrupted) return;
-          if (hasDeferredBackgroundWork(context)) return;
+          if (yield* blocksDeferredFinalize(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
           yield* Effect.gen(function* () {
@@ -7894,7 +7949,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return;
             }
-            if (hasDeferredBackgroundWork(context)) return;
+            if (yield* blocksDeferredFinalize(context)) return;
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
@@ -7907,12 +7962,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
           context: ActiveAcpTurn,
         ) {
-          if (openAgentRequests.size > 0) return true;
-          if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) return true;
-          for (const tool of context.tools.values()) {
-            const status = toolStatus(tool.status);
-            if (status === "pending" || status === "running" || status === "waiting") return true;
-          }
+          if (yield* awaitsRequestOrTool(context, () => true)) return true;
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return true;
           }
@@ -8256,6 +8306,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 new Map(current).set(requestedSessionId, initialNativeMetadata),
               );
             }
+            const precedingRunTools = yield* Ref.getAndSet(finalizedRunTools, null);
             const context: ActiveAcpTurn = {
               input: turnInput,
               providerTurnId,
@@ -8276,6 +8327,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               tools: new Map(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
+              precedingRunTools:
+                isContinuationTurn && precedingRunTools?.sessionId === requestedSessionId
+                  ? precedingRunTools
+                  : null,
               subagents: new Map(),
               subagentsBySessionId: new Map(),
               pendingSubagentNotifications: new Map(),
@@ -8550,6 +8605,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       !context.interrupted &&
                       hasDeferredBackgroundWork(context)
                     ) {
+                      // A foreground tool still open at end_turn is stale; left open it would
+                      // hold the deferred finalize until Stop.
+                      yield* terminalizeOpenForegroundTools(context);
                       yield* closeTextStreams(context);
                       yield* (
                         options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
