@@ -115,7 +115,7 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
   }
 
   val chip = when {
-    !active -> null
+    !active -> if (phase == ActivityPhase.FAILED) "Failed" else "Done"
     phase == null -> data["activity_chip"]?.takeIf { it.isNotBlank() }?.take(7) ?: "Active"
     phase == ActivityPhase.RUNNING && activeCount > 1 ->
       "${if (activeCount > 9) "9+" else activeCount} live"
