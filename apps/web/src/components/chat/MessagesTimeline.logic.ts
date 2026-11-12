@@ -1026,7 +1026,6 @@ function deriveTurnFolds(input: {
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
-  retainedAssistantReplyEntryIds: ReadonlySet<string>;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   const promptIndexByRunId = new Map<RunId, number>();
@@ -1159,8 +1158,7 @@ function deriveTurnFolds(input: {
       if (
         entry.id === visibleCompactionId ||
         timelineEntryIsPersistentResourceCard(entry) ||
-        input.liveSubagentEntryIds.has(entry.id) ||
-        input.retainedAssistantReplyEntryIds.has(entry.id)
+        input.liveSubagentEntryIds.has(entry.id)
       ) {
         continue;
       }
@@ -1520,7 +1518,6 @@ function deriveTimelineTurnFolds(
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
-    retainedAssistantReplyEntryIds: retainedAssistantReplyEntryIds(timelineEntries),
   });
 }
 
@@ -1605,7 +1602,6 @@ export function deriveMessagesTimelineRows(input: {
           unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
           runlessWorkActive,
           liveSubagentEntryIds,
-          retainedAssistantReplyEntryIds: retainedAssistantReplyIds,
         });
   const timelineEntryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
   const collapsedEntryIds = new Set<string>();

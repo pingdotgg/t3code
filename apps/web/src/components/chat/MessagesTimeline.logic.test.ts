@@ -3479,13 +3479,17 @@ describe("v2 run and attempt history", () => {
           for (const visibility of ["showAll", "zen"] as const) {
             const rows = rowsFor(completedSecond, runStatus, visibility, phase);
             expect(rows.some((row) => row.id === "old-reply-entry")).toBe(retained);
+            // Worked-for folds keep prose visible; only zen or a superseded attempt hides it.
+            const showsProse = visibility === "showAll";
             if (phase !== undefined && runStatus === "completed") {
               const nativeRows = rowsFor(completedSecond, runStatus, visibility, phase, true);
-              expect(nativeRows.some((row) => row.id === "old-reply-entry")).toBe(retained);
-              expect(nativeRows.some((row) => row.id === "status-entry")).toBe(false);
+              expect(nativeRows.some((row) => row.id === "old-reply-entry")).toBe(
+                showsProse || retained,
+              );
+              expect(nativeRows.some((row) => row.id === "status-entry")).toBe(showsProse);
             }
             if (runStatus === "completed") {
-              expect(rows.some((row) => row.id === "status-entry")).toBe(false);
+              expect(rows.some((row) => row.id === "status-entry")).toBe(showsProse && retained);
             }
           }
         }

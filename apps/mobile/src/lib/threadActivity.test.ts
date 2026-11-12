@@ -1048,7 +1048,14 @@ describe("buildThreadFeed", () => {
       deriveThreadFeedPresentation(feed, null, new Set()).map((entry) =>
         entry.type === "message" ? entry.id : entry.type,
       ),
-    ).toEqual(["message-user", "run-fold", "message-steer", "run-fold", "message-assistant"]);
+    ).toEqual([
+      "message-user",
+      "run-fold",
+      "message-steer",
+      "run-fold",
+      "message-progress",
+      "message-assistant",
+    ]);
     const foldRunId = messageFoldRunId(
       feed,
       "message-progress",
@@ -1453,8 +1460,8 @@ describe("buildThreadFeed", () => {
       );
 
     const turn = [user, step, passed, failed, final];
-    expect(rows(turn, "hideSuccessful")).toEqual(["user", "fold", "step", "failed", "final"]);
-    expect(rows(turn, "hideAll")).toEqual(["user", "fold", "step", "final"]);
+    expect(rows(turn, "hideSuccessful")).toEqual(["user", "step", "fold", "failed", "final"]);
+    expect(rows(turn, "hideAll")).toEqual(["user", "step", "final"]);
     expect(rows(turn, "zen")).toEqual(["user", "final"]);
     const [steer, answer] = [say("steer", 2, true, true), say("answer", 3)];
     expect(rows([user, steer, answer, final], "zen")).toEqual(["user", "steer", "answer", "final"]);
@@ -1469,7 +1476,7 @@ describe("buildThreadFeed", () => {
         deriveThreadFeedPresentation(interrupted, null, new Set()).some(
           (row) => row.type === "message" && row.message.id === answer.messageId,
         ),
-      ).toBe(phase === "final_answer");
+      ).toBe(true);
       expect(rows([user, partial, steer, final], "zen").includes("answer")).toBe(
         phase === "final_answer",
       );
