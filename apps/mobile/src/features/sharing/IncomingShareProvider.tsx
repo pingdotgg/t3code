@@ -26,7 +26,7 @@ import { persistComposerAttachmentFile } from "../../lib/composerImages";
 import { subscribeAppActive } from "../../lib/appState";
 import { coalescedRun } from "../../lib/coalescedRun";
 import { rootNavigationRef } from "../../lib/rootNavigation";
-import { selectWorkspaceDetail } from "../workspace/workspace-detail-selection";
+import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
 import { isDraftThreadRoute } from "../threads/thread-route-state";
 import { makeIncomingShareImports } from "../threads/incomingShareImport";
 import { liveNewTaskFlowKeys } from "../threads/new-task-flow-state";
@@ -229,6 +229,11 @@ function getIncomingShareSnapshot() {
 }
 
 function reportRefreshFailure(cause: unknown) {
+  console.warn(
+    "[incoming-share] refresh failed",
+    cause,
+    cause instanceof Error ? cause.cause : null,
+  );
   const error = cause instanceof Error ? cause : new Error("Could not import shared content.");
   Dialog.alert("Could not import shared content", error.message, [
     { text: "Dismiss", style: "cancel" },

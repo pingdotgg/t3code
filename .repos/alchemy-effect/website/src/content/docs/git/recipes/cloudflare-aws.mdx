@@ -6,7 +6,7 @@ description: Compute on Cloudflare, bytes in S3, and large pushes hashed one Lam
 The examples use `Authentication` from
 [Getting Started](/git/getting-started): the application's request middleware.
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 The Worker and the Durable Objects stay on Cloudflare. Packs, bundles,
 and spilled pushes live in S3, and every 4 MiB chunk of a push is
@@ -14,10 +14,10 @@ hashed on its own Lambda:
 
 ```typescript
 // src/git.ts
-import * as AWS from "alchemy/AWS";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Git from "alchemy/Git";
-import * as GitHasher from "alchemy/Git/Hasher";
+import * as AWS from "@alchemy.run/aws";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Git from "@alchemy.run/git";
+import * as GitHasher from "@alchemy.run/git/Hasher";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -48,8 +48,8 @@ export default class GitHost extends Cloudflare.Worker<GitHost>()(
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as AWS from "@alchemy.run/aws";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import GitHost from "./src/git.ts";
@@ -67,20 +67,7 @@ export default Alchemy.Stack(
 );
 ```
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 ## What gets created
 
