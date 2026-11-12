@@ -314,7 +314,8 @@ export const make = DesktopLifecycle.of({
         Effect.runSyncWith(context)(
           Effect.gen(function* () {
             const shutdown = yield* DesktopShutdown.DesktopShutdown;
-            if (yield* shutdown.isComplete) return;
+            // "allowed" without a finished shutdown is the updater's quit; its relaunched app is a child.
+            if (quit.phase === "allowed" || (yield* shutdown.isComplete)) return;
             const attributes = { exitCode, quitPhase: quit.phase };
             yield* Effect.gen(function* () {
               yield* logLifecycleError(
