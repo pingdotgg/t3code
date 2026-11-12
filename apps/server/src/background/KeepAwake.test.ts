@@ -178,12 +178,14 @@ it.effect("whileWorking holds from the first live work to the last", () =>
     yield* harness.work("run.updated", true);
     assert.equal(yield* harness.next, "query");
 
-    // Only an item that ended can have changed the answer, so progress asks nothing.
-    yield* harness.work("turn-item.updated", true, { type: "subagent", status: "running" });
     yield* harness.work("turn-item.updated", false, { type: "subagent", status: "completed" });
     assert.deepEqual([yield* harness.next, yield* harness.next], ["query", "kill"]);
+
+    // A provider can report a subagent after the run has ended.
+    yield* harness.work("turn-item.updated", true, { type: "subagent", status: "running" });
+    assert.deepEqual([yield* harness.next, yield* harness.next], ["query", "spawn"]);
     assert.isTrue(yield* harness.idle);
-    assert.lengthOf(harness.commands, 1);
+    assert.lengthOf(harness.commands, 2);
   }),
 );
 

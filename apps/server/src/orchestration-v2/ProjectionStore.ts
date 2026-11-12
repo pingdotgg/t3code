@@ -7653,12 +7653,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       `;
       if (candidates.length === 0) return false;
       // The shell decides what is pending, so a hold always has a thread that shows it.
-      const { threads } = yield* decodeShellSnapshot(
+      const { threads, archivedThreads } = yield* decodeShellSnapshot(
         yield* readShellSnapshotRows({
           threadIds: candidates.map((row) => ThreadId.make(row.thread_id)),
         }),
       );
-      return threads.some((shell) =>
+      return [...threads, ...archivedThreads].some((shell) =>
         backgroundWorkHoldsCompletion(
           (shell.pendingBackgroundTasks ?? []).filter((task) => !isPullRequestWatchTask(task)),
         ),

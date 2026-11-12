@@ -9635,6 +9635,15 @@ it.effect("reports live agent work for active runs and holding background work o
     }
 
     yield* store.apply({
+      id: EventId.make("event:live-work:archived"),
+      type: "thread.archived",
+      threadId,
+      occurredAt: now,
+      payload: { ...initial.thread, archivedAt: now },
+    });
+    assert.isTrue(yield* store.hasLiveAgentWork(), "archived thread");
+
+    yield* store.apply({
       id: EventId.make("event:live-work:deleted"),
       type: "thread.deleted",
       threadId,

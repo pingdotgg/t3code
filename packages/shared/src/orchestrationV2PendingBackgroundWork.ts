@@ -48,6 +48,11 @@ void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
+/** Starting or ending one of these items can change whether a thread has background work. */
+export function isBackgroundTurnItem(item: Pick<OrchestrationV2TurnItem, "type">): boolean {
+  return BACKGROUND_TURN_ITEM_TYPES.has(item.type);
+}
+
 export function turnItemUpdateCanEndBackgroundWork(
   item: Pick<OrchestrationV2TurnItem, "type" | "status">,
 ): boolean {

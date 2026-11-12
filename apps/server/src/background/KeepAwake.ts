@@ -5,7 +5,7 @@
  */
 import type { KeepAwakeMode, OrchestrationV2StoredEvent } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { isBackgroundTurnItem } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -49,9 +49,9 @@ const WORK_EVENT_TYPES = [
   "thread.deleted",
 ] as const;
 
-// Item updates stream with every tool call; only an ending background item can release the hold.
+// Messages and plans stream item updates too; only background items can start or end work.
 const canChangeLiveWork = ({ event }: OrchestrationV2StoredEvent) =>
-  event.type !== "turn-item.updated" || turnItemUpdateCanEndBackgroundWork(event.payload);
+  event.type !== "turn-item.updated" || isBackgroundTurnItem(event.payload);
 
 const restartSchedule = Schedule.exponential("1 second").pipe(
   Schedule.modifyDelay(({ duration }) =>
