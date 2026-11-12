@@ -180,7 +180,7 @@ export function AutoSettleSettingsRows(props: {
           label="Close running terminals on settle"
           subtitle="Stop all of the thread's terminals, including dev servers, when it settles manually or automatically. Off closes idle terminals and actions configured to stop on settle."
           value={uniformMobileSetting(displayTargets, "closeRunningTerminalsOnSettle")}
-          disabled={disabled}
+          disabled={disabledFor("closeRunningTerminalsOnSettle")}
           onValueChange={(value) => props.write({ closeRunningTerminalsOnSettle: value })}
         />
       </SettingsSection>
