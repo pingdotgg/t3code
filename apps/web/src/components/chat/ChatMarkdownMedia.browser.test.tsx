@@ -2,8 +2,13 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
-import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import { act, render, stubGlobal } from "../../../test/render";
+import "../../index.css";
+import {
+  authoredImageSizeStyle,
+  ChatMarkdownAssetImage,
+  ChatMarkdownVideo,
+} from "./ChatMarkdownMedia";
 
 // Every evaluation of the URL query is one mint: the first read, then one per refresh.
 const assetQuery = vi.hoisted(() => ({ mints: 0 }));
@@ -82,5 +87,73 @@ describe("ChatMarkdownAssetImage", () => {
     await using screen = await render(<ChatMarkdownAssetImage {...image.props} />);
     await expect.element(screen.getByRole("img", { name: "diagram" })).toBeInTheDocument();
     expect(assetQuery.mints).toBe(2);
+  });
+});
+
+// Keeps preload="none" so the fake URL is never fetched; the test fires the metadata event.
+class HiddenIntersectionObserver {
+  observe() {}
+  disconnect() {}
+}
+
+describe("ChatMarkdownVideo", () => {
+  it("sizes a video from the server's size, then from its own loaded size", async () => {
+    using _observer = stubGlobal("IntersectionObserver", HiddenIntersectionObserver);
+    // A file overwritten in place can load with a shape the server no longer describes.
+    await using screen = await render(
+      <ChatMarkdownVideo
+        src="/asset/portrait.mp4"
+        alt="portrait"
+        copyMarkdown={undefined}
+        knownSize={{ width: 1920, height: 1080 }}
+      />,
+    );
+    const video = screen.getByLabelText("portrait").element() as HTMLVideoElement;
+    const knownBox = video.getBoundingClientRect();
+    expect({ width: knownBox.width, height: knownBox.height }).toEqual({
+      width: 414,
+      height: 232.875,
+    });
+    Object.defineProperties(video, {
+      videoWidth: { value: 1080 },
+      videoHeight: { value: 1920 },
+    });
+    await act(() => {
+      video.dispatchEvent(new Event("loadedmetadata"));
+    });
+
+    const box = video.getBoundingClientRect();
+    expect({ width: box.width, height: box.height }).toEqual({ width: 270, height: 480 });
+
+    // A different video in the same slot starts from its own size, not the last one's.
+    await screen.rerender(
+      <ChatMarkdownVideo
+        src="/asset/landscape.mp4"
+        alt="landscape"
+        copyMarkdown={undefined}
+        knownSize={{ width: 1920, height: 1080 }}
+      />,
+    );
+    const next = screen.getByLabelText("landscape").element().getBoundingClientRect();
+    expect({ width: next.width, height: next.height }).toEqual({ width: 414, height: 232.875 });
+  });
+
+  it("keeps a video's own ratio when Markdown gives only a width", async () => {
+    using _observer = stubGlobal("IntersectionObserver", HiddenIntersectionObserver);
+    await using screen = await render(
+      <ChatMarkdownVideo
+        src="/asset/portrait.mp4"
+        alt="portrait"
+        copyMarkdown={undefined}
+        style={authoredImageSizeStyle(200, undefined)}
+        knownSize={{ width: 1080, height: 1920 }}
+      />,
+    );
+
+    const box = screen.getByLabelText("portrait").element().getBoundingClientRect();
+    expect({ width: box.width, height: Math.round(box.height) }).toEqual({
+      width: 200,
+      height: 356,
+    });
   });
 });
