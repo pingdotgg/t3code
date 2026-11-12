@@ -168,6 +168,13 @@ it("reports native quota only for an OpenAI login on a native route", () => {
     ["default route", chatgpt, true, {}, true],
     ["openai base url", chatgpt, true, { openai_base_url: "https://chatgpt.com/x" }, true],
     ["openai proxy url", chatgpt, true, { openai_base_url: "https://proxy.example.com" }, false],
+    [
+      "loopback pass-through proxy",
+      chatgpt,
+      true,
+      { model_provider: "openai", openai_base_url: "http://127.0.0.1:6767/v1" },
+      true,
+    ],
     ["custom provider", chatgpt, true, hub, false],
     ["unknown provider id", chatgpt, true, { model_provider: "missing" }, false],
     ["unreadable config", chatgpt, true, null, false],
