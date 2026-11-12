@@ -60,6 +60,9 @@ Its threads, settings, and files stay as they are, and archived projects still s
 Settings project list, marked **Archived**. Choose one there and select **Unarchive** to bring it
 back. On mobile, both are in **Settings → Projects → Organize**.
 
+When T3 Code starts, it archives any project whose folder no longer exists, such as one you
+deleted or moved, or one on a drive that isn't connected. Unarchive it once the folder is back.
+
 A project on several machines must have every machine connected to pin or archive it.
 
 ## Worktree branch names
