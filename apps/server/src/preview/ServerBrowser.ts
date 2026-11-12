@@ -2658,6 +2658,9 @@ const make = Effect.gen(function* () {
         }
         tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
+      case "stop":
+        await session.send("Page.stopLoading");
+        return;
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);

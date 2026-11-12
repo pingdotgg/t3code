@@ -32,6 +32,7 @@ interface Props {
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
+  onStop: () => void;
   onSubmit: (url: string) => void;
   onOpenInBrowser?: (() => void) | undefined;
   onCapture?: ((record: boolean) => void) | undefined;
@@ -61,6 +62,7 @@ export function PreviewChromeRow({
   onBack,
   onForward,
   onRefresh,
+  onStop,
   onSubmit,
   onOpenInBrowser,
   onCapture,
@@ -135,7 +137,7 @@ export function PreviewChromeRow({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  onClick={refreshDisabled ? NOOP : onRefresh}
+                  onClick={refreshDisabled ? NOOP : loading ? onStop : onRefresh}
                   disabled={refreshDisabled}
                   aria-label={loading ? "Stop" : "Refresh"}
                   type="button"

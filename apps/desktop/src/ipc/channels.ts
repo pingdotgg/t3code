@@ -89,6 +89,7 @@ export const PREVIEW_NAVIGATE_CHANNEL = "desktop:preview-navigate";
 export const PREVIEW_GO_BACK_CHANNEL = "desktop:preview-go-back";
 export const PREVIEW_GO_FORWARD_CHANNEL = "desktop:preview-go-forward";
 export const PREVIEW_REFRESH_CHANNEL = "desktop:preview-refresh";
+export const PREVIEW_STOP_CHANNEL = "desktop:preview-stop";
 export const PREVIEW_ZOOM_IN_CHANNEL = "desktop:preview-zoom-in";
 export const PREVIEW_ZOOM_OUT_CHANNEL = "desktop:preview-zoom-out";
 export const PREVIEW_RESET_ZOOM_CHANNEL = "desktop:preview-reset-zoom";
