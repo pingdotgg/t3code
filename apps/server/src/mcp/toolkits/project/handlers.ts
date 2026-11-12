@@ -5,15 +5,19 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
+import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -25,18 +29,45 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
+
+const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
 
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") return unavailable();
   const message =
-    error._tag === "ProjectNotFoundError"
-      ? "The project was not found."
-      : error._tag === "ProjectConflictError"
-        ? "The workspace is already registered to a project."
-        : "The project is not empty; force=true is required to delete it.";
+    error._tag === "ProjectInvalidError"
+      ? error.detail
+      : error._tag === "ProjectNotFoundError"
+        ? "The project was not found."
+        : error._tag === "ProjectConflictError"
+          ? "The workspace is already registered to a project."
+          : "The project is not empty; force=true is required to delete it.";
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
+}
+
+function worktreeCheckHint(
+  error:
+    | ThreadLaunch.ThreadLaunchBaseRefError
+    | ThreadLaunch.ThreadLaunchBranchConflictError
+    | ThreadLaunch.ThreadLaunchNotRepositoryError,
+  strategy: { readonly startFromOrigin?: boolean | undefined },
+) {
+  if (error._tag === "ThreadLaunchNotRepositoryError")
+    return `Use workspaceStrategy: {type: "root"}, or pass the projectId of a Git repository.`;
+  if (error._tag === "ThreadLaunchBranchConflictError") {
+    const sibling = error.branch.replaceAll("/", "-");
+    return `Use a name that does not nest under or contain an existing branch${
+      sibling === error.branch ? "" : `, such as "${sibling}"`
+    }.`;
+  }
+  return `Pass a branch, tag, or commit that exists there${
+    strategy.startFromOrigin === true
+      ? "; the project has no usable remote to fetch it from."
+      : ", or set startFromOrigin:true if it exists only on a remote."
+  }`;
 }
 
 /** Require project worktrees so launches cannot target arbitrary host directories. */
@@ -64,10 +95,10 @@ const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
   namespace: string,
   key: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  // @effect-diagnostics-next-line preferSchemaOverJson:off - a JSON pair keeps the caller apart from the key.
+  const crypto = yield* Digest.Digest;
+  // @effect-diagnostics-next-line globalJsonInEffect:off - a JSON pair keeps the caller apart from the key.
   const bytes = new TextEncoder().encode(JSON.stringify([namespace, key]));
-  const digest = yield* crypto.digest("SHA-256", bytes).pipe(Effect.mapError(unavailable));
+  const digest = yield* crypto.digest(Digest.sha256, bytes).pipe(Effect.mapError(unavailable));
   return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });
 
@@ -120,11 +151,6 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               )).projectId
             : yield* resolveProjectId(context, input.projectId);
-        const readProject = Project.ProjectService.pipe(
-          Effect.flatMap((projects) => projects.getById(projectId)),
-          Effect.mapError(unavailable),
-          Effect.map(Option.getOrUndefined),
-        );
         // A retry of an accepted launch replays it: it keeps the model it started
         // with and skips the checks only a new launch needs, which the project
         // may no longer pass, such as a base branch deleted since.
@@ -135,16 +161,34 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const launchedModel =
           launched === null || launched.deletedAt !== null ? undefined : launched.modelSelection;
         const replaying = launchedModel !== undefined;
-        if (!replaying && input.workspaceStrategy?.type === "existing_worktree") {
-          const project = yield* readProject;
-          if (project === undefined)
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: "The project was not found.",
-            });
+        const project = replaying
+          ? undefined
+          : yield* Project.ProjectService.pipe(
+              Effect.flatMap((projects) => projects.getById(projectId)),
+              Effect.mapError(unavailable),
+              Effect.flatMap(
+                Option.match({
+                  onNone: () =>
+                    Effect.fail(
+                      new OrchestratorMcpFailure({
+                        code: "invalid_request",
+                        message: "The project was not found.",
+                      }),
+                    ),
+                  onSome: Effect.succeed,
+                }),
+              ),
+            );
+        if (project !== undefined && input.workspaceStrategy?.type === "existing_worktree")
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
+        if (!replaying && input.modelSelection !== undefined) {
+          const { instanceId, model } = input.modelSelection;
+          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+          if (provider !== undefined)
+            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
         }
-        // Reject unresolved base refs before accepting a launch; worktree provisioning happens later.
+        // Reject unresolved base refs and blocked branch names before accepting a launch; worktree provisioning happens later.
         const strategy = input.workspaceStrategy;
         if (!replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
@@ -155,11 +199,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               (error) =>
                 new OrchestratorMcpFailure({
                   code: "invalid_request",
-                  message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
-                    strategy.startFromOrigin === true
-                      ? "; the project has no usable remote to fetch it from."
-                      : ", or set startFromOrigin:true if it exists only on a remote."
-                  }`,
+                  message: `${error.message} No thread was created. ${worktreeCheckHint(error, strategy)}`,
                 }),
             ),
           );
@@ -167,15 +207,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // project's effective defaults, as the composer does. Its mode stays
         // within the ceiling it was approved with.
         const projectDefaults =
-          caller === undefined && !replaying
+          caller === undefined && project !== undefined
             ? yield* ServerSettings.ServerSettingsService.pipe(
                 Effect.flatMap((settings) => settings.getSettings),
                 Effect.mapError(unavailable),
-                Effect.flatMap((settings) =>
-                  Effect.map(
-                    readProject,
-                    (project) => resolveProjectSettings(settings, projectId, project).settings,
-                  ),
+                Effect.map(
+                  (settings) => resolveProjectSettings(settings, projectId, project).settings,
                 ),
               )
             : undefined;
@@ -202,12 +239,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
-        const startedRuntimeMode =
+        let startedRuntimeMode =
           projectDefaults !== undefined && input.runtimeMode === undefined
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
                 Effect.orElseSucceed(() => runtimeMode),
               )
             : runtimeMode;
+        if (!replaying) {
+          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          startedRuntimeMode = yield* resolveRuntimeMode(startedRuntimeMode, input.runtimeMode, {
+            modelSelection,
+            supportedRuntimeModes: providers.find(
+              (provider) => provider.instanceId === modelSelection.instanceId,
+            )?.supportedRuntimeModes,
+          });
+        }
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -246,6 +292,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 message: error.message,
               });
             }
+            // The administrator's ceiling refuses the mode; say so rather than "unavailable".
+            if (error._tag === "ThreadLaunchError" && isAboveCeilingError(error.cause)) {
+              return new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: error.cause.message,
+              });
+            }
             return unavailable();
           }),
         );
@@ -253,7 +306,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,
-          link: McpInvocationContext.threadLinkFor(scope, thread.id),
+          link: McpInvocationContext.threadLinkFor(scope, thread.id, thread.title),
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
           runId: run?.id ?? null,
@@ -343,16 +396,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      return yield* projects
-        .delete({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
+      const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
+      return yield* mutateProjectWithClone(projects, clones, {
+        ...input,
+        type: "project.delete",
+        commandId: yield* newCommandId(),
+      }).pipe(Effect.mapError(projectFailure));
     }),
   ),
   t3_project_clone: McpToolAccess.writesEnvironment(
     (input) =>
       Effect.gen(function* () {
         const repositories = yield* Repositories.SourceControlRepositoryService;
-        return yield* repositories.cloneRepository(input).pipe(
+        // Agents' MCP calls have their own long budget, and an aborted call interrupts git.
+        return yield* repositories.cloneRepository(input, { timeoutMs: null }).pipe(
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({

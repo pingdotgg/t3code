@@ -17,6 +17,14 @@ const ASSET_PATH_MAX_LENGTH = 1024;
  */
 export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
 
+export const NativeAppIconReference = Schema.Union([
+  ToolActivityNativeAppReference,
+  Schema.TaggedStruct("app-path", {
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
+]);
+export type NativeAppIconReference = typeof NativeAppIconReference.Type;
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
@@ -50,14 +58,16 @@ export const AssetResource = Schema.Union([
     path: Schema.optional(ProjectFaviconPath),
   }),
   Schema.TaggedStruct("native-app-icon", {
-    app: ToolActivityNativeAppReference,
+    app: NativeAppIconReference,
   }),
   // Media a change request body points at on its host. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches
-  // them with the credential the host's driver holds for the repository at `cwd`.
+  // them with the credential the host's driver holds for the repository at `cwd`. `repository`
+  // names the change request's repository, which can differ from the checkout at `cwd`.
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+    repository: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;

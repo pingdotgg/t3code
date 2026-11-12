@@ -3,6 +3,7 @@ import type {
   StorageCleanupSettings,
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
+import { resolvePastedPath } from "@t3tools/shared/path";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -16,6 +17,8 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useDebouncedValue } from "../../state/queries";
+import { AnimatedHeight } from "../AnimatedHeight";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
@@ -52,6 +55,7 @@ export function WorktreesDirectoryRow() {
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["worktreesDirectory"]);
   const edited = useRef(false);
+  const draft = useRef("");
   if (
     connectedEnvironments.some(
       (environment) =>
@@ -85,8 +89,13 @@ export function WorktreesDirectoryRow() {
           spellCheck={false}
           placeholder={mixed ? "Mixed" : "Default"}
           defaultValue={mixed ? "" : settings.worktreesDirectory}
-          onChange={() => {
+          onFocus={(event) => {
+            draft.current = event.target.value;
+          }}
+          onChange={(event) => {
             edited.current = true;
+            draft.current = resolvePastedPath(draft.current, event.target.value);
+            event.target.value = draft.current;
           }}
           onBlur={(event) => {
             const value = event.target.value.trim();
@@ -100,6 +109,8 @@ export function WorktreesDirectoryRow() {
   );
 }
 
+type SaveOptions = Parameters<ReturnType<typeof useUpdateScopedSettings>>[1];
+
 function RetentionControl({
   label,
   value,
@@ -108,19 +119,65 @@ function RetentionControl({
 }: {
   label: string;
   value: number | null;
-  onChange: (value: number | null) => void;
+  onChange: (value: number | null, onFailed: () => void) => void;
   minimum?: number;
 }) {
   const [draft, setDraft] = useState(value);
   const [savedValue, setSavedValue] = useState(value);
+  // Saving an age can start a cleanup sweep, so turning a rule on only opens a draft.
+  // While its first save is in flight this holds that submission.
+  const [enabling, setEnabling] = useState<"draft" | "edited" | { days: number } | null>(null);
+  // Holds an age until Enter or focus leaves the row: one edited before focus moved to the
+  // switch, so switching off never saves it first, or one stepped toward a rule's first age,
+  // so raising it from 8 never saves a shorter age on the way.
+  const [held, setHeld] = useState(false);
+  // Hides a saved rule's age once it is switched off, so no blur can save it after null.
+  const [switchedOff, setSwitchedOff] = useState(false);
   if (savedValue !== value) {
     setSavedValue(value);
     setDraft(value);
+    setEnabling(null);
+    setHeld(false);
+    setSwitchedOff(false);
   }
+  const pending = typeof enabling === "object" ? enabling : null;
+  const on = (value !== null && !switchedOff) || enabling !== null;
+  const row = useRef<HTMLDivElement>(null);
+
+  const commit = (next: number) => {
+    const days = Math.min(3650, Math.max(minimum, Math.round(next)));
+    setDraft(days);
+    setHeld(false);
+    if (days === pending?.days) return;
+    if (value !== null) {
+      onChange(days, () => {});
+      return;
+    }
+    const submission = { days };
+    setEnabling(submission);
+    onChange(days, () => setEnabling((current) => (current === submission ? null : current)));
+  };
+
+  const switchOff = () => {
+    setDraft(value);
+    setHeld(false);
+    setEnabling(null);
+    if (value === null && pending === null) return;
+    setSwitchedOff(true);
+    onChange(null, () => setSwitchedOff(false));
+  };
 
   return (
-    <div className="flex items-center gap-3">
-      {value !== null ? (
+    <div
+      ref={row}
+      className="flex items-center gap-3"
+      onBlur={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget)) return;
+        if (held && draft !== null) commit(draft);
+        else setEnabling((current) => (typeof current === "string" ? null : current));
+      }}
+    >
+      {on ? (
         <NumberField
           value={draft}
           min={minimum}
@@ -128,22 +185,54 @@ function RetentionControl({
           step={1}
           size="sm"
           className="w-auto"
-          onValueChange={setDraft}
-          onValueCommitted={(next) => {
+          onValueChange={(next) => {
+            setDraft(next);
+            setEnabling((current) => (current === "draft" ? "edited" : current));
+          }}
+          onValueCommitted={(next, { reason, event }) => {
             if (next === null) setDraft(value);
-            else {
-              const days = Math.min(3650, Math.max(minimum, Math.round(next)));
-              setDraft(days);
-              onChange(days);
-            }
+            else if (
+              reason === "input-blur"
+                ? event instanceof FocusEvent &&
+                  event.relatedTarget instanceof Node &&
+                  row.current?.contains(event.relatedTarget)
+                : value === null
+            ) {
+              setDraft(next);
+              setHeld(true);
+            } else commit(next);
           }}
         >
           <NumberFieldGroup>
             <NumberFieldDecrement aria-label={`Decrease ${label}`} />
             <NumberFieldInput
               aria-label={`${label} in days`}
-              size={new Intl.NumberFormat().format(draft ?? value).length}
-              className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right"
+              autoFocus={value === null}
+              size={5}
+              className="w-auto grow-0 text-right"
+              // Any typed or pasted edit replaces a held age: NumberField commits it on blur itself,
+              // and text it cannot parse yet must not leave the held age to be saved.
+              onChange={() => setHeld(false)}
+              onPaste={() => setHeld(false)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (event.key === "Enter") {
+                  // Blurring lets NumberField parse the visible text and commit it once. It
+                  // skips an unedited value, so an untouched draft is committed here.
+                  const input = event.currentTarget;
+                  const shown =
+                    draft !== null && input.value === new Intl.NumberFormat().format(draft);
+                  if (enabling === "draft" && shown) commit(draft);
+                  input.blur();
+                } else if (event.key === "Escape" && (held || typeof enabling === "string")) {
+                  // An unhandled Escape closes the settings page.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setDraft(pending?.days ?? value);
+                  setHeld(false);
+                  setEnabling((current) => (typeof current === "string" ? null : current));
+                }
+              }}
             />
             <span aria-hidden="true" className="self-center pr-2 text-xs">
               days
@@ -156,8 +245,15 @@ function RetentionControl({
       )}
       <Switch
         aria-label={label}
-        checked={value !== null}
-        onCheckedChange={(enabled) => onChange(enabled ? 8 : null)}
+        checked={on}
+        // Keeps focus in the age field, so switching off never commits an edited age first.
+        onMouseDown={(event) => event.preventDefault()}
+        onCheckedChange={(enabled) => {
+          if (enabled) {
+            setDraft(8);
+            setEnabling("draft");
+          } else switchOff();
+        }}
       />
     </div>
   );
@@ -474,12 +570,15 @@ export function WorktreeCleanupSection() {
     )
       ? "Mixed across selected machines"
       : undefined;
-  const update = (patch: Partial<StorageCleanupSettings>) =>
-    updateSettings({ storageCleanup: patch });
-  const updateWorktree = (patch: Partial<WorktreeCleanupRules>) =>
+  // A policy locks these through worktreeCleanup, which also reaches each project's own rules.
+  const lockablePath = (key: keyof WorktreeCleanupRules) =>
+    isProjectScope ? ["worktreeCleanup"] : ["worktreeCleanup", `storageCleanup.${key}`];
+  const update = (patch: Partial<StorageCleanupSettings>, options?: SaveOptions) =>
+    updateSettings({ storageCleanup: patch }, options);
+  const updateWorktree = (patch: Partial<WorktreeCleanupRules>, options?: SaveOptions) =>
     isProjectScope
-      ? updateSettings({ worktreeCleanup: { mode: "custom", rules: patch } })
-      : update(patch);
+      ? updateSettings({ worktreeCleanup: { mode: "custom", rules: patch } }, options)
+      : update(patch, options);
 
   if (
     isProjectScope &&
@@ -555,6 +654,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete worktrees with deleted threads"
               status={ruleStatus("worktreeOnDelete")}
+              managedPaths={lockablePath("worktreeOnDelete")}
               description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
@@ -568,6 +668,7 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
+              managedPaths={lockablePath("worktreeOnMerge")}
               description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
               serverScoped={!isProjectScope}
               control={
@@ -581,13 +682,16 @@ export function WorktreeCleanupSection() {
             <SettingsRow
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
+              managedPaths={lockablePath("worktreeAfterDays")}
               description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
                   label="Delete inactive worktrees"
                   value={settings.worktreeAfterDays}
-                  onChange={(worktreeAfterDays) => updateWorktree({ worktreeAfterDays })}
+                  onChange={(worktreeAfterDays, onFailed) =>
+                    updateWorktree({ worktreeAfterDays }, { onFailed })
+                  }
                 />
               }
             />
@@ -603,6 +707,7 @@ export function WorktreeCleanupSection() {
                 ) && (
                   <SettingsRow
                     title="Delete settled worktrees"
+                    managedPaths={lockablePath("worktreeSettledAfterDays")}
                     status={[
                       ruleStatus("worktreeSettledAfterDays"),
                       environments.length > connectedEnvironments.length
@@ -618,8 +723,8 @@ export function WorktreeCleanupSection() {
                         label="Delete settled worktrees"
                         value={settings.worktreeSettledAfterDays}
                         minimum={0}
-                        onChange={(worktreeSettledAfterDays) =>
-                          updateWorktree({ worktreeSettledAfterDays })
+                        onChange={(worktreeSettledAfterDays, onFailed) =>
+                          updateWorktree({ worktreeSettledAfterDays }, { onFailed })
                         }
                       />
                     }
@@ -628,6 +733,7 @@ export function WorktreeCleanupSection() {
               <SettingsRow
                 title="Delete unchanged worktrees"
                 status={ruleStatus("worktreeUnchanged")}
+                managedPaths={lockablePath("worktreeUnchanged")}
                 description="Remove worktrees with no commits beyond the default branch."
                 serverScoped={!isProjectScope}
                 control={
@@ -645,6 +751,7 @@ export function WorktreeCleanupSection() {
                 <SettingsRow
                   {...searchableSetting("storage-worktree-keep-when")}
                   status={ruleStatus("worktreeKeepWhen")}
+                  managedPaths={lockablePath("worktreeKeepWhen")}
                   description={
                     settings.worktreeKeepWhen === "any-local-files"
                       ? "Includes ignored files, except node_modules."
@@ -694,14 +801,33 @@ export function StorageCleanupSections() {
   const { scope, connectedEnvironments, targets } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  if (scope.kind === "project" || scope.kind === "checkout") return null;
   const settings = scopedSettings.storageCleanup;
-  const ruleStatus = (key: "browserArtifactsAfterDays" | "logsAfterDays") =>
-    targets.some((target) => target.settings.storageCleanup[key] !== settings[key])
+  const targetIdsKey = environmentIdsKey(targets.map((target) => target.environmentId).sort());
+  const artifactsMixed =
+    targets.length > 1 &&
+    targets.some(
+      (target) =>
+        target.settings.storageCleanup.browserArtifactsAfterDays !==
+        settings.browserArtifactsAfterDays,
+    );
+  const logsMixed =
+    targets.length > 1 &&
+    targets.some(
+      (target) => target.settings.storageCleanup.logsAfterDays !== settings.logsAfterDays,
+    );
+  const settledArtifactsStatus = useDebouncedValue(`${targetIdsKey}:${artifactsMixed}`, 300);
+  const settledLogsStatus = useDebouncedValue(`${targetIdsKey}:${logsMixed}`, 300);
+  const artifactsStatus =
+    targets.length > 1 && settledArtifactsStatus === `${targetIdsKey}:true`
       ? "Mixed across selected machines"
       : undefined;
-  const update = (patch: Partial<StorageCleanupSettings>) =>
-    updateSettings({ storageCleanup: patch });
+  const logsStatus =
+    targets.length > 1 && settledLogsStatus === `${targetIdsKey}:true`
+      ? "Mixed across selected machines"
+      : undefined;
+  if (scope.kind === "project" || scope.kind === "checkout") return null;
+  const update = (patch: Partial<StorageCleanupSettings>, options: SaveOptions) =>
+    updateSettings({ storageCleanup: patch }, options);
   const databaseStorageNotice = (
     <DatabaseStorageNotice
       environments={connectedEnvironments.filter(
@@ -725,32 +851,40 @@ export function StorageCleanupSections() {
     <>
       {databaseStorageNotice}
       <SettingsSection id="storage-artifacts" title="Artifacts and logs">
-        <SettingsRow
-          title="Delete old browser artifacts"
-          status={ruleStatus("browserArtifactsAfterDays")}
-          description="Delete saved browser captures after this many days. Older capture links will no longer open."
-          serverScoped
-          control={
-            <RetentionControl
-              label="Delete old browser artifacts"
-              value={settings.browserArtifactsAfterDays}
-              onChange={(browserArtifactsAfterDays) => update({ browserArtifactsAfterDays })}
-            />
-          }
-        />
-        <SettingsRow
-          title="Delete old rotated logs"
-          status={ruleStatus("logsAfterDays")}
-          description="Delete inactive rotated log files after this many days. Current logs are kept."
-          serverScoped
-          control={
-            <RetentionControl
-              label="Delete old rotated logs"
-              value={settings.logsAfterDays}
-              onChange={(logsAfterDays) => update({ logsAfterDays })}
-            />
-          }
-        />
+        <AnimatedHeight>
+          <SettingsRow
+            title="Delete old browser artifacts"
+            status={artifactsStatus}
+            managedPaths={["storageCleanup.browserArtifactsAfterDays"]}
+            description="Delete saved browser captures after this many days. Older capture links will no longer open."
+            serverScoped
+            control={
+              <RetentionControl
+                label="Delete old browser artifacts"
+                value={settings.browserArtifactsAfterDays}
+                onChange={(browserArtifactsAfterDays, onFailed) =>
+                  update({ browserArtifactsAfterDays }, { onFailed })
+                }
+              />
+            }
+          />
+        </AnimatedHeight>
+        <AnimatedHeight>
+          <SettingsRow
+            title="Delete old rotated logs"
+            status={logsStatus}
+            managedPaths={["storageCleanup.logsAfterDays"]}
+            description="Delete inactive rotated log files after this many days. Current logs are kept."
+            serverScoped
+            control={
+              <RetentionControl
+                label="Delete old rotated logs"
+                value={settings.logsAfterDays}
+                onChange={(logsAfterDays, onFailed) => update({ logsAfterDays }, { onFailed })}
+              />
+            }
+          />
+        </AnimatedHeight>
       </SettingsSection>
       <CleanupSection />
     </>

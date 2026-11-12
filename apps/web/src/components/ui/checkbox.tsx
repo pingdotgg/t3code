@@ -8,10 +8,21 @@ const rootClassName =
 const indicatorClassName =
   "-inset-px absolute flex items-center justify-center rounded-[.25rem] text-primary-foreground data-unchecked:hidden data-checked:bg-primary data-indeterminate:text-foreground in-[[data-slot=checkbox]:focus-visible]:inset-shadow-[0_0_0_3px_var(--background)] in-[[data-slot=checkbox]:focus-visible]:outline-2 in-[[data-slot=checkbox]:focus-visible]:outline-solid in-[[data-slot=checkbox]:focus-visible]:-outline-offset-2 in-[[data-slot=checkbox]:focus-visible]:outline-inherit";
 
-function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
+const variantClassNames = {
+  default: "",
+  contrast: "border-foreground/55",
+};
+
+type CheckboxVariant = keyof typeof variantClassNames;
+
+function Checkbox({
+  className,
+  variant = "default",
+  ...props
+}: CheckboxPrimitive.Root.Props & { variant?: CheckboxVariant }) {
   return (
     <CheckboxPrimitive.Root
-      className={cn(rootClassName, className)}
+      className={cn(rootClassName, variantClassNames[variant], className)}
       data-slot="checkbox"
       {...props}
     >
@@ -60,10 +71,21 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
 }
 
 // Checkbox's look without its hidden input, for a row that is itself the button.
-function CheckboxMark({ checked }: { checked: boolean }) {
+function CheckboxMark({
+  checked,
+  variant = "default",
+}: {
+  checked: boolean;
+  variant?: CheckboxVariant;
+}) {
   const state = checked ? { "data-checked": "" } : { "data-unchecked": "" };
   return (
-    <span aria-hidden className={rootClassName} data-slot="checkbox" {...state}>
+    <span
+      aria-hidden
+      className={cn(rootClassName, variantClassNames[variant])}
+      data-slot="checkbox"
+      {...state}
+    >
       <span className={indicatorClassName} data-slot="checkbox-indicator" {...state}>
         <svg
           className="size-3.5 text-current sm:size-3"

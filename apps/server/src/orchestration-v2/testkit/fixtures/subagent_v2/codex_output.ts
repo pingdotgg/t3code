@@ -83,4 +83,14 @@ export function assertSubagentV2Output(
     "child thread must contain the post-root subagent response",
   );
   assert.equal(childProjection.providerTurns[0]?.status, "completed");
+
+  // Codex reports each agent's counts on its own turn. Only the root's model was reported.
+  assert.deepInclude(projection.providerTurns[0]?.turnTokenUsage, {
+    usageStatus: "complete",
+    outputTokens: 69,
+    models: ["gpt-6-luna"],
+  });
+  const childUsage = childProjection.providerTurns[0]?.turnTokenUsage;
+  assert.deepInclude(childUsage, { usageStatus: "complete", outputTokens: 6 });
+  assert.notProperty(childUsage, "models");
 }
