@@ -25,6 +25,9 @@ allowBuilds:
   objc-js: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz": true
   sharp: true
+  # i18next-cli depends on @swc/core, whose platform binaries ship as
+  # prebuilds; its postinstall only validates them and falls back to @swc/wasm.
+  "@swc/core": false
   utf-8-validate: false
   workerd: false
 
