@@ -95,21 +95,17 @@ it("returns focus to the editor after a pick", async () => {
   await vi.waitFor(() => expect(handle.focusAtEnd).toHaveBeenCalled());
 });
 
-it("leaves the editor unfocused after a pick on a coarse pointer", async () => {
-  const matchMedia = window.matchMedia.bind(window);
-  using _coarse = vi
-    .spyOn(window, "matchMedia")
-    .mockImplementation((query) =>
-      query === "(pointer: coarse)" ? { ...matchMedia(query), matches: true } : matchMedia(query),
-    );
+it("leaves the editor unfocused after a touch pick", async () => {
   const { handle, ui } = withComposer(<OverflowMenu />);
   await using screen = await render(ui, { router: false }); // no routes involved
   await userEvent.click(screen.getByRole("button", { name: "More" }));
-  await userEvent.click(page.getByRole("menuitemradio", { name: "Supervised" }));
+  const supervised = page.getByRole("menuitemradio", { name: "Supervised" });
+  // userEvent only taps with a mouse pointer; a tap reaches Base UI as a touch click.
+  supervised
+    .element()
+    .dispatchEvent(new PointerEvent("click", { bubbles: true, detail: 1, pointerType: "touch" }));
   await expect.element(screen.getByRole("status")).toHaveTextContent("approval-required");
-  await expect
-    .element(page.getByRole("menuitemradio", { name: "Supervised" }))
-    .not.toBeInTheDocument();
+  await expect.element(supervised).not.toBeInTheDocument();
   expect(handle.focusAtEnd).not.toHaveBeenCalled();
 });
 
