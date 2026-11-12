@@ -825,38 +825,37 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
-      // Agents advertise project-scoped commands for the session/new cwd.
-      snapshotForCwd: (cwd) =>
-        !effectiveConfig.enabled
-          ? snapshot.getSnapshot
-          : Effect.all([
-              snapshot.getSnapshot,
-              provideAcpManagementServices(
-                probeAcpRegistryConfiguration({
-                  instanceId,
-                  settings: effectiveConfig,
-                  cwd,
-                  environment: providerProbeEnvironment(processEnvironment),
-                }),
-              ).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderDriverError({
-                      driver: DRIVER_KIND,
-                      instanceId,
-                      detail: `Failed to discover ACP Registry commands for '${cwd}'.`,
-                      cause,
-                    }),
-                ),
+      snapshotForCwd: Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (cwd: string) {
+        const machineSnapshot = yield* snapshot.getSnapshot;
+        if (!effectiveConfig.enabled) return machineSnapshot;
+        // Agents advertise project-scoped commands for a session's cwd; a live session there wins.
+        const live = Option.isSome(runtimeCoordinator)
+          ? yield* runtimeCoordinator.value.getAvailableCommandsForCwd(instanceId, cwd)
+          : Option.none();
+        const { slashCommands, skills } = Option.isSome(live)
+          ? live.value
+          : yield* provideAcpManagementServices(
+              probeAcpRegistryConfiguration({
+                instanceId,
+                settings: effectiveConfig,
+                cwd,
+                environment: providerProbeEnvironment(processEnvironment),
+              }),
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to discover ACP Registry commands for '${cwd}'.`,
+                    cause,
+                  }),
               ),
-            ]).pipe(
-              Effect.map(([machineSnapshot, { slashCommands, skills }]) => ({
-                ...machineSnapshot,
-                slashCommands,
-                skills,
-                slashCommandsPending: false,
-              })),
-            ),
+            );
+        // Agents may advertise after the probe's grace period; keep what live sessions published.
+        if (slashCommands.length === 0 && skills.length === 0) return machineSnapshot;
+        return { ...machineSnapshot, slashCommands, skills, slashCommandsPending: false };
+      }),
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
         : Effect.void

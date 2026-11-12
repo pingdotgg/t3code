@@ -303,13 +303,27 @@ export const mergeProviderSnapshot = (
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
   const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
-  // Folder catalogs were compared with the old machine catalog, so every folder rescans.
-  const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
-    ? previousProvider.workspaceSnapshots
-    : previousProvider.workspaceSnapshots?.map((snapshot) => ({
-        ...snapshot,
-        modelsPending: true,
-      }));
+  const inventory = shouldRetainMissingOpenCodeMetadata(nextProvider)
+    ? {
+        slashCommands:
+          nextProvider.slashCommands.length === 0
+            ? previousProvider.slashCommands
+            : nextProvider.slashCommands,
+        skills: nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
+      }
+    : { slashCommands: nextProvider.slashCommands, skills: nextProvider.skills };
+  // Folder snapshots were taken against the old machine snapshot. Changed commands (e.g. a live
+  // session advertising) drop them so clients rescan at once; changed models mark them pending.
+  const previousWorkspaceSnapshots =
+    !Equal.equals(inventory.slashCommands, previousProvider.slashCommands) ||
+    !Equal.equals(inventory.skills, previousProvider.skills)
+      ? undefined
+      : Equal.equals(models, previousProvider.models)
+        ? previousProvider.workspaceSnapshots
+        : previousProvider.workspaceSnapshots?.map((snapshot) => ({
+            ...snapshot,
+            modelsPending: true,
+          }));
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
@@ -319,15 +333,7 @@ export const mergeProviderSnapshot = (
       : previousWorkspaceSnapshots !== undefined
         ? { workspaceSnapshots: previousWorkspaceSnapshots }
         : {}),
-    ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
-      ? {
-          slashCommands:
-            nextProvider.slashCommands.length === 0
-              ? previousProvider.slashCommands
-              : nextProvider.slashCommands,
-          skills: nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
-        }
-      : {}),
+    ...inventory,
   };
 };
 

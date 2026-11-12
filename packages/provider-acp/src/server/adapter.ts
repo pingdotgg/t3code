@@ -344,8 +344,10 @@ export interface AcpAdapterV2Flavor {
    * nor count as it starting.
    */
   readonly ignoreSessionUpdate?: (notification: EffectAcpSchema.SessionNotification) => boolean;
+  /** `cwd` is the session's working directory, which agents scope project commands to. */
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+    cwd: string | null,
   ) => Effect.Effect<void>;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
@@ -6352,8 +6354,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
               if (notification.update.sessionUpdate === "available_commands_update") {
                 yield* (
-                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                    Effect.void
+                  flavor.onAvailableCommandsUpdate?.(
+                    notification.update.availableCommands,
+                    input.runtimePolicy.cwd,
+                  ) ?? Effect.void
                 );
               }
               if (

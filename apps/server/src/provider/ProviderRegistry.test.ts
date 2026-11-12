@@ -615,7 +615,7 @@ it.layer(
   });
 
   describe("ProviderRegistry.layer", () => {
-    it("marks folder catalogs pending when a machine refresh changes the machine models", () => {
+    it("rescans folders when a machine refresh changes the machine models or commands", () => {
       const machineModel = {
         slug: "opencode/big-pickle",
         name: "Big Pickle",
@@ -667,6 +667,11 @@ it.layer(
           { cwd: "/plain", models: undefined, modelsPending: true },
         ],
       );
+      const liveCommands = ProviderRegistry.mergeProviderSnapshot(withCatalog, {
+        ...provider,
+        slashCommands: [{ name: "new-live-command" }],
+      });
+      assert.strictEqual(liveCommands.workspaceSnapshots, undefined);
     });
 
     it("stores workspace skills, commands and options without changing machine metadata", () => {

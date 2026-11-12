@@ -493,8 +493,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
   } else if (method === "session/new") {
     const projectCommands = join(params.cwd, "commands.json");
-    const names = existsSync(projectCommands) ? JSON.parse(readFileSync(projectCommands, "utf8")) : [];
     send({ id, result: { sessionId: "probe-session" } });
+    // Without a commands.json the agent advertises nothing, like one that advertises late.
+    if (!existsSync(projectCommands)) return;
+    const names = JSON.parse(readFileSync(projectCommands, "utf8"));
     send({
       method: "session/update",
       params: {
@@ -630,6 +632,23 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       const workspace = yield* snapshotForCwd(projectPath);
       expect(workspace.slashCommands.map((command) => command.name)).toContain("demo");
       expect(workspace.skills.map((skill) => skill.name)).toContain("demo-skill");
+
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      const liveCommands = [{ name: "review" }, { name: "new-live-command" }];
+      yield* coordinator.publishAvailableCommands(
+        identity.instanceId,
+        { slashCommands: liveCommands, skills: [] },
+        projectPath,
+      );
+      const live = yield* snapshotForCwd(projectPath);
+      expect(live.slashCommands).toEqual(liveCommands);
+      expect(live.skills).toEqual([]);
+
+      const silentPath = path.join(directory, "silent");
+      yield* fileSystem.makeDirectory(silentPath);
+      yield* instance.snapshot.refresh;
+      const silent = yield* snapshotForCwd(silentPath);
+      expect(silent.slashCommands).toEqual(liveCommands);
     }),
   );
 });

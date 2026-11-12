@@ -263,10 +263,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(runtimeCoordinator === undefined
       ? {}
       : {
-          onAvailableCommandsUpdate: (commands) =>
+          onAvailableCommandsUpdate: (commands, cwd) =>
             runtimeCoordinator.publishAvailableCommands(
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
+              cwd,
             ),
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
