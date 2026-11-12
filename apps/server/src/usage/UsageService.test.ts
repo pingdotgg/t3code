@@ -12,6 +12,7 @@ import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
@@ -248,6 +249,7 @@ const layerService = (input: {
   );
 
 const BEFORE_NARROW_WINDOW = Date.parse("2026-08-01T10:00:00Z") / 1000;
+const NARROW_WINDOW_MTIME = Date.parse("2026-09-01T10:00:00Z") / 1000;
 const NARROW_WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-09-01"),
@@ -576,9 +578,55 @@ describe("UsageService", () => {
         assert.strictEqual(totalOutputTokens(rewritten), 71);
         assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, rewritten.buckets);
         yield* service.awaitPersisted;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const originalPath = (yield* Effect.promise(() => NodeFSP.realpath(compressedPath))).slice(
+          0,
+          -4,
+        );
+        yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<
+              string,
+              { cs: Record<string, unknown>; r: unknown[]; t: unknown[]; mr: number }
+            >;
+          };
+          const archived = document.files[await NodeFSP.realpath(compressedPath)];
+          assert.ok(archived);
+          document.files[originalPath] = {
+            ...archived,
+            r: [],
+            t: [],
+            mr: 1,
+            cs: { ...archived.cs, malformedRecords: 1 },
+          };
+          await NodeFSP.writeFile(cachePath, encodeUnknownJsonString(document));
+        });
         const restarted = yield* UsageService.make;
-        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, rewritten.buckets);
+        const restored = yield* restarted.readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, rewritten.buckets);
+        assert.strictEqual(
+          restored.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          0,
+        );
         yield* restarted.awaitPersisted;
+        yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, unknown>;
+          };
+          assert.strictEqual(document.files[originalPath], undefined);
+          await NodeFSP.rm(compressedPath);
+        });
+        const removed = yield* UsageService.make;
+        const retained = yield* removed.readSummary(WINDOW);
+        assert.deepStrictEqual(retained.buckets, rewritten.buckets);
+        assert.strictEqual(
+          retained.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          0,
+        );
+        yield* removed.awaitPersisted;
       }).pipe(
         Effect.scoped,
         Effect.provide(layerService({ prefix: "usage-compressed-codex", home, settings })),
@@ -1120,7 +1168,7 @@ describe("UsageService", () => {
           };
           const muse = (summary: UsageSummary) =>
             summary.buckets.filter((bucket) => bucket.provider === "muse");
-          const first = yield* service.readSummary(window);
+          const first = yield* service.readSummary({ ...window, awaitRefresh: true });
           const buckets = muse(first);
           assert.strictEqual(
             buckets.reduce((sum, b) => sum + b.records, 0),
@@ -1202,6 +1250,7 @@ describe("UsageService", () => {
           assert.closeTo(repriced?.costUsd ?? NaN, 0.000486, 1e-12);
         }).pipe(
           Effect.scoped,
+          Effect.provideService(SpawnExecutableResolution, (command: string) => command),
           Effect.provide(
             layerService({
               prefix: "usage-muse",
@@ -1233,6 +1282,66 @@ describe("UsageService", () => {
           ),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("returns other providers' usage while Muse home discovery is still pending", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const museStarted = yield* Deferred.make<void>();
+      const museReady = yield* Deferred.make<MuseSdk.MuseSdkHost>();
+      const museHome = NodePath.join(home, "muse");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(museHome, "sessions"), { recursive: true }),
+      );
+      using _create = vi
+        .spyOn(MuseSdk, "createMuseSdkHostEffect")
+        .mockImplementation(() =>
+          Deferred.succeed(museStarted, undefined).pipe(Effect.andThen(Deferred.await(museReady))),
+        );
+      const museSources = (summary: UsageSummary) =>
+        summary.sources
+          .filter((source) => source.fingerprint.provider === "muse")
+          .map((source) => [source.fingerprint.resolvedHomePath, source.status, source.refreshing]);
+      const [pending, refreshed] = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const read = yield* Effect.forkChild(service.readSummary(WINDOW));
+        yield* Deferred.await(museStarted);
+        const pending = yield* Fiber.join(read);
+        const refresh = yield* Effect.forkChild(
+          service.readSummary({ ...WINDOW, awaitRefresh: true }),
+        );
+        yield* Deferred.succeed(museReady, {
+          initializeResult: { grantedCapabilities: [], museHome },
+          close: async () => {},
+        } as unknown as MuseSdk.MuseSdkHost);
+        return [pending, yield* Fiber.join(refresh)] as const;
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(SpawnExecutableResolution, (command: string) => command),
+        Effect.provide(
+          layerService({
+            prefix: "usage-muse-pending",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("muse")]: {
+                  driver: ProviderDriverKind.make("muse"),
+                  enabled: false,
+                },
+              },
+            },
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(pending), 5);
+      assert.deepStrictEqual(museSources(pending), [["muse", "ok", true]]);
+      assert.deepStrictEqual(museSources(refreshed), [
+        [NodePath.join(museHome, "sessions"), "ok", undefined],
+      ]);
+    }).pipe(Effect.scoped),
   );
 
   it.live("reports missing Pi history and skips malformed records without losing valid usage", () =>
@@ -1322,6 +1431,15 @@ describe("UsageService", () => {
           "windows-profile",
           "win32",
         ],
+        [undefined, undefined, "pi-home/.pi/agent/sessions", undefined, "pi-home"],
+        ["~/custom-pi", undefined, "pi-agent-home/custom-pi/sessions", undefined, "pi-agent-home"],
+        [
+          "~/ignored-pi",
+          "~/custom-sessions",
+          "pi-session-home/custom-sessions",
+          undefined,
+          "pi-session-home",
+        ],
       ] as const) {
         const dir = NodePath.join(home, relativeDir);
         yield* Effect.promise(async () => {
@@ -1361,7 +1479,7 @@ describe("UsageService", () => {
               prefix: "usage-pi-" + relativeDir.replaceAll("/", "-"),
               home,
               settings:
-                launchArgs === undefined
+                launchArgs === undefined && instanceHome === undefined
                   ? settings
                   : {
                       ...settings,
@@ -1369,7 +1487,7 @@ describe("UsageService", () => {
                         ...settings.providerInstances,
                         [ProviderInstanceId.make("pi")]: {
                           driver: ProviderDriverKind.make("pi"),
-                          config: { launchArgs },
+                          config: launchArgs === undefined ? {} : { launchArgs },
                           environment:
                             instanceHome === undefined
                               ? []
@@ -1814,6 +1932,43 @@ describe("UsageService", () => {
           1,
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("counts unpriced tokens from the unpriced records of a mixed model", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const message = (id: string, cost: number, input: number, output: number, minute: number) =>
+        encodeUnknownJson({
+          id,
+          sessionID: "session-1",
+          role: "assistant",
+          modelID: "acme-coder-1",
+          providerID: "acme",
+          time: { created: Date.parse(`2026-08-01T10:0${minute}:00Z`) },
+          cost,
+          tokens: { input, output, reasoning: 0, cache: { read: 0, write: 0 } },
+        });
+      const priced = yield* message("msg_priced", 1, 60, 40, 0);
+      const unpriced = yield* message("msg_unpriced", 0, 9_000, 900, 1);
+      yield* Effect.promise(async () => {
+        const directory = NodePath.join(home, "opencode", "storage", "message", "session-1");
+        await NodeFSP.mkdir(directory, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(directory, "msg_priced.json"), priced);
+        await NodeFSP.writeFile(NodePath.join(directory, "msg_unpriced.json"), unpriced);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-unpriced-tokens", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const model = mergeUsage(
+        [{ environmentId: EnvironmentId.make("local"), label: "local", summary }],
+        summary.contractVersion,
+      ).models.find((entry) => entry.model === "acme-coder-1");
+
+      assert.strictEqual(model?.costUsd, 1);
+      assert.strictEqual(model?.totalTokens, 10_000);
+      assert.strictEqual(model?.unpricedTokens, 9_900);
+    }).pipe(Effect.scoped),
   );
 
   it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
@@ -2295,6 +2450,75 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live(
+    "answers a provisional read from the last scan, then the exact read adds what changed",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        const provisional = { ...WINDOW, provisional: true };
+        const claude = (summary: UsageSummary) =>
+          summary.sources.find((source) => source.fingerprint.provider === "claude");
+        yield* Effect.gen(function* () {
+          // With nothing persisted, the first answer is a full scan.
+          const service = yield* UsageService.make;
+          const loop = NodePath.join(NodePath.dirname(transcript), "loop.jsonl");
+          yield* Effect.promise(() => NodeFSP.symlink(loop, loop, "junction"));
+          assert.strictEqual(claude(yield* service.readSummary(provisional))?.status, "partial");
+          yield* Effect.promise(() => NodeFSP.rm(loop));
+          // A scan that missed a path covers nothing, so this is a full scan too.
+          assert.isUndefined(claude(yield* service.readSummary(provisional))?.refreshing);
+          yield* service.awaitPersisted;
+
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+          const restarted = yield* UsageService.make;
+          const saved = yield* restarted.readSummary(provisional);
+          assert.strictEqual(totalOutputTokens(saved), 5);
+          assert.isTrue(claude(saved)?.refreshing);
+          // A window that starts before the saved scan could only show part of its usage.
+          const wider = yield* restarted.readSummary({
+            ...provisional,
+            sinceDay: UsageDay.make("2026-07-01"),
+          });
+          assert.strictEqual(totalOutputTokens(wider), 12);
+          assert.isUndefined(claude(wider)?.refreshing);
+          const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
+          assert.strictEqual(totalOutputTokens(refreshed), 12);
+          assert.isUndefined(claude(refreshed)?.refreshing);
+          // Saved usage with nothing to show marks nothing refreshing, so it must not be the answer.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(transcript, claudeLine(3, 11, "claude-other")),
+          );
+          const unseen = yield* restarted.readSummary({
+            ...provisional,
+            modelFilter: { include: [{ model: "claude-other" }] },
+          });
+          assert.strictEqual(totalOutputTokens(unseen), 11);
+          yield* restarted.awaitPersisted;
+
+          // A saved scan with an entry this server cannot read covers nothing.
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              files: Record<string, Record<string, unknown>>;
+            };
+            const [entry] = Object.values(document.files);
+            document.files[NodePath.join(NodePath.dirname(transcript), "broken.jsonl")] = {
+              ...entry,
+              r: "broken",
+            };
+            await NodeFSP.writeFile(cachePath, JSON.stringify(document));
+          });
+          const reloaded = yield* UsageService.make;
+          assert.isUndefined(claude(yield* reloaded.readSummary(provisional))?.refreshing);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(layerService({ prefix: "usage-service-provisional", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("filters original model IDs before aliases, pricing, buckets and session counts", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -2681,7 +2905,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8, 10])(
+  it.live.each([4, 5, 6, 7, 8, 10, 11, 12, 13])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts, removes the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2782,7 +3006,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v14.json");
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
               .filter((name) => name.startsWith("usage-scan-cache"))
@@ -3050,6 +3274,64 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("credits the same copy of a duplicate from the last scan as an exact read does", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-08-15T00:00:00Z"));
+      const { transcript, settings, home } = yield* setup;
+      const dir = NodePath.dirname(transcript);
+      const [first = "", second = ""] = yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
+        await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
+        return (await NodeFSP.readdir(dir)).map((name) => NodePath.join(dir, name));
+      });
+      const forked = (line: string) => line.replace('"session-1"', '"session-2"');
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(first, claudeLine(1, 5));
+        await NodeFSP.utimes(first, BEFORE_NARROW_WINDOW, BEFORE_NARROW_WINDOW);
+        await NodeFSP.writeFile(second, forked(claudeLine(1, 5)) + forked(claudeLine(2, 7)));
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        // The narrow window saves the second copy before the wide one reads the first.
+        yield* service.readSummary(NARROW_WINDOW);
+        const exact = yield* service.readSummary(WINDOW);
+        yield* service.awaitPersisted;
+        const restarted = yield* UsageService.make;
+        const saved = yield* restarted.readSummary({ ...WINDOW, provisional: true });
+        assert.isTrue(saved.sources.some((source) => source.refreshing === true));
+        assert.deepStrictEqual(saved.buckets, exact.buckets);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-saved-order-test", home, settings })),
+      );
+
+      // A narrow scan that first saves the earlier copy still puts it before a later file it skipped.
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(first, forked(claudeLine(1, 5)) + forked(claudeLine(2, 7)));
+        await NodeFSP.utimes(
+          first,
+          Date.parse("2026-07-01T00:00:00Z") / 1000,
+          Date.parse("2026-07-01T00:00:00Z") / 1000,
+        );
+        await NodeFSP.writeFile(second, claudeLine(1, 5));
+        await NodeFSP.utimes(second, BEFORE_NARROW_WINDOW, BEFORE_NARROW_WINDOW);
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() =>
+          NodeFSP.utimes(first, NARROW_WINDOW_MTIME, NARROW_WINDOW_MTIME),
+        );
+        yield* service.readSummary(NARROW_WINDOW);
+        const saved = yield* service.readSummary({ ...WINDOW, provisional: true });
+        assert.isTrue(saved.sources.some((source) => source.refreshing === true));
+        const exact = yield* service.readSummary(WINDOW);
+        assert.deepStrictEqual(saved.buckets, exact.buckets);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-narrow-order-test", home, settings })),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "keeps a newer cached read when a slower scan of another window finishes later",
     () =>
@@ -3191,7 +3473,14 @@ describe("UsageService", () => {
             HttpClient.HttpClient,
             HttpClient.make((request) =>
               Deferred.await(releaseRates).pipe(
-                Effect.as(HttpClientResponse.fromWeb(request, Response.json({}))),
+                Effect.as(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({
+                      "example-model": { input_cost_per_token: 1e-6, output_cost_per_token: 1e-5 },
+                    }),
+                  ),
+                ),
               ),
             ),
           ),
@@ -3210,7 +3499,8 @@ describe("UsageService", () => {
 
         const original = yield* Fiber.join(first);
         const updated = yield* Fiber.join(second);
-        assert.strictEqual(original.buckets[0]?.costUsd, 0);
+        // Fetched rates price the first read, so scans must start while the fetch is pending.
+        assert.isAbove(original.buckets[0]?.costUsd ?? 0, 0);
         assert.closeTo(updated.buckets[0]?.costUsd ?? -1, 0.00006, 1e-12);
       }).pipe(
         Effect.provide(layerService({ prefix: "usage-service-price-race-test", home, settings })),
