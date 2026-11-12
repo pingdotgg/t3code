@@ -581,6 +581,21 @@ function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unk
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
+// Fast successful SQL statement and transaction spans were most of the trace file and rotated
+// history out within minutes. Exporters still receive them; slow or failed ones stay in the file.
+const LOCAL_TRACE_SQL_SPAN_MIN_MS = 10;
+
+const isRoutineSqliteSpan = (
+  span: LocalFileSpan,
+  exit: Exit.Exit<unknown, unknown>,
+  endTime: bigint,
+) =>
+  ExitRuntime.isSuccess(exit) &&
+  span.events.length === 0 &&
+  span.attributes.get("db.system.name") === "sqlite" &&
+  span.status._tag === "Ended" &&
+  Number(endTime - span.status.startTime) / 1_000_000 < LOCAL_TRACE_SQL_SPAN_MIN_MS;
+
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -632,7 +647,7 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled) {
+    if (this.sampled && !isRoutineSqliteSpan(this, traceExit, endTime)) {
       this.push(spanToTraceRecord(this));
     }
   }

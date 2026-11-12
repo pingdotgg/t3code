@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import type { OtlpTracer } from "effect/observability";
 
 import {
@@ -192,6 +193,41 @@ describe("observability", () => {
           );
         }
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("writes only slow or failed SQL spans to the file but exports every one", () =>
+    Effect.gen(function* () {
+      const exported: Array<string> = [];
+      const written: Array<string> = [];
+      const tracer = yield* makeLocalFileTracer({
+        filePath: "unused",
+        maxBytes: 1024,
+        maxFiles: 1,
+        batchWindowMs: 10_000,
+        sink: {
+          filePath: "unused",
+          push: (record) => written.push(record.name),
+          flush: Effect.void,
+          flushSync: () => {},
+          close: () => Effect.void,
+        },
+        delegate: Tracer.make({
+          span: (options) => {
+            exported.push(options.name);
+            return new Tracer.NativeSpan(options);
+          },
+        }),
+      });
+      const sqlite = { attributes: { "db.system.name": "sqlite" } };
+      yield* Effect.gen(function* () {
+        yield* Effect.void.pipe(Effect.withSpan("fast-sql", sqlite));
+        yield* TestClock.adjust("10 millis").pipe(Effect.withSpan("slow-sql", sqlite));
+        yield* Effect.fail("busy").pipe(Effect.withSpan("failed-sql", sqlite), Effect.exit);
+        yield* Effect.void.pipe(Effect.withSpan("fast-other"));
+      }).pipe(Effect.provideService(Tracer.Tracer, tracer));
+      assert.deepStrictEqual(written, ["slow-sql", "failed-sql", "fast-other"]);
+      assert.deepStrictEqual(exported, ["fast-sql", "slow-sql", "failed-sql", "fast-other"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {

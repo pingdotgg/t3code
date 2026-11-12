@@ -63,6 +63,10 @@ span spent waiting for that connection, behind other SQL. That wait does not blo
 so subtract it before you blame a slow span on the query. Statements inside a transaction use its
 connection and do not carry these attributes.
 
+The trace file keeps a SQL span only when it failed, recorded an event, or took at least 10 ms. Fast
+successful statements and transactions would otherwise fill the file's rotation within minutes. An
+OTLP traces endpoint still receives every SQL span.
+
 An MCP request over HTTP has a `McpHttpServer.authenticateRequest` span that covers only admitting
 it: the credential check, the mode limit, and the Linked environments gate. The request runs after
 it, under the `McpServer.…/<method>` span, and each tool call has its own `mcp.tool.<name>` span
@@ -689,7 +693,7 @@ Current high-value span and metric boundaries include:
 - git command execution and git hook events
 - terminal session lifecycle
 - sqlite query execution, except the statements inside `orchestrationV2.EventSink.write`, which
-  its `sql.transaction` span times as one
+  its `sql.transaction` span times as one (the trace file keeps only slow or failed SQL spans)
 - event loop stalls (`server.eventLoop.stall`)
 
 ### Current Constraints
