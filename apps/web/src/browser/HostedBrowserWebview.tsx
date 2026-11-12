@@ -140,7 +140,7 @@ export function HostedBrowserWebview(props: {
   const [webviewGeneration, setWebviewGeneration] = useState(0);
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
   const active = presentation.visible && presentation.rect !== null;
-  const shown = active || pictureInPicture;
+  const shown = active || pictureInPicture || detached;
   const reportedShown = useEffectEvent(() => serverDriven && shown);
   // The pop-out window's guest replaced ours; coming back needs a fresh guest at the current URL.
   const [renderedDetached, setRenderedDetached] = useState(detached);
