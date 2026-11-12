@@ -1473,6 +1473,117 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect("a steer that changes the service tier updates Codex's next-turn settings", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "steer-tier-thread";
+      const nativeTurnId = "steer-tier-turn";
+      const ultrafast = {
+        ...CODEX_TEST_MODEL_SELECTION,
+        options: [{ id: "serviceTier", value: "ultrafast" }],
+      } satisfies ModelSelection;
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "steer-service-tier",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Work." }).map(
+              (entry) =>
+                entry.type === "expect_outbound" &&
+                entry.label === "turn/start" &&
+                Predicate.isObject(entry.frame) &&
+                Predicate.isObject(entry.frame.params)
+                  ? {
+                      ...entry,
+                      frame: {
+                        ...entry.frame,
+                        params: { ...entry.frame.params, serviceTier: "ultrafast" },
+                      },
+                    }
+                  : entry,
+            ),
+            {
+              type: "expect_outbound",
+              label: "thread/settings/update",
+              frame: {
+                id: 4,
+                method: "thread/settings/update",
+                params: { threadId: nativeThreadId, serviceTier: "default" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 4, result: {} } },
+            {
+              type: "expect_outbound",
+              label: "turn/steer",
+              frame: {
+                id: 5,
+                method: "turn/steer",
+                params: {
+                  threadId: nativeThreadId,
+                  expectedTurnId: nativeTurnId,
+                  input: [{ type: "text", text: "Slow down." }],
+                },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 5, result: { turnId: nativeTurnId } } },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      const turnInput = {
+        ...makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("steer-tier-attempt"),
+          text: "Work.",
+        }),
+        modelSelection: ultrafast,
+      };
+      yield* harness.runtime.startTurn(turnInput);
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
+        ),
+      );
+      const providerTurnId = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0];
+      assert.isDefined(providerTurnId);
+      if (providerTurnId === undefined) return;
+      yield* harness.runtime.steerTurn({
+        ...turnInput,
+        providerTurnId,
+        modelSelection: {
+          ...CODEX_TEST_MODEL_SELECTION,
+          options: [{ id: "serviceTier", value: "default" }],
+        },
+        message: { ...turnInput.message, text: "Slow down." },
+      });
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {
       const nativeThreadId = "image-view-thread";
