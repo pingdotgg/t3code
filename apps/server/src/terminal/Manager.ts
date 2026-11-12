@@ -1359,6 +1359,7 @@ function createTerminalSpawnEnv(
   runtimeEnv: Record<string, string> | null | undefined,
   platform: NodeJS.Platform,
   home: string,
+  threadId: string,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1387,6 +1388,7 @@ function createTerminalSpawnEnv(
       );
     }
   }
+  spawnEnv[PortScanner.AGENT_THREAD_ENV] = threadId;
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
@@ -2461,6 +2463,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.runtimeEnv,
               platform,
               yield* HostProcess.HomeDirectory,
+              session.threadId,
             );
             // Append managed install directories so agent commands resolve without shadowing user/system tools.
             if (
