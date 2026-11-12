@@ -15,6 +15,7 @@ import {
   isCopilotLostSessionError,
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
+import { cursorClientCapabilitiesMeta } from "./cursorAcp.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -187,6 +188,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  const isCursor = registryAgentId === "cursor";
   // Local installs launch the `copilot` binary directly with no registry id.
   const isCopilot =
     registryAgentId === "github-copilot-cli" ||
@@ -236,6 +238,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
         }
       : {}),
+    ...(isCursor ? { clientCapabilitiesMeta: cursorClientCapabilitiesMeta } : {}),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {

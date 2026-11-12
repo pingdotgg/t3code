@@ -34,6 +34,7 @@ import {
   flattenSelectChoices,
 } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
+import { cursorClientCapabilitiesMeta } from "./cursorAcp.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const MAX_AUTH_METHODS = 32;
@@ -345,6 +346,9 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
             elicitation: { url: {} },
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
+            ...(input.settings.source !== "local" && input.settings.agentId === "cursor"
+              ? { _meta: cursorClientCapabilitiesMeta }
+              : {}),
           },
           clientInfo: { name: "t3-code-provider-test", version: "0.0.0" },
           authenticateOnAuthRequired: false,
