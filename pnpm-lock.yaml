@@ -363,7 +363,7 @@ patchedDependencies:
   '@clerk/expo-native-components@0.4.4': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
   '@cursor/sdk@1.2.0': 57f502128bf6accd976963b126e227c86a45d815a53a8dc450461beae3bed4a4
   '@effect/vitest@4.1.2': 299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7
-  '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
+  '@ff-labs/fff-node@0.11.0': a71dc3a5544fc47afacf0fe9da04dccec3018e625a76c96087ebfdf35e293768
   '@legendapp/list@3.7.2': 3c68607b8bb7a531873bcbe0b197d163ef1fdb4d4cf52a4ddf9d2b3804671658
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.3': 4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8
@@ -856,7 +856,7 @@ importers:
         version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(utf-8-validate@6.0.6)
       '@ff-labs/fff-node':
         specifier: 0.11.0
-        version: 0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)
+        version: 0.11.0(patch_hash=a71dc3a5544fc47afacf0fe9da04dccec3018e625a76c96087ebfdf35e293768)
       '@muse-code/sdk':
         specifier: 1.4.6
         version: 1.4.6(patch_hash=7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101)(@types/node@24.12.4)
@@ -15144,7 +15144,7 @@ snapshots:
   '@ff-labs/fff-bin-win32-x64@0.11.0':
     optional: true
 
-  '@ff-labs/fff-node@0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)':
+  '@ff-labs/fff-node@0.11.0(patch_hash=a71dc3a5544fc47afacf0fe9da04dccec3018e625a76c96087ebfdf35e293768)':
     dependencies:
       ffi-rs: 1.3.2
     optionalDependencies:
