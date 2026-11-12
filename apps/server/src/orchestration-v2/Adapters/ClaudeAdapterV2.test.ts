@@ -4774,8 +4774,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     const openPlanTurn = Effect.fn("openPlanTurn")(function* (
       runtimeMode: "auto" | "full-access",
       approvalPolicy?: "never",
+      permissionRules?: ReadonlyArray<ClaudeAdapterV2.ClaudePermissionRule>,
     ) {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* permissionRules === undefined
+        ? makeWakeHarness
+        : makeWakeHarnessWithOptions({
+            mcp: {
+              mcpServerStatus: Effect.succeed([]),
+              readMcpResource: () => Effect.die("unexpected MCP resource read"),
+              callMcpTool: () => Effect.die("unexpected MCP tool call"),
+              listPermissionRules: Effect.succeed(permissionRules),
+            },
+          });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode,
         interactionMode: "plan",
@@ -4894,9 +4904,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ruleContent: "*",
         },
       },
-    ])("$name", ({ matchedAskRule }) =>
+      {
+        name: "still asks a repeated Plan MCP call under an ask rule the callback does not name",
+        permissionRules: [{ behavior: "ask" as const, rule: "mcp__t3-code__t3_thread_read" }],
+      },
+    ])("$name", ({ matchedAskRule, permissionRules }) =>
       Effect.gen(function* () {
-        const turn = yield* openPlanTurn("full-access");
+        const turn = yield* openPlanTurn("full-access", undefined, permissionRules);
         const toolName = "mcp__t3-code__t3_thread_read";
         const first = yield* requestWrite(
           turn,
@@ -4918,7 +4932,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           { threadId: "thread-other", afterPosition: 50 },
           { toolUseID: "read-page-2", ...(matchedAskRule === undefined ? {} : { matchedAskRule }) },
         );
-        if (matchedAskRule !== undefined) {
+        if (matchedAskRule !== undefined || permissionRules !== undefined) {
           assert.equal(second.first.type, "request", "the ask rule was bypassed");
           return;
         }

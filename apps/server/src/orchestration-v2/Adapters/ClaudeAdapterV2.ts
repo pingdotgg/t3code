@@ -11315,7 +11315,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             toolName.startsWith("mcp__") &&
             (callbackOptions.suggestions ?? []).length === 0 &&
             callbackOptions.matchedAskRule === undefined;
-          if (grantsByToolName && (yield* Ref.get(mcpToolSessionGrants)).has(toolName)) {
+          // Ask-rule callbacks often carry no matchedAskRule, so the rules themselves are checked.
+          if (
+            grantsByToolName &&
+            (yield* Ref.get(mcpToolSessionGrants)).has(toolName) &&
+            (yield* Effect.fromNullishOr(yield* Ref.get(queryContext)).pipe(
+              Effect.flatMap((live) => live.query.listPermissionRules),
+              Effect.map((rules) => !claudeRulesMayCoverMcpTools(rules, ["ask"])),
+              Effect.orElseSucceed(() => false),
+            ))
+          ) {
             return {
               behavior: "allow",
               updatedInput: toolInput,
