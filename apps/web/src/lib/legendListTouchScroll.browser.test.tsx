@@ -35,10 +35,14 @@ function Rows({
   );
 }
 
-async function mountScrolledToRow30() {
+function mountScrolledToRow30() {
+  return mountScrolledTo(30 * ROW_HEIGHT, () => ROW_HEIGHT);
+}
+
+async function mountScrolledTo(offset: number, heightOf: (index: number) => number) {
   await using stack = new AsyncDisposableStack();
   const listRef = createRef<LegendListRef>();
-  let heights: ReadonlyArray<number> = Array.from({ length: 60 }, () => ROW_HEIGHT);
+  let heights: ReadonlyArray<number> = Array.from({ length: 60 }, (_, index) => heightOf(index));
   const screen = stack.use(await render(<Rows ref={listRef} heights={heights} />));
   const query = (selector: string) => {
     const element = screen.container.querySelector<HTMLElement>(selector);
@@ -50,8 +54,8 @@ async function mountScrolledToRow30() {
   const rowTop = (index: number) => query(`[data-row="row-${index}"]`).getBoundingClientRect().top;
 
   await vi.waitFor(() => expect(rowTop(0)).toBe(scroller().getBoundingClientRect().top));
-  await act(() => listRef.current?.scrollToOffset({ offset: 30 * ROW_HEIGHT, animated: false }));
-  await vi.waitFor(() => expect(scroller().scrollTop).toBe(30 * ROW_HEIGHT));
+  await act(() => listRef.current?.scrollToOffset({ offset, animated: false }));
+  await vi.waitFor(() => expect(scroller().scrollTop).toBe(offset));
 
   const environment = stack.move();
   return {
@@ -60,9 +64,12 @@ async function mountScrolledToRow30() {
     rowTop,
     rowBottom: (index: number) => query(`[data-row="row-${index}"]`).getBoundingClientRect().bottom,
     held: () => -Number(/^translateY\((-?[\d.]+)px\)$/.exec(content().style.transform)?.[1] ?? 0),
-    async growRow28By(extra: number) {
-      heights = heights.map((height, index) => (index === 28 ? height + extra : height));
+    async setRowHeight(row: number, height: number) {
+      heights = heights.map((value, index) => (index === row ? height : value));
       await screen.rerender(<Rows ref={listRef} heights={heights} />);
+    },
+    growRow28By(extra: number) {
+      return this.setRowHeight(28, ROW_HEIGHT + extra);
     },
     touch(type: "touchstart" | "touchend") {
       const touches = [{ identifier: 1, target: scroller() }];
@@ -158,5 +165,21 @@ describe("LegendList size corrections during an iOS touch scroll", () => {
     list.touch("touchend");
     list.scroller().dispatchEvent(new Event("scrollend"));
     expect(list.rowBottom(59)).toBeCloseTo(viewportBottom, 0);
+  });
+
+  it("reaches the last row when a held shrink settles at the bottom", async () => {
+    await using list = await mountScrolledTo(4400, (index) => (index === 50 ? 380 : ROW_HEIGHT));
+    list.touch("touchstart");
+    list.scroller().dispatchEvent(new Event("scroll"));
+    await list.setRowHeight(50, ROW_HEIGHT);
+    await vi.waitFor(() => expect(list.held()).toBeLessThanOrEqual(-300));
+
+    const viewportBottom = list.scroller().getBoundingClientRect().bottom;
+    list.scroller().scrollTop = list.scroller().scrollHeight;
+
+    await vi.waitFor(() => {
+      expect(list.content().style.transform).toBe("");
+      expect(list.rowBottom(59)).toBeCloseTo(viewportBottom, 0);
+    });
   });
 });

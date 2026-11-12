@@ -79,7 +79,7 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..c414a49e866ecab1393645101fb67d55
    const state = ctx.state;
    const { idsInView, positions, props } = state;
 diff --git a/react.js b/react.js
-index 515545471e08426fc90856256db9491db0ca4b92..0c301c50cf4aeb73e734f986f07a8ae9a8f47e1c 100644
+index 515545471e08426fc90856256db9491db0ca4b92..e76cc1e4d13c9c18e6c109234e9c2d3e8457a09c 100644
 --- a/react.js
 +++ b/react.js
 @@ -6921,8 +6921,8 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
@@ -152,7 +152,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..0c301c50cf4aeb73e734f986f07a8ae9
            const totalSize = isExternal ? el[axis.contentSizeKey] : contentNode[axis.contentSizeKey];
            const viewportSize = el[axis.viewportSizeKey];
            const nextScroll = parentScroll + scrollDelta;
-@@ -7514,6 +7534,102 @@ function ScrollAdjust() {
+@@ -7514,6 +7534,105 @@ function ScrollAdjust() {
        lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
      }
    }, [clearTemporaryScrollAdjust, ctx]);
@@ -169,9 +169,12 @@ index 515545471e08426fc90856256db9491db0ca4b92..0c301c50cf4aeb73e734f986f07a8ae9
 +        const held = hold.held;
 +        hold.held = 0;
 +        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
-+        if (target == null ? void 0 : target.contentNode) target.contentNode.style.transform = "";
-+        if (target && Math.abs(held) > 0.01) {
-+          target.scrollElement.scrollTo({ behavior: "instant", top: target.scrollElement.scrollTop + held });
++        if (!target) return;
++        // Read the offset first: dropping a positive transform can shrink the range and clamp it.
++        const top = target.scrollElement.scrollTop + held;
++        if (target.contentNode) target.contentNode.style.transform = "";
++        if (Math.abs(held) > 0.01) {
++          target.scrollElement.scrollTo({ behavior: "instant", top });
 +        }
 +      }
 +    };
@@ -256,7 +259,7 @@ index 515545471e08426fc90856256db9491db0ca4b92..0c301c50cf4aeb73e734f986f07a8ae9
    useValueListener$("scrollAdjustUserOffset", callback);
    React3__namespace.useLayoutEffect(() => {
 diff --git a/react.mjs b/react.mjs
-index ce08abe7ee62e8940f9c6ff169829244bd6bb736..de2c6e9a8d9d0b20d02b3f8d9581219ccdfb26bb 100644
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..e4476ac4456b30d96771fbb9a5d1f2a43eaa514a 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -6900,8 +6900,8 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
@@ -329,7 +332,7 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..de2c6e9a8d9d0b20d02b3f8d9581219c
            const totalSize = isExternal ? el[axis.contentSizeKey] : contentNode[axis.contentSizeKey];
            const viewportSize = el[axis.viewportSizeKey];
            const nextScroll = parentScroll + scrollDelta;
-@@ -7493,6 +7513,102 @@ function ScrollAdjust() {
+@@ -7493,6 +7513,105 @@ function ScrollAdjust() {
        lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
      }
    }, [clearTemporaryScrollAdjust, ctx]);
@@ -346,9 +349,12 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..de2c6e9a8d9d0b20d02b3f8d9581219c
 +        const held = hold.held;
 +        hold.held = 0;
 +        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
-+        if (target == null ? void 0 : target.contentNode) target.contentNode.style.transform = "";
-+        if (target && Math.abs(held) > 0.01) {
-+          target.scrollElement.scrollTo({ behavior: "instant", top: target.scrollElement.scrollTop + held });
++        if (!target) return;
++        // Read the offset first: dropping a positive transform can shrink the range and clamp it.
++        const top = target.scrollElement.scrollTop + held;
++        if (target.contentNode) target.contentNode.style.transform = "";
++        if (Math.abs(held) > 0.01) {
++          target.scrollElement.scrollTo({ behavior: "instant", top });
 +        }
 +      }
 +    };
