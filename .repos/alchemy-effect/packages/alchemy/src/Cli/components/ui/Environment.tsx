@@ -1,11 +1,12 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
 import { useWindowSize } from "@alchemy.run/sigil";
 import { createContext, useContext, useMemo } from "@alchemy.run/sigil/react";
 import type { ReactNode } from "react";
-import type { CliKitCapabilities } from "../types.ts";
 import { glyphsFor, theme, type KeyHint } from "../../../Util/Theme.ts";
+import type { TerminalCapabilities } from "../types.ts";
 
-const defaults: CliKitCapabilities = {
+const defaults: TerminalCapabilities = {
   input: false,
   columns: 80,
   rows: 24,
@@ -14,35 +15,28 @@ const defaults: CliKitCapabilities = {
   alternateScreen: false,
 };
 
-const EnvironmentContext = createContext<CliKitCapabilities>(defaults);
+const EnvironmentContext = createContext<TerminalCapabilities>(defaults);
 
 /**
  * Resize-following variant, split out so the static renderer (`renderToString`
  * for every print/format) never attaches a `resize` listener to stdout.
  */
 type ObservingEnvironmentProps = {
-  readonly capabilities: CliKitCapabilities;
+  readonly capabilities: TerminalCapabilities;
   readonly children?: ReactNode;
 };
 
-function ObservingEnvironment({
-  capabilities,
-  children,
-}: ObservingEnvironmentProps) {
+function ObservingEnvironment({ capabilities, children }: ObservingEnvironmentProps) {
   const window = useWindowSize();
   const environment = useMemo(
     () => ({ ...capabilities, columns: window.columns, rows: window.rows }),
     [capabilities, window.columns, window.rows],
   );
-  return (
-    <EnvironmentContext.Provider value={environment}>
-      {children}
-    </EnvironmentContext.Provider>
-  );
+  return <EnvironmentContext.Provider value={environment}>{children}</EnvironmentContext.Provider>;
 }
 
 type CliEnvironmentProps = {
-  readonly capabilities: CliKitCapabilities;
+  readonly capabilities: TerminalCapabilities;
   /** Follow Sigil's terminal resize subscription for a live renderer. */
   readonly observeWindow?: boolean;
   readonly children?: ReactNode;
@@ -54,13 +48,9 @@ export function CliEnvironment({
   children,
 }: CliEnvironmentProps) {
   return observeWindow ? (
-    <ObservingEnvironment capabilities={capabilities}>
-      {children}
-    </ObservingEnvironment>
+    <ObservingEnvironment capabilities={capabilities}>{children}</ObservingEnvironment>
   ) : (
-    <EnvironmentContext.Provider value={capabilities}>
-      {children}
-    </EnvironmentContext.Provider>
+    <EnvironmentContext.Provider value={capabilities}>{children}</EnvironmentContext.Provider>
   );
 }
 

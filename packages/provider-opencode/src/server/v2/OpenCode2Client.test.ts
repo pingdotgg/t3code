@@ -1,9 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import { Session } from "@opencode/client/effect";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
+import * as UrlParams from "effect/http/UrlParams";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { describe } from "vite-plus/test";
@@ -45,6 +50,36 @@ describe("OpenCode2Client authorization", () => {
       assert.strictEqual(yield* authorizationFor("pass€word"), utf8Basic("pass€word"));
       assert.strictEqual(yield* authorizationFor(Redacted.make("pässwörd")), utf8Basic("pässwörd"));
     }),
+  );
+});
+
+describe("OpenCode2Client event subscription", () => {
+  it.effect("times out and cancels a subscription with no response headers", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* Deferred.make<void>();
+      const transport = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          assert.strictEqual(request.url, "http://127.0.0.1:4096/api/event");
+          return Effect.never.pipe(Effect.ensuring(Deferred.succeed(cancelled, undefined)));
+        }),
+      );
+      const opencode = yield* OpenCode2Client.OpenCode2Client.pipe(
+        Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(transport))),
+      );
+      const { events } = yield* opencode.connect({
+        baseUrl: "http://127.0.0.1:4096",
+        password: "test-password",
+      });
+      const opening = yield* events.pipe(Effect.flip, Effect.forkScoped);
+
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(yield* Deferred.isDone(cancelled));
+      const error = yield* Fiber.join(opening);
+      assert.strictEqual(error._tag, "HttpClientError");
+      assert.strictEqual(error.reason._tag, "TransportError");
+      assert.isTrue(Cause.isTimeoutError(error.cause));
+    }).pipe(Effect.scoped),
   );
 });
 
@@ -130,6 +165,289 @@ describe("OpenCode2Client message history", () => {
       assert.strictEqual(error._tag, "ClientError");
       assert.isTrue(Schema.isSchemaError(error.cause));
       assert.include(String(error.cause), field);
+    }),
+  );
+});
+
+describe("OpenCode2Client native image jobs", () => {
+  it.effect.each([
+    { path: "/work/image.png", location: "/work" },
+    { path: "/tmp/images/session/image.png", location: "/tmp/images/session" },
+  ])("reads remote image $path through its native filesystem location", ({ path, location }) =>
+    Effect.gen(function* () {
+      const transport = HttpClient.make((request) =>
+        Effect.sync(() => {
+          assert.strictEqual(request.url, "http://remote.test/api/fs/read/image.png");
+          assert.deepEqual(UrlParams.toRecord(request.urlParams), {
+            "location[directory]": location,
+          });
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(Buffer.from("iVBORw0KGgo=", "base64")),
+          );
+        }),
+      );
+      const service = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* service.connect({ baseUrl: "http://remote.test", password: "secret" });
+      assert.deepEqual(yield* api.readImage(path, "/work"), {
+        uri: "data:image/png;base64,iVBORw0KGgo=",
+        mime: "image/png",
+      });
+    }),
+  );
+
+  it.effect("rejects remote previews above the shared image limit", () =>
+    Effect.gen(function* () {
+      const transport = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response(new Uint8Array(11 * 1024 * 1024))),
+        ),
+      );
+      const service = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* service.connect({ baseUrl: "http://remote.test", password: "secret" });
+      const result = yield* api.readImage("/work/image.png", "/work").pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("reads scoped image jobs without accepting other sessions or job kinds", () =>
+    Effect.gen(function* () {
+      const job = {
+        kind: "image",
+        id: "image_test",
+        sessionID: "ses_owner",
+        status: "running",
+        path: "/work/image",
+        model: "test/image",
+      } as const;
+      const transport = HttpClient.make((request) =>
+        Effect.sync(() => {
+          assert.strictEqual(request.headers.authorization, utf8Basic("secret"));
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              data: [
+                job,
+                { ...job, sessionID: "ses_other" },
+                { ...job, kind: "shell" },
+                { ...job, status: "future" },
+              ],
+            }),
+          );
+        }),
+      );
+      const service = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* service.connect({ baseUrl: "http://remote.test", password: "secret" });
+      assert.deepEqual(yield* api.imageJobs("ses_owner"), [job]);
+    }),
+  );
+});
+
+describe("OpenCode2Client usage limits", () => {
+  it.effect("reads the connected workspace and maps Go and Console budgets", () =>
+    Effect.gen(function* () {
+      let workspace = "wrk_remote";
+      let usageURL: string | undefined;
+      const transport = HttpClient.make((request) => {
+        assert.strictEqual(request.headers.authorization, utf8Basic("remote-password"));
+        assert.deepStrictEqual(Array.from(request.urlParams), [
+          ["location[directory]", "/remote/project"],
+        ]);
+        if (request.url === "https://remote.example/prefix/api/provider")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                data: [
+                  { id: "opencode", integrationID: "opencode" },
+                  { id: "console-custom", integrationID: "opencode" },
+                  { id: "opencode-go", integrationID: "opencode" },
+                  { id: "anthropic", integrationID: "anthropic" },
+                  { id: "byok" },
+                ],
+              }),
+            ),
+          );
+        assert.strictEqual(
+          request.url,
+          "https://remote.example/prefix/api/experimental/usage/limits",
+        );
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              location: { directory: "/remote/project" },
+              data: {
+                workspace: {
+                  id: workspace,
+                  name: workspace,
+                  usageURL: usageURL ?? "https://opencode.ai/console/" + workspace,
+                },
+                go: {
+                  rolling: { percent: 23, limited: false, resetsAt: 1793491200000 },
+                  weekly: { percent: 99, limited: true, resetsAt: 1793491200000 },
+                  monthly: { percent: 12, limited: false, resetsAt: 1793491200000 },
+                },
+                budgets: [
+                  {
+                    id: "all",
+                    limit: 20,
+                    spent: 15,
+                    scope: "combined",
+                    per: "set",
+                    coverage: "all",
+                    models: [],
+                    vendors: [],
+                    picked: false,
+                    shared: true,
+                    resetsAt: 1793491200000,
+                  },
+                  {
+                    id: "models",
+                    limit: 10,
+                    spent: 12,
+                    scope: "each",
+                    per: "model",
+                    coverage: "models",
+                    models: [
+                      { providerID: "opencode", modelID: "a", name: "Model A", spent: 12 },
+                      { providerID: "opencode", modelID: "b", name: "Model B", spent: 2 },
+                    ],
+                    vendors: [],
+                    picked: true,
+                    shared: false,
+                    resetsAt: 1793491200000,
+                  },
+                  {
+                    id: "zz_missing",
+                    limit: 10,
+                    spent: 10,
+                    scope: "each",
+                    per: "model",
+                    coverage: "models",
+                    models: [{ providerID: "opencode", modelID: "unknown", name: "Unknown spend" }],
+                    shared: false,
+                    resetsAt: 1793491200000,
+                  },
+                  {
+                    id: "zero",
+                    limit: 0,
+                    spent: 0,
+                    scope: "each",
+                    per: "set",
+                    coverage: "all",
+                    models: [],
+                    vendors: [],
+                    picked: false,
+                    shared: false,
+                    resetsAt: 1793491200000,
+                  },
+                ],
+              },
+            }),
+          ),
+        );
+      });
+      const opencode = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const api = yield* opencode.connect({
+        baseUrl: "https://remote.example/prefix",
+        password: "remote-password",
+      });
+      const first = yield* api.usageLimits("/remote/project");
+      assert.isDefined(first);
+      assert.deepStrictEqual(
+        first?.windows.map((window) => window.usedPercent),
+        [23, 100, 12, 75, 100, 20, 100, 100],
+      );
+      assert.isTrue(
+        first?.windows.every((window) => window.resetsAt === "2026-11-01T00:00:00.000Z"),
+      );
+      assert.include(first?.windows[3]?.label ?? "", "Shared");
+      assert.include(first?.windows[4]?.label ?? "", "Model A");
+      assert.deepStrictEqual(first?.windows[4]?.modelIds, ["opencode/a"]);
+      assert.strictEqual(first?.windows[3]?.modelIds, undefined);
+      assert.deepStrictEqual(first?.windows[3]?.providerIds, ["opencode", "console-custom"]);
+      assert.deepStrictEqual(first?.windows[7]?.modelIds, []);
+      assert.include(first?.windows[7]?.label ?? "", "Most used model");
+      assert.strictEqual(first?.credentialFingerprint, undefined);
+      workspace = "wrk_switched";
+      const next = yield* api.usageLimits("/remote/project");
+      assert.strictEqual(next?.externalUsage?.label, "wrk_switched");
+      assert.strictEqual(next?.externalUsage?.url, "https://opencode.ai/console/wrk_switched");
+      for (const url of [
+        "not a URL",
+        "javascript:alert(1)",
+        "custom-app://usage",
+        "file:///tmp/usage",
+      ]) {
+        usageURL = url;
+        const invalid = yield* api.usageLimits("/remote/project");
+        assert.strictEqual(invalid?.externalUsage, undefined);
+        assert.deepStrictEqual(invalid?.windows, next?.windows);
+      }
+      usageURL = "http://console.example/workspace/usage";
+      assert.strictEqual((yield* api.usageLimits("/remote/project"))?.externalUsage?.url, usageURL);
+    }),
+  );
+
+  it.effect("recognizes an older server's SPA fallback", () =>
+    Effect.gen(function* () {
+      const opencode = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response("<!doctype html><title>OpenCode</title>", {
+                  headers: { "content-type": "text/html; charset=utf-8" },
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const api = yield* opencode.connect({ baseUrl: "https://old.example", password: "secret" });
+      assert.strictEqual(yield* api.usageLimits("/remote"), undefined);
+    }),
+  );
+
+  it.effect("distinguishes missing endpoints, signed out, and failed remote probes", () =>
+    Effect.gen(function* () {
+      for (const [status, body, reason] of [
+        [404, {}, undefined],
+        [405, {}, undefined],
+        [200, { location: { directory: "/remote" }, data: null }, "unsupported"],
+        [503, {}, "probeFailed"],
+        [401, {}, "probeFailed"],
+        [200, { data: { workspace: {} } }, "probeFailed"],
+      ] as const) {
+        const opencode = yield* OpenCode2Client.make.pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status }))),
+            ),
+          ),
+        );
+        const api = yield* opencode.connect({
+          baseUrl: "https://remote.example",
+          password: "secret",
+        });
+        const result = yield* api.usageLimits("/remote");
+        if (reason === undefined) assert.strictEqual(result, undefined);
+        else assert.strictEqual(result?.unavailable?.reason, reason);
+        if (status === 200 && reason === "unsupported")
+          assert.include(result?.unavailable?.message ?? "", "signed in");
+      }
     }),
   );
 });

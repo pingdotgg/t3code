@@ -120,6 +120,19 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
     }),
   );
+  it.effect("fails the repository probe that other callers read as no repository", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* git(tmp, ["init"]);
+      yield* writeTextFile(NodePath.join(tmp, ".git", "config"), "invalid config\n");
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+      expect(yield* registry.detect({ cwd: tmp })).toBeNull();
+      const probe = yield* Effect.flip(checkpointStore.isGitRepository(tmp));
+      expect(probe._tag).toBe("VcsProcessExitError");
+    }),
+  );
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
@@ -159,6 +172,10 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* initRepoWithCommit(tmp);
         yield* git(tmp, ["config", "diff.noprefix", "true"]);
         yield* git(tmp, ["config", "diff.suppressBlankEmpty", "true"]);
+        yield* git(tmp, ["config", "diff.submodule", "log"]);
+        const sub = NodePath.join(tmp, "sub");
+        yield* git(tmp, ["init", "sub"]);
+        yield* initRepoWithCommit(sub);
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
         const threadId = ThreadId.make("thread-checkpoint-store-noprefix");
         const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
@@ -170,6 +187,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           checkpointRef: fromCheckpointRef,
         });
         yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nafter\n");
+        yield* git(sub, ["commit", "--allow-empty", "-m", "moved"]);
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: toCheckpointRef,
@@ -184,6 +202,8 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
 
         expect(diff).toContain("diff --git a/README.md b/README.md");
         expect(diff).toContain(" # test\n \n-before\n+after\n");
+        expect(diff).toContain("diff --git a/sub b/sub");
+        expect(diff).toContain("+Subproject commit ");
       }),
     );
 
