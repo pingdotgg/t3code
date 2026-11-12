@@ -69,6 +69,10 @@ vi.mock(import("~/components/preview/previewBridge"), async (original) => {
   }
 });
 
+vi.mock("./recordingCompositor", () => ({
+  createRecordingCompositor: async (stream: MediaStream) => ({ stream, dispose: () => {} }),
+}));
+
 vi.mock("~/rpc/atomRegistry", () => ({
   appAtomRegistry: { set: registrySet },
 }));
