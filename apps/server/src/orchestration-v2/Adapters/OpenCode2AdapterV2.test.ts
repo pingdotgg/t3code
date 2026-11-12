@@ -3609,35 +3609,53 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("fails owned work when the process exits during a stalled history read", () =>
-    Effect.gen(function* () {
-      const reading = yield* Deferred.make<void>();
-      const cancelled = yield* Deferred.make<void>();
-      const exited = yield* Deferred.make<void>();
-      const { runtime, thread } = yield* resumed(
-        [
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          ...reconnected({ [SESSION]: { type: "running" } }),
-        ],
-        {
-          processExit: Deferred.await(exited),
-          beforeResponse: (path) =>
-            path.endsWith("/message")
-              ? Deferred.succeed(reading, undefined).pipe(
-                  Effect.andThen(Effect.never),
-                  Effect.onInterrupt(() => Deferred.succeed(cancelled, undefined)),
-                )
-              : Effect.void,
-        },
-      );
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread));
-      yield* Deferred.await(reading);
-      yield* Deferred.succeed(exited, undefined);
-      assert.equal((yield* Fiber.join(terminal))?.status, "failed");
-      yield* Deferred.await(cancelled);
-    }).pipe(Effect.scoped),
+  it.effect(
+    "recovers through a restarted server when the process exits during a history read",
+    () =>
+      Effect.gen(function* () {
+        const reading = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+        let restarted = false;
+        let held = false;
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            ...reconnected({ [SESSION]: { type: "running" } }),
+            ...reconnected({}).slice(1),
+          ],
+          {
+            // The replay lends one connection; only the first borrow's process exits.
+            processExit: Effect.suspend(() =>
+              restarted
+                ? Effect.never
+                : Effect.sleep("1 second").pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        restarted = true;
+                      }),
+                    ),
+                  ),
+            ),
+            beforeResponse: (path) =>
+              path.endsWith("/message") && !held
+                ? Effect.sync(() => (held = true)).pipe(
+                    Effect.andThen(Deferred.succeed(reading, undefined)),
+                    Effect.andThen(Effect.never),
+                    Effect.onInterrupt(() => Deferred.succeed(cancelled, undefined)),
+                  )
+                : Effect.void,
+          },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        yield* Deferred.await(reading);
+        // The exit at 1s cuts the stalled read; the retry 2s later borrows the restarted server.
+        yield* TestClock.adjust("3 seconds");
+        yield* Deferred.await(cancelled);
+        assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+        assert.equal(runtime.providerSession.status, "ready");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("releases a recovering session on shutdown without waiting for its HTTP read", () =>

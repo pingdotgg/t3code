@@ -625,6 +625,10 @@ const OWNED_RECOVERY_RETRY = {
   schedule: OWNED_RECONNECT_SCHEDULE,
   while: (error: unknown) => !isPermanentRecoveryError(error),
 };
+class OpenCode2ServerExitedError extends Schema.TaggedError<OpenCode2ServerExitedError>()(
+  "OpenCode2ServerExitedError",
+  {},
+) {}
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
@@ -3663,11 +3667,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const state of threads.values()) {
         yield* recoverShells(state).pipe(Effect.ignore({ log: true }));
       }
-      // An owned process's exit, rather than a read deadline, bounds recovery.
-      // HTTP waits stay outside the event lock so Stop can still settle.
-      yield* connection.processExit === undefined
+      // An owned process's exit, rather than a read deadline, bounds recovery; the retry then
+      // borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
+      const exited = next.processExit;
+      yield* exited === undefined
         ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
-        : reconcile().pipe(Effect.retry(OWNED_RECOVERY_RETRY));
+        : reconcile().pipe(
+            Effect.retry(OWNED_RECOVERY_RETRY),
+            Effect.raceFirst(
+              exited.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
+            ),
+          );
       return stream;
     }).pipe(
       Effect.retry(
@@ -3732,18 +3742,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       );
     // Subscribed before any session or prompt call, so no event of theirs is missed.
-    const following = follow(
+    yield* follow(
       yield* connection.events.pipe(Effect.provideService(Scope.Scope, currentScope)),
-    );
-    yield* (
-      connection.processExit === undefined
-        ? following
-        : Effect.raceFirst(
-            following,
-            connection.processExit.pipe(
-              Effect.andThen(lock.withPermit(failAll("The OpenCode server exited."))),
-            ),
-          )
     ).pipe(Effect.forkScoped);
 
     yield* Effect.gen(function* () {
