@@ -46,12 +46,15 @@ export function isSelectionRectVisible(rect: SelectionRect, clips: readonly Sele
 export function observeSelectionActions({
   element,
   getActionElement,
+  multiClickCycles = false,
   restoreAfterScroll = false,
   onSelection,
   onDismiss,
 }: {
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
+  /** Set where clicks cycle the selection (the terminal), so any further click can change it. */
+  multiClickCycles?: boolean;
   restoreAfterScroll?: boolean;
   onSelection: (pointer: SelectionActionPoint | null) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
@@ -133,7 +136,9 @@ export function observeSelectionActions({
     if (!gestureActive) return;
     gestureActive = false;
     pointer = { x: event.clientX, y: event.clientY };
-    schedule(event.detail >= 2 ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
+    // A third click can still grow a double-click's word; nothing grows a triple-click's line.
+    const waitForClick = event.detail === 2 || (multiClickCycles && event.detail > 2);
+    schedule(waitForClick ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;

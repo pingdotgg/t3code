@@ -1118,6 +1118,7 @@ function TerminalSessionViewport({
 
       selectionActions = observeSelectionActions({
         element: mount,
+        multiClickCycles: true,
         onSelection: (pointer) => {
           void showSelectionAction(pointer);
         },
