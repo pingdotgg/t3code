@@ -141,6 +141,7 @@ import {
   readableFailure,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
+  isPullRequestReadyToMerge,
   allowedPullRequestMergeMethods,
   allowsSinglePullRequestMerge,
   canDeletePullRequestBranch,
@@ -1274,6 +1275,16 @@ export function PullRequestDetailPanel({
       ? "pending"
       : latestChecksState;
   const checksStale = checksState !== detailChecksState;
+  const readyToMerge =
+    detail !== null &&
+    isPullRequestReadyToMerge({
+      state: detail.state,
+      isDraft: detail.isDraft,
+      mergeability: detail.mergeability,
+      checksState,
+      reviewDecision: sharedSummary?.reviewDecision,
+      autoMergeEnabled: detail.autoMergeEnabled,
+    });
   const primaryAction = detail
     ? resolvePullRequestPrimaryControl({
         state: detail.state,
@@ -1466,6 +1477,7 @@ export function PullRequestDetailPanel({
               ) : null}
               <PullRequestPrimaryAction
                 mergeBlockedReason={mergeBlockedReason}
+                readyToMerge={readyToMerge}
                 pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
                 autoMergeArmed={autoMergeArmed}

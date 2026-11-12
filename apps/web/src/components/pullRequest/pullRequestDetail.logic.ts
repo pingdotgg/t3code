@@ -31,6 +31,7 @@ import {
   type PullRequestReaction,
   type PullRequestMergeMethod,
   type PullRequestRef,
+  type PullRequestReviewDecision,
   type RepositoryIdentity,
   type PullRequestConversationThread,
   type PullRequestReviewThread,
@@ -116,6 +117,27 @@ export function resolvePullRequestPrimaryControl(input: {
     return "enable-auto-merge";
   }
   return input.canMerge ? "merge" : null;
+}
+
+/** Open, conflict-free, checks green, no blocking review, and auto-merge not armed. */
+export function isPullRequestReadyToMerge(input: {
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
+  readonly mergeability: PullRequestMergeability;
+  readonly checksState: ContractPullRequestChecksState | null;
+  readonly reviewDecision: PullRequestReviewDecision | null | undefined;
+  readonly autoMergeEnabled: boolean | undefined;
+}): boolean {
+  return (
+    input.state === "open" &&
+    !input.isDraft &&
+    input.mergeability === "mergeable" &&
+    input.checksState !== "pending" &&
+    input.checksState !== "failing" &&
+    input.reviewDecision !== "changes-requested" &&
+    input.reviewDecision !== "review-required" &&
+    input.autoMergeEnabled !== true
+  );
 }
 
 export function pullRequestCheckoutCommand(

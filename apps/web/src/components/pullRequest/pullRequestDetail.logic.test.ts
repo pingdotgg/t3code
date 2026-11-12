@@ -46,6 +46,7 @@ import {
   resolveDisplayedPullRequestDetail,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
+  isPullRequestReadyToMerge,
   allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
@@ -192,6 +193,35 @@ describe("pull request primary control", () => {
     expect(resolvePullRequestPrimaryControl({ ...open, checksState: "failing" })).toBe(
       "enable-auto-merge",
     );
+  });
+
+  it("is ready to merge only when nothing still waits or blocks", () => {
+    const ready = {
+      state: "open" as const,
+      isDraft: false,
+      mergeability: "mergeable" as const,
+      checksState: "passing" as const,
+      reviewDecision: "approved" as const,
+      autoMergeEnabled: false,
+    };
+    expect(isPullRequestReadyToMerge(ready)).toBe(true);
+    expect(isPullRequestReadyToMerge({ ...ready, checksState: null, reviewDecision: null })).toBe(
+      true,
+    );
+    expect(isPullRequestReadyToMerge({ ...ready, autoMergeEnabled: undefined })).toBe(true);
+    for (const blocked of [
+      { state: "merged" as const },
+      { isDraft: true },
+      { mergeability: "conflicting" as const },
+      { mergeability: "unknown" as const },
+      { checksState: "pending" as const },
+      { checksState: "failing" as const },
+      { reviewDecision: "review-required" as const },
+      { reviewDecision: "changes-requested" as const },
+      { autoMergeEnabled: true },
+    ]) {
+      expect(isPullRequestReadyToMerge({ ...ready, ...blocked })).toBe(false);
+    }
   });
 
   it("does not offer auto-merge while the host state is unknown", () => {

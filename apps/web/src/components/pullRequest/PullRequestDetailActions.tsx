@@ -4,11 +4,17 @@ import type {
   PullRequestMergeMethod,
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
-import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CircleCheckIcon,
+  FolderGit2Icon,
+  GitBranchIcon,
+  PlayIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AnimatedWidth } from "~/components/AnimatedWidth";
-import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -192,6 +198,7 @@ export function PullRequestPrimaryAction({
   pullRequestKey,
   primaryAction,
   mergeBlockedReason,
+  readyToMerge,
   autoMergeArmed,
   armedAutoMergeLabel,
   pendingAutoMergeLabel,
@@ -205,6 +212,7 @@ export function PullRequestPrimaryAction({
   pullRequestKey: string;
   primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
   mergeBlockedReason: string | null;
+  readyToMerge: boolean;
   autoMergeArmed: boolean;
   armedAutoMergeLabel: string;
   pendingAutoMergeLabel: string;
@@ -219,6 +227,21 @@ export function PullRequestPrimaryAction({
   const actionPending = pendingAction !== null;
   return (
     <>
+      {readyToMerge ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Badge size="control" variant="success" role="img" aria-label="Ready to merge">
+                <CircleCheckIcon aria-hidden className="size-3.5" />
+                <span className="@max-[30rem]/pr-header:hidden">Ready to merge</span>
+              </Badge>
+            }
+          />
+          <TooltipPopup side="top">
+            Ready to merge: no conflicts, checks pass, and no review blocks it
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {autoMergeArmed && primaryAction !== "auto-merge-armed" ? (
         <Tooltip>
           <TooltipTrigger
@@ -383,11 +406,9 @@ export function PullRequestPrimaryAction({
         </Tooltip>
       ) : (primaryAction === "merged" || primaryAction === "closed") &&
         statePresentation !== null ? (
-        <Badge size="control" variant="outline">
-          <span className={cn("flex items-center gap-1", statePresentation.toneClassName)}>
-            <statePresentation.Icon className="size-3.5" />
-            {statePresentation.label}
-          </span>
+        <Badge size="control" variant={primaryAction === "merged" ? "merged" : "error"}>
+          <statePresentation.Icon aria-hidden className="size-3.5" />
+          {statePresentation.label}
         </Badge>
       ) : null}
     </>

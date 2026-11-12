@@ -87,6 +87,7 @@ it.each(["merge", "enable-auto-merge"] as const)(
         pullRequestKey="owner/repo/7"
         primaryAction={primaryAction}
         mergeBlockedReason={mergeBlockedReason}
+        readyToMerge={false}
         autoMergeArmed={false}
         armedAutoMergeLabel="Auto-merge enabled"
         pendingAutoMergeLabel="Auto-merge (squash)"
