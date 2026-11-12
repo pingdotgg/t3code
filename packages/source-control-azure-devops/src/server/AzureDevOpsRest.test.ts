@@ -1,5 +1,6 @@
 import { assert, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -32,7 +33,9 @@ const SIGNED_IN = DateTime.toDateUtc(DateTime.makeUnsafe(1_000));
 const SWITCHED = DateTime.toDateUtc(DateTime.makeUnsafe(2_000));
 
 function setup(input: {
-  readonly respond: (request: HttpClientRequest.HttpClientRequest) => Response;
+  readonly respond: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Response | Effect.Effect<Response>;
   readonly issue?: () => Effect.Effect<string, VcsProcessExitError>;
   readonly profile?: { mtime: Date };
 }) {
@@ -42,7 +45,12 @@ function setup(input: {
     ),
   );
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
-    Effect.succeed(HttpClientResponse.fromWeb(request, input.respond(request))),
+    Effect.suspend(() => {
+      const response = input.respond(request);
+      return (Effect.isEffect(response) ? response : Effect.succeed(response)).pipe(
+        Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+      );
+    }),
   );
   const layer = AzureDevOpsRest.layer.pipe(
     Layer.provide(TestSourceControlHost.layer({ process: { run } })),
@@ -203,3 +211,34 @@ it.effect("asks az for a token again after the az login account changes", () => 
     expect(run).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("ignores a delayed refusal from the previous az login account", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<Response>();
+    const profile = { mtime: SIGNED_IN };
+    const { run, execute, layer, read } = setup({
+      profile,
+      issue: () => Effect.sync(() => tokenJson(profile.mtime === SIGNED_IN ? "old" : "new", 3600)),
+      respond: (request) =>
+        request.headers.authorization === "Bearer old"
+          ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
+          : ok({ value: [] }),
+    });
+    yield* Effect.gen(function* () {
+      const previousAccount = yield* Effect.forkChild(read(ACME));
+      yield* Deferred.await(started);
+      profile.mtime = SWITCHED;
+      assert.isTrue(Option.isSome(yield* read(GLOBEX)));
+      yield* Deferred.succeed(release, new Response(null, { status: 401 }));
+      assert.isTrue(Option.isNone(yield* Fiber.join(previousAccount)));
+      assert.isTrue(Option.isSome(yield* read(ACME)));
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls.map(([request]) => request.headers.authorization)).toEqual([
+        "Bearer old",
+        "Bearer new",
+        "Bearer new",
+      ]);
+    }).pipe(Effect.provide(layer));
+  }),
+);

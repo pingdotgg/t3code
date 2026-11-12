@@ -81,6 +81,7 @@ const make = Effect.gen(function* () {
     "azureProfile.json",
   );
   let profileVersion: number | null | undefined;
+  let accountGeneration = 0;
 
   // `az login` and `az account set` rewrite the profile. Whatever the old account was given or
   // refused no longer applies, so the next read asks az again.
@@ -89,6 +90,7 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
     Effect.map((version) => {
       if (profileVersion !== undefined && version !== profileVersion) {
+        accountGeneration += 1;
         held = null;
         tokenRetryAt = 0;
         refusedUntil.clear();
@@ -148,6 +150,7 @@ const make = Effect.gen(function* () {
       if (url === null || !isAzureDevOpsServicesUrl(url)) return Option.none();
       const organization = organizationKey(url);
       yield* tokenLock.withPermit(followAccount);
+      const generation = accountGeneration;
       const now = yield* Clock.currentTimeMillis;
       if ((refusedUntil.get(organization) ?? 0) > now) return Option.none();
 
@@ -170,7 +173,9 @@ const make = Effect.gen(function* () {
           ) {
             return Clock.currentTimeMillis.pipe(
               Effect.map((at) => {
-                refusedUntil.set(organization, at + ORGANIZATION_RETRY_MS);
+                if (generation === accountGeneration) {
+                  refusedUntil.set(organization, at + ORGANIZATION_RETRY_MS);
+                }
                 return Option.none<string>();
               }),
             );
