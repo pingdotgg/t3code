@@ -279,14 +279,16 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         // The guarded reader does not block on a FIFO and does not follow a symlink.
         const previous = Option.fromNullOr(readThemeFileGuarded(destination, MAX_THEME_FILE_BYTES));
+        const servedBefore = (yield* refresh).themes.map((theme) => theme.id);
         yield* fs.makeDirectory(environmentThemesDir, { recursive: true }).pipe(
           Effect.andThen(replace(contents)),
           Effect.mapError((cause) => fail("not-published", cause)),
         );
-        // The reader skips files past its count and size limits, so confirm this one is served.
-        const { themes } = yield* refresh;
-        if (themes.some((theme) => theme.id === themeId)) return;
-        // Put back what was there, so a rejected update does not take a working theme away.
+        // The reader stops at its count and size limits, so this file can go unserved, or it can
+        // push another theme out. Both count as a failed publish.
+        const served = new Set((yield* refresh).themes.map((theme) => theme.id));
+        if (served.has(themeId) && servedBefore.every((id) => served.has(id))) return;
+        // Put back what was there, so a rejected publish does not take a working theme away.
         yield* Option.match(previous, {
           onNone: () => fs.remove(destination, { force: true }),
           onSome: replace,
@@ -300,14 +302,16 @@ const make = Effect.gen(function* () {
   const apply: EnvironmentThemeService["Service"]["apply"] = Effect.fn(
     "EnvironmentThemeService.apply",
   )(function* ({ themeId, theme }) {
-    const fail = (reason: EnvironmentThemeApplyError["reason"], known?: ReadonlyArray<string>) =>
-      new EnvironmentThemeApplyError({ themeId, reason, known });
+    const fail = (
+      reason: EnvironmentThemeApplyError["reason"],
+      detail?: { readonly known?: ReadonlyArray<string>; readonly cause?: unknown },
+    ) => new EnvironmentThemeApplyError({ themeId, reason, ...detail });
     if (!isEnvironmentThemeId(themeId)) return yield* fail("invalid-id");
     if (theme !== undefined) {
       yield* publish(themeId, theme);
     } else {
       const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
-      if (!known.includes(themeId)) return yield* fail("unknown-id", known);
+      if (!known.includes(themeId)) return yield* fail("unknown-id", { known });
     }
     // The timestamp makes clients apply the theme again when its id did not change.
     yield* settings
@@ -315,7 +319,7 @@ const make = Effect.gen(function* () {
         defaultTheme: themeId,
         defaultThemeSetAt: DateTime.formatIso(yield* DateTime.now),
       })
-      .pipe(Effect.mapError(() => fail("not-selected")));
+      .pipe(Effect.mapError((cause) => fail("not-selected", { cause })));
   });
 
   return {

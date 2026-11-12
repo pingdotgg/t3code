@@ -240,6 +240,14 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           .pipe(Effect.flip);
         assert.strictEqual(refused.reason, "not-published");
         assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
+
+        // A new theme that sorts first would be served and push the last one out.
+        const displacing = yield* themes
+          .apply({ themeId: "ab-new", theme: large("Displacing") })
+          .pipe(Effect.flip);
+        assert.strictEqual(displacing.reason, "not-published");
+        assert.deepEqual(yield* served, { id: "zz-look", ...NIGHTFALL_THEME });
+        assert.isFalse((yield* themes.current).some((theme) => theme.id === "ab-new"));
       }),
     );
   });
