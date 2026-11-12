@@ -89,6 +89,7 @@ describe("remarkCodexDirectives", () => {
     expect(text).toContain("Rates held.");
     expect(text).not.toMatch(WEB_CITATION_MARKER);
     expect(textContent(parse("red \uE200cite\uE202turn0search0\uE201**blue**"))).toBe("red blue");
+    expect(textContent(parse("Rates held. \uE200cite\uE202turn0sea"))).toBe("Rates held.");
   });
 
   it("keeps web citation markers out of a bare URL they follow", () => {
@@ -153,6 +154,8 @@ describe.each([
     ],
     ["[s](https://a.dev\uE200cite\uE202turn0search0\uE201)", "[s](https://a.dev)"],
     ["[s]\n\n[s]: https://a.dev\uE200cite\uE202turn0search0\uE201", "[s]\n\n[s]: https://a.dev"],
+    ["Rates held. \uE200cite\uE202turn0search0\uE202turn0sea", "Rates held."],
+    ["Rates held. \uE200ci", "Rates held."],
     [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
     ["`citeturn0search0`", "`citeturn0search0`"],
     [':codex-followup[Show `citeturn0search0`]{prompt="Show it"}', "Show `citeturn0search0`"],
