@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -29,6 +31,39 @@ const instanceId = ProviderInstanceId.make("acpRegistry_codex");
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
+
+const mockAgentCatalog = (env: Record<string, string>) =>
+  AcpRegistrySupport.AcpRegistryCatalog.of({
+    search: () => Effect.die("unused search"),
+    prepare: () => Effect.die("unused prepare"),
+    inspect: () => Effect.die("unused inspect"),
+    uninstallManagedBinary: () => Effect.die("unused uninstall"),
+    resolve: () =>
+      Effect.succeed({
+        agent: {
+          id: "mock-agent",
+          name: "Mock Agent",
+          version: "1.0.0",
+          description: "ACP session management test agent",
+          distribution: { npx: { package: "mock-agent@1.0.0" } },
+        },
+        distribution: "npx" as const,
+        spawn: { command: "node", args: [mockAgentPath], env: { ...process.env, ...env } },
+      }),
+  });
+
+const watchUntil = (directory: string, done: () => boolean) =>
+  Effect.callback<void>((resume) => {
+    const check = () => {
+      if (!done()) return;
+      // Deleting a still-watched directory raises EPERM on Windows.
+      watcher.close();
+      resume(Effect.void);
+    };
+    const watcher = NodeFS.watch(directory, check);
+    check();
+    return Effect.sync(() => watcher.close());
+  });
 
 describe("ACP Registry probe", () => {
   it("returns advertised auth methods and de-duplicated models", () => {
@@ -326,31 +361,9 @@ describe("ACP Registry probe", () => {
   });
 
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
-    const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
-      search: () => Effect.die("unused search"),
-      prepare: () => Effect.die("unused prepare"),
-      inspect: () => Effect.die("unused inspect"),
-      uninstallManagedBinary: () => Effect.die("unused uninstall"),
-      resolve: () =>
-        Effect.succeed({
-          agent: {
-            id: "mock-agent",
-            name: "Mock Agent",
-            version: "1.0.0",
-            description: "ACP session management test agent",
-            distribution: { npx: { package: "mock-agent@1.0.0" } },
-          },
-          distribution: "npx" as const,
-          spawn: {
-            command: "node",
-            args: [mockAgentPath],
-            env: {
-              ...process.env,
-              T3_ACP_SESSION_LIFECYCLE: "1",
-              T3_ACP_AUTH_METHOD_ID: "mock-login",
-            },
-          },
-        }),
+    const catalog = mockAgentCatalog({
+      T3_ACP_SESSION_LIFECYCLE: "1",
+      T3_ACP_AUTH_METHOD_ID: "mock-login",
     });
     const input = {
       instanceId,
@@ -378,6 +391,33 @@ describe("ACP Registry probe", () => {
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Effect.scoped,
+    );
+  });
+
+  it.live("lets the agent finish work it started after session/new before closing a probe", () => {
+    const markerDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-acp-probe-"));
+    const markerPath = NodePath.join(markerDir, "post-session-work");
+    const markerWritten = watchUntil(markerDir, () => NodeFS.existsSync(markerPath));
+
+    return Effect.gen(function* () {
+      const result = yield* probeAcpRegistryConfiguration({
+        instanceId,
+        settings: decodeSettings({ agentId: "mock-agent" }),
+        cwd: process.cwd(),
+        environment: process.env,
+      });
+      expect(result.probe.ready).toBe(true);
+      yield* markerWritten;
+      expect(NodeFS.readFileSync(markerPath, "utf8")).toBe("done");
+    }).pipe(
+      Effect.provideService(
+        AcpRegistrySupport.AcpRegistryCatalog,
+        mockAgentCatalog({ T3_ACP_POST_SESSION_WORK_MARKER_PATH: markerPath }),
+      ),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      Effect.ensuring(
+        Effect.sync(() => NodeFS.rmSync(markerDir, { recursive: true, force: true })),
+      ),
     );
   });
 
@@ -425,6 +465,10 @@ describe("ACP Registry probe", () => {
         expect(result.probe.ready).toBe(true);
         expect(result.probe.sessionManagement.canDelete).toBe(true);
 
+        // Successful probes close their scope, and so delete the session, after the settle grace.
+        yield* watchUntil(directory, () =>
+          NodeFS.readFileSync(requestLogPath, "utf8").includes('"session/delete"'),
+        );
         const requests = (yield* fs.readFileString(requestLogPath))
           .split("\n")
           .filter((line) => line.length > 0)
