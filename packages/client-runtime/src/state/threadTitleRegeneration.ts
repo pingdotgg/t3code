@@ -21,9 +21,11 @@ function settledOutcome(
   snapshot: OrchestrationV2ShellSnapshot | null,
   request: TitleRegenerationRequest,
 ): ThreadTitleRegenerationOutcome | null | undefined {
-  if (snapshot === null) return null;
+  if (snapshot === null) return undefined;
   if (snapshot.snapshotSequence < request.sequence) return undefined;
-  const thread = snapshot.threads.find((candidate) => candidate.id === request.threadId);
+  const thread =
+    snapshot.threads.find((candidate) => candidate.id === request.threadId) ??
+    snapshot.archivedThreads.find((candidate) => candidate.id === request.threadId);
   if (thread === undefined) return null;
   const last = thread.lastTitleRegeneration;
   if (last?.requestId === request.requestId) {

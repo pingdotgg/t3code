@@ -447,7 +447,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
-  lastTitleRegeneration: Schema.NullOr(LastThreadTitleRegeneration),
+  lastTitleRegeneration: Schema.optional(Schema.NullOr(LastThreadTitleRegeneration)),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   parentThreadId: Schema.NullOr(ThreadId),

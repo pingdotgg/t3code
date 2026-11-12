@@ -155,7 +155,9 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
       ),
     ),
   );
-  const snapshotAtom = Atom.family((_environmentId: EnvironmentId) => Atom.make(SNAPSHOT));
+  const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<OrchestrationV2ShellSnapshot | null>(SNAPSHOT),
+  );
   const commands = createThreadEnvironmentAtoms(runtime, snapshotAtom);
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
@@ -295,6 +297,7 @@ describe("title regeneration", () => {
         completedAt: NOW,
       };
 
+      h.registry.set(source, null);
       const result = h.commands.regenerateTitle.run(h.registry, target);
       const request = yield* Queue.take(h.requests);
       const requestId = request.command.commandId;
@@ -314,9 +317,11 @@ describe("title regeneration", () => {
       h.registry.set(source, {
         ...SNAPSHOT,
         snapshotSequence: 3,
-        threads: [
+        threads: [],
+        archivedThreads: [
           {
             ...thread,
+            archivedAt: NOW,
             titleRegeneration: null,
             lastTitleRegeneration: {
               requestId,
