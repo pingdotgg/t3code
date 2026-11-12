@@ -116,3 +116,33 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     );
   },
 );
+
+describe("ElectronUpdater quitAndInstall", () => {
+  it.effect("fails when the updater reports an install error synchronously", () =>
+    Effect.gen(function* () {
+      const installError = new Error("Command pkexec exited with code 127");
+      // electron-updater's DebUpdater emits `error` and returns normally when pkexec fails.
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const onError = () => undefined;
+          autoUpdater.on("error", onError);
+          const spy = vi.spyOn(autoUpdater, "quitAndInstall").mockImplementation(() => {
+            autoUpdater.emit("error", installError);
+          });
+          return { onError, spy };
+        }),
+        ({ onError, spy }) =>
+          Effect.sync(() => {
+            spy.mockRestore();
+            autoUpdater.removeListener("error", onError);
+          }),
+      );
+
+      const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
+      const exit = yield* Effect.exit(
+        electronUpdater.quitAndInstall({ isSilent: true, isForceRunAfter: true }),
+      );
+      assert.isTrue(exit._tag === "Failure", "a reported install error must fail quitAndInstall");
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+});
