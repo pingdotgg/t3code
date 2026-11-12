@@ -999,6 +999,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
           repositoryIdentityResolved: false,
         }),
       invalidate: () => Effect.void,
+      refreshRepositoryIdentity: () => Effect.void,
       subscribeChanges: Effect.never,
     }),
   ),
@@ -1629,6 +1630,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             providerTurnId: providerTurn.id,
             messageId: steerMessageId,
             modelSelection: run.modelSelection,
+            steerFollowUpAfterRunOrdinal: run.ordinal,
           },
         ],
       );

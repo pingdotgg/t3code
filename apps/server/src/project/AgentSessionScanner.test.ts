@@ -660,6 +660,8 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const codexWorkspace = yield* makeTempDir("t3code-workspace-codex-");
         const piWorkspace = yield* makeTempDir("t3code-workspace-pi-");
         const piFlatWorkspace = yield* makeTempDir("t3code-workspace-pi-flat-");
+        const piInstanceHome = yield* makeTempDir("t3code-pi-instance-home-");
+        const piHomeWorkspace = yield* makeTempDir("t3code-workspace-pi-home-");
 
         // Pi nests sessions per cwd by default and keeps a custom session directory flat.
         for (const [filePath, cwd, mtime] of [
@@ -672,6 +674,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             path.join(piSessionDir, "2026-01-04_pi-flat.jsonl"),
             piFlatWorkspace,
             "2026-01-04T00:00:00.000Z",
+          ],
+          [
+            path.join(piInstanceHome, "custom-pi", "sessions", "--slug--", "2026-01-05_pi.jsonl"),
+            piHomeWorkspace,
+            "2026-01-05T00:00:00.000Z",
           ],
         ] as const) {
           yield* writeTranscript({
@@ -731,10 +738,22 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               ],
               config: {},
             },
+            [ProviderInstanceId.make("pi-home")]: {
+              driver: ProviderDriverKind.make("pi"),
+              enabled: true,
+              environment: [
+                { name: "HOME", value: piInstanceHome, sensitive: false },
+                { name: "USERPROFILE", value: piInstanceHome, sensitive: false },
+                { name: "PI_CODING_AGENT_DIR", value: "~/custom-pi", sensitive: false },
+                { name: "PI_CODING_AGENT_SESSION_DIR", value: "", sensitive: false },
+              ],
+              config: {},
+            },
           },
         });
 
         expect(result.candidates.map((candidate) => [candidate.path, candidate.sources])).toEqual([
+          [piHomeWorkspace, ["pi"]],
           [piFlatWorkspace, ["pi"]],
           [piWorkspace, ["pi"]],
           [codexWorkspace, ["codex"]],
