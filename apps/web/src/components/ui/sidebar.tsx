@@ -282,6 +282,7 @@ function Sidebar({
   variant = "sidebar",
   collapsible = "offcanvas",
   resizable = false,
+  sheetTransitionDurationMs,
   className,
   children,
   ...props
@@ -290,6 +291,7 @@ function Sidebar({
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
   resizable?: boolean | SidebarResizableOptions;
+  sheetTransitionDurationMs?: number;
 }) {
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetMounted } = useSidebar();
   const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
@@ -336,6 +338,9 @@ function Sidebar({
             data-slot="sidebar"
             showCloseButton={false}
             side={side}
+            {...(sheetTransitionDurationMs === undefined
+              ? {}
+              : { transitionDurationMs: sheetTransitionDurationMs })}
             style={
               {
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,

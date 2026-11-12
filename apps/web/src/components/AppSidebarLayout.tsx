@@ -481,6 +481,7 @@ export function AppSidebarLayout({
                 storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
                 onResize: setSidebarWidth,
               }}
+              sheetTransitionDurationMs={routePanelAnimationsActive ? panelAnimationDurationMs : 0}
               style={windowControlsInsetStyle}
             >
               <ThreadSidebar routeReveal={sidebarRouteReveal} />
