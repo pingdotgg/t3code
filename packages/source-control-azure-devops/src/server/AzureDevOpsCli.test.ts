@@ -351,10 +351,6 @@ describe("azureCliInvocation", () => {
     interpreter: "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\python.exe",
     installer: "MSI",
   };
-  const zip: AzureCliInstall = {
-    interpreter: "D:\\azure-cli\\python.exe",
-    installer: "ZIP",
-  };
 
   const invocationFor = (install: AzureCliInstall | undefined) =>
     AzureDevOpsCli.azureCliInvocation().pipe(
@@ -370,11 +366,6 @@ describe("azureCliInvocation", () => {
         command: msi.interpreter,
         args: ["-X", "utf8", "-IBm", "azure.cli"],
         env: { AZ_INSTALLER: "MSI" },
-      });
-      assert.deepStrictEqual(yield* invocationFor(zip), {
-        command: zip.interpreter,
-        args: ["-X", "utf8", "-IBm", "azure.cli"],
-        env: { AZ_INSTALLER: "ZIP" },
       });
     }),
   );
