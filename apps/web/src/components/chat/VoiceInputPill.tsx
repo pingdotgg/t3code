@@ -66,7 +66,7 @@ export function VoiceInputPill({
             "h-7 rounded-md max-sm:order-first max-sm:basis-full sm:h-6"
           : "h-9 max-w-fit grow-[1.5] basis-0 rounded-full p-0.5 sm:h-8",
         tone === "error"
-          ? "bg-destructive/6 text-destructive ring-destructive/24"
+          ? "bg-destructive/6 text-destructive-foreground ring-destructive/24"
           : "bg-muted/48 ring-border",
       )}
     >
