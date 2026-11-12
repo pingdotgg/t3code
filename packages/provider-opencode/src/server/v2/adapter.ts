@@ -334,6 +334,8 @@ interface ThreadState {
   /** Execution starts seen; lets a check that awaited OpenCode notice a run that began meanwhile. */
   starts: number;
   directory: string;
+  /** Where T3 last placed the session; `directory` differs after a native session.moved. */
+  cwd: string;
   agent: string;
   title: string | undefined;
   rules: ReadonlyArray<Rule> | undefined;
@@ -843,6 +845,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       unsettledStarted: false,
       starts: 0,
       directory,
+      cwd: directory,
       agent: "build",
       title: undefined,
       rules: undefined,
@@ -3192,6 +3195,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (sessionId === undefined) return;
       const state = threads.get(sessionId);
       if (state === undefined) return;
+      if (event.type === "session.moved") state.directory = event.data.location.directory;
       if (event.type === "rpc.opencode.goal.changed") {
         if (!supportsNativeGoals()) return;
         const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
@@ -4053,7 +4057,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
       const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-      const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
+      // OpenCode scopes MCP servers per Location, so follow the session where it moved.
+      const directory = state.directory;
       const name = yield* mcpServerNameFor(turnInput.threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
@@ -4529,8 +4534,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             updatedAt: yield* DateTime.now,
           };
           const cwd = threadInput.runtimePolicy?.cwd;
-          const loaded = threads.has(sessionId);
-          const state = register(providerThread, native, cwd ?? native.location.directory);
+          const previous = threads.get(sessionId);
+          const loaded = previous !== undefined;
+          // A loaded session keeps its native move unless T3 changed the thread's cwd since.
+          const target = cwd != null && cwd !== previous?.cwd ? cwd : undefined;
+          const state = register(providerThread, native, target ?? native.location.directory);
+          // Until the move lands the session is still at its native location; a failed move retries.
+          if (!loaded) state.cwd = native.location.directory;
           if (!loaded) yield* stopLeftoverRequests(state);
           if (!loaded && supportsNativeGoals()) {
             yield* readGoal(state).pipe(
@@ -4540,12 +4550,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           if (!loaded) yield* recoverShells(state).pipe(Effect.ignore({ log: true }));
           yield* writeRules(state, threadInput.runtimePolicy ?? state.policy);
-          if (cwd != null && native.location.directory !== cwd) {
+          if (target !== undefined && native.location.directory !== target) {
             yield* client.session.move({
               sessionID: Session.ID.make(sessionId),
-              directory: AbsolutePath.make(cwd),
+              directory: AbsolutePath.make(target),
             });
           }
+          if (target !== undefined) state.cwd = target;
           return state.providerThread;
         },
         (effect, threadInput) =>
