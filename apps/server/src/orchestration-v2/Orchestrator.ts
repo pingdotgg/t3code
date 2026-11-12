@@ -4696,6 +4696,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ? undefined
                 : (existing.watch ?? {
                     startedAt,
+                    ...(command.includeOwnRemarks && { includeOwnRemarks: true }),
                     headSha: null,
                     failedChecks: [],
                     passed: false,
@@ -4728,6 +4729,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           if (
             command.type === "thread.pull-request.watch" &&
             watch !== undefined &&
+            watch === existing.watch &&
             command.includeOwnRemarks !== undefined &&
             command.includeOwnRemarks !== (watch.includeOwnRemarks ?? false)
           ) {
