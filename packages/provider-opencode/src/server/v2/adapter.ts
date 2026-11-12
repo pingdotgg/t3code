@@ -4958,6 +4958,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               })
               .pipe(Effect.timeout(REQUEST_REPLY_TIMEOUT), Effect.ignore({ log: true }));
           }
+          // OpenCode cancels open forms when it reloads a location and continues without the answer.
+          let formClosed = false;
+          const closeForm = () =>
+            Effect.sync(() => {
+              formClosed = true;
+            });
           const delivered = yield* native.type === "permission"
             ? deliver(
                 client.permission
@@ -4970,20 +4976,32 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   .pipe(Effect.catchTags(permissionGone)),
               )
             : deliver(
-                (answers === undefined || decision === "decline" || decision === "cancel"
-                  ? client.session.form.cancel({
-                      sessionID: entry.sessionId,
-                      formID: Form.ID.make(native.id),
-                    })
-                  : client.session.form.reply({
-                      sessionID: entry.sessionId,
-                      formID: Form.ID.make(native.id),
-                      answer: formAnswer(native.form, answers),
-                    })
-                ).pipe(Effect.catchTags(formGone)),
+                answers === undefined || decision === "decline" || decision === "cancel"
+                  ? client.session.form
+                      .cancel({ sessionID: entry.sessionId, formID: Form.ID.make(native.id) })
+                      .pipe(Effect.catchTags(formGone))
+                  : client.session.form
+                      .reply({
+                        sessionID: entry.sessionId,
+                        formID: Form.ID.make(native.id),
+                        answer: formAnswer(native.form, answers),
+                      })
+                      .pipe(
+                        Effect.catchTags({
+                          ...formGone,
+                          FormNotFoundError: closeForm,
+                          FormAlreadySettledError: closeForm,
+                        }),
+                      ),
               );
           yield* forgetRequest(entry);
           if (!delivered) yield* abandonRequest(asker, "answer not delivered");
+          if (formClosed) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: `OpenCode closed question ${requestInput.requestId} before it received the answer`,
+            });
+          }
         },
         (effect, requestInput) =>
           effect.pipe(
