@@ -215,7 +215,12 @@ export const trustEnvironment = Effect.fn("PreviewBrowserHost.trustEnvironment")
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const env = yield* HostProcess.Environment;
   const realHome = env.HOME ?? (yield* HostProcess.HomeDirectory);
-  const userDatabase = path.join(realHome, ".pki", "nssdb");
+  const dataHome = env.XDG_DATA_HOME ?? path.join(realHome, ".local", "share");
+  // Chrome reads ~/.pki/nssdb when that directory exists, and the XDG data one otherwise.
+  const legacyDatabase = path.join(realHome, ".pki", "nssdb");
+  const userDatabase = (yield* fs.exists(legacyDatabase).pipe(Effect.orElseSucceed(() => false)))
+    ? legacyDatabase
+    : path.join(dataHome, "pki", "nssdb");
   const userFiles: Array<readonly [string, Uint8Array]> = [];
   for (const name of ["cert9.db", "key4.db"]) {
     const bytes = yield* fs
@@ -280,6 +285,6 @@ export const trustEnvironment = Effect.fn("PreviewBrowserHost.trustEnvironment")
   return {
     HOME: home,
     XDG_CONFIG_HOME: env.XDG_CONFIG_HOME ?? path.join(realHome, ".config"),
-    XDG_DATA_HOME: env.XDG_DATA_HOME ?? path.join(realHome, ".local", "share"),
+    XDG_DATA_HOME: dataHome,
   };
 });
