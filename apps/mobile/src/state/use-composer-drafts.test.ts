@@ -205,6 +205,7 @@ import {
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
+  retargetSavedNewTaskDraft,
   setComposerDraftText,
   insertComposerDraftContext,
   insertComposerDraftText,
@@ -1931,6 +1932,30 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+  });
+
+  it("retargets a saved new-task draft only after drafts load", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const to = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-2"),
+    };
+    const key = createNewTaskDraft(from);
+    setComposerDraftText(key, "kept through a cold start");
+    await flushComposerDrafts();
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+
+    await expect(retargetSavedNewTaskDraft(key, to)).resolves.toBe(true);
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      text: "kept through a cold start",
+      project: to,
+    });
+    await expect(retargetSavedNewTaskDraft(`${key}-gone`, to)).resolves.toBe(false);
+    expect(appAtomRegistry.get(composerDraftsAtom)[`${key}-gone`]).toBeUndefined();
   });
 
   it("merges persisted option memory without replacing newer choices", async () => {

@@ -40,6 +40,7 @@ const TEXT_CONTROL_STATES = "data-pressed:text-foreground data-popup-open:text-f
 
 export function ComposerControlsBar(props: {
   environmentId: EnvironmentId;
+  workspaceCwd: string | null;
   routeKind: ChatComposerProps["routeKind"];
   routeThreadRef: ChatComposerProps["routeThreadRef"];
   draftId: ChatComposerProps["draftId"];
@@ -176,6 +177,7 @@ export function ComposerControlsBar(props: {
   const composerModelPicker = (
     <ComposerModelPicker
       environmentId={environmentId}
+      workspaceCwd={props.workspaceCwd}
       compact={false}
       isComposerOwned
       // The trigger grows away from this edge when its model or effort label changes.

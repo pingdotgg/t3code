@@ -109,7 +109,7 @@ function UserFilePreview(props: useRender.ComponentProps<"button">) {
       {
         type: "button",
         className:
-          "group/file focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-control text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none",
+          "group/file hover:surface-ghost-hover focus-visible:ring-ring flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-control text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none",
       },
       props,
     ),
@@ -298,14 +298,21 @@ function UserMessageSwitchNote({ row }: { row: Extract<TimelineRow, { kind: "mes
   ) : null;
 }
 
-function AutomationMessageToggle(props: useRender.ComponentProps<"button">) {
+function AutomationMessageToggle({
+  queued,
+  ...props
+}: useRender.ComponentProps<"button"> & { queued?: boolean }) {
   return useRender({
     defaultTagName: "button",
     props: mergeProps<"button">(
       {
         type: "button",
-        className:
-          "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-pane px-3.5 py-2.5 text-left text-body focus-visible:outline-2 focus-visible:outline-ring",
+        className: cn(
+          "flex w-full min-w-0 cursor-pointer items-center text-left text-body focus-visible:outline-2 focus-visible:outline-ring",
+          queued
+            ? "h-7 gap-1 rounded-control"
+            : "gap-1.5 rounded-pane px-3.5 py-2.5 hover:surface-ghost-hover",
+        ),
       },
       props,
     ),
@@ -440,20 +447,28 @@ export function FoldedMessageHeader(props: {
   summary: string;
   expanded: boolean;
   onToggle: () => void;
+  queued?: boolean;
 }) {
   const Icon = props.icon;
   return (
     <AutomationMessageToggle
+      queued={props.queued === true}
       aria-expanded={props.expanded}
       data-scroll-anchor-ignore
       onClick={props.onToggle}
     >
-      <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
+      <Icon
+        className={cn(
+          "shrink-0 stroke-2 text-muted-foreground",
+          props.queued ? "size-3.5 max-sm:size-4" : "size-4",
+        )}
+      />
       <span className="max-w-1/2 shrink-0 truncate text-muted-foreground">{props.label}</span>
       <span className="min-w-0 flex-1 truncate">{props.summary}</span>
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
+          props.queued && "max-sm:size-4",
           props.expanded && "rotate-180",
         )}
       />
