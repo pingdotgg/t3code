@@ -1394,6 +1394,50 @@ it.effect("a task whose thread there waits on its own task ends with the answer 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a later run the box's own background wake starts reaches the parent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+
+      // The run there ends while its background command still runs.
+      yield* Ref.set(thread.reply, "WAITING");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+        status: "completed",
+        result: "WAITING",
+      });
+
+      // The command finishes there and its wake starts a run nobody here sent, with the answer.
+      yield* Ref.set(thread.laterReply, "FINAL");
+      yield* Deferred.succeed(thread.laterFinished, undefined);
+      const answered = yield* a.orchestrator
+        .streamStoredEventsFrom({
+          threadId: parentThreadId,
+          afterSequence: 0,
+          eventType: "subagent.updated",
+        })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" && stored.event.payload.result === "FINAL",
+          ),
+          Stream.runHead,
+        );
+      expect(Option.isSome(answered)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("the same key from another provider session is another task", () =>
   Effect.scoped(
     Effect.gen(function* () {
