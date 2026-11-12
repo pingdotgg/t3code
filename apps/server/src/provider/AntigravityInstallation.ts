@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or free-space query.
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
 import { ProviderDriverKind, type ProviderInstallState } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import { resolveCommandPath } from "@t3tools/shared/shell";
@@ -329,7 +330,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     "AntigravityInstallation.resolve",
   )(
     function* (binaryPath?: string, processEnvironment?: NodeJS.ProcessEnv) {
-      const override = binaryPath?.trim();
+      const override = expandHomePath(binaryPath?.trim() ?? "", yield* HostProcess.HomeDirectory);
       if (override) {
         for (const candidate of yield* commandCandidates(override, processEnvironment)) {
           const selected = yield* fromExternal(candidate, "override");

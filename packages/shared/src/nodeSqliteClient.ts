@@ -630,17 +630,25 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     yield* warn("Node SQLite lacks transaction-state or statement-authorizer support");
     return undefined;
   }
-  // These are the writer's first statements, before callers set their own wait.
-  writer.exec("PRAGMA busy_timeout = 5000;");
-  const version = String(writer.prepare("SELECT sqlite_version() AS version").get()?.version);
+  // These are the writer's first statements, before callers set their own wait. A file that is
+  // not a database first fails here.
+  const { version, frames, sizeLimit } = yield* Effect.try({
+    try: () => {
+      writer.exec("PRAGMA busy_timeout = 5000;");
+      return {
+        version: String(writer.prepare("SELECT sqlite_version() AS version").get()?.version),
+        frames: writer.prepare("PRAGMA wal_checkpoint(NOOP)"),
+        sizeLimit: writer.prepare("PRAGMA journal_size_limit"),
+      };
+    },
+    catch: (cause) => failed(cause, "Failed to open database", "open"),
+  });
   const [major = 0, minor = 0] = version.split(".").map(Number);
   // Older SQLite treats NOOP as PASSIVE, which would checkpoint on the writer.
   if (major < 3 || (major === 3 && minor < 51)) {
     yield* warn(`SQLite ${version} has no NOOP checkpoint`);
     return undefined;
   }
-  const frames = writer.prepare("PRAGMA wal_checkpoint(NOOP)");
-  const sizeLimit = writer.prepare("PRAGMA journal_size_limit");
   const started = Result.try(
     () =>
       new NodeWorkerThreads.Worker(checkpointWorkerSource, {

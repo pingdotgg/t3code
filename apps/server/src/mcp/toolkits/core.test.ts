@@ -718,6 +718,11 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const fresh = yield* call("schedule_task", {
+      scheduledTaskId: "task-auto",
+      freshSession: true,
+    });
+    expect(fresh.structuredContent).toMatchObject({ freshSession: true });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
