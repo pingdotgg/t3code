@@ -36,6 +36,7 @@ vi.mock("electron", async (importOriginal) => ({
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
@@ -48,6 +49,10 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import {
+  PASSKEY_BRIDGE_ARGUMENT,
+  PRIMARY_PASTE_DISABLED_ARGUMENT,
+} from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 
@@ -238,6 +243,8 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly primaryPasteEnabled?: boolean;
+  readonly previewPasskeyBridgeEnabled?: boolean;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -329,8 +336,11 @@ function layerTest(input: {
         } satisfies ElectronShell.ElectronShell["Service"]),
         layerElectronTheme,
         layerElectronWindow,
+        Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, {
+          enabled: input.primaryPasteEnabled ?? true,
+        }),
         Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-          bridgeEnabled: false,
+          bridgeEnabled: input.previewPasskeyBridgeEnabled ?? false,
           installSessionHandlers: () => {},
           attachGuest: () => () => {},
         }),
@@ -439,6 +449,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           } satisfies ElectronShell.ElectronShell["Service"]),
           layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
+          Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
           Layer.mock(PreviewPasskeys.PreviewPasskeys)({
             bridgeEnabled: false,
             installSessionHandlers: () => {},
@@ -1012,9 +1023,73 @@ describe("DesktopWindow", () => {
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
         assert.deepEqual(mainWindowMaximizedUpdates, [true]);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect.each([
+    { normal: "on display 1", width: 1920, height: 1080, x: 220 },
+    { normal: "on display 1", width: 1280, height: 720, x: 220 },
+    { normal: "straddling both displays", width: 1920, height: 1080, x: 1800 },
+  ])(
+    "persists bounds on the display a maximized window was moved to ($width x $height, normal $normal)",
+    ({ width, height, x }) =>
+      Effect.gen(function* () {
+        const displayOne = { x: 0, y: 0, width: 1920, height: 1080 };
+        const displayTwo = { x: 1920, y: 0, width, height };
+        const getAllDisplays = vi.mocked(Electron.screen.getAllDisplays);
+        getAllDisplays.mockReturnValue([
+          { bounds: displayOne, workArea: displayOne },
+          { bounds: displayTwo, workArea: displayTwo },
+        ] as unknown as Electron.Display[]);
+        const fakeWindow = makeFakeBrowserWindow();
+        fakeWindow.isMaximized.mockReturnValue(true);
+        fakeWindow.getBounds.mockReturnValue(displayTwo);
+        fakeWindow.getNormalBounds.mockReturnValue({ x, y: 140, width: 1380, height: 920 });
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+        const mainWindowMaximizedUpdates: boolean[] = [];
+        const layer = layerTest({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          mainWindowBoundsUpdates,
+          mainWindowMaximizedUpdates,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const move = fakeWindow.windowListeners.get("move");
+          if (!move) {
+            return yield* Effect.die("window move listener was not registered");
+          }
+          move();
+          yield* TestClock.adjust(500);
+          yield* Effect.promise(() => Promise.resolve());
+
+          const persisted = mainWindowBoundsUpdates.at(-1);
+          assert.isDefined(persisted, "maximized window bounds were not persisted");
+          const persistedDisplay = [displayOne, displayTwo].findIndex(
+            (display) =>
+              persisted.x >= display.x &&
+              persisted.y >= display.y &&
+              persisted.x + persisted.width <= display.x + display.width &&
+              persisted.y + persisted.height <= display.y + display.height,
+          );
+          assert.equal(
+            persistedDisplay,
+            1,
+            `window maximized on display 2 persisted bounds ${JSON.stringify(persisted)}, which restore on display ${persistedDisplay + 1}`,
+          );
+          assert.deepEqual(mainWindowMaximizedUpdates, [true]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.sync(() => getAllDisplays.mockReset())),
+        );
+      }),
   );
 
   it.effect("preserves unrestorable bounds until the user changes the window", () =>
@@ -1060,8 +1135,7 @@ describe("DesktopWindow", () => {
   it.effect("flushes normal bounds when minimized before the debounce completes", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      fakeWindow.getBounds.mockReturnValue({ x: -32_000, y: -32_000, width: 160, height: 28 });
-      fakeWindow.getNormalBounds.mockReturnValue({ x: 180, y: 120, width: 1440, height: 960 });
+      fakeWindow.getBounds.mockReturnValue({ x: 180, y: 120, width: 1440, height: 960 });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
@@ -1082,14 +1156,84 @@ describe("DesktopWindow", () => {
         }
         resize();
         yield* TestClock.adjust(250);
+        // Windows reports a minimized window at -32000.
         fakeWindow.isMinimized.mockReturnValue(true);
+        fakeWindow.getBounds.mockReturnValue({ x: -32_000, y: -32_000, width: 160, height: 28 });
 
         yield* desktopWindow.flushMainWindowBounds;
+        resize();
+        yield* TestClock.adjust(500);
+        yield* Effect.promise(() => Promise.resolve());
 
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 180, y: 120, width: 1440, height: 960 }]);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
-        assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect.each([
+    { window: "normal", write: "flush" },
+    { window: "normal", write: "debounce" },
+    { window: "maximized", write: "flush" },
+    { window: "maximized", write: "debounce" },
+  ] as const)("persists a $window window change minimized before its $write", (input) =>
+    Effect.gen(function* () {
+      const displayOne = { x: 0, y: 0, width: 1920, height: 1080 };
+      const displayTwo = { x: 1920, y: 0, width: 1920, height: 1080 };
+      const getAllDisplays = vi.mocked(Electron.screen.getAllDisplays);
+      getAllDisplays.mockReturnValue([
+        { bounds: displayOne, workArea: displayOne },
+        { bounds: displayTwo, workArea: displayTwo },
+      ] as unknown as Electron.Display[]);
+      const maximized = input.window === "maximized";
+      const fakeWindow = makeFakeBrowserWindow();
+      fakeWindow.isMaximized.mockReturnValue(maximized);
+      fakeWindow.getBounds.mockReturnValue(
+        maximized ? displayTwo : { x: 220, y: 140, width: 1380, height: 920 },
+      );
+      fakeWindow.getNormalBounds.mockReturnValue({ x: 220, y: 140, width: 1380, height: 920 });
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+      const mainWindowMaximizedUpdates: boolean[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        mainWindowBoundsUpdates,
+        mainWindowMaximizedUpdates,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const move = fakeWindow.windowListeners.get("move");
+        if (!move) {
+          return yield* Effect.die("window move listener was not registered");
+        }
+        move();
+        yield* TestClock.adjust(250);
+        // Minimized windows report stale state: macOS unmaximized at the pre-move frame.
+        fakeWindow.isMinimized.mockReturnValue(true);
+        fakeWindow.isMaximized.mockReturnValue(false);
+        fakeWindow.getBounds.mockReturnValue({ x: 100, y: 100, width: 1100, height: 780 });
+        fakeWindow.getNormalBounds.mockReturnValue({ x: 100, y: 100, width: 1100, height: 780 });
+        if (input.write === "debounce") {
+          yield* TestClock.adjust(250);
+          yield* Effect.promise(() => Promise.resolve());
+        }
+        yield* desktopWindow.flushMainWindowBounds;
+
+        assert.deepEqual(mainWindowBoundsUpdates, [
+          maximized
+            ? { x: 2140, y: 140, width: 1380, height: 920 }
+            : { x: 220, y: 140, width: 1380, height: 920 },
+        ]);
+        assert.deepEqual(mainWindowMaximizedUpdates, [maximized]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => getAllDisplays.mockReset())),
+      );
     }),
   );
 
@@ -1181,6 +1325,43 @@ describe("DesktopWindow", () => {
         ]);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect.each([
+    {
+      primaryPasteEnabled: false,
+      expected: [PASSKEY_BRIDGE_ARGUMENT, PRIMARY_PASTE_DISABLED_ARGUMENT],
+    },
+    { primaryPasteEnabled: true, expected: [PASSKEY_BRIDGE_ARGUMENT] },
+  ])(
+    "passes the primary-paste setting to preview guests (enabled: $primaryPasteEnabled)",
+    ({ primaryPasteEnabled, expected }) =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const layer = layerTest({
+          window: fakeWindow.window,
+          createCount: yield* Ref.make(0),
+          mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+          primaryPasteEnabled,
+          previewPasskeyBridgeEnabled: true,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const willAttachWebview = fakeWindow.webContentsListeners.get("will-attach-webview");
+          if (!willAttachWebview) {
+            return yield* Effect.die("will-attach-webview listener was not registered");
+          }
+          const webPreferences: Electron.WebPreferences = {};
+          willAttachWebview({ preventDefault: () => {} }, webPreferences, {
+            partition: "persist:t3code-preview-test",
+          });
+
+          assert.deepEqual(webPreferences.additionalArguments, expected);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("opens safe off-origin renderer navigations in the system browser", () =>
