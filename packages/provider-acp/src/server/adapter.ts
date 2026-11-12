@@ -7159,6 +7159,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           },
         );
 
+        // Read before the session exists: its own config updates replace what the client showed.
+        const unsetOptionDefaults = yield* flavor.unsetOptionDefaults ?? Effect.succeed([]);
         const initialStart = yield* Effect.result(
           startAcpRuntime(input.threadId, input.initialNativeThreadId),
         );
@@ -7257,7 +7259,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           modelSelection: ModelSelection,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-          newSession = false,
+          unsetOptionDefaults: NonNullable<ModelSelection["options"]> = [],
         ) {
           yield* Ref.set(activeSelection, null);
           yield* validateModelSelection(modelSelection);
@@ -7351,13 +7353,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return granted !== undefined && !isRuntimeModeAbove(granted, ceiling);
           };
           const explicitSelections = modelSelection.options ?? [];
-          const implicitSelections =
-            newSession && flavor.unsetOptionDefaults !== undefined
-              ? (yield* flavor.unsetOptionDefaults).filter(
-                  (implicit) =>
-                    !explicitSelections.some((selection) => selection.id === implicit.id),
-                )
-              : [];
+          const implicitSelections = unsetOptionDefaults.filter(
+            (implicit) => !explicitSelections.some((selection) => selection.id === implicit.id),
+          );
           const optionSelections = [...explicitSelections, ...implicitSelections].flatMap(
             (selection) => {
               if (flavor.ownedModelOptionIds?.includes(selection.id) === true) return [];
@@ -7524,7 +7522,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           started,
           input.modelSelection,
           input.runtimePolicy,
-          started.sessionId !== input.initialNativeThreadId,
+          started.sessionId !== input.initialNativeThreadId ? unsetOptionDefaults : [],
         );
         yield* Ref.set(activeSelection, input.modelSelection);
         yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);

@@ -549,7 +549,7 @@ describe("AcpRegistryAdapterV2", () => {
             Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
               withForegroundStartup: (_startupKey, effect) => effect,
               getLiveConfiguration: () =>
-                Effect.succeed(Option.fromUndefinedOr(input.liveConfiguration)),
+                Effect.sync(() => Option.fromUndefinedOr(published ?? input.liveConfiguration)),
               publishLiveConfiguration: (_instanceId, configuration) =>
                 Effect.sync(() => {
                   published = configuration;
@@ -847,6 +847,21 @@ describe("AcpRegistryAdapterV2", () => {
             ],
           },
           pickFrames: [
+            // The new session's own update replaces the shared live configuration.
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "notification",
+                method: "session/update",
+                params: {
+                  sessionId: "agent-session",
+                  update: {
+                    sessionUpdate: "config_option_update",
+                    configOptions: [copilotModel("claude-sonnet-5.5"), effort("medium")],
+                  },
+                },
+              },
+            },
             outbound("session/set_config_option", {
               sessionId: "agent-session",
               configId: "model",
