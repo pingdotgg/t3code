@@ -198,7 +198,8 @@ export function withShellIntegration(input: {
 
 // Apple's bash 3.2 in /bin/bash doesn't read ENV in POSIX mode, so it would start
 // without the user's files. As in Ghostty, it starts as before, and so does a bare
-// "bash" on macOS, which may resolve to it.
+// "bash" on macOS, which may resolve to it. The caller passes the shell's real path,
+// so a link to /bin/bash counts as /bin/bash.
 function bashReadsEnvInPosixMode(shell: string, platform: NodeJS.Platform): boolean {
   return platform !== "darwin" || (shell.startsWith("/") && shell !== "/bin/bash");
 }

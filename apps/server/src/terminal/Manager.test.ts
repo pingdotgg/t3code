@@ -239,6 +239,7 @@ interface CreateManagerOptions {
   maxRetainedInactiveSessions?: number;
   historyByteLimit?: number;
   ptyAdapter?: FakePtyAdapter;
+  shellIntegrationDir?: string;
   resolveProviderInstanceEnvironment?: Parameters<
     typeof TerminalManager.makeWithOptions
   >[0]["resolveProviderInstanceEnvironment"];
@@ -277,6 +278,9 @@ const createManager = (
           ? { historyByteLimit: options.historyByteLimit }
           : {}),
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
+        ...(options.shellIntegrationDir !== undefined
+          ? { shellIntegrationDir: options.shellIntegrationDir }
+          : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
@@ -2142,6 +2146,33 @@ it.layer(
         expect.soft(ptyAdapter.spawnInputs[0]?.args, `${platform} ${shell}`).toEqual(args);
       }
     }),
+  );
+  // macOS keeps /bin/bash in /bin itself; elsewhere /bin may be a link.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
+    "starts a macOS bash that links to /bin/bash as before",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-bash-link-" });
+        const shellIntegrationDir = path.join(dir, "shell-integration");
+        yield* fs.makeDirectory(path.join(dir, "apple"));
+        yield* fs.makeDirectory(path.join(dir, "brew"));
+        yield* fs.symlink("/bin/bash", path.join(dir, "apple", "bash"));
+        yield* fs.writeFileString(path.join(dir, "brew", "bash-5"), "");
+        yield* fs.symlink(path.join(dir, "brew", "bash-5"), path.join(dir, "brew", "bash"));
+        for (const [shell, args] of [
+          [path.join(dir, "apple", "bash"), ["-l"]],
+          [path.join(dir, "brew", "bash"), ["--posix", "-l"]],
+        ] as const) {
+          const { manager, ptyAdapter } = yield* createManager(5, {
+            shellResolver: () => shell,
+            shellIntegrationDir,
+          }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+          yield* manager.open(openInput());
+          expect.soft(ptyAdapter.spawnInputs[0]?.args, shell).toEqual(args);
+        }
+      }),
   );
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {

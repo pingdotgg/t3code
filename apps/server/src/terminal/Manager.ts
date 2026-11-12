@@ -2399,12 +2399,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    const shellName = basenameForPlatform(candidate.shell, platform).toLowerCase();
+    // A bash that links to Apple's /bin/bash is that bash; see withShellIntegration.
+    const realShell =
+      platform === "darwin" && shellName === "bash" && path.isAbsolute(candidate.shell)
+        ? yield* fileSystem
+            .realPath(candidate.shell)
+            .pipe(Effect.orElseSucceed(() => candidate.shell))
+        : candidate.shell;
     const shell =
       shellIntegration === null || platform === "win32"
         ? { args: candidate.args ?? [], env: spawnEnv }
         : withShellIntegration({
-            shell: candidate.shell,
-            shellName: basenameForPlatform(candidate.shell, platform).toLowerCase(),
+            shell: realShell,
+            shellName,
             platform,
             args: candidate.args ?? [],
             env: spawnEnv,
