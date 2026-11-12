@@ -171,6 +171,7 @@ function ColumnScreen(props: {
             />
             <ColumnContent
               primary={sidebar}
+              insetTop={options.headerShown !== false}
               insetHorizontally={
                 (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
               }
