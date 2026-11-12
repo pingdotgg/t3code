@@ -471,6 +471,97 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       }),
     ),
   ),
+  t3_work_review: McpToolAccess.either(
+    (input) => input.action === "list" || input.action === "read",
+    McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        // Default MCP thread reads only load user_input turn items; approval cards need their own fetch.
+        const context = yield* readThread(input.threadId, ["runtimeRequests"]);
+        const projection = yield* context.threads
+          .getProjectThreadRecords(
+            {
+              projectId: context.projection.thread.projectId,
+              threadId: context.projection.thread.id,
+            },
+            ["runtimeRequests", "turnItems"],
+            { turnItemTypes: ["approval_request"] },
+          )
+          .pipe(Effect.mapError(unavailable));
+        const summarize = (requestId: RuntimeRequestId) => {
+          const request = projection.runtimeRequests.find(
+            (candidate) => candidate.id === requestId && candidate.kind === "work_review",
+          );
+          if (request === undefined) return undefined;
+          const item = projection.turnItems.findLast(
+            (candidate) =>
+              candidate.type === "approval_request" && candidate.requestId === request.id,
+          );
+          return {
+            requestId: request.id,
+            status: request.status,
+            ...(item?.type === "approval_request" && item.prompt ? { criteria: item.prompt } : {}),
+            ...(item?.type === "approval_request" && item.title ? { name: item.title } : {}),
+            ...(item?.type === "approval_request" && item.reason ? { note: item.reason } : {}),
+            ...(request.decision === undefined ? {} : { decision: request.decision }),
+            ...(request.deliverable === undefined ? {} : { deliverable: request.deliverable }),
+            createdAt: request.createdAt,
+          };
+        };
+        if (input.action === "list") {
+          const reviews = projection.runtimeRequests
+            .filter((request) => request.kind === "work_review")
+            .filter((request) => (input.openOnly === true ? request.status === "pending" : true))
+            .flatMap((request) => {
+              const summary = summarize(request.id);
+              return summary === undefined ? [] : [summary];
+            });
+          return { reviews };
+        }
+        const requestId = yield* required(input.requestId, "requestId");
+        return (
+          summarize(requestId) ??
+          (yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The work review was not found.",
+          }))
+        );
+      }),
+    ),
+    writesThread((input) =>
+      Effect.gen(function* () {
+        switch (input.action) {
+          case "request": {
+            const criteria = yield* required(input.criteria, "criteria");
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "work-review.request",
+              criteria,
+              ...(input.name === undefined ? {} : { name: input.name }),
+              ...(input.note === undefined ? {} : { note: input.note }),
+              ...(input.deliverable === undefined ? {} : { deliverable: input.deliverable }),
+            }));
+          }
+          case "accept":
+          case "reject": {
+            const requestId = yield* required(input.requestId, "requestId");
+            // Orchestration work reviews resolve without a live provider session, so decline
+            // feedback is not supported on this path; `note` is only used when requesting.
+            return yield* dispatch(input.threadId, (common) => ({
+              ...common,
+              type: "runtime-request.respond",
+              requestId,
+              decision: input.action === "accept" ? ("accept" as const) : ("decline" as const),
+            }));
+          }
+          default:
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "Unsupported work review action.",
+            });
+        }
+      }),
+    ),
+  ),
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);

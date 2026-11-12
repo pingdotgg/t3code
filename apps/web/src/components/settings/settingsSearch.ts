@@ -305,6 +305,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "permission-routing-when-nobody",
+    title: "When nobody can approve",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["permission routing approval assignee permit when nobody openrig wait audit"],
+    environmentOnly: true,
+  },
+  {
     id: "color-scheme",
     title: "Color scheme",
     to: "/settings/appearance",
@@ -672,6 +680,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Thread notifications",
     to: "/settings/general",
     searchTerms: ["notification sound alert completion input approval desktop"],
+  },
+  {
+    id: "quiet-hours",
+    title: "Quiet hours",
+    to: "/settings/general",
+    searchTerms: ["quiet hours mute defer night notification sound desktop"],
   },
   {
     id: "in-app-notifications",

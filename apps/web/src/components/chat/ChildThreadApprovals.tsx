@@ -44,7 +44,10 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           presentation="inline"
           requestId={approval.requestId}
           isResponding={responding}
-          canRespond={approval.responseCapability === "live"}
+          canRespond={
+            approval.responseCapability === "live" ||
+            approval.responseCapability === "orchestration"
+          }
           disabled={!canRespond}
           options={approval.options}
           onRespondToApproval={async (requestId, decision) => {

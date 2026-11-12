@@ -34,17 +34,20 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const options: ReadonlyArray<ProviderApprovalOption> =
     props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
   const warning = options.find((option) => option.warning)?.warning;
-  const canRespond = props.approval.responseCapability === "live";
+  const canRespond =
+    props.approval.responseCapability === "live" ||
+    props.approval.responseCapability === "orchestration";
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
+  const title =
+    props.approval.appName ??
+    (props.approval.requestKind === "work_review" ? "Review" : props.approval.requestKind);
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-        Approval needed
+        {props.approval.requestKind === "work_review" ? "Review needed" : "Approval needed"}
       </Text>
-      <Text className="font-t3-bold text-lg text-foreground">
-        {props.approval.appName ?? props.approval.requestKind}
-      </Text>
+      <Text className="font-t3-bold text-lg text-foreground">{title}</Text>
       {props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-foreground-secondary">
           {props.approval.detail}

@@ -39,8 +39,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as PermissionRouting from "./PermissionRouting.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
+import * as Option from "effect/Option";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -581,15 +583,23 @@ export const layer: Layer.Layer<
                   nodeId: input.event.turnItem.nodeId,
                 }),
               ];
-            case "runtime_request.updated":
+            case "runtime_request.updated": {
+              const now = yield* DateTime.now;
+              const policy = yield* PermissionRouting.readPermissionRoutingPolicy();
+              const runtimeRequest = PermissionRouting.stampPendingApprovalRouting({
+                request: input.event.runtimeRequest,
+                policy,
+                now,
+              });
               return [
                 yield* makeDomainEvent(input, {
                   type: "runtime-request.updated",
                   ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
-                  payload: input.event.runtimeRequest,
-                  nodeId: input.event.runtimeRequest.nodeId,
+                  payload: runtimeRequest,
+                  nodeId: runtimeRequest.nodeId,
                 }),
               ];
+            }
             case "plan.updated": {
               const occurredAt = yield* DateTime.now;
               const plan = input.event.plan;
@@ -748,6 +758,22 @@ export const layer: Layer.Layer<
             effect.pipe(
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
+                  const hooks = yield* Effect.serviceOption(
+                    PermissionRouting.PermissionRoutingHooks,
+                  );
+                  if (Option.isSome(hooks)) {
+                    for (const stored of storedEvents) {
+                      if (stored.event.type !== "runtime-request.updated") continue;
+                      const request = stored.event.payload;
+                      if (request.status !== "pending" || request.routing === undefined) continue;
+                      yield* hooks.value
+                        .onPendingApprovalRouted({
+                          threadId: stored.event.threadId,
+                          requestId: request.id,
+                        })
+                        .pipe(Effect.ignoreCause({ log: true }));
+                    }
+                  }
                   if (
                     storedEvents.length === 0 ||
                     input.event.type !== "turn.terminal" ||

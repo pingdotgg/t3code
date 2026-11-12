@@ -1,7 +1,9 @@
+import { CommandId } from "@t3tools/contracts";
 import * as WorktreeBranchSync from "./WorktreeBranchSync.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
@@ -58,6 +60,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as PermissionRouting from "./PermissionRouting.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -368,11 +371,33 @@ const layerMcpAppRequestsProvided = McpAppRequests.layer.pipe(
   ),
 );
 
+const layerPermissionRoutingHooks = Layer.effect(
+  PermissionRouting.PermissionRoutingHooks,
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    return PermissionRouting.PermissionRoutingHooks.of({
+      onPendingApprovalRouted: Effect.fn(
+        "PermissionRouting.PermissionRoutingHooks.onPendingApprovalRouted",
+      )(function* ({ threadId, requestId }) {
+        yield* threads
+          .dispatch({
+            type: "permission-routing.consider",
+            commandId: CommandId.make(`permission-routing:${requestId}`),
+            threadId,
+            requestId,
+          })
+          .pipe(Effect.ignoreCause({ log: true }), Effect.asVoid);
+      }),
+    });
+  }),
+).pipe(Layer.provide(layerThreadManagementProvided));
+
 export const layer = Layer.mergeAll(
   layerCommandOutputHubProvided,
   layerOrchestratorProvided,
   layerMcpAppRequestsProvided,
   layerThreadManagementProvided,
+  layerPermissionRoutingHooks,
   layerEffectWorkerProvided,
   layerProviderSessionManagerProvided,
   layerProviderAuthServiceProvided,

@@ -640,6 +640,9 @@ export function applyServerSettingsPatch(
     ...(patch.reviewGuideModelSelection !== undefined
       ? { reviewGuideModelSelection: patch.reviewGuideModelSelection }
       : {}),
+    ...(patch.workReviewModelSelection !== undefined
+      ? { workReviewModelSelection: patch.workReviewModelSelection }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };

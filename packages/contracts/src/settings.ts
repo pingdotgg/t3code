@@ -35,6 +35,7 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
+import { DEFAULT_PERMISSION_ROUTING_POLICY, PermissionRoutingPolicy } from "./permissionRouting.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   BrowserRecordingFrameRate,
@@ -275,6 +276,30 @@ export const NotificationMode = Schema.Literals([
 ]);
 export type NotificationMode = typeof NotificationMode.Type;
 
+/** Local wall-clock window that defers routine desktop/sound notifications. */
+export const QuietHours = Schema.Struct({
+  enabled: Schema.Boolean,
+  startMinutes: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1439 })),
+  endMinutes: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1439 })),
+});
+export type QuietHours = typeof QuietHours.Type;
+export const DEFAULT_QUIET_HOURS: QuietHours = {
+  enabled: false,
+  startMinutes: 22 * 60,
+  endMinutes: 8 * 60,
+};
+
+/** True when `nowMinutes` (0–1439) falls in the quiet window, including overnight spans. */
+export function isWithinQuietHours(quietHours: QuietHours, nowMinutes: number): boolean {
+  if (!quietHours.enabled) return false;
+  const { startMinutes, endMinutes } = quietHours;
+  if (startMinutes === endMinutes) return true;
+  if (startMinutes < endMinutes) {
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  }
+  return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+}
+
 export const QuitConfirmationMode = Schema.Literals(["direct", "hold", "double-click"]);
 export type QuitConfirmationMode = typeof QuitConfirmationMode.Type;
 const DEFAULT_QUIT_CONFIRMATION_MODE: QuitConfirmationMode = "hold";
@@ -394,6 +419,7 @@ export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
+  quietHours: QuietHours.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_QUIET_HOURS))),
   inAppNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
@@ -1404,6 +1430,10 @@ export const ServerSettings = Schema.Struct({
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
+  /** Who should answer approval asks, and what to do when nobody matching is online. */
+  permissionRouting: PermissionRoutingPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PERMISSION_ROUTING_POLICY)),
+  ),
 
   projectSettingsOverrides: Schema.Record(
     ProjectId,
@@ -1522,6 +1552,10 @@ export const ServerSettings = Schema.Struct({
   ),
   reviewGuidesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   reviewGuideModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Intake field for a future work-review classifier; unused at runtime yet. */
+  workReviewModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   reviewGuideInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1837,6 +1871,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
+  permissionRouting: Schema.optionalKey(PermissionRoutingPolicy),
   fallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
   projectSettingsOverrides: Schema.optionalKey(
@@ -1905,6 +1940,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuidesEnabled: Schema.optionalKey(Schema.Boolean),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  workReviewModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
@@ -1984,6 +2020,7 @@ export function requiredScopesForProjectMutation(
 
 export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
+  quietHours: Schema.optionalKey(QuietHours),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),

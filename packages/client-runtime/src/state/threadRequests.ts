@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2UserInputQuestion,
+  PermissionRequestRouting,
   ProviderApprovalFullAccessOverride,
   ProviderApprovalOption,
   ProviderApprovalDecision,
@@ -51,15 +52,17 @@ export async function declinePendingApprovals(
 
 export interface ThreadPendingApproval {
   readonly requestId: RuntimeRequestId;
-  readonly requestKind: ProviderRequestKind;
+  readonly requestKind: ProviderRequestKind | "work_review";
   readonly createdAt: string;
   readonly detail?: string;
   readonly reason?: string;
   readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
   readonly appName?: string;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
-  readonly responseCapability: "live" | "not_resumable";
+  readonly responseCapability: "live" | "orchestration" | "not_resumable";
   readonly supportsFeedback?: boolean;
+  /** Soft routing target from environment permission-routing policy. */
+  readonly routing?: PermissionRequestRouting;
 }
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
@@ -281,10 +284,16 @@ export function derivePendingThreadRequests(
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
         : {}),
-      responseCapability: responseCapability === "live" ? "live" : "not_resumable",
+      responseCapability:
+        responseCapability === "live"
+          ? "live"
+          : responseCapability === "orchestration"
+            ? "orchestration"
+            : "not_resumable",
       ...(request.responseCapability.type === "live" && request.responseCapability.supportsFeedback
         ? { supportsFeedback: true }
         : {}),
+      ...(request.routing === undefined ? {} : { routing: request.routing }),
     });
   }
 

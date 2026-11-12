@@ -18,6 +18,8 @@ import {
   OwnedWorkClosureReason,
   OwnedWorkItem,
   OwnedWorkItemId,
+  OrchestrationV2RuntimeRequest,
+  WorkReviewDeliverable,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -146,6 +148,39 @@ const OwnedWorkTool = Tool.make("t3_owned_work", {
   success: Schema.Union([
     Schema.Struct({ items: Schema.Array(OwnedWorkItem) }),
     OwnedWorkItem,
+    OrchestrationV2DispatchCommandResult,
+  ]),
+}).annotate(Tool.Destructive, true);
+
+const WORK_REVIEW_READ_ACTIONS = ["list", "read"] as const;
+const WorkReviewSummary = Schema.Struct({
+  requestId: RuntimeRequestId,
+  status: OrchestrationV2RuntimeRequest.fields.status,
+  criteria: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  note: Schema.optional(Schema.String),
+  decision: Schema.optional(OrchestrationV2RuntimeRequest.fields.decision),
+  deliverable: Schema.optional(WorkReviewDeliverable),
+  createdAt: OrchestrationV2RuntimeRequest.fields.createdAt,
+});
+const WorkReviewTool = Tool.make("t3_work_review", {
+  ...commandTool,
+  description:
+    "Ask for human review of unfinished work as a pending approval card. Omit `threadId` for this thread. list/read pending or recent reviews. request: `criteria` (+ optional `name`, `note`, `deliverable`). accept/reject: `requestId` (+ optional `note` as feedback). Decline clears the ask so you can fix and request again; Accept records acceptance.",
+  parameters: Schema.Struct({
+    action: Schema.Literals([...WORK_REVIEW_READ_ACTIONS, "request", "accept", "reject"]),
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    threadId: Schema.optional(ThreadId),
+    requestId: Schema.optional(RuntimeRequestId),
+    name: Schema.optional(TrimmedNonEmptyString),
+    criteria: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    note: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    deliverable: Schema.optional(WorkReviewDeliverable),
+    openOnly: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Union([
+    Schema.Struct({ reviews: Schema.Array(WorkReviewSummary) }),
+    WorkReviewSummary,
     OrchestrationV2DispatchCommandResult,
   ]),
 }).annotate(Tool.Destructive, true);
@@ -288,4 +323,5 @@ export const ThreadToolkit = Toolkit.make(
   PendingRequestTool,
   QueueTool,
   OwnedWorkTool,
+  WorkReviewTool,
 );

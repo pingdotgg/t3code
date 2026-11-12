@@ -82,6 +82,11 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
+  PermissionRequestResolvedBy,
+  PermissionRequestRouting,
+  PermissionRoutingApprover,
+} from "./permissionRouting.ts";
+import {
   TurnTokenUsage,
   ToolActivitySurface,
   ToolActivityIcon,
@@ -1250,7 +1255,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   nativeRequestRef: Schema.NullOr(OrchestrationV2ProviderRef),
   kind: Schema.Union([
     ProviderRequestKind,
-    Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh"]),
+    Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh", "work_review"]),
   ]),
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
@@ -1260,6 +1265,8 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
       supportsFeedback: Schema.optional(Schema.Boolean),
     }),
     Schema.Struct({ type: Schema.Literal("message") }),
+    /** Durable approval with no provider session; resolve stays in orchestration. */
+    Schema.Struct({ type: Schema.Literal("orchestration") }),
     Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
   ]),
   createdAt: Schema.DateTimeUtc,
@@ -1267,8 +1274,32 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   decision: Schema.optional(ProviderApprovalDecision),
   feedback: Schema.optional(Schema.String),
   answers: Schema.optional(ProviderUserInputAnswers),
+  /** Optional owned-work link; coordinates with OwnedWorkItemId when that lands. */
+  deliverable: Schema.optionalKey(
+    Schema.Struct({
+      kind: Schema.Literal("owned_work"),
+      itemId: TrimmedNonEmptyString,
+    }),
+  ),
+  /** Absent on older events and non-approval requests. */
+  routing: Schema.optionalKey(PermissionRequestRouting),
+  /** Who closed the ask; absent on older events. */
+  resolvedBy: Schema.optionalKey(PermissionRequestResolvedBy),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
+
+export const WorkReviewDeliverable = Schema.Struct({
+  kind: Schema.Literal("owned_work"),
+  itemId: TrimmedNonEmptyString,
+});
+export type WorkReviewDeliverable = typeof WorkReviewDeliverable.Type;
+
+/** Approval card kinds: provider policy asks plus orchestration work review. */
+export const ApprovalRequestKind = Schema.Union([
+  ProviderRequestKind,
+  Schema.Literal("work_review"),
+]);
+export type ApprovalRequestKind = typeof ApprovalRequestKind.Type;
 
 const SubagentNotificationSource = Schema.Struct({
   kind: Schema.Literal("subagent"),
@@ -1751,7 +1782,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("approval_request"),
     requestId: RuntimeRequestId,
-    requestKind: ProviderRequestKind,
+    requestKind: ApprovalRequestKind,
     prompt: Schema.optional(Schema.String),
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
@@ -2118,6 +2149,8 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   createdAt: Schema.DateTimeUtc,
   /** False for async questions the run keeps working past. Absent from older servers. */
   blocking: Schema.optional(Schema.Boolean),
+  /** Soft routing target for approval attention; absent when unrouted or older. */
+  assignee: Schema.optionalKey(PermissionRoutingApprover),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2465,11 +2498,17 @@ export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFi
 }));
 export type OrchestrationV2ProviderTurnJson = typeof OrchestrationV2ProviderTurnJson.Type;
 
+const PermissionRequestRoutingJson = PermissionRequestRouting.mapFields((fields) => ({
+  ...fields,
+  routedAt: Schema.DateTimeUtcFromString,
+}));
+
 export const OrchestrationV2RuntimeRequestJson = OrchestrationV2RuntimeRequest.mapFields(
   (fields) => ({
     ...fields,
     createdAt: Schema.DateTimeUtcFromString,
     resolvedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    routing: Schema.optionalKey(PermissionRequestRoutingJson),
   }),
 );
 export type OrchestrationV2RuntimeRequestJson = typeof OrchestrationV2RuntimeRequestJson.Type;
@@ -2603,7 +2642,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("approval_request"),
     requestId: RuntimeRequestId,
-    requestKind: ProviderRequestKind,
+    requestKind: ApprovalRequestKind,
     prompt: Schema.optional(Schema.String),
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
@@ -3185,6 +3224,16 @@ export const OrchestrationV2Command = Schema.Union([
     actorThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
+    type: Schema.Literal("work-review.request"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** What the reviewer should check; shown as the approval card prompt. */
+    criteria: Schema.String,
+    name: Schema.optional(TrimmedNonEmptyString),
+    deliverable: Schema.optional(WorkReviewDeliverable),
+    note: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -3452,6 +3501,8 @@ export const OrchestrationV2Command = Schema.Union([
     feedback: Schema.optional(Schema.String),
     answers: Schema.optional(ProviderUserInputAnswers),
     attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+    /** Policy auto-permit sets this; human responds default to source "human". */
+    resolvedBy: Schema.optionalKey(PermissionRequestResolvedBy),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),
@@ -3545,6 +3596,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Re-check pending approvals for audited permit-when-nobody. */
+  Schema.Struct({
+    type: Schema.Literal("permission-routing.consider"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** When set, only this pending approval is considered. */
+    requestId: Schema.optionalKey(RuntimeRequestId),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

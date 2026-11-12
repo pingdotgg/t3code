@@ -162,6 +162,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "owned-work.attention":
     case "owned-work.complete":
     case "owned-work.cancel":
+    case "work-review.request":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
