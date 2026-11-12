@@ -16,9 +16,14 @@ function viewer(scrollHeight: number, height = 500) {
   };
 }
 
-function mount(scopeKey: string, view: ReturnType<typeof viewer>, settled = true) {
+function mount(
+  scopeKey: string,
+  view: ReturnType<typeof viewer>,
+  settled = true,
+  loadMore: (() => void) | null = null,
+) {
   const restore = createCodeViewScrollRestore();
-  restore.update(scopeKey, settled);
+  restore.update(scopeKey, settled, loadMore);
   restore.attach(view);
   return restore;
 }
@@ -36,15 +41,19 @@ describe("createCodeViewScrollRestore", () => {
     expect(again.scrolls).toEqual([{ type: "position", position: 4032 }]);
   });
 
-  it("waits for loading content to reach the position, then gives up once it settles", () => {
+  it("loads more files until the position is reachable, then gives up once none remain", () => {
     const first = viewer(10_000);
     mount("thread-c", first).onScroll(4000, first.instance);
 
     const loading = viewer(700);
-    const restore = mount("thread-c", loading, false);
+    let batches = 0;
+    const restore = mount("thread-c", loading, false, () => {
+      batches += 1;
+    });
     restore.onScroll(0, loading.instance);
     restore.flush();
     expect(loading.scrolls).toEqual([]);
+    expect(batches).toBe(2);
     loading.instance.scrollHeight = 10_000;
     restore.flush();
     restore.flush();
@@ -54,7 +63,7 @@ describe("createCodeViewScrollRestore", () => {
     const settling = mount("thread-c", shrunk, false);
     settling.flush();
     expect(shrunk.scrolls).toEqual([]);
-    settling.update("thread-c", true);
+    settling.update("thread-c", true, null);
     settling.flush();
     expect(shrunk.scrolls).toEqual([{ type: "position", position: 1500 }]);
   });
