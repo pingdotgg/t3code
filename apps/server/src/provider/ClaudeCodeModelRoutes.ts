@@ -98,8 +98,12 @@ export const makeClaudeCodeModelRoutes = Effect.fn("makeClaudeCodeModelRoutes")(
       cwd: string | null,
       launchSettings?: ClaudeSdkSettings,
     ) {
-      // Leave room for the sequential version and capability probes before falling back.
-      yield* Deferred.await(firstProbeSettled).pipe(Effect.timeoutOption("2 minutes"));
+      // Leave room for the sequential version and capability probes before falling back once;
+      // an expired wait counts as settled so later calls do not wait again.
+      yield* Deferred.await(firstProbeSettled).pipe(
+        Effect.timeoutOption("2 minutes"),
+        Effect.andThen(Deferred.succeed(firstProbeSettled, undefined)),
+      );
       if (claudeModelSettingsKey(launchSettings ?? {}) !== NO_MODEL_SETTINGS_KEY) return base;
       const { models, settingsKey: probeKey } = yield* Ref.get(reported);
       const routed = withClaudeCodeModelRoutes(base, models);

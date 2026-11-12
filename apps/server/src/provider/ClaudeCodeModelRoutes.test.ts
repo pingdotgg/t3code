@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { type ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeClaudeCodeModelRoutes } from "./ClaudeCodeModelRoutes.ts";
@@ -55,6 +56,12 @@ describe("Claude Code model routes", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* TestClock.adjust("2 minutes");
         assert.strictEqual(yield* Fiber.join(fallback), BUNDLED_CLAUDE_MODEL_CATALOG);
+        // Later turns, steers and effort changes do not wait for the stuck probe again.
+        const later = yield* stuck
+          .route(BUNDLED_CLAUDE_MODEL_CATALOG, "/project")
+          .pipe(Effect.timeoutOption("1 second"), Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust("1 second");
+        assert.deepStrictEqual(yield* Fiber.join(later), Option.some(BUNDLED_CLAUDE_MODEL_CATALOG));
       }),
   );
 });
