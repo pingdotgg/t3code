@@ -3593,7 +3593,15 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   return claudeNativeToolOutputText(output);
 }
 
+// Claude Code prefixes foreground Agent results with a note for the parent model, not the report.
+const CLAUDE_TOOLS_USED_NOTE =
+  /^\s*<tools-used-before-summary>[^<]*<\/tools-used-before-summary>\s*/;
+
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
+  return claudeSubagentRawResultText(output).replace(CLAUDE_TOOLS_USED_NOTE, "");
+}
+
+function claudeSubagentRawResultText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   const content = Array.isArray(value)
     ? value
@@ -6392,7 +6400,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             driver: CLAUDE_PROVIDER,
             nativeItemId: `task:${taskId}:thread-root`,
           }),
-          childThreadId: idAllocator.derive.threadFromProviderThread({
+          childThreadId: idAllocator.derive.subagentThread({
             driver: CLAUDE_PROVIDER,
             nativeThreadId: `${context.input.providerThread.id}:${taskId}`,
           }),
@@ -6730,7 +6738,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ...workflow,
           agents: workflow.agents.map((member) => ({
             ...member,
-            childThreadId: idAllocator.derive.threadFromProviderThread({
+            childThreadId: idAllocator.derive.subagentThread({
               driver: CLAUDE_PROVIDER,
               nativeThreadId: `${coordinatorChildThreadId}:agent:${member.index}`,
             }),
