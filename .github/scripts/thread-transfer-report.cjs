@@ -32,6 +32,7 @@ const SCENARIO_KEYS = [
 
 const SCENARIO_ROW_KEYS = ["phase", "metric", "unit", "observed", "ceiling"];
 // These labels come from the PR and reach a comment the bot posts: no markup, links or mentions.
+// GitHub still links plain text such as `GH-26`, so they are rendered as code spans.
 const SCENARIO_LABEL = /^[A-Za-z0-9][A-Za-z0-9 ,-]{0,79}$/;
 const MAX_SCENARIO_ROWS = 100;
 
@@ -207,6 +208,7 @@ function renderScenarios(current, baseline, ceilingChanges) {
   const all = [];
   const notable = [];
   let failed = false;
+  let withoutBaseline = 0;
 
   for (const provider of PROVIDERS) {
     const baselineRows = new Map(
@@ -217,25 +219,29 @@ function renderScenarios(current, baseline, ceilingChanges) {
       const beforeObserved = before?.unit === row.unit ? before.observed : undefined;
       const pass = row.observed <= row.ceiling;
       failed ||= !pass;
-      const line = `| ${providerLabel(provider)} | ${row.phase} | ${row.metric} | ${beforeObserved === undefined ? "—" : formatValue(beforeObserved, row.unit)} | ${formatValue(row.observed, row.unit)} | ${formatImpact(row.observed, beforeObserved, row.unit)} | ${formatValue(row.ceiling, row.unit)} | ${pass ? "✅" : "❌"} |`;
+      if (beforeObserved === undefined) withoutBaseline += 1;
+      const line = `| ${providerLabel(provider)} | \`${row.phase}\` | \`${row.metric}\` | ${beforeObserved === undefined ? "—" : formatValue(beforeObserved, row.unit)} | ${formatValue(row.observed, row.unit)} | ${formatImpact(row.observed, beforeObserved, row.unit)} | ${formatValue(row.ceiling, row.unit)} | ${pass ? "✅" : "❌"} |`;
       all.push(line);
       if (!pass || (beforeObserved !== undefined && beforeObserved !== row.observed)) {
         notable.push(line);
       }
       if (beforeObserved !== undefined && before.ceiling !== row.ceiling) {
         ceilingChanges.push(
-          `- ${providerLabel(provider)} ${row.phase} ${row.metric}: ${formatValue(before.ceiling, row.unit)} → ${formatValue(row.ceiling, row.unit)}`,
+          `- ${providerLabel(provider)} \`${row.phase}\` \`${row.metric}\`: ${formatValue(before.ceiling, row.unit)} → ${formatValue(row.ceiling, row.unit)}`,
         );
       }
     }
   }
 
-  const summary =
-    notable.length > 0
-      ? `${notable.length} of ${all.length} scenario measurements changed or failed.`
-      : baseline
-        ? `All ${all.length} scenario measurements match \`main\`.`
-        : `No \`main\` baseline exists yet for these ${all.length} scenario measurements.`;
+  const compared = all.length - withoutBaseline;
+  const summary = !baseline
+    ? `No \`main\` baseline exists yet for these ${all.length} scenario measurements.`
+    : [
+        notable.length > 0
+          ? `${notable.length} of ${all.length} scenario measurements changed or failed.`
+          : `${compared === all.length ? "All " : ""}${compared} scenario measurements match \`main\`.`,
+        ...(withoutBaseline > 0 ? [`${withoutBaseline} have no \`main\` baseline.`] : []),
+      ].join(" ");
   return {
     failed,
     lines: [

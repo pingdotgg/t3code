@@ -476,11 +476,17 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             });
 
           // A phone that comes back after one ordinary turn replays it, without tool bodies.
-          yield* sink.write({
+          const shortTurn = yield* sink.write({
             events: turnEvents(provider, TRANSFER_HISTORY_TURN_COUNT + 1, false),
           });
           const shortTurnResume = yield* open({ thread: THREAD_ID, afterSequence: last.sequence });
           assert.notInclude(shortTurnResume.kinds, "snapshot");
+          // The byte cap below also passes when the resume skips the turn.
+          assert.isTrue(
+            shortTurnResume.items.some(
+              (item) => "sequence" in item && item.sequence === shortTurn.at(-1)!.sequence,
+            ),
+          );
 
           // A turn that is still running cannot defer its work, so it loads in row-budget windows.
           const [finishLongTurn, ...longTurnHistory] = longTurnThreadBatches(provider).toReversed();

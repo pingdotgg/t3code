@@ -111,12 +111,20 @@ test("lists scenario rows that changed or failed above the collapsed table", () 
   assert.match(open(grown), /1 of 4 scenario measurements changed or failed/);
   assert.match(
     open(grown),
-    /\| Codex \| long turn finished, cold open \| HTTP decoded \| 380\.9 KiB \| 390\.6 KiB \| \+9\.8 KiB \(\+2\.6%\) \| 410\.2 KiB \| ✅ \|/,
+    /\| Codex \| `long turn finished, cold open` \| `HTTP decoded` \| 380\.9 KiB \| 390\.6 KiB \| \+9\.8 KiB \(\+2\.6%\) \| 410\.2 KiB \| ✅ \|/,
   );
 
   const over = render(scenarios({ observed: 430_000, ceiling: 425_000 }), scenarios());
   assert.match(over, /❌ One or more thread transfer ceilings were exceeded/);
-  assert.match(over, /Codex long turn finished, cold open HTTP decoded: 410\.2 KiB → 415\.0 KiB/);
+  assert.match(
+    over,
+    /Codex `long turn finished, cold open` `HTTP decoded`: 410\.2 KiB → 415\.0 KiB/,
+  );
+
+  // A row `main` does not have is not reported as matching it.
+  const added = render(scenarios({ phase: "GH-26" }), scenarios());
+  assert.match(open(added), /3 scenario measurements match `main`\. 1 have no `main` baseline\./);
+  assert.match(added, /\| Codex \| `GH-26` \|/);
 
   // A main run from before the scenario file has nothing to compare; a PR run from before it has no section.
   assert.match(open(render(scenarios(), undefined)), /No `main` baseline exists yet/);
