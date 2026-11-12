@@ -24,6 +24,7 @@ export interface RunRow {
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
   readonly result_json: string | null;
+  readonly input_json: string | null;
   readonly pauses: number | bigint;
   readonly started_at: string;
   readonly updated_at: string;
@@ -72,6 +73,7 @@ export class WorkflowStore extends Context.Service<
       readonly version: number;
       readonly engineTag: string;
       readonly idempotencyKey: string;
+      readonly input: Schema.Json;
     }) => Effect.Effect<void>;
     readonly runStatus: (
       runId: string,
@@ -117,6 +119,10 @@ export class WorkflowStore extends Context.Service<
     readonly signalSeen: (signalId: string) => Effect.Effect<boolean>;
     /** Counts one more arrival at `name` in this run and returns the count. */
     readonly mark: (runId: string, name: string) => Effect.Effect<number>;
+    /** The steps a cancelled run left in flight are over: nothing will end them. */
+    readonly stepsCancelled: (runId: string) => Effect.Effect<void>;
+    /** Cancelled runs whose `onEnd` has not completed and may still be tried. */
+    readonly runsToEnd: (step: string, tries: number) => Effect.Effect<ReadonlyArray<RunRow>>;
     readonly stepThread: (
       runId: string,
       name: string,
@@ -169,10 +175,12 @@ const make = Effect.gen(function* () {
         run.runId,
         sql`
           INSERT INTO workflow_runs (
-            run_id, workflow, version, engine_tag, idempotency_key, title, status, started_at, updated_at
+            run_id, workflow, version, engine_tag, idempotency_key, title, status, input_json,
+            started_at, updated_at
           ) VALUES (
             ${run.runId}, ${run.workflow}, ${run.version}, ${run.engineTag},
-            ${run.idempotencyKey}, ${`${run.workflow} ${run.idempotencyKey}`}, 'running', ${at}, ${at}
+            ${run.idempotencyKey}, ${`${run.workflow} ${run.idempotencyKey}`}, 'running',
+            ${jsonText(run.input)}, ${at}, ${at}
           )
           ON CONFLICT (run_id) DO NOTHING
         `,
@@ -305,6 +313,26 @@ const make = Effect.gen(function* () {
         RETURNING count
       `.pipe(Effect.orDie);
       return Number(rows[0]?.count ?? 1);
+    }),
+    stepsCancelled: Effect.fn("WorkflowStore.stepsCancelled")(function* (runId) {
+      const at = yield* now;
+      yield* write(
+        runId,
+        sql`
+          UPDATE workflow_steps SET status = 'failed', detail = 'cancelled', ended_at = ${at}
+          WHERE run_id = ${runId} AND status = 'running'
+        `,
+      );
+    }),
+    runsToEnd: Effect.fn("WorkflowStore.runsToEnd")(function* (step, tries) {
+      // A day bounds the list: a cleanup that has not worked by then needs a person.
+      const since = DateTime.formatIso(DateTime.subtractDuration(yield* DateTime.now, "1 day"));
+      return yield* sql<RunRow>`
+        SELECT r.* FROM workflow_runs r
+        LEFT JOIN workflow_steps s ON s.run_id = r.run_id AND s.name = ${step}
+        WHERE r.status = 'cancelled' AND r.ended_at > ${since}
+          AND (s.status IS NULL OR (s.status != 'completed' AND s.attempts < ${tries}))
+      `.pipe(Effect.orDie);
     }),
     stepThread: Effect.fn("WorkflowStore.stepThread")(
       function* (runId, name, threadId, environment) {
