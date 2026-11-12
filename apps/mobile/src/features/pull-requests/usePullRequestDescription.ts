@@ -4,7 +4,7 @@ import {
   settleDescriptionSave,
   startDescriptionSave,
   type DescriptionDraft,
-} from "@t3tools/client-runtime/pull-request-editing";
+} from "@t3tools/client-runtime/review-editing";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";

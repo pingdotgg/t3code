@@ -9,6 +9,7 @@ import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Keep the native socket path within the temporary directory.
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -16,7 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessTimeoutError } from "@t3tools/contracts";
-import { HttpClient, HttpClientResponse, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse, HttpClientRequest } from "effect/http";
 import { GraphQLClient } from "effect/graphql";
 
 import * as GitHubRest from "./GitHubRest.ts";
@@ -40,7 +41,10 @@ const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
-function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Response) {
+function harness(
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  transport?: Layer.Layer<HttpClient.HttpClient>,
+) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokens = ["first", "second"];
   let invalidations = 0;
@@ -75,7 +79,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     }),
   );
   const layer = GitHubRest.layer.pipe(
-    Layer.provide(Layer.mergeAll(credentials, http, appSignedOut)),
+    Layer.provide(Layer.mergeAll(credentials, transport ?? http, appSignedOut)),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
@@ -665,4 +669,76 @@ describe("GitHubCredentials", () => {
       ),
     ),
   );
+});
+
+it.effect(
+  "streams media to the host upload endpoint under the pinned repository credential",
+  () => {
+    const { layer, requests } = harness(
+      () => new Response(JSON.stringify({ url: "https://github.com/user-attachments/assets/one" })),
+    );
+    return Effect.gen(function* () {
+      const api = yield* GitHubRest.GitHubRest;
+      yield* api
+        .rest({
+          host: "github.com",
+          operation: "uploadAttachment",
+          path: "user-attachments/assets",
+          method: "POST",
+          upload: {
+            repositoryId: 42,
+            name: "screen shot.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            stream: Stream.make(new Uint8Array([1, 2, 3])),
+          },
+        })
+        .pipe(
+          Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+            host: "github.com",
+            token: Redacted.make("pinned-test-token"),
+            credentialFingerprint: "pinned",
+          }),
+        );
+      expect(requests[0]?.url).toBe(
+        "https://uploads.github.com/user-attachments/assets?repository_id=42&name=screen+shot.png&content_type=image%2Fpng",
+      );
+      expect(requests[0]?.method).toBe("POST");
+      expect(requests[0]?.headers["authorization"]).toBe("Bearer pinned-test-token");
+      expect(requests[0]?.body._tag).toBe("Stream");
+      const body = requests[0]?.body;
+      if (body?._tag !== "Stream") throw new Error("Expected streaming upload");
+      expect(body.contentLength).toBe(3);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("preserves upload length and bytes through the fetch transport", () => {
+  let receivedHeaders = new Headers();
+  let receivedBytes = new Uint8Array();
+  const fetch: typeof globalThis.fetch = async (_url, init) => {
+    receivedHeaders = new Headers(init?.headers);
+    receivedBytes = new Uint8Array(await new Response(init?.body).arrayBuffer());
+    return json({ url: "https://github.com/user-attachments/assets/one" });
+  };
+  const { layer } = harness(() => json({}), FetchHttpClient.layer);
+  return Effect.gen(function* () {
+    const api = yield* GitHubRest.GitHubRest;
+    yield* api.rest({
+      host: "github.com",
+      operation: "uploadAttachment",
+      method: "POST",
+      path: "user-attachments/assets",
+      upload: {
+        repositoryId: 42,
+        name: "screen.png",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        stream: Stream.make(new Uint8Array([1]), new Uint8Array([2, 3])),
+      },
+    });
+    expect(receivedHeaders.get("content-length")).toBe("3");
+    expect(receivedHeaders.get("content-type")).toBe("application/octet-stream");
+    expect(receivedBytes).toEqual(new Uint8Array([1, 2, 3]));
+  }).pipe(Effect.provide(layer), Effect.provideService(FetchHttpClient.Fetch, fetch));
 });

@@ -82,21 +82,15 @@ function setup() {
       handoff={null}
       attachesToComposer={false}
       askAboutPullRequest={() => {}}
-      explainPullRequest={() => {}}
       canFixFindings={false}
       startFixFindings={() => {}}
       handoffLabels={{ fixFindings: "Fix review findings" }}
-      canWriteGuide={false}
-      guideRunning={false}
-      guideWritten={false}
-      writeGuide={() => {}}
       pickableEnvironments={[]}
       actingEnvironmentId={environmentId}
       onActingEnvironmentChange={() => {}}
       can={() => false}
       autoMergeArmed={false}
       showsDraftToggle={false}
-      showsMergeNow={false}
       showsAutoMerge={false}
       showsMergeMethods={false}
       allowedMergeMethods={[]}

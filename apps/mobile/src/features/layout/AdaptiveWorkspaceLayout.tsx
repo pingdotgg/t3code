@@ -82,6 +82,10 @@ import {
 } from "./workspace/workspace-detail-selection";
 import { startOpeningDetail } from "./workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
+import {
+  rememberedThreadWorkspaceNavigationState,
+  useRememberThreadWorkspaceLocation,
+} from "./workspace/threadWorkspaceNavigationMemory";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -269,6 +273,7 @@ function AdaptiveWorkspaceLayoutContent(
   const workspacePage =
     Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
+  useRememberThreadWorkspaceLocation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [nativeInspectorWidthFraction, setNativeInspectorWidthFraction] = useState(0.4);
@@ -575,7 +580,20 @@ function AdaptiveWorkspaceLayoutContent(
         tab: detail.name === "Thread" ? "threads" : "pullRequests",
       });
       startOpeningDetail(detail);
-      navigation.dispatch(selectWorkspaceDetail(detail, sheet));
+      const state = rootStackState(navigation);
+      const remembered =
+        detail.name === "Thread" && !sheet && detail.params?.environmentId && detail.params.threadId
+          ? rememberedThreadWorkspaceNavigationState(
+              state,
+              {
+                environmentId: detail.params.environmentId,
+                threadId: detail.params.threadId,
+              },
+              true,
+            )
+          : null;
+      if (state && remembered) dispatchRootStackReset(navigation, state, remembered);
+      else navigation.dispatch(selectWorkspaceDetail(detail, sheet));
     });
   }
   const handleSelectThreadRoute = (params: ReactNavigation.RootParamList["Thread"]) =>

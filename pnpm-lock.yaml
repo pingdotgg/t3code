@@ -1502,6 +1502,9 @@ importers:
 
   packages/client-runtime:
     dependencies:
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
       '@pierre/diffs':
         specifier: 1.7.0-beta.3
         version: 1.7.0-beta.3(patch_hash=4a64f63a0def94c5add9d86d70560d26d6857e1f5150133862e42e1fd77bc4e8)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -1560,6 +1563,12 @@ importers:
         specifier: ^5.0.0
         version: 5.0.0
     devDependencies:
+      react:
+        specifier: 'catalog:'
+        version: 19.3.0
+      '@types/react':
+        specifier: ~19.3.0
+        version: 19.3.0
       '@effect/vitest':
         specifier: 4.1.2
         version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.2)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)

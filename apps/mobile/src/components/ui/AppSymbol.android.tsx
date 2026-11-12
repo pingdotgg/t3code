@@ -1,3 +1,8 @@
+import IconPaperclip from "@tabler/icons-react-native/IconPaperclip";
+import IconSquare from "@tabler/icons-react-native/IconSquare";
+import IconSquareCheckFilled from "@tabler/icons-react-native/IconSquareCheckFilled";
+import IconSparkles from "@tabler/icons-react-native/IconSparkles";
+import { DiffCollapseIcon, DiffExpandIcon } from "../DiffDisclosureIcons";
 import type { Icon } from "@tabler/icons-react-native/types";
 /* Package-root imports eagerly register the entire Tabler icon set in Metro. */
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
@@ -204,6 +209,12 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "doc.on.doc": IconCopy,
   "doc.text": IconFileText,
   "file.diff": IconFileDiff,
+  "diff.collapse": DiffCollapseIcon,
+  "diff.expand": DiffExpandIcon,
+  paperclip: IconPaperclip,
+  square: IconSquare,
+  "checkmark.square.fill": IconSquareCheckFilled,
+  sparkles: IconSparkles,
   ellipsis: IconDots,
   moon: IconMoon,
   "ellipsis.circle": IconDotsCircleHorizontal,
@@ -299,6 +310,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
     | "git.pull-request.closed"
     | "git.pull-request.draft"
     | "git.commit"
+    | "diff.collapse"
+    | "diff.expand"
     | "file.diff"
     | "robot",
     Icon
@@ -310,6 +323,8 @@ const SF_ICON_LOOKUP: Partial<
     | "git.pull-request.closed"
     | "git.pull-request.draft"
     | "git.commit"
+    | "diff.collapse"
+    | "diff.expand"
     | "file.diff"
     | "robot",
     Icon

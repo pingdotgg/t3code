@@ -1,3 +1,4 @@
+import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
   parsePullRequestAnchor,
   pullRequestLinkCommit,
@@ -25,16 +26,19 @@ import {
   type PullRequestRef,
   type PullRequestReviewGuideStop,
   type PullRequestSummary,
+  type PullRequestReviewThread,
+  type PullRequestThreadComment,
+  type PullRequestComment,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
-  ArrowDownUpIcon,
   ArrowLeftIcon,
   CircleDotIcon,
   FileDiffIcon,
-  GitCommitHorizontalIcon,
-  MessageSquareIcon,
+  FileTextIcon,
+  ListOrderedIcon,
+  DiffIcon,
   PanelRightIcon,
 } from "lucide-react";
 import {
@@ -45,6 +49,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -78,6 +83,7 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
+import { PullRequestMergeControl } from "./PullRequestMergeControl";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
 import { RelativeTime } from "~/components/RelativeTime";
@@ -92,7 +98,7 @@ import {
   PullRequestDetailHeaderBody,
   PullRequestDetailTabBar,
 } from "./PullRequestDetailLayout";
-import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
+import { PullRequestDetailGhost, PullRequestConversationGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { pullRequestRefKey, usePullRequestDetail } from "./usePullRequestDetail";
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
@@ -105,7 +111,6 @@ import {
 import { PullRequestBaseBranch } from "./PullRequestBaseBranch";
 import { PullRequestDetailCrumbs } from "./PullRequestDetailCrumbs";
 import { PullRequestTitleEditor } from "./PullRequestTitleEditor";
-import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
@@ -115,12 +120,14 @@ import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { pullRequestMarkdownPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
+import { PullRequestCommentsPopover } from "./PullRequestCommentsPopover";
+import { getReviewPositionAnchor } from "./PullRequestReviewAnnotation";
+import type { PendingReviewComment } from "./pullRequestReviewStore";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutGuideStopHandoff,
   buildAskAboutPullRequestHandoff,
-  buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildPullRequestCommentContext,
@@ -155,17 +162,13 @@ import { resolvePickableEnvironments } from "./pullRequestProjectAssignment.logi
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
   PullRequestActorLabel,
-  PullRequestMetaLine,
-  PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
   pullRequestChecksStatePresentation,
-  pullRequestReviewOutcomeToneClassName,
   resolvePullRequestState,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
 import { PullRequestGuideTab } from "./PullRequestGuideTab";
 import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
-import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 
 const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
   merge: `Could not merge this ${term}`,
@@ -205,11 +208,10 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
 const UPDATE_BRANCH_REBASE_FAILURE_HINT =
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.";
 
-const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
-  { value: "summary", label: "Summary" },
-  { value: "guide", label: "Guide" },
-  { value: "timeline", label: "Timeline" },
-  { value: "code", label: "Code" },
+const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string; icon: ReactNode }> = [
+  { value: "summary", label: "Overview", icon: <FileTextIcon aria-hidden /> },
+  { value: "guide", label: "Guide", icon: <ListOrderedIcon aria-hidden /> },
+  { value: "code", label: "Code", icon: <DiffIcon aria-hidden /> },
 ];
 
 // Defer the diff viewer's worker pool until Code is approached.
@@ -403,12 +405,12 @@ export function PullRequestDetailPanel({
     (value !== "guide" || reviewGuidesEnabled);
   // An unavailable tab falls back without overwriting the saved selection.
   const tab = isTabAvailable(requestedTab) ? requestedTab : "summary";
+  const [viewControlsTarget, setViewControlsTarget] = useState<HTMLDivElement | null>(null);
   const selectTab = (next: PullRequestDetailTab) => {
     if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, next);
     else setTab(next);
     onTabChange?.(next);
   };
-  const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
     readonly oid: string | null;
@@ -425,6 +427,9 @@ export function PullRequestDetailPanel({
   const [codeRevealRequest, setCodeRevealRequest] = useState<{
     readonly path: string;
     readonly nonce: number;
+    readonly line?: number | null;
+    readonly side?: "left" | "right";
+    readonly threadId?: string;
   } | null>(null);
   const openFileInCode = (path: string) => {
     selectCodeCommit(null);
@@ -459,6 +464,17 @@ export function PullRequestDetailPanel({
     followLink();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each clicked link is a navigation request
   }, [revealUrl]);
+  const openCommentInCode = (location: {
+    path: string;
+    line: number | null;
+    side: "left" | "right";
+    threadId?: string;
+  }) => {
+    selectCodeCommit(null);
+    setCodeRevealRequest((previous) => ({ ...location, nonce: (previous?.nonce ?? 0) + 1 }));
+    void loadCodeTab();
+    selectTab("code");
+  };
   const tabScopeKey = `${environmentId}:${pullRequestKey}`;
   const [tabMountState, setTabMountState] = useState(() => ({
     key: tabScopeKey,
@@ -485,6 +501,9 @@ export function PullRequestDetailPanel({
     },
     timeline: (node: HTMLElement | null) => {
       scrollerByTab.current.timeline = node;
+    },
+    guide: (node: HTMLDivElement | null) => {
+      scrollerByTab.current.guide = node;
     },
     code: (node: HTMLElement | null) => {
       scrollerByTab.current.code = node;
@@ -621,10 +640,13 @@ export function PullRequestDetailPanel({
       : "Checking stack membership…";
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
+  const refreshDetailQuery = detailQuery.refresh;
+  const refreshActivityQuery = activityQuery.refresh;
+  const refreshNativeStackQuery = nativeStackQuery.refresh;
   const refreshDetail = () => {
-    detailQuery.refresh();
-    activityQuery.refresh();
-    nativeStackQuery.refresh();
+    refreshDetailQuery();
+    refreshActivityQuery();
+    refreshNativeStackQuery();
   };
   const [refreshToken, setRefreshToken] = useState(0);
   const [activityRevision, setActivityRevision] = useState<{
@@ -778,6 +800,7 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    adminOverride = false,
   ) => {
     onActed?.(action, "sent");
     const result = await runAction({
@@ -787,6 +810,7 @@ export function PullRequestDetailPanel({
         action,
         ...(method ? { mergeMethod: method } : {}),
         ...(updateMethod ? { updateMethod } : {}),
+        ...(adminOverride ? { adminOverride: true } : {}),
       },
     });
     setPendingAction(null);
@@ -826,10 +850,11 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    adminOverride = false,
   ) => {
     if (!canWriteSourceControl || pendingAction !== null) return false;
     setPendingAction(action);
-    return finishAction(action, method, updateMethod);
+    return finishAction(action, method, updateMethod, adminOverride);
   };
 
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
@@ -859,15 +884,6 @@ export function PullRequestDetailPanel({
   const canPrepareWorktree = prepareThread.isAllowed && canOperateThread;
   const canFixFindings = attachTarget !== null || canPrepareWorktree;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
-  const guideWriter = useReviewGuideWriter({
-    environmentId,
-    reference,
-    title: detail?.title ?? null,
-  });
-  const writeGuide = () => {
-    void guideWriter.write();
-    if (guideWriter.data?.guide == null) selectTab("guide");
-  };
 
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
@@ -1081,21 +1097,6 @@ export function PullRequestDetailPanel({
     });
   };
 
-  const explainPullRequest = () => {
-    if (!detail) return;
-    void startAsk("explain", {
-      ...buildExplainPullRequestHandoff({
-        number: detail.number,
-        title: detail.title,
-        url: detail.url,
-        headBranch: detail.headBranch,
-        baseBranch: detail.baseBranch,
-        state: detail.state,
-        isDraft: detail.isDraft,
-      }),
-    });
-  };
-
   const askAboutGuideStop = (stop: PullRequestReviewGuideStop, index: number, question: string) => {
     if (!detail) return;
     void startAsk(
@@ -1200,6 +1201,76 @@ export function PullRequestDetailPanel({
         finding,
         inThisThread: attachTarget !== null,
       }),
+    );
+  };
+
+  const addThreadCommentToComposer = (
+    thread: PullRequestReviewThread,
+    comment: PullRequestThreadComment,
+  ) => {
+    if (!detail) return;
+    const task = buildFixFindingHandoff({
+      number: detail.number,
+      title: detail.title,
+      url: detail.url,
+      headBranch: detail.headBranch,
+      baseBranch: detail.baseBranch,
+      state: detail.state,
+      isDraft: detail.isDraft,
+      finding: { kind: "thread", thread: { ...thread, comments: [comment] } },
+    });
+    void startAsk(
+      `comment:${comment.id}`,
+      {
+        ...task,
+        prompt: "",
+        reviewComments: task.reviewComments.map((context) => ({
+          ...context,
+          id: `pull-request-comment:${comment.id}`,
+          text: comment.body,
+          startIndex: Math.max(0, (thread.startLine ?? thread.line ?? 1) - 1),
+        })),
+      },
+      { keepGuide: true },
+    );
+  };
+  const addCommentToComposer = (comment: PullRequestComment) => {
+    if (!detail) return;
+    const task = buildFixFindingHandoff({
+      number: detail.number,
+      title: detail.title,
+      url: detail.url,
+      headBranch: detail.headBranch,
+      baseBranch: detail.baseBranch,
+      state: detail.state,
+      isDraft: detail.isDraft,
+      finding: { kind: "comment", comment },
+    });
+    // General comments have no diff anchor, so their words belong in the composer itself.
+    void startAsk(`comment:${comment.id}`, { ...task, prompt: comment.body }, { keepGuide: true });
+  };
+  const addPendingToComposer = (comment: PendingReviewComment) => {
+    const anchor = getReviewPositionAnchor(comment.position);
+    const start = comment.startPosition ? getReviewPositionAnchor(comment.startPosition) : null;
+    void startAsk(
+      `comment:${comment.id}`,
+      {
+        prompt: "",
+        reviewComments: [
+          {
+            id: comment.id,
+            sectionId: `pull-request:${reference.number}`,
+            sectionTitle: `PR #${reference.number} review`,
+            filePath: comment.path,
+            startIndex: (start?.line ?? anchor.line) - 1,
+            endIndex: anchor.line - 1,
+            rangeLabel: `${start ? `L${start.line} to ` : ""}L${anchor.line}${anchor.side === "left" ? " (before)" : ""}`,
+            text: comment.body,
+            diff: "",
+          },
+        ],
+      },
+      { keepGuide: true },
     );
   };
 
@@ -1312,6 +1383,34 @@ export function PullRequestDetailPanel({
     !detail.isDraft &&
     !conflicting &&
     allowedMergeMethods.length > 0;
+  const canAdminOverride =
+    canMergeSinglePullRequest &&
+    detail?.viewerPermissions.adminMerge === true &&
+    can("merge") &&
+    canWriteSourceControl &&
+    !detail.isDraft &&
+    !conflicting;
+  const renderMergeControl = (autoMerge: boolean) =>
+    detail ? (
+      <PullRequestMergeControl
+        key={`${pullRequestKey}:${detail.headSha}:${autoMerge}:${canAdminOverride}`}
+        label={autoMerge ? pendingAutoMergeLabel : selectedMergeMethodLabel}
+        methodLabel={selectedMergeMethodLabel}
+        baseBranch={detail.baseBranch}
+        autoMerge={autoMerge}
+        canAdminOverride={canAdminOverride}
+        pending={actionPending}
+        blockedReason={mergeBlockedReason}
+        onConfirm={(adminOverride) =>
+          perform(
+            autoMerge && !adminOverride ? "enable-auto-merge" : "merge",
+            selectedMergeMethod,
+            undefined,
+            adminOverride,
+          )
+        }
+      />
+    ) : null;
   const showsMergeMethods =
     detail?.state === "open" &&
     can("merge") &&
@@ -1346,13 +1445,6 @@ export function PullRequestDetailPanel({
     : detail
       ? summarizePullRequestChecks(detail.checks)
       : null;
-  const approvalCount =
-    detail && !detail.commentsTruncated
-      ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
-          (entry) => entry.outcome === "approved" && !entry.stale,
-        ).length
-      : 0;
-
   const checkoutControl =
     context === "page" ? (
       <PullRequestCheckoutMenu
@@ -1394,6 +1486,7 @@ export function PullRequestDetailPanel({
               {handoffSummary.state === "open" && handoffSummary.mergeability === "conflicting"
                 ? resolveConflictsControl
                 : null}
+              {showsMergeNow ? renderMergeControl(false) : null}
               {checkoutControl}
             </TooltipProvider>
           ) : undefined
@@ -1403,7 +1496,10 @@ export function PullRequestDetailPanel({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
+    <div
+      data-pull-request-panel
+      className="relative flex h-full min-h-0 w-full flex-col bg-background"
+    >
       {threadPickerOpen && detail ? (
         <PullRequestThreadLinks
           key={`${environmentId}:${detail.url}`}
@@ -1468,19 +1564,18 @@ export function PullRequestDetailPanel({
                 />
               ) : null}
               <PullRequestPrimaryAction
-                mergeBlockedReason={mergeBlockedReason}
-                pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
                 autoMergeArmed={autoMergeArmed}
                 armedAutoMergeLabel={armedAutoMergeLabel}
-                pendingAutoMergeLabel={pendingAutoMergeLabel}
-                selectedMergeMethod={selectedMergeMethod}
-                selectedMergeMethodLabel={selectedMergeMethodLabel}
                 statePresentation={statePresentation}
                 pendingAction={pendingAction}
                 perform={perform}
                 resolveConflicts={resolveConflictsControl}
+                mergeControl={renderMergeControl}
               />
+              {/* Keep checkout beside the menu so host actions arriving on its left cannot
+                  move a different action under the reader's pointer. */}
+              {showsMergeNow ? renderMergeControl(false) : null}
               {checkoutControl}
               <PullRequestActionsMenu
                 environmentId={environmentId}
@@ -1498,21 +1593,15 @@ export function PullRequestDetailPanel({
                 handoff={handoff}
                 attachesToComposer={attachTarget !== null}
                 askAboutPullRequest={askAboutPullRequest}
-                explainPullRequest={explainPullRequest}
                 canFixFindings={canFixFindings}
                 startFixFindings={startFixFindings}
                 handoffLabels={handoffLabels}
-                canWriteGuide={reviewGuidesEnabled && guideWriter.canWrite}
-                guideRunning={guideWriter.running}
-                guideWritten={guideWriter.data?.guide != null}
-                writeGuide={writeGuide}
                 pickableEnvironments={pickableEnvironments}
                 actingEnvironmentId={actingEnvironmentId}
                 onActingEnvironmentChange={selectActingEnvironment}
                 can={can}
                 autoMergeArmed={autoMergeArmed}
                 showsDraftToggle={showsDraftToggle}
-                showsMergeNow={showsMergeNow}
                 showsAutoMerge={showsAutoMerge}
                 showsMergeMethods={showsMergeMethods}
                 allowedMergeMethods={allowedMergeMethods}
@@ -1745,80 +1834,21 @@ export function PullRequestDetailPanel({
                   label={checksSummary}
                 />
               )
-            ) : tab === "timeline" ? (
-              <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                <PullRequestMetaLine
-                  className={cn(
-                    "whitespace-nowrap text-2xs transition-opacity",
-                    (activityPending || activityError) && "opacity-35",
-                  )}
-                >
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label={
-                      activityError
-                        ? "Comments unavailable"
-                        : `${detail.commentCount.toLocaleString()} ${
-                            detail.commentCount === 1 ? "comment" : "comments"
-                          }`
-                    }
-                  >
-                    <MessageSquareIcon aria-hidden className="size-3" />
-                    {activityError
-                      ? "-"
-                      : activityPending
-                        ? "…"
-                        : detail.commentCount.toLocaleString()}
-                  </span>
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label={
-                      activityError
-                        ? "Commits unavailable"
-                        : `${detail.commits.length.toLocaleString()} ${
-                            detail.commits.length === 1 ? "commit" : "commits"
-                          }`
-                    }
-                  >
-                    <GitCommitHorizontalIcon aria-hidden className="size-3" />
-                    {activityError
-                      ? "-"
-                      : activityPending
-                        ? "…"
-                        : detail.commits.length.toLocaleString()}
-                  </span>
-                  {approvalCount > 0 ? (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1",
-                        pullRequestReviewOutcomeToneClassName("approved"),
-                      )}
-                    >
-                      <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
-                      {approvalCount.toLocaleString()}
-                      <span className="sr-only">
-                        {approvalCount === 1 ? "approval" : "approvals"}
-                      </span>
-                    </span>
-                  ) : null}
-                </PullRequestMetaLine>
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  aria-label={
-                    timelineOrder === "newest"
-                      ? "Show oldest activity first"
-                      : "Show newest activity first"
-                  }
-                  onClick={() =>
-                    setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
-                  }
-                >
-                  <ArrowDownUpIcon aria-hidden className="size-3" />
-                  {timelineOrder === "newest" ? "Newest first" : "Oldest first"}
-                </Button>
-              </div>
             ) : null}
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <div ref={setViewControlsTarget} />
+              <PullRequestMarkdownContext value={markdownContext}>
+                <PullRequestCommentsPopover
+                  environmentId={environmentId}
+                  reference={reference}
+                  detail={detail}
+                  onRefresh={refreshDetail}
+                  onOpenComment={openCommentInCode}
+                  onAddThreadCommentToComposer={addThreadCommentToComposer}
+                  onAddPendingToComposer={addPendingToComposer}
+                />
+              </PullRequestMarkdownContext>
+            </div>
           </PullRequestDetailTabBar>
         ) : null}
       </div>
@@ -1905,7 +1935,9 @@ export function PullRequestDetailPanel({
                   environmentId={environmentId}
                   reference={reference}
                   active={tab === "guide"}
+                  viewControlsTarget={tab === "guide" ? viewControlsTarget : null}
                   title={detail.title}
+                  detail={detail}
                   workspaceRoot={detail.workspaceRoot}
                   canComment={
                     detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
@@ -1925,13 +1957,36 @@ export function PullRequestDetailPanel({
                   }
                   onOpenFile={openFileInCode}
                   onTourShown={onGuideShown}
+                  renderFallback={(status) => (
+                    <Suspense
+                      fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}
+                    >
+                      <PullRequestCodeTab
+                        guideFallback
+                        guideStatus={status}
+                        viewControlsTarget={tab === "guide" ? viewControlsTarget : null}
+                        scrollerRef={scrollerRefs.guide}
+                        onAddToAgentSelection={(input) =>
+                          addSelectionToAgent(input, { keepGuide: true })
+                        }
+                        environmentId={environmentId}
+                        reference={reference}
+                        detail={detail}
+                        selectedCommitOid={null}
+                        onSelectedCommitChange={selectCodeCommit}
+                        onRefresh={refreshDetail}
+                        refreshToken={refreshToken}
+                        backgroundRefreshToken={turnRefresh ?? 0}
+                      />
+                    </Suspense>
+                  )}
                 />
               </div>
             ) : null}
             {mountedTabs.has("timeline") ? (
               <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
                 {activityPending ? (
-                  <PullRequestTimelineGhost />
+                  <PullRequestConversationGhost terminology={terminology} />
                 ) : activityError ? (
                   <PullRequestActivityUnavailableState
                     error={activityError}
@@ -1947,7 +2002,7 @@ export function PullRequestDetailPanel({
                     environmentId={environmentId}
                     threadRef={threadRef}
                     reference={reference}
-                    order={timelineOrder}
+                    order="newest"
                     onOpenCommit={openCommit}
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}
@@ -1964,6 +2019,7 @@ export function PullRequestDetailPanel({
                 >
                   <PullRequestCodeTab
                     scrollerRef={scrollerRefs.code}
+                    viewControlsTarget={tab === "code" ? viewControlsTarget : null}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
                     reference={reference}
@@ -1980,6 +2036,8 @@ export function PullRequestDetailPanel({
                     revealRequest={codeRevealRequest}
                     revealUrl={tab === "code" ? revealUrl : undefined}
                     onRevealSettled={settleReveal}
+                    onAddThreadCommentToComposer={addThreadCommentToComposer}
+                    onAddPendingToComposer={addPendingToComposer}
                   />
                 </Suspense>
               </div>

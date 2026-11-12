@@ -4,8 +4,9 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { useEffect, useRef, useState } from "react";
-import { Pressable, RefreshControl, View } from "react-native";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
@@ -115,6 +116,8 @@ export function FileTreeBrowser(props: {
   readonly onPreviewFile?: (path: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
+  readonly toolbar?: ReactNode;
+  readonly pinnedToolbar?: boolean;
 }) {
   const { expandedPaths, setExpandedPaths } = props;
   const [pendingSelection, setPendingSelection] = useState<{
@@ -212,11 +215,11 @@ export function FileTreeBrowser(props: {
   const extraData = { expandedPaths, loadingDirectories, selectedPath };
 
   // Keep the list as direct screen content so UIKit can apply header insets.
-  return (
+  const list = (
     <LegendList
       renderScrollComponent={NativeScrollView}
       nestedScrollEnabled={false}
-      contentInset={{ top: headerInset, bottom: bottomInset }}
+      contentInset={{ top: props.pinnedToolbar ? 0 : headerInset, bottom: bottomInset }}
       alwaysBounceVertical
       className="flex-1"
       data={visibleNodes}
@@ -229,13 +232,18 @@ export function FileTreeBrowser(props: {
       recycleItems
       maintainVisibleContentPosition
       extraData={extraData}
-      contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+      contentContainerStyle={{
+        paddingTop: 8,
+        paddingBottom: 8 + (props.pinnedToolbar ? bottomInset : 0),
+      }}
+      scrollIndicatorInsets={props.pinnedToolbar ? { bottom: bottomInset } : undefined}
       refreshControl={
         <RefreshControl refreshing={props.isRefreshing} onRefresh={props.onRefresh} />
       }
       renderItem={renderItem}
       ListHeaderComponent={
         <>
+          {props.pinnedToolbar ? null : props.toolbar}
           {props.error && props.entries.length > 0 ? (
             <Text accessibilityRole="alert" className="mx-4 my-2 text-xs text-foreground-muted">
               {props.error}
@@ -283,5 +291,13 @@ export function FileTreeBrowser(props: {
         </View>
       }
     />
+  );
+  return props.pinnedToolbar ? (
+    <View className="flex-1">
+      <View style={{ paddingTop: headerInset }}>{props.toolbar}</View>
+      {list}
+    </View>
+  ) : (
+    list
   );
 }

@@ -84,7 +84,7 @@ import {
   settleDescriptionSave,
   startDescriptionSave,
   type DescriptionDraft,
-} from "@t3tools/client-runtime/pull-request-editing";
+} from "@t3tools/client-runtime/review-editing";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";

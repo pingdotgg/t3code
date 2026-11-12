@@ -1,3 +1,4 @@
+import { Columns2Icon } from "lucide-react";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
@@ -11,7 +12,6 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ChevronDownIcon,
-  Columns2Icon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
   PilcrowIcon,
@@ -69,10 +69,14 @@ import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
+import { WorkingChangesReview } from "./diffs/WorkingChangesReview";
+import { DiffDisplayControls } from "./diffs/DiffDisplayControls";
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
+import { compareReviewFilePaths } from "@t3tools/client-runtime/review-workspace";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
+import { ReviewIcon as MorphIcon } from "~/components/ReviewIcon";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
@@ -282,7 +286,11 @@ export default function DiffPanel({
       : null,
   );
   const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
+    selectThreadDiffPanelSelection(
+      state.byThreadKey,
+      routeThreadRef,
+      gitStatusQuery.data?.hasWorkingTreeChanges ?? false,
+    ),
   );
   const rememberedBaseRef = useDiffPanelStore((state) =>
     selectThreadBranchBaseRef(state, routeThreadRef),
@@ -302,6 +310,14 @@ export default function DiffPanel({
       : null,
   );
   const toolCallItem = toolCallDetail.data?.item;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- initializes review scope from the environment git status
+  useEffect(() => {
+    if (routeThreadRef && gitStatusQuery.data) {
+      useDiffPanelStore
+        .getState()
+        .initializeGitScope(routeThreadRef, gitStatusQuery.data.hasWorkingTreeChanges);
+    }
+  }, [routeThreadRef, gitStatusQuery.data]);
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
@@ -468,7 +484,11 @@ export default function DiffPanel({
     void openLink(url, { event });
   };
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshDiffFromUserAction = refreshPreviewQuery;
+  const [workingRefresh, setWorkingRefresh] = useState(0);
+  const refreshDiffFromUserAction = () => {
+    setWorkingRefresh((value) => value + 1);
+    refreshPreviewQuery();
+  };
 
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
@@ -602,7 +622,9 @@ export default function DiffPanel({
     fileStates,
     retry,
     requestFile,
-    renderableFiles,
+    readyFilePaths,
+    renderableFiles: unorderedFiles,
+    settledFileCount,
     remainingFileCount,
     loadNextFiles,
   } = useReviewFilePatches({
@@ -616,7 +638,10 @@ export default function DiffPanel({
     previewInput: branchDiffPreviewInput,
     preview: renderablePatch,
   });
-  const refreshBranchDiffPreview = refreshPreviewQuery;
+  const renderableFiles = unorderedFiles.toSorted((left, right) =>
+    compareReviewFilePaths(resolveFileDiffPath(left), resolveFileDiffPath(right)),
+  );
+  const refreshBranchDiffPreview = refreshDiffFromUserAction;
   const diffRefreshKey = `diff:${activeThreadRefreshKey ?? ""}`;
 
   // The panel stays mounted while hidden, and edits made outside T3 Code bump no mutation id, so
@@ -1319,6 +1344,22 @@ export default function DiffPanel({
             {fileAccess.error ?? "This connection cannot read local diffs."}
           </div>
         )
+      ) : selectedRunId === null && selectedGitScope === "unstaged" && activeCwd ? (
+        <WorkingChangesReview
+          key={`${activeThread.environmentId}:${activeThread.id}:${activeCwd}`}
+          navigationKey={`${activeThread.environmentId}:${activeThread.id}`}
+          environmentId={activeThread.environmentId}
+          cwd={activeCwd}
+          composerDraftTarget={composerDraftTarget}
+          wordWrap={wordWrap}
+          split={diffLayout === "split"}
+          ignoreWhitespace={diffIgnoreWhitespace}
+          projectName={activeProject?.title ?? "Workspace"}
+          onOpenFile={openDiffFile}
+          fileTreeOpen={fileTreeOpen}
+          revision={`${workspaceMutationId ?? ""}:${workingRefresh}`}
+          onChanged={refreshBranchDiffPreview}
+        />
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1462,13 +1503,15 @@ export default function DiffPanel({
                       const path = resolveFileDiffPath(fileDiff);
                       const state = fileStates.get(path);
                       return (
-                        <DiffFileHeaderSuffix
-                          filePath={path}
-                          hasStat={fileStats.has(path)}
-                          error={state?.error ?? false}
-                          truncated={state?.truncated ?? false}
-                          onRetry={retry}
-                        />
+                        <>
+                          <DiffFileHeaderSuffix
+                            filePath={path}
+                            hasStat={fileStats.has(path)}
+                            error={state?.error ?? false}
+                            truncated={state?.truncated ?? false}
+                            onRetry={retry}
+                          />
+                        </>
                       );
                     }}
                     {...(lazySource

@@ -63,6 +63,9 @@ export class GitWorkflowService extends Context.Service<
     /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
     readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly generateStagedCommitMessage: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<string, GitManagerServiceError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitManager.GitRunStackedActionOptions,
@@ -273,6 +276,7 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
+    generateStagedCommitMessage: gitManager.generateStagedCommitMessage,
     repositoryRoot: Effect.fn("GitWorkflowService.repositoryRoot")(function (cwd) {
       return registry.detect({ cwd }).pipe(
         Effect.map((handle) => (handle?.kind === "git" ? handle.repository.rootPath : null)),

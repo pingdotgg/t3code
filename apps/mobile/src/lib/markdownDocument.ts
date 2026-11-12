@@ -460,6 +460,11 @@ export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownForNativeParsing(markdown));
 }
 
+// Source edits need offsets before native rendering transforms change the string's length.
+export function parseMarkdownSource(markdown: string): Root {
+  return parser.parse(markdown);
+}
+
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
   return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
 }

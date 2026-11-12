@@ -67,8 +67,10 @@ vi.mock("~/state/filesystem", () => ({
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
-  useClientSettings: (select: (settings: ClientSettings) => unknown) =>
-    select({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: state.diffFilesCollapsed }),
+  useClientSettings: (select?: (settings: ClientSettings) => unknown) => {
+    const settings = { ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: state.diffFilesCollapsed };
+    return select ? select(settings) : settings;
+  },
   updateClientSettings: async () => {},
 }));
 vi.mock("~/hooks/useTheme", () => ({
@@ -86,6 +88,9 @@ vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => async ()
 vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => async () => {} }));
 vi.mock("./diffs/DiffCommentAnnotation", () => ({ DiffCommentAnnotation: () => null }));
+// The test drives comparison controls, without mounting virtualized diff viewers or their workers.
+vi.mock("./diffs/AnnotatableCodeView", () => ({ AnnotatableCodeView: () => null }));
+vi.mock("./diffs/WorkingChangesReview", () => ({ WorkingChangesReview: () => null }));
 vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 

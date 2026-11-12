@@ -52,6 +52,20 @@ it("keeps Try again inside a short panel when a failed guide has long diagnostic
       reference={reference}
       title="Test pull request"
       workspaceRoot="/workspace"
+      renderFallback={(status) => <div className="h-full overflow-y-auto px-4 py-5">{status}</div>}
+      viewControlsTarget={null}
+      detail={{
+        reviewThreads: [],
+        capabilities: {
+          diff: true,
+          comment: false,
+          actions: [],
+          mergeMethods: [],
+          search: true,
+          review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+          reviewers: { request: false, listCandidates: false },
+        },
+      }}
       active
       canComment={false}
       rangeComments={false}

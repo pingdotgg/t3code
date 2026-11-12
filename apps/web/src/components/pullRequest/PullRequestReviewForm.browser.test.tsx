@@ -35,6 +35,7 @@ it("submits only the line comments still in the draft when dictation finishes", 
   await using screen = await render(
     <PullRequestReviewForm
       active
+      reviewThreads={[]}
       environmentId={EnvironmentId.make("test")}
       reference={reference}
       completionScope={null}

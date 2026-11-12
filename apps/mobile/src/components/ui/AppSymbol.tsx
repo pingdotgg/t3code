@@ -1,3 +1,4 @@
+import { DiffCollapseIcon, DiffExpandIcon } from "../DiffDisclosureIcons";
 import IconGitBranch from "@tabler/icons-react-native/IconGitBranch";
 import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
@@ -24,6 +25,8 @@ const CUSTOM_ICONS = {
   "git.pull-request.draft": IconGitPullRequestDraft,
   "git.commit": IconGitCommit,
   robot: IconRobot,
+  "diff.collapse": DiffCollapseIcon,
+  "diff.expand": DiffExpandIcon,
 };
 
 function AppSymbolView(props: AppSymbolViewProps) {

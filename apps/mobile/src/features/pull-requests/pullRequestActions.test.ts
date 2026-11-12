@@ -5,6 +5,7 @@ import {
   canPerformPullRequestAction,
   mergeUnavailableReason,
   pullRequestActionLabel,
+  pullRequestMergeConfirmationAction,
 } from "./pullRequestActions";
 
 const GITHUB = sourceControlClients.get("github").changeRequest;
@@ -46,6 +47,19 @@ function detail(overrides: Partial<Detail> = {}): Detail {
 }
 
 describe("mobile pull request actions", () => {
+  it("merges ready PRs immediately and waits only for unmet requirements", () => {
+    for (const [requirementsUnmet, canConfirmAutoMerge, bypass, expected] of [
+      [false, true, false, "merge"],
+      [true, true, false, "enable-auto-merge"],
+      [true, true, true, "merge"],
+      [true, false, false, "merge"],
+    ] as const) {
+      expect(
+        pullRequestMergeConfirmationAction({ requirementsUnmet, canConfirmAutoMerge, bypass }),
+      ).toBe(expected);
+    }
+  });
+
   it("requires both provider support and account permission", () => {
     expect(
       canPerformPullRequestAction(detail({ viewerPermissions: { actions: [] } }), "merge"),

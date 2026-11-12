@@ -30,10 +30,12 @@ import type {
   GitHubViewerAccess,
   GitHubWorkflowRunApproval,
 } from "./gitHubPullRequestJson.ts";
+import { isReviewVerdict } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
+  attachments: true,
   comment: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
@@ -47,6 +49,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   review: {
     inlineComment: true,
     rangeComment: true,
+    draftComment: true,
     reply: true,
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
@@ -75,9 +78,11 @@ const UNAVAILABLE_REQUIREMENT = {
  */
 export function gitHubViewerPermissions(
   access: GitHubViewerAccess & Pick<GitHubRepositoryAccess, "autoMergeAllowed">,
+  host = "github.com",
 ): PullRequestViewerPermissions {
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
+    ...(access.canAdmin ? { adminMerge: true } : {}),
     actions: [
       ...(access.canDeleteBranch === true ? (["delete-branch"] as const) : []),
       // Keep disabling available if the repository has since turned auto-merge off.
@@ -95,6 +100,9 @@ export function gitHubViewerPermissions(
       ...(access.canUpdate ? (["ready", "draft", "close", "reopen"] as const) : []),
       ...(access.canUpdateBranch === true ? (["update-branch"] as const) : []),
     ],
+    attachments:
+      access.canWrite &&
+      (host.toLowerCase() === "github.com" || host.toLowerCase().endsWith(".ghe.com")),
     comment: true,
     resolve: access.canWrite || access.didAuthor,
     // Authors may comment on their own PRs, but GitHub rejects their approvals and change requests.
@@ -519,10 +527,13 @@ export const make = Effect.gen(function* () {
           ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
           viewerPermissions: {
-            ...gitHubViewerPermissions({
-              ...pullRequest.viewerAccess,
-              canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-            }),
+            ...gitHubViewerPermissions(
+              {
+                ...pullRequest.viewerAccess,
+                canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+              },
+              input.host,
+            ),
             maintainerEdits: pullRequest.canEditMaintainerEdits,
           },
           baseComparison:
@@ -616,7 +627,13 @@ export const make = Effect.gen(function* () {
                 editedAt: reviewThreads.editedAtById.get(comment.id) ?? comment.editedAt ?? null,
               }))
               .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+            commentCount:
+              pullRequest.comments.filter(
+                (comment) =>
+                  comment.kind !== "review" ||
+                  comment.body.trim().length > 0 ||
+                  isReviewVerdict(comment.reviewState),
+              ).length + reviewThreads.commentCount,
             commentsTruncated: reviewThreads.truncated,
             reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
             reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
@@ -641,18 +658,21 @@ export const make = Effect.gen(function* () {
     getViewerPermissions: (input) => {
       const lightAccess = cli
         .getViewerAccess({ ...input, allowReserve: true })
-        .pipe(Effect.map((access) => gitHubViewerPermissions(access)));
+        .pipe(Effect.map((access) => gitHubViewerPermissions(access, input.host)));
       if (input.includeUpdateBranch === false) {
         return lightAccess.pipe(Effect.mapError(fail("getViewerPermissions")));
       }
       return cli.getPullRequestDetail(input).pipe(
         Effect.provideService(SourceControlRateLimit.Interactive, true),
         Effect.map((pullRequest) =>
-          gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch:
-              pullRequest.state === "open" && pullRequest.comparison?.viewerCanUpdate === true,
-          }),
+          gitHubViewerPermissions(
+            {
+              ...pullRequest.viewerAccess,
+              canUpdateBranch:
+                pullRequest.state === "open" && pullRequest.comparison?.viewerCanUpdate === true,
+            },
+            input.host,
+          ),
         ),
         Effect.catchIf(
           (error) =>
@@ -732,6 +752,7 @@ export const make = Effect.gen(function* () {
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          ...(input.adminOverride === true ? { adminOverride: true } : {}),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
@@ -751,6 +772,8 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("updateChangeRequest"))),
 
+    uploadAttachment: (input) =>
+      cli.uploadAttachment(input).pipe(Effect.mapError(fail("uploadAttachment"))),
     comment: (input) => cli.commentOnPullRequest(input).pipe(Effect.mapError(fail("comment"))),
 
     updateComment: (input) =>
@@ -766,6 +789,10 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("updateComment"))),
 
+    saveDraftComment: (input) =>
+      cli.saveDraftComment(input).pipe(Effect.mapError(fail("saveDraftComment"))),
+    discardDraftComment: (input) =>
+      cli.discardDraftComment(input).pipe(Effect.mapError(fail("discardDraftComment"))),
     submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
 
     replyToThread: (input) =>
@@ -775,6 +802,9 @@ export const make = Effect.gen(function* () {
           repository: input.repository,
           host: input.host,
           threadId: input.threadId,
+          ...(input.pendingReviewId === undefined
+            ? {}
+            : { pendingReviewId: input.pendingReviewId }),
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),

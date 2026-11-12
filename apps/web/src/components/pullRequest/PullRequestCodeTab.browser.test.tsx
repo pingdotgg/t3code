@@ -68,10 +68,7 @@ function deliverViewedPaths(paths: ReadonlySet<string> | null) {
   for (const listener of mocks.viewedListeners) listener();
 }
 
-vi.mock(import("~/state/use-atom-command"), async (original) => ({
-  ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
-}));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock(import("./usePullRequestFilesViewed"), async () => {
   const { useSyncExternalStore } = await import("react");
   const subscribe = (listener: () => void) => {
@@ -82,6 +79,9 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
     usePullRequestFilesViewed: () => {
       const viewedPaths = useSyncExternalStore(subscribe, () => mocks.viewedPaths);
       return {
+        ready: true,
+        filePaths: viewedPaths === null ? null : [...viewedPaths],
+        viewedCount: viewedPaths?.size ?? 0,
         enabled: viewedPaths !== null,
         isViewed: (path: string) => viewedPaths?.has(path) === true,
         isStale: () => false,
@@ -288,40 +288,52 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
-it("never requests the diff of a selected commit the pull request no longer has", async () => {
-  setup({ paged: false });
-  const container = document.createElement("div");
-  container.className = "flex h-[700px] w-[900px]";
-  // The timeline can open a commit that a force-push removed from the pull request.
-  await using screen = await render(
-    <PullRequestCodeTab
-      scrollerRef={() => {}}
-      environmentId={EnvironmentId.make("environment")}
-      reference={detail}
-      detail={{
-        ...detail,
-        commits: [
-          {
-            oid: "kept",
-            messageHeadline: "Kept commit",
-            committedDate: "2026-09-01T00:00:00Z",
-          },
-        ],
-      }}
-      selectedCommitOid="gone"
-      onSelectedCommitChange={() => {}}
-      onRefresh={() => {}}
-    />,
-    { container },
-  );
+it.each(["gone", "kept..newer"])(
+  "validates the selected commit scope %s against the pull request",
+  async (selection) => {
+    setup({ paged: false });
+    const container = document.createElement("div");
+    container.className = "flex h-[700px] w-[900px]";
+    // The timeline can open a commit that a force-push removed from the pull request.
+    await using screen = await render(
+      <PullRequestCodeTab
+        scrollerRef={() => {}}
+        environmentId={EnvironmentId.make("environment")}
+        reference={detail}
+        detail={{
+          ...detail,
+          commits: [
+            {
+              oid: "newer",
+              messageHeadline: "Newer commit",
+              committedDate: "2026-09-02T00:00:00Z",
+            },
+            {
+              oid: "kept",
+              messageHeadline: "Kept commit",
+              committedDate: "2026-09-01T00:00:00Z",
+            },
+          ],
+        }}
+        selectedCommitOid={selection}
+        onSelectedCommitChange={() => {}}
+        onRefresh={() => {}}
+      />,
+      { container },
+    );
 
-  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
-  await expect
-    .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
-    .toBeVisible();
-  expect(mocks.diffCommits).not.toContain("gone");
-});
-
+    await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+    await expect
+      .element(
+        screen.getByRole("button", {
+          name: selection === "gone" ? "Diff scope: All commits" : "Diff scope: 2 commits",
+        }),
+      )
+      .toBeVisible();
+    expect(mocks.diffCommits).not.toContain("gone");
+    if (selection !== "gone") expect(mocks.diffCommits).toContain(selection);
+  },
+);
 it("answers a commit's diff link only once that commit's diff is shown", async () => {
   setup({ paged: false });
   const container = document.createElement("div");

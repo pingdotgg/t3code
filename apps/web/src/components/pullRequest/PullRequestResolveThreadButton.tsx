@@ -4,7 +4,7 @@ import type {
   PullRequestRef,
   PullRequestConversationThread,
 } from "@t3tools/contracts";
-import { canResolvePullRequestThread } from "@t3tools/client-runtime/pull-request-editing";
+import { canResolvePullRequestThread } from "@t3tools/client-runtime/review-editing";
 import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";

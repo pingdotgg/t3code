@@ -297,7 +297,7 @@ export function allowedPullRequestMergeMethods(
     : detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
 }
 
-function canPerformPullRequestAction(
+export function canPerformPullRequestAction(
   detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
   action: PullRequestAction,
 ): boolean {
@@ -464,7 +464,8 @@ export function latestPullRequestReviewOutcomes(
 export interface PullRequestTimelineEvent {
   readonly id: string;
   readonly at: string;
-  readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed";
+  readonly kind: "opened" | "commit" | "comment" | "review" | "thread" | "merged" | "closed";
+  readonly reviewThread?: PullRequestReviewThread;
   readonly title: string;
   readonly body: string | null;
   readonly markdown: boolean;
@@ -606,7 +607,13 @@ export function pullRequestConversationItems(
   let next = 0;
   // Preserve loose comments' existing order, inserting each thread at its finding's time.
   for (const comment of comments) {
-    if (claimed.has(comment.id)) continue;
+    if (
+      claimed.has(comment.id) ||
+      (comment.kind === "review" &&
+        visibleBody(comment.body) === null &&
+        pullRequestReviewOutcome(comment.reviewState) === null)
+    )
+      continue;
     while (
       next < threads.length &&
       instant(threads[next]!.createdAt) < instant(comment.createdAt)
@@ -779,7 +786,7 @@ export function pullRequestTimelineEventMatches(
   event: PullRequestTimelineEvent,
   anchor: string,
 ): boolean {
-  return [event, ...(event.thread?.replies ?? [])].some((item) =>
+  return [event, ...(event.thread?.replies ?? []), ...(event.reviewThread?.comments ?? [])].some((item) =>
     pullRequestAnchorMatchesUrl(anchor, item.url),
   );
 }
@@ -788,10 +795,19 @@ export function buildPullRequestTimeline(
   detail: Pick<
     PullRequestDetailView,
     "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
-  > &
-    Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
+  > & Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
 ): ReadonlyArray<PullRequestTimelineEvent> {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const currentComments = new Map(detail.comments.map((comment) => [comment.id, comment]));
+  const threads = (detail.reviewThreads ?? []).map((thread) => ({
+    ...thread,
+    comments: thread.comments
+      .map((comment) => currentComments.get(comment.id) ?? comment)
+      .toSorted((left, right) => instant(left.createdAt) - instant(right.createdAt)),
+  }));
+  const threadedCommentIds = new Set(
+    threads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
+  );
   return [
     {
       id: "created",
@@ -825,27 +841,61 @@ export function buildPullRequestTimeline(
       reviewState: null,
       reactions: [],
     })),
-    ...pullRequestConversationItems(detail.comments, [
-      ...(detail.reviewThreads ?? []),
-      ...(detail.overviewThreads ?? []),
-    ]).map((item) => {
-      if (item.kind === "comment") return commentTimelineEvent(item.comment);
+    ...detail.comments
+      .filter(
+        (comment) =>
+          !threadedCommentIds.has(comment.id) && !(detail.overviewThreads ?? []).some((thread) => thread.comments.some((entry) => entry.id === comment.id)) &&
+          !(
+            comment.kind === "review" &&
+            visibleBody(comment.body) === null &&
+            pullRequestReviewOutcome(comment.reviewState) === null
+          ),
+      )
+      .map((comment) => ({
+        id: comment.id,
+        comment,
+        at: comment.createdAt,
+        kind: comment.kind === "review" ? ("review" as const) : ("comment" as const),
+        title: comment.kind === "review" ? "reviewed" : "commented",
+        body: visibleBody(comment.body),
+        markdown: true,
+        url: comment.url,
+        actor: comment.author,
+        commitAuthors: [],
+        additions: null,
+        deletions: null,
+        path: comment.path,
+        reviewState: comment.reviewState,
+        reactions: comment.reactions ?? [],
+      })),
+    ...threads.map((thread) => {
+      const first = thread.comments[0];
+      const latest = thread.comments.reduce(
+        (at, comment) => (instant(comment.createdAt) > instant(at) ? comment.createdAt : at),
+        first?.createdAt ?? detail.createdAt,
+      );
       return {
-        ...commentTimelineEvent(item.root),
-        thread: {
-          id: item.thread.id,
-          ...(item.thread.canResolve === undefined ? {} : { canResolve: item.thread.canResolve }),
-          path: item.thread.path,
-          line: item.thread.line,
-          isResolved: item.thread.isResolved,
-          isOutdated: item.thread.isOutdated,
-          replies: item.replies.map(commentTimelineEvent),
-          moreReplies: item.moreReplies,
-          hasMoreReplies: item.hasMoreReplies,
-          url: item.url,
-        },
+        id: `thread:${thread.id}`,
+        at: latest,
+        kind: "thread" as const,
+        reviewThread: thread,
+        title: thread.isResolved ? "resolved discussion" : "open discussion",
+        body: null,
+        markdown: false,
+        url: first?.url ?? null,
+        actor: first?.author ?? null,
+        commitAuthors: [],
+        additions: null,
+        deletions: null,
+        path: thread.path,
+        reviewState: null,
+        reactions: [],
       };
     }),
+    ...pullRequestConversationItems(detail.comments.filter((comment) => (detail.overviewThreads ?? []).some((thread) => thread.comments.some((entry) => entry.id === comment.id))), detail.overviewThreads ?? []).flatMap((item) => item.kind !== "thread" ? [] : [{
+      ...commentTimelineEvent(item.root),
+      thread: { ...item.thread, replies: item.replies.map(commentTimelineEvent), moreReplies: item.moreReplies, hasMoreReplies: item.hasMoreReplies, url: item.url },
+    }]),
     ...(detail.mergedAt
       ? [
           {

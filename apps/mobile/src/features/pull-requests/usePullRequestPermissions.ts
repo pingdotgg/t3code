@@ -3,7 +3,7 @@ import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
   canEditPullRequestMaintainerEdits,
-} from "@t3tools/client-runtime/pull-request-editing";
+} from "@t3tools/client-runtime/review-editing";
 import type { PullRequestComment, PullRequestDetail } from "@t3tools/contracts";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { composerPullRequests } from "../../state/pull-requests";

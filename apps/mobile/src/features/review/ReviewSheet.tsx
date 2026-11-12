@@ -1,15 +1,29 @@
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AsyncResult } from "effect/reactivity";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { LegendList } from "@legendapp/list/react-native";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
+import { WorkingChangesReview } from "./WorkingChangesReview";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  StackActions,
+  useFocusEffect,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppBar } from "../../components/ui/AppBar";
-import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
-import type { ReviewSectionItem } from "./reviewModel";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
-import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } from "react";
+import {
+  type Ref,
+  useImperativeHandle,
+  type ReactElement,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Platform,
   Pressable,
@@ -20,7 +34,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useReduceMotionEnabled } from "../../lib/appState";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useContentTopInset } from "../../components/ui/useBarInset";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
@@ -56,32 +69,27 @@ import { useReviewSections } from "./useReviewSections";
 import { useNativeReviewDiffBridge } from "./useNativeReviewDiffBridge";
 import { useReviewCommentSelectionController } from "./useReviewCommentSelectionController";
 import { resolveReviewAvailability } from "./reviewAvailability";
-import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
-import { buildReviewSectionMenu } from "./review-section-menu";
+import { ReviewComparisonPicker } from "./ReviewComparisonPicker";
+import { ReviewFileTree } from "./ReviewFileTree";
+import { selectReviewFileDiff } from "./reviewPaneSelection";
+import {
+  readThreadReviewSelection,
+  rememberThreadReviewSelection,
+  workspaceThreadMemoryKey,
+} from "../layout/workspace/workspacePaneMemory";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
-function ReviewHeader(
+export function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
-    readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
-    readonly showSectionToolbar: boolean;
-    readonly showChangedFilesToggle: boolean;
-    readonly onSelectSection: (sectionId: string) => void;
+    readonly iconColor?: string;
     readonly onReturnToThread: () => void;
+    readonly showGitMenu?: boolean;
   },
 ) {
   const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const presentation = useReviewHeaderPresentation(props);
-  const sectionAction = (section: ReviewSectionItem | null, title: string): AppBarMenuItem => ({
-    id: section ? `section:${section.id}` : `unavailable:${title}`,
-    title,
-    disabled: section === null,
-    selected: section !== null && section.id === props.selectedSection?.id,
-    onPress: () => {
-      if (section) props.onSelectSection(section.id);
-    },
-  });
   return (
     <AppBar
       title={presentation.title}
@@ -89,54 +97,14 @@ function ReviewHeader(
       onBack={props.onReturnToThread}
       hideBottomBorder
       backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
-      actions={
-        props.showChangedFilesToggle
-          ? [
-              {
-                accessibilityLabel: panes.auxiliaryPaneVisible
-                  ? "Hide changed files"
-                  : "Show changed files",
-                icon: "sidebar.right",
-                selected: panes.auxiliaryPaneVisible,
-                onPress: toggleAuxiliaryPane,
-              },
-            ]
-          : undefined
-      }
       menus={[
-        ...(presentation.gitMenu ? [presentation.gitMenu] : []),
-        ...(props.showSectionToolbar
+        ...(presentation.gitMenu && props.showGitMenu !== false ? [presentation.gitMenu] : []),
+        ...(presentation.refreshAction
           ? [
               {
-                title: "Select diff",
-                icon: presentation.menuIcon,
-                items: [
-                  {
-                    id: "sections",
-                    inline: true,
-                    items: [
-                      sectionAction(props.sectionMenu.branchChanges, "Changes"),
-                      sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
-                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
-                    ],
-                  },
-                  ...(props.sectionMenu.turns.length > 0
-                    ? [
-                        {
-                          id: "turns",
-                          title: "Turn",
-                          items: props.sectionMenu.turns.map((section) => ({
-                            id: `section:${section.id}`,
-                            title: section.title,
-                            subtitle: section.subtitle ?? undefined,
-                            selected: section.id === props.selectedSection?.id,
-                            onPress: () => props.onSelectSection(section.id),
-                          })),
-                        },
-                      ]
-                    : []),
-                  ...(presentation.refreshAction ? [presentation.refreshAction] : []),
-                ],
+                title: "Git actions",
+                icon: "ellipsis" as const,
+                items: [presentation.refreshAction],
               },
             ]
           : []),
@@ -363,8 +331,19 @@ type ReviewSheetProps = StaticScreenProps<{
   readonly threadId: ThreadId;
 }>;
 
-export function ReviewSheet(props: ReviewSheetProps) {
-  const reduceMotion = useReduceMotionEnabled();
+export function ReviewSheet(
+  props: ReviewSheetProps & {
+    readonly workspaceTabs?: ReactNode;
+    readonly workspaceHeader?: ReactNode;
+    readonly openedFile?:
+      | {
+          readonly sectionId: string;
+          readonly path?: string;
+          readonly scope?: "staged" | "unstaged" | undefined;
+        }
+      | undefined;
+  },
+) {
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { panes } = useWorkspacePaneState();
   const navigation = useNavigation();
@@ -381,9 +360,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const columnMetrics = useNativeColumnLayoutMetrics();
   const safeArea = columnMetrics?.safeArea ?? insets;
   const topContentInset = useContentTopInset();
+  const toolbarInset = topContentInset;
   const bottomContentInset =
     Platform.OS === "ios" ? safeArea.bottom + 8 : Math.max(insets.bottom, 18) + 18;
 
+  const memoryKey = workspaceThreadMemoryKey(String(environmentId), String(threadId));
+  const [rememberedReview] = useState(() => readThreadReviewSelection(memoryKey));
   const {
     error,
     reviewSections,
@@ -391,12 +373,28 @@ export function ReviewSheet(props: ReviewSheetProps) {
     refreshSelectedSection,
     selectSection,
     isSelectedSectionPending,
+    liveGitUnavailableReason,
   } = useReviewSections({
     enabled: isEnvironmentReady,
     environmentId,
     threadId,
     reviewCache,
+    selectedSectionId:
+      props.openedFile?.sectionId ??
+      reviewCache.selectedSectionId ??
+      rememberedReview?.sectionId ??
+      "git:working-tree",
   });
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedSection) return;
+      rememberThreadReviewSelection(memoryKey, {
+        sectionId: selectedSection.id,
+        ...(props.openedFile?.path ? { path: props.openedFile.path } : {}),
+        ...(props.openedFile?.scope ? { scope: props.openedFile.scope } : {}),
+      });
+    }, [memoryKey, selectedSection, props.openedFile]),
+  );
   useReviewDiffPrewarming({
     threadKey: reviewCache.threadKey,
     sections: reviewSections,
@@ -413,19 +411,21 @@ export function ReviewSheet(props: ReviewSheetProps) {
     threadKey: reviewCache.threadKey,
     environmentId,
     cwd: selectedThreadCwd,
-    selectedSection,
+    selectedSection: selectedSection?.kind === "working-tree" ? null : selectedSection,
     draftMessage,
     draftContext,
   });
-  // Expo may return null before registration or in older binaries; use the fallback.
   const NativeReviewDiffView = resolveNativeReviewDiffView();
   const nativeReviewDiffViewRef = useRef<NativeReviewDiffViewHandle>(null);
   const showcasedReviewDrawRef = useRef<string | null>(null);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = async () => {
     setIsPullRefreshing(true);
-    await refreshSelectedSection();
-    setIsPullRefreshing(false);
+    return await (async () => {
+      await refreshSelectedSection();
+    })().finally(async () => {
+      setIsPullRefreshing(false);
+    });
   };
   const isRefreshing = isPullRefreshing || isSelectedSectionPending || areFilePatchesPending;
   // A refresh that starts programmatically adds its height to the native top inset and
@@ -437,8 +437,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
     setFallbackInset(topContentInset);
     if (isRefreshing) setFallbackScrollViewKey((key) => key + 1);
   }
-  const reviewFileNavigatorRef = useRef<ReviewFileNavigatorHandle>(null);
   const reviewFiles = parsedDiff.kind === "files" ? parsedDiff.files : [];
+  const treeFiles =
+    parsedDiff.kind === "files"
+      ? parsedDiff.files
+      : (selectedSection?.files ?? []).map((file) => ({ ...file, changeType: "change" }));
   const fileVisibility = useReviewFileVisibility({
     threadKey: reviewCache.threadKey,
     sectionId: selectedSection?.id ?? null,
@@ -446,26 +449,36 @@ export function ReviewSheet(props: ReviewSheetProps) {
     cachedExpandedFileIds: selectedSection?.id
       ? reviewCache.expandedFileIdsBySection[selectedSection.id]
       : undefined,
-    cachedViewedFileIds: selectedSection?.id
-      ? reviewCache.viewedFileIdsBySection[selectedSection.id]
-      : undefined,
+    cachedViewedFileIds: undefined,
   });
-  const { collapsedFileIds, toggleExpandedFile, toggleViewedFile, viewedFileIds } = fileVisibility;
+  const { collapsedFileIds, toggleExpandedFile } = fileVisibility;
+  const displayedDiff = useMemo(
+    () =>
+      props.openedFile?.path
+        ? selectReviewFileDiff(nativeReviewDiffData, props.openedFile.path)
+        : nativeReviewDiffData,
+    [nativeReviewDiffData, props.openedFile],
+  );
+  const openedPath = props.openedFile?.path;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the externally requested file into the native diff viewer
+  useEffect(() => {
+    if (openedPath) loadVisibleFile(openedPath);
+  }, [openedPath, loadVisibleFile]);
   const commentSelection = useReviewCommentSelectionController({
     environmentId,
     threadId,
     selectedSection,
-    nativeReviewDiffData,
+    nativeReviewDiffData: displayedDiff,
   });
   const nativeBridge = useNativeReviewDiffBridge({
     threadKey: reviewCache.threadKey,
     sectionId: selectedSection?.id ?? null,
     diff: selectedSection?.diff,
-    data: nativeReviewDiffData,
+    data: displayedDiff,
     collapsedFileIds,
-    viewedFileIds,
+    viewedFileIds: [],
     selectedRowIds: commentSelection.selectedRowIds,
-    canHighlight: parsedDiff.kind === "files",
+    canHighlight: props.openedFile !== undefined && parsedDiff.kind === "files",
   });
   const showcaseReviewKey =
     SHOWCASE_ENABLED && parsedDiff.kind === "files" && selectedSection
@@ -484,28 +497,21 @@ export function ReviewSheet(props: ReviewSheetProps) {
     reportShowcaseSceneRendered({ scene: "review", themeId: nativeBridge.themeId });
   };
 
+  const reviewFileNavigatorRef = useRef<ReviewFileNavigatorHandle>(null);
   const handleSelectFile = async (fileId: string | null) => {
     loadVisibleFile(fileId, true);
     commentSelection.clearSelection();
-    if (fileId !== null && collapsedFileIds.includes(fileId)) {
-      toggleExpandedFile(fileId);
-    }
+    if (fileId !== null && collapsedFileIds.includes(fileId)) toggleExpandedFile(fileId);
     const nativeView = nativeReviewDiffViewRef.current;
-    if (!nativeView) return;
-    const result = await settlePromise(() =>
-      fileId === null
-        ? nativeView.scrollToTop(!reduceMotion)
-        : nativeView.scrollToFile(fileId, !reduceMotion),
-    );
-    if (AsyncResult.isFailure(result)) {
-      console.error("[review] Failed to navigate to diff file", squashAtomCommandFailure(result));
-    }
+    if (nativeView)
+      await settlePromise(() =>
+        fileId === null ? nativeView.scrollToTop(false) : nativeView.scrollToFile(fileId, false),
+      );
   };
   const handleVisibleFileChange = (
     event: NativeSyntheticEvent<{ readonly fileId?: string | null }>,
   ) => {
     loadVisibleFile(event.nativeEvent.fileId ?? null);
-    reviewFileNavigatorRef.current?.setVisibleFile(event.nativeEvent.fileId ?? null);
   };
   const renderInspector = () => (
     <ReviewFileNavigator
@@ -516,28 +522,33 @@ export function ReviewSheet(props: ReviewSheetProps) {
     />
   );
 
-  const handleNativeToggleFile = (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => {
-    const { fileId } = event.nativeEvent;
-    if (fileId) {
-      loadVisibleFile(fileId, true);
-      toggleExpandedFile(fileId);
-    }
+  const openFile = (path: string | undefined, scope?: "staged" | "unstaged") => {
+    if (!selectedSection) return;
+    navigation.dispatch(
+      StackActions.push("ThreadReviewFile", {
+        environmentId: String(environmentId),
+        threadId: String(threadId),
+        reviewSectionId: selectedSection.id,
+        ...(path ? { reviewFilePath: path } : {}),
+        ...(scope ? { reviewWorkingTreeScope: scope } : {}),
+      }),
+    );
   };
-
-  const handleNativeToggleViewedFile = (
-    event: NativeSyntheticEvent<{ readonly fileId?: string }>,
-  ) => {
-    const { fileId } = event.nativeEvent;
-    if (fileId) {
-      toggleViewedFile(fileId);
-    }
-  };
+  const handleNativeToggleFile = useCallback(
+    (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => {
+      const { fileId } = event.nativeEvent;
+      if (fileId) {
+        loadVisibleFile(fileId, true);
+        toggleExpandedFile(fileId);
+      }
+    },
+    [toggleExpandedFile, loadVisibleFile],
+  );
 
   const parsedDiffNotice =
     parsedDiff.kind === "files" || parsedDiff.kind === "raw" ? parsedDiff.notice : null;
   const hasCachedSelectedDiff = selectedSection?.diff != null;
   const hasAnyCachedDiff = reviewSections.some((section) => section.diff != null);
-  const sectionMenu = buildReviewSectionMenu(reviewSections);
   const { showConnectionNotice, showSectionToolbar } = resolveReviewAvailability({
     hasEnvironmentPresentation: environment.isReady,
     isEnvironmentConnected: isEnvironmentReady,
@@ -609,7 +620,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const headerTitleText = selectedSection?.title ?? "Review changes";
+  const headerTitleText =
+    props.openedFile?.path?.split("/").at(-1) ??
+    (props.openedFile?.scope === "staged" ? "Staged" : props.openedFile ? "Unstaged" : "Git");
 
   return (
     <>
@@ -619,24 +632,43 @@ export function ReviewSheet(props: ReviewSheetProps) {
           content={{ active: "changes", panes: [{ key: "changes", render: renderInspector }] }}
         />
       ) : null}
-      <ReviewHeader
-        environmentId={environmentId}
-        threadId={threadId}
-        title={headerTitleText}
-        subtitle={headerSubtitle}
-        androidSubtitle={androidHeaderSubtitle}
-        selectedThreadCwd={selectedThreadCwd}
-        sectionMenu={sectionMenu}
-        selectedSection={selectedSection}
-        showSectionToolbar={showSectionToolbar}
-        showChangedFilesToggle={showChangedFilesToggle}
-        onRefresh={handlePullToRefresh}
-        onSelectSection={selectSection}
-        onReturnToThread={handleReturnToThread}
-      />
+      {props.workspaceHeader ?? (
+        <ReviewHeader
+          environmentId={environmentId}
+          threadId={threadId}
+          title={headerTitleText}
+          subtitle={headerSubtitle}
+          androidSubtitle={androidHeaderSubtitle}
+          selectedThreadCwd={selectedThreadCwd}
+          selectedSection={selectedSection}
+          onRefresh={handlePullToRefresh}
+          onReturnToThread={handleReturnToThread}
+        />
+      )}
 
       <ScreenContent>
         <View className="flex-1 bg-sheet android:bg-sheet-solid">
+          <View style={{ paddingTop: toolbarInset }}>
+            {props.workspaceTabs}
+            {showSectionToolbar ? (
+              <ReviewComparisonPicker
+                sections={reviewSections}
+                selected={selectedSection}
+                onSelect={(sectionId) => {
+                  selectSection(sectionId);
+                  if (props.openedFile) navigation.goBack();
+                }}
+              />
+            ) : null}
+          </View>
+          {liveGitUnavailableReason && !showConnectionNotice ? (
+            <Text
+              accessibilityRole="alert"
+              className="border-b border-warning-border bg-warning px-4 py-3 text-xs leading-normal text-warning-foreground"
+            >
+              {liveGitUnavailableReason}
+            </Text>
+          ) : null}
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice
@@ -652,6 +684,50 @@ export function ReviewSheet(props: ReviewSheetProps) {
                 onRetry={handleRetryEnvironment}
               />
             </View>
+          ) : selectedSection?.kind === "working-tree" && selectedThreadCwd ? (
+            <View
+              className="flex-1"
+              style={{ paddingTop: topContentInset, paddingBottom: bottomContentInset }}
+            >
+              <WorkingChangesReview
+                key={`${environmentId}:${selectedThreadCwd}`}
+                environmentId={environmentId}
+                threadId={threadId}
+                cwd={selectedThreadCwd}
+                draftMessage={draftMessage}
+                draftContext={draftContext}
+                revision={selectedSection?.source?.diffHash}
+                onChanged={refreshSelectedSection}
+                openedFile={
+                  props.openedFile
+                    ? {
+                        path: props.openedFile.path,
+                        scope: props.openedFile.scope === "staged" ? "staged" : "unstaged",
+                      }
+                    : undefined
+                }
+                onOpenFile={({ path, scope }) => openFile(path, scope)}
+                onOpenScope={(scope) => openFile(undefined, scope)}
+              />
+            </View>
+          ) : !props.openedFile && treeFiles.length > 0 ? (
+            <View className="min-h-0 flex-1">
+              {listHeader}
+              <ReviewFileTree
+                files={treeFiles}
+                onSelectFile={(path) => openFile(path)}
+                onRefresh={() => void handlePullToRefresh()}
+                refreshing={isPullRefreshing || isSelectedSectionPending}
+              />
+            </View>
+          ) : props.openedFile &&
+            parsedDiff.kind === "files" &&
+            displayedDiff.files.length === 0 &&
+            !isSelectedSectionPending &&
+            !areFilePatchesPending ? (
+            <Text className="px-4 py-3 text-xs text-foreground-muted">
+              No changes remaining in this file.
+            </Text>
           ) : selectedSection && parsedDiff.kind === "files" && NativeReviewDiffView ? (
             <View
               className="flex-1"
@@ -690,12 +766,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     tokensPatchJson={nativeBridge.tokensPatchJson}
                     tokensResetKey={nativeBridge.tokensResetKey}
                     viewedFileIdsJson={nativeBridge.viewedFileIdsJson}
+                    showViewedCheckbox={false}
                     onDebug={handleNativeDebug}
                     onPressLine={commentSelection.onPressLine}
+                    enableLineRangeSelection
+                    onSelectLineRange={commentSelection.onSelectLineRange}
                     onVisibleFileChange={handleVisibleFileChange}
                     onToggleComment={nativeBridge.onToggleComment}
                     onToggleFile={handleNativeToggleFile}
-                    onToggleViewedFile={handleNativeToggleViewedFile}
                   />
                 </View>
               </View>
