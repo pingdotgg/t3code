@@ -101,7 +101,8 @@ export function blockedAssetUrlState(
     fileAccess.canReadFiles ||
     (resource._tag !== "workspace-file" &&
       resource._tag !== "media-file" &&
-      resource._tag !== "draft-workspace-file")
+      resource._tag !== "draft-workspace-file" &&
+      !(resource._tag === "native-app-icon" && resource.app._tag === "app-path"))
   ) {
     return null;
   }
@@ -275,6 +276,7 @@ export function createAssetEnvironmentAtoms<R, E>(
         error._tag === "AssetWorkspaceContextNotFoundError"
       ) ||
       resource._tag !== "media-file" ||
+      resource.hostOnly ||
       !(resource.path.startsWith("/") || isWindowsAbsolutePath(resource.path)) ||
       mediaMimeTypeFromExtension(resource.path.slice(resource.path.lastIndexOf("."))) === null
     )
