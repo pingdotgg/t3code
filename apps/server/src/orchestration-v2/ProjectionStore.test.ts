@@ -9,6 +9,7 @@ import {
   ContextTransferId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextHandoffId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -55,6 +56,7 @@ import {
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
+import { buildBoundedThreadStreamSnapshot } from "./ThreadStream.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
@@ -2591,6 +2593,142 @@ it.effect("SQL snapshot windows keep cards for requests still pending", () =>
       );
       for (const id of pendingCardIds) assert.notInclude(visibleIds, id);
     }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("SQL snapshot windows leave handoff bodies in SQLite without changing the wire", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:handoff-window");
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:handoff-window"),
+        title: "Handoff window",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const providerThreadId = ProviderThreadId.make("provider-thread:handoff-window");
+    const earlierItemId = TurnItemId.make("item:handoff-window:earlier");
+    const handoff = (id: string, status: "ready" | "superseded") => ({
+      id: ContextHandoffId.make(`handoff:handoff-window:${id}`),
+      transferId: null,
+      threadId,
+      targetRunId: RunId.make("run:handoff-window"),
+      fromProviderThreadIds: [providerThreadId],
+      toProviderThreadId: providerThreadId,
+      coveredRunOrdinals: { from: 1, to: 1 },
+      strategy: "full_thread_summary" as const,
+      status,
+      summaryMessageId: null,
+      summaryText: `Summary ${id}`,
+      history: {
+        messages: [
+          {
+            role: "user" as const,
+            text: "Earlier request ".repeat(1_000),
+            threadId,
+            runId: null,
+            itemId: earlierItemId,
+            providerThreadId,
+            status: "completed",
+            kind: "user_message",
+          },
+        ],
+        coverage: "full",
+        omittedItems: 0,
+      },
+      delivery: { nativeThreadId: "native", status: "injected" as const, itemIds: [earlierItemId] },
+      createdByProviderInstanceId: providerInstanceId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    // The window keeps a ready handoff and one its rows show; the third is outside it.
+    const handoffs = [
+      handoff("ready", "ready"),
+      handoff("shown", "superseded"),
+      handoff("old", "superseded"),
+    ];
+    for (const payload of handoffs) {
+      yield* store.apply({
+        id: EventId.make(`event:${payload.id}`),
+        type: "context-handoff.updated",
+        threadId,
+        occurredAt: now,
+        payload,
+      });
+    }
+    yield* store.apply({
+      id: EventId.make("event:handoff-window:item"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:handoff-window:handoff"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "handoff",
+        contextHandoffId: handoffs[1]!.id,
+        fromProviderThreadIds: [providerThreadId],
+        toProviderThreadId: providerThreadId,
+        fromProviderInstanceIds: [providerInstanceId],
+        toProviderInstanceId: providerInstanceId,
+        strategy: "full_thread_summary",
+      },
+    });
+
+    const window = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 10 });
+    const windowHandoffs = window.projection.contextHandoffs;
+    assert.deepEqual(
+      windowHandoffs.map((row) => row.id),
+      [handoffs[0]!.id, handoffs[1]!.id],
+    );
+    for (const row of windowHandoffs) {
+      assert.isUndefined(row.history);
+      assert.isUndefined(row.delivery);
+    }
+    const full = yield* store.getThreadSnapshot(threadId);
+    assert.deepEqual(full.projection.contextHandoffs, handoffs);
+    assert.deepEqual(
+      buildBoundedThreadStreamSnapshot(window),
+      buildBoundedThreadStreamSnapshot({
+        ...window,
+        projection: { ...window.projection, contextHandoffs: handoffs.slice(0, 2) },
+      }),
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
