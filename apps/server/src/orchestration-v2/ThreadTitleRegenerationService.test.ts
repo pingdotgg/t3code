@@ -13,6 +13,7 @@ import {
   RunId,
   ScheduledTaskId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -559,78 +560,136 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
-  it.effect("regenerates on every Nth message a person sends until the thread is renamed", () =>
-    Effect.gen(function* () {
-      let generated = 0;
-      const harness = makeHarness({
-        regenerationInterval: 2,
-        // Request 1 declines to title the seed; request 4 is the manual one and keeps what it finds.
-        generateTitle: () =>
-          Effect.sync(() => {
-            generated += 1;
-            if (generated === 1) return { title: "New thread" };
-            return { title: generated === 4 ? "Manual title" : `Generated ${generated}` };
-          }),
-      });
-      yield* Effect.gen(function* () {
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
-        const threadId = yield* createThread({
-          command: "command:title:auto:create",
-          thread: "thread:title:auto",
+  it.effect.each([false, true])(
+    "regenerates on every Nth message until renamed (compacted: %s)",
+    (compacted) =>
+      Effect.gen(function* () {
+        let generated = 0;
+        const harness = makeHarness({
+          regenerationInterval: 2,
+          // Request 1 declines to title the seed; request 4 is the manual one and keeps what it finds.
+          generateTitle: () =>
+            Effect.sync(() => {
+              generated += 1;
+              if (generated === 1) return { title: "New thread" };
+              return { title: generated === 4 ? "Manual title" : `Generated ${generated}` };
+            }),
         });
-        const title = Effect.map(threads.getThreadProjection(threadId), (it) => it.thread.title);
-        // Sends a message, runs the title job it queued, and reports which kind that was.
-        const send = Effect.fn(function* (
-          step: string,
-          message: Pick<
-            Parameters<typeof dispatchUserMessage>[0],
-            "titleSeed" | "createdBy" | "scheduledTaskId"
-          > = {},
-        ) {
-          const command = `command:title:auto:${step}`;
-          yield* dispatchUserMessage({ command, threadId, text: `Message ${step}`, ...message });
-          const requestId = CommandId.make(command);
-          const queued = (yield* outbox.listByCommandId(requestId)).flatMap((effect) =>
-            effect.request.type === "thread-title.generate" ? [effect.request.kind] : [],
-          );
-          for (const kind of queued) yield* service.execute({ threadId, requestId, kind });
-          return queued.map((kind) => kind.type);
-        });
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const outbox = yield* EffectOutbox.EffectOutboxV2;
+          const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+          const threadId = yield* createThread({
+            command: "command:title:auto:create",
+            thread: "thread:title:auto",
+          });
+          const title = Effect.map(threads.getThreadProjection(threadId), (it) => it.thread.title);
+          // Sends a message, runs the title job it queued, and reports which kind that was.
+          const send = Effect.fn(function* (
+            step: string,
+            message: Pick<
+              Parameters<typeof dispatchUserMessage>[0],
+              "titleSeed" | "createdBy" | "scheduledTaskId"
+            > = {},
+          ) {
+            const command = `command:title:auto:${step}`;
+            yield* dispatchUserMessage({ command, threadId, text: `Message ${step}`, ...message });
+            const requestId = CommandId.make(command);
+            const queued = (yield* outbox.listByCommandId(requestId)).flatMap((effect) =>
+              effect.request.type === "thread-title.generate" ? [effect.request.kind] : [],
+            );
+            for (const kind of queued) yield* service.execute({ threadId, requestId, kind });
+            return queued.map((kind) => kind.type);
+          });
 
-        assert.deepEqual(yield* send("1", { titleSeed: "First ask" }), ["initial"]);
-        // The seed stays T3's title, so the next due message retries it.
-        assert.equal(yield* title, "First ask");
-        assert.deepEqual(yield* send("2"), ["regenerate"]);
-        assert.equal(yield* title, "Generated 2");
-        assert.deepEqual(yield* send("3"), []);
-        // Agent and scheduled traffic neither trigger a regeneration nor count toward the next.
-        assert.deepEqual(yield* send("agent", { createdBy: "agent" }), []);
-        const scheduledTaskId = ScheduledTaskId.make("task:title:auto");
-        assert.deepEqual(yield* send("scheduled", { scheduledTaskId }), []);
-        assert.deepEqual(yield* send("4"), ["regenerate"]);
-        assert.equal(yield* title, "Generated 3");
+          assert.deepEqual(yield* send("1", { titleSeed: "First ask" }), ["initial"]);
+          // The seed stays T3's title, so the next due message retries it.
+          assert.equal(yield* title, "First ask");
+          assert.deepEqual(yield* send("2"), ["regenerate"]);
+          assert.equal(yield* title, "Generated 2");
+          assert.deepEqual(yield* send("3"), []);
+          if (compacted) {
+            const compactCommand = "command:title:auto:compact";
+            yield* dispatchUserMessage({ command: compactCommand, threadId, text: "/compact" });
+            const projection = yield* threads.getThreadProjection(threadId);
+            const compactRun = projection.runs.find(
+              (run) => run.userMessageId === MessageId.make(`${compactCommand}:message`),
+            )!;
+            const before = yield* DateTime.now;
+            const after = DateTime.add(before, { seconds: 1 });
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                ...projection.runs.map((run) => ({
+                  id: EventId.make(`${run.id}:completed`),
+                  type: "run.updated" as const,
+                  threadId,
+                  runId: run.id,
+                  occurredAt: after,
+                  payload: {
+                    ...run,
+                    status: "completed" as const,
+                    requestedAt: run.id === compactRun.id ? after : before,
+                    startedAt: run.id === compactRun.id ? after : before,
+                    completedAt: run.id === compactRun.id ? after : before,
+                  },
+                })),
+                {
+                  id: EventId.make("event:title:auto:compacted"),
+                  type: "turn-item.updated",
+                  threadId,
+                  runId: compactRun.id,
+                  occurredAt: after,
+                  payload: {
+                    id: TurnItemId.make("item:title:auto:compacted"),
+                    threadId,
+                    runId: compactRun.id,
+                    nodeId: null,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: projection.turnItems.length + 1,
+                    status: "completed",
+                    title: null,
+                    startedAt: after,
+                    completedAt: after,
+                    updatedAt: after,
+                    type: "compaction",
+                    driver: adapter.driver,
+                  },
+                },
+              ],
+            });
+          }
+          // Agent and scheduled traffic neither trigger a regeneration nor count toward the next.
+          assert.deepEqual(yield* send("agent", { createdBy: "agent" }), []);
+          const scheduledTaskId = ScheduledTaskId.make("task:title:auto");
+          assert.deepEqual(yield* send("scheduled", { scheduledTaskId }), []);
+          assert.deepEqual(yield* send("4"), ["regenerate"]);
+          assert.equal(yield* title, "Generated 3");
 
-        yield* threads.dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make("command:title:auto:rename"),
-          threadId,
-          title: "Manual title",
-        });
-        assert.deepEqual(yield* send("5"), []);
-        assert.deepEqual(yield* send("6"), []);
-        assert.equal(yield* title, "Manual title");
+          yield* threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("command:title:auto:rename"),
+            threadId,
+            title: "Manual title",
+          });
+          assert.deepEqual(yield* send("5"), []);
+          assert.deepEqual(yield* send("6"), []);
+          assert.equal(yield* title, "Manual title");
 
-        // Asking for a generated title hands the thread back, even when the title stands.
-        const requestId = yield* armRegeneration({ command: "command:title:auto:regen", threadId });
-        yield* service.execute({ threadId, requestId, kind: { type: "regenerate" } });
-        assert.equal(yield* title, "Manual title");
-        assert.deepEqual(yield* send("7"), []);
-        assert.deepEqual(yield* send("8"), ["regenerate"]);
-        assert.equal(yield* title, "Generated 5");
-      }).pipe(Effect.provide(harness.layer));
-    }),
+          // Asking for a generated title hands the thread back, even when the title stands.
+          const requestId = yield* armRegeneration({
+            command: "command:title:auto:regen",
+            threadId,
+          });
+          yield* service.execute({ threadId, requestId, kind: { type: "regenerate" } });
+          assert.equal(yield* title, "Manual title");
+          assert.deepEqual(yield* send("7"), []);
+          assert.deepEqual(yield* send("8"), ["regenerate"]);
+          assert.equal(yield* title, "Generated 5");
+        }).pipe(Effect.provide(harness.layer));
+      }),
   );
 
   it.effect("leaves titles alone when no regeneration interval is set", () =>

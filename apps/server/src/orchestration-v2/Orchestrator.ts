@@ -6338,7 +6338,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
     const interval = resolveProjectSettings(settings, thread.projectId).settings
       .threadTitleRegenerationInterval;
-    return interval !== null && (userMessages.filter(fromPerson).length + 1) % interval === 0;
+    if (interval === null) return false;
+    // A compacted command projection omits older messages. Read only user messages, and keep
+    // any pending messages already added in this transaction without counting them twice.
+    const stored = yield* projectionStore
+      .getThreadRecords(command.threadId, ["messages"], { messageRoles: ["user"] })
+      .pipe(mapDispatchError(command));
+    const all = new Map(
+      [...stored.messages, ...userMessages].map((message) => [message.id, message]),
+    );
+    return ([...all.values()].filter(fromPerson).length + 1) % interval === 0;
   });
 
   const dispatchMessage = Effect.fn("Orchestrator.dispatchMessage")(function* (
