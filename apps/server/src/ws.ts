@@ -458,9 +458,10 @@ function machineCatalogNames(provider: Pick<ServerProvider, "slashCommands" | "s
 }
 
 // Stable across restarts, so a client's cached lists stay current until the catalog changes.
-const machineCatalogDigest = (catalog: ReturnType<typeof machineCatalogNames>) =>
+// It covers the full entries: a changed description or input hint must reach the client too.
+const machineCatalogDigest = (provider: Pick<ServerProvider, "slashCommands" | "skills">) =>
   NodeCrypto.createHash("sha256")
-    .update(JSON.stringify([catalog.slashCommands, catalog.skills]))
+    .update(JSON.stringify([provider.slashCommands, provider.skills]))
     .digest("hex")
     .slice(0, 16);
 
@@ -473,15 +474,14 @@ function withoutWorkspaceSnapshots(
 ): ServerProvider[] {
   return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => {
     if (!catalogsPerCwd.has(provider.instanceId)) return provider;
-    const catalog = machineCatalogNames(provider);
     return catalogDigests
       ? {
           ...provider,
           slashCommands: [],
           skills: [],
-          catalogDigest: machineCatalogDigest(catalog),
+          catalogDigest: machineCatalogDigest(provider),
         }
-      : { ...provider, ...catalog };
+      : { ...provider, ...machineCatalogNames(provider) };
   });
 }
 
@@ -2528,7 +2528,7 @@ export const layerWsRpc = (
                     skills: catalog?.skills ?? [],
                     ...(catalog === undefined
                       ? {}
-                      : { catalogDigest: machineCatalogDigest(catalog) }),
+                      : { catalogDigest: machineCatalogDigest(provider) }),
                     workspaceSnapshots: workspaceSnapshotOrCatalog(provider, cwd, catalogOnDemand),
                   };
                 }),

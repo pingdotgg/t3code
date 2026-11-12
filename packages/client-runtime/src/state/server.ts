@@ -402,7 +402,9 @@ function withFetchedMachineCatalogs(
     if (
       catalog === undefined ||
       provider.catalogDigest === undefined ||
-      provider.loadedCatalogDigest === catalog.digest
+      provider.loadedCatalogDigest === catalog.digest ||
+      // The held lists match the live catalog, so a reply with another digest is an older one.
+      provider.loadedCatalogDigest === provider.catalogDigest
     ) {
       return provider;
     }
