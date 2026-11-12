@@ -60,6 +60,7 @@ export function resolveWindowTitle(input: {
   readonly appDisplayName: string;
   readonly projectTitle: string | null;
   readonly threadTitle: string | null;
+  readonly threadStatus?: string | null;
   readonly desktop: boolean;
 }): string {
   const threadTitle = input.threadTitle?.trim() ?? "";
@@ -68,6 +69,7 @@ export function resolveWindowTitle(input: {
   }
 
   const projectTitle = input.projectTitle?.trim() ?? "";
-  const context = projectTitle === "" ? threadTitle : `${projectTitle} / ${threadTitle}`;
+  const thread = input.threadStatus ? `${threadTitle}, ${input.threadStatus}` : threadTitle;
+  const context = projectTitle === "" ? thread : `${projectTitle} / ${thread}`;
   return input.desktop ? context : `${context} - ${input.appDisplayName}`;
 }

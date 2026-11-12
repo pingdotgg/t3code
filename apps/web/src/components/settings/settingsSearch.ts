@@ -496,6 +496,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "window-title-thread-status",
+    title: "Thread status in window title",
+    to: "/settings/chat",
+    searchTerms: [
+      "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar working approval",
+    ],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",

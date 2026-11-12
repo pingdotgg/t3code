@@ -541,6 +541,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.screenReaderAnnouncements !== DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements
       ? ["Screen reader announcements"]
       : []),
+    ...(settings.windowTitleThreadStatus !== DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus
+      ? ["Thread status in window title"]
+      : []),
     ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
       ? ["Response streaming"]
       : []),
@@ -658,6 +661,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility,
       screenReaderAnnouncements: DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements,
+      windowTitleThreadStatus: DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -1290,6 +1294,7 @@ export function ChatSettingsPanel() {
       <SettingsSection id="activity" title="Activity">
         <ToolCallVisibilityRow />
         <ScreenReaderAnnouncementsRow />
+        <WindowTitleThreadStatusRow />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -1398,6 +1403,36 @@ function ScreenReaderAnnouncementsRow() {
             ))}
           </SelectPopup>
         </Select>
+      }
+    />
+  );
+}
+
+function WindowTitleThreadStatusRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("window-title-thread-status")}
+      description="Add Working, Needs approval, or Needs your input after the thread's name in the window title, which screen readers read when you switch apps. Taskbars, shared screens, and time trackers see it too."
+      resetAction={
+        settings.windowTitleThreadStatus !== DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus ? (
+          <SettingResetButton
+            label="thread status in window title"
+            onClick={() =>
+              updateSettings({
+                windowTitleThreadStatus: DEFAULT_UNIFIED_SETTINGS.windowTitleThreadStatus,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.windowTitleThreadStatus}
+          onCheckedChange={(checked) => updateSettings({ windowTitleThreadStatus: checked })}
+          aria-label="Thread status in window title"
+        />
       }
     />
   );
