@@ -393,6 +393,51 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.isNull(result.messageId);
 });
 
+it("keeps the final report of a run that failed after its turn ended", () => {
+  const { projection, run } = taskFixture();
+  const failedRun = { ...run, status: "failed" as const };
+  const artifacts = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("report"),
+    turnItemId: TurnItemId.make("report"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "Review complete: no blocking issues.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  if (artifacts.turnItem.type !== "assistant_message") throw new Error("Expected assistant item");
+  const failure = {
+    class: "unknown" as const,
+    message: "Connection failed repeatedly",
+    code: null,
+    retryable: false,
+  };
+  const result = subagentResultForRun(
+    {
+      ...projection,
+      messages: [{ ...artifacts.message, runId: run.id }],
+      turnItems: [
+        { ...artifacts.turnItem, runId: run.id },
+        {
+          ...artifacts.turnItem,
+          id: TurnItemId.make("error"),
+          ordinal: 2,
+          type: "error",
+          runId: run.id,
+          failure,
+        },
+      ],
+    },
+    failedRun,
+  );
+  assert.include(result.text, failure.message);
+  assert.include(result.text, "Review complete: no blocking issues.");
+});
+
 it("orders a task's assistant messages by turn item, not by timestamps", () => {
   const { projection, run } = taskFixture();
   const at = DateTime.makeUnsafe("2026-07-24T10:05:00.000Z");
