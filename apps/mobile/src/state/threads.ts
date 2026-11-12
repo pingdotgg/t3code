@@ -51,7 +51,7 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
 });
 const steadyShells = createSteadyShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
-  snapshotAtom: visibleThreadSnapshotAtom,
+  snapshotAtom: threadEnvironment.snapshotAtom,
   shellStateAtom: environmentShell.stateValueAtom,
   rowActionsAtom: threadEnvironment.rowActionsAtom,
   connectionStateAtom: environmentCatalog.stateAtom,
@@ -63,7 +63,8 @@ const steadyShells = createSteadyShellAtoms({
 export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
 export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
-  snapshotAtom: steadyShells.snapshotAtom,
+  // Filtered after the hold, which can keep showing an older snapshot that still has the row.
+  snapshotAtom: withoutForgottenThreads(steadyShells.snapshotAtom),
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 }).navigationThreadShellsAtom;
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({

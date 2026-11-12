@@ -242,8 +242,10 @@ function useThreadActionExecutor(
           rerun === null
             ? null
             : (next) => {
-                if (rerun) rerun(next, thread);
-                else void executeAction(next, thread);
+                // The dialog can stay open while the row changes elsewhere.
+                const current = liveThread(thread);
+                if (rerun) rerun(next, current);
+                else void executeAction(next, current);
               },
         );
         return false;

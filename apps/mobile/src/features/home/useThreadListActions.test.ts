@@ -639,23 +639,25 @@ describe("thread action failure dialog", () => {
     expect(state.archivedRefreshes).toEqual([primaryEnvironmentId]);
   });
 
-  it("keeps Undo when a retried settle succeeds", async () => {
-    const thread = makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" });
-    state.failedAction = "settle";
+  it.each([
+    ["still pinned", "2026-09-02T00:00:00.000Z", ["settle", "settle", "unsettle", "pin"]],
+    ["unpinned elsewhere", null, ["settle", "settle", "unsettle"]],
+  ] as const)(
+    "keeps Undo for the live row when a retried settle succeeds: %s",
+    async (_, pinnedAt, requests) => {
+      const thread = makeThread({ pinnedAt: "2026-09-02T00:00:00.000Z" });
+      state.failedAction = "settle";
 
-    await useThreadListActions().settleThread(thread);
-    state.failedAction = null;
-    pressButton("Try again");
-    await vi.waitFor(() => expect(readThreadUndoNotice()).not.toBeNull());
-    await readThreadUndoNotice()!.undo();
+      await useThreadListActions().settleThread(thread);
+      state.failedAction = null;
+      state.shells = [{ ...thread, pinnedAt }];
+      pressButton("Try again");
+      await vi.waitFor(() => expect(readThreadUndoNotice()).not.toBeNull());
+      await readThreadUndoNotice()!.undo();
 
-    expect(state.requests.map(({ action }) => action)).toEqual([
-      "settle",
-      "settle",
-      "unsettle",
-      "pin",
-    ]);
-  });
+      expect(state.requests.map(({ action }) => action)).toEqual(requests);
+    },
+  );
 
   it.each(["Server rejected action", "Thread thread is deleted."])(
     "offers no partial retry when a move step fails: %s",
