@@ -180,7 +180,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
-        "Default 'async'. 'wait' only if this turn needs the result. A question, approval, or incoming steering ends the wait; the child keeps running.",
+        "Default async; wait only if needed. Question, approval or steering ends wait; child runs.",
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
