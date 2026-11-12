@@ -59,6 +59,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
               renderInsights
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
+              turnItemOrdinal={row.projectedItem?.item.ordinal}
               isStreaming={Boolean(row.message.streaming)}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}

@@ -143,7 +143,7 @@ describe("threadCommandDirectories", () => {
   });
 
   // regression: #35337 a checkout outside every project, known only from the agent's `cd`
-  it("returns absolute directories the commands changed into outside the workspace", () => {
+  it("returns absolute directories earlier commands changed into outside the workspace", () => {
     expect(
       threadCommandDirectories(
         [
@@ -157,8 +157,10 @@ describe("threadCommandDirectories", () => {
           command(7, "printf '%s\\n' 'cd /work/repo-c'"),
           command(8, "echo hi && cd /work/later"),
           command(9, "cd /work/piped | cat"),
+          command(11, "cd /work/after-the-message && ls"),
         ],
         "/home/user/acme",
+        10,
       ),
     ).toEqual(["/work/repo-b-feature", "/work/with space"]);
   });

@@ -237,6 +237,8 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
+  /** The rendered message's turn item position; links may then point where earlier commands `cd`. */
+  turnItemOrdinal?: number | undefined;
   pullRequestPanelRef?: ScopedThreadRef | undefined;
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
@@ -505,6 +507,7 @@ function useChatMarkdownState({
   inline = false,
   cwd,
   threadRef,
+  turnItemOrdinal,
   pullRequestPanelRef,
   environmentId: explicitEnvironmentId,
   onTaskListChange,
@@ -820,13 +823,15 @@ function useChatMarkdownState({
         ? [project.workspaceRoot]
         : [],
     );
-    const commandDirectories = threadRef
-      ? threadCommandDirectories(
-          appAtomRegistry.get(environmentThreadDetails.threadAtom(threadRef))?.projection
-            .turnItems ?? [],
-          cwd,
-        )
-      : [];
+    const commandDirectories =
+      threadRef && turnItemOrdinal !== undefined
+        ? threadCommandDirectories(
+            appAtomRegistry.get(environmentThreadDetails.threadAtom(threadRef))?.projection
+              .turnItems ?? [],
+            cwd,
+            turnItemOrdinal,
+          )
+        : [];
     if (projectRoots.length === 0 && commandDirectories.length === 0) return null;
     // Another project's file never replaces a thread-local file the search missed.
     if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {

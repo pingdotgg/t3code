@@ -138,24 +138,49 @@ export function pickProjectLinkMatch(
   return new Set(matches).size === 1 ? (matches[0] ?? null) : null;
 }
 
-// Only a `cd` that opens the command, optionally inside Codex's `sh -lc` wrapper, and is followed
-// by a separator: a `cd` inside an argument (`printf 'cd /x'`) changes nothing.
+// Only a `cd` that opens the command, optionally inside Codex's `sh -lc` wrapper: a `cd` inside an
+// argument (`printf 'cd /x'`) changes nothing. Anchored and without overlapping quantifiers.
 const COMMAND_CD_PATTERN =
-  /^\s*(?:(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+["'])?cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|()'"]+))(?=\s*(?:&&|;|\n|["']?\s*$))/;
+  /^\s*(?:(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+["'])?cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|()'"]+))/;
 
-/** Absolute directories the thread's commands `cd` into outside `cwd`, where its links may point. */
+function commandDirectory(input: string): string | null {
+  const match = COMMAND_CD_PATTERN.exec(input);
+  if (match === null) return null;
+  let index = match[0].length;
+  while (input[index] === " " || input[index] === "\t") index += 1;
+  const next = input[index];
+  // A separator, the end, or the wrapper's closing quote must follow for `cd` to be a whole command.
+  const wholeCommand =
+    next === undefined ||
+    next === "\n" ||
+    next === ";" ||
+    input.startsWith("&&", index) ||
+    ((next === "'" || next === '"') && input.slice(index + 1).trim() === "");
+  if (!wholeCommand) return null;
+  const directory = match[1] ?? match[2] ?? match[3] ?? "";
+  let end = directory.length;
+  while (end > 1 && (directory[end - 1] === "/" || directory[end - 1] === "\\")) end -= 1;
+  const trimmed = directory.slice(0, end);
+  // Path helpers trim separator runs with regexes that are quadratic on a long inner run.
+  return /[\\/]{2}/.test(trimmed) ? null : trimmed;
+}
+
+/**
+ * Absolute directories that commands before `beforeOrdinal` `cd` into outside `cwd`, where a
+ * message at that position may point. Later commands cannot have informed it.
+ */
 export function threadCommandDirectories(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
   cwd: string,
+  beforeOrdinal: number,
 ): string[] {
   const directories = new Set<string>();
   for (const item of items) {
-    if (item.type !== "command_execution") continue;
-    const match = COMMAND_CD_PATTERN.exec(item.input);
-    if (match === null) continue;
-    const directory = (match[1] ?? match[2] ?? match[3] ?? "").replace(/(.)[\\/]+$/, "$1");
+    if (item.type !== "command_execution" || item.ordinal >= beforeOrdinal) continue;
+    const directory = commandDirectory(item.input);
     // Searching an ancestor of the workspace (`cd ~`, `cd /`) would crawl far past the checkout.
     if (
+      directory !== null &&
       isAbsolutePath(directory) &&
       workspaceRelativeFilePath(directory, cwd) === null &&
       workspaceRelativeFilePath(cwd, directory) === null

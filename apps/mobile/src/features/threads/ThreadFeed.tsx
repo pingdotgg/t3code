@@ -238,7 +238,6 @@ import {
   needsWorkspaceBasenameLookup,
   pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
-  threadCommandDirectories,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
   workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
@@ -256,11 +255,7 @@ import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
-import {
-  environmentThreadDetails,
-  environmentThreadShells,
-  threadEnvironment,
-} from "../../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
@@ -2886,11 +2881,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       let match = pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries);
       const otherProject = match === null;
       if (otherProject) {
-        const threadRef = scopeThreadRef(props.environmentId, props.threadId);
         const threadProjectId = appAtomRegistry.get(
-          environmentThreadShells.threadShellAtom(threadRef),
+          environmentThreadShells.threadShellAtom(
+            scopeThreadRef(props.environmentId, props.threadId),
+          ),
         )?.projectId;
-        const projectRoots = appAtomRegistry
+        const otherRoots = appAtomRegistry
           .get(environmentProjects.projectsAtom)
           .flatMap((project) =>
             project.environmentId === props.environmentId &&
@@ -2899,16 +2895,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               ? [project.workspaceRoot]
               : [],
           );
-        const commandDirectories = threadCommandDirectories(
-          appAtomRegistry.get(environmentThreadDetails.threadAtom(threadRef))?.projection
-            .turnItems ?? [],
-          workspaceRoot,
-        );
-        // The checkout the agent worked in outranks other projects that share the path.
-        for (const roots of [commandDirectories, projectRoots]) {
-          if (match !== null || roots.length === 0) continue;
-          match = pickProjectLinkMatch(relativePath, await Promise.all(roots.map(searchRoot)));
-        }
+        match =
+          otherRoots.length === 0
+            ? null
+            : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
       }
       if (!match || match === relativePath || signal.aborted) return relativePath;
       const metadata = await executeAtomQuery(
