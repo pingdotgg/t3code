@@ -373,9 +373,12 @@ const initRepoWithCommit = (
     const empty =
       !(yield* fileSystem.exists(cwd)) || (yield* fileSystem.readDirectory(cwd)).length === 0;
     if (empty) {
-      repoTemplate ??= yield* fileSystem.makeTempDirectory({ prefix: "git-vcs-driver-template-" });
-      if (!(yield* fileSystem.exists(pathService.join(repoTemplate, ".git")))) {
-        yield* commitInitialRepo(repoTemplate);
+      if (!repoTemplate) {
+        const template = yield* fileSystem.makeTempDirectory({
+          prefix: "git-vcs-driver-template-",
+        });
+        yield* commitInitialRepo(template);
+        repoTemplate = template;
       }
       yield* fileSystem.copy(repoTemplate, cwd);
     } else {
