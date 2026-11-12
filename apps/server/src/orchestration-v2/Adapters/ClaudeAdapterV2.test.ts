@@ -3664,6 +3664,64 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  it.effect("resumes the session a /clear selected after the Claude process is replaced", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const turn = (ordinal: number, providerThread: OrchestrationV2ProviderThread) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make(`clear-session-${ordinal}`),
+          text: ordinal === 1 ? "/clear" : "Continue the cleared conversation",
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+        });
+      yield* harness.runtime.startTurn(turn(1, harness.providerThread));
+      // Claude Code reports the session /clear started in its next init frame.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          session_id: "cleared-native-session",
+          uuid: "00000000-0000-4000-8000-000000000501",
+        }),
+      );
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      const latest = (): OrchestrationV2ProviderThread => {
+        const event = harness.events.findLast(
+          (candidate) => candidate.type === "provider_thread.updated",
+        );
+        return event?.type === "provider_thread.updated"
+          ? event.providerThread
+          : harness.providerThread;
+      };
+      assert.equal(latest().nativeThreadRef?.nativeId, "cleared-native-session");
+      yield* harness.runtime.interruptTurn({
+        providerThread: latest(),
+        providerTurnId: lastProviderTurn(harness.events).id,
+        requestRuntimeRestart: true,
+      });
+      yield* harness.runtime.startTurn(turn(2, latest()));
+      assert.equal(harness.processQueues.length, 2);
+      assert.equal(harness.getOpenedOptions()?.resume, "cleared-native-session");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["release-after", "cancel-after", "release-before", "resume-pending"] as const)(
     "keeps attachment reservations across compaction: %s boundary",
     (outcome) =>
@@ -6830,6 +6888,94 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  // regression: #17270 root text_delta frames stream the reply before the block's snapshot
+  it.effect("streams Claude assistant text deltas before the completed snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("text-stream-attempt"),
+          text: "Write two paragraphs",
+          attachments: [],
+        }),
+      );
+      const stream = (event: unknown) =>
+        claudeSdkFrame({
+          type: "stream_event",
+          event,
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "stream-frame",
+        });
+      yield* harness.offerAndWait(
+        stream({ type: "message_start", message: { id: "text-message" } }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "First paragraph.\n\n" },
+        }),
+      );
+      yield* harness.offerAndWait(
+        stream({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text: "Second paragraph." },
+        }),
+      );
+      yield* harness.offerAndWait(stream({ type: "content_block_stop", index: 0 }));
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "text-snapshot",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "text-message",
+            model: "claude-sonnet-4-6",
+            content: [{ type: "text", text: "First paragraph.\n\nSecond paragraph." }],
+          },
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, makeResultFrame({ uuid: "text-result", result: "" }));
+      yield* Queue.take(harness.terminalReceipts);
+      const replies = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem]
+          : [],
+      );
+      // The stream's own item carries the reply; the block's snapshot does not repeat it.
+      assert.deepEqual(
+        [...new Set(replies.map((item) => item.nativeItemRef?.nativeId))],
+        ["text-message:text:0"],
+      );
+      assert.equal(replies.at(-1)?.text, "First paragraph.\n\nSecond paragraph.");
+      assert.equal(replies.at(-1)?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   // regression: #15892 non-execution metadata is carried through, not guessed from result text
