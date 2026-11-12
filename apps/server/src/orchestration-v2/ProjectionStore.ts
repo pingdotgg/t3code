@@ -2057,15 +2057,26 @@ function shellFromState(input: {
   };
 }
 
+// Dynamic tool output the client renders inline (HTML, MCP apps, viewed images, delegated
+// tasks), so its work group never defers. Mirrors the LIKE backfill in migration 083, where
+// delegate_task" counts anywhere after the first toolName. Searching from that first one
+// once avoids rescanning the payload for every nested toolName.
+const INLINE_WORK_OUTPUT = new RegExp(`htmlRender|${MCP_APP_OUTPUT_KEY}|"viewedImagePath"`, "i");
+const TOOL_NAME_PREFIX = /"toolName":"/i;
+const DELEGATE_TASK = /delegate.task"/is;
+
+const isInlineWorkOutput = (payloadJson: string) => {
+  if (INLINE_WORK_OUTPUT.test(payloadJson)) return true;
+  const toolName = TOOL_NAME_PREFIX.exec(payloadJson);
+  return (
+    toolName !== null && DELEGATE_TASK.test(payloadJson.slice(toolName.index + toolName[0].length))
+  );
+};
+
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-
-    const inlineWorkOutput = sql`item.type = 'dynamic_tool' AND (
-      item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
-      OR item.payload_json LIKE '%"viewedImagePath"%'
-      OR item.payload_json LIKE '%"toolName":"%delegate_task"%')`;
 
     // SQLite uses the partial conversation index of migration 082 only for this exact predicate.
     const CONVERSATION_INDEX_EXCLUDED_TYPES = sql.literal(
@@ -2781,7 +2792,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type,
                 status,
                 updated_at,
-                payload_json
+                payload_json,
+                inline_work_output
               )
               VALUES (
                 ${event.payload.id},
@@ -2795,7 +2807,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.type},
                 ${event.payload.status},
                 ${updatedAt},
-                ${payloadJson}
+                ${payloadJson},
+                ${event.payload.type === "dynamic_tool" && isInlineWorkOutput(payloadJson) ? 1 : 0}
               )
               ON CONFLICT(turn_item_id)
               DO UPDATE SET
@@ -2809,7 +2822,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type = excluded.type,
                 status = excluded.status,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                inline_work_output = excluded.inline_work_output
             `;
               break;
             }
@@ -3030,7 +3044,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const eligible = sql`
                 WITH eligible AS NOT MATERIALIZED (
                   SELECT item.rowid AS item_rowid, item.payload_json, item.ordinal, item.turn_item_id,
-                    item.run_id, item.node_id, item.type, item.status, run.status AS run_status,
+                    item.run_id, item.node_id, item.type, item.status, item.inline_work_output,
+                    run.status AS run_status,
                     attempt.attempt_id, attempt.status AS attempt_status
                   FROM orchestration_v2_projection_turn_items AS item
                   LEFT JOIN orchestration_v2_projection_runs AS run
@@ -3310,7 +3325,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
                     CASE WHEN status = 'completed' AND (run_status = 'completed' OR attempt_status = 'superseded')
                       AND type IN ${sql.in(DEFERRED_WORK_ITEM_TYPES)}
-                      AND NOT (${inlineWorkOutput})
+                      AND inline_work_output = 0
                       AND run_id NOT IN (SELECT run_id FROM blocked_runs)
                       THEN 1 ELSE 0 END AS can_defer
                   FROM eligible AS item
@@ -6063,9 +6078,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
           ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
           ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
-          ${
-            includePersistentOutput ? sql`CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END` : sql`0`
-          } AS persistent_output,
+          ${includePersistentOutput ? sql`item.inline_work_output` : sql`0`} AS persistent_output,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
           CASE WHEN item.type IN ('user_message', 'assistant_message') THEN json_extract(item.payload_json, '$.messageId') END AS message_id
