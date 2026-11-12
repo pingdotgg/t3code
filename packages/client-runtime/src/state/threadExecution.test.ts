@@ -641,6 +641,30 @@ describe("formatSubagentEffort", () => {
       null,
     ],
     [
+      "keeps a stated OpenCode variant the catalog no longer offers",
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        models: [
+          {
+            ...piModel,
+            capabilities: createModelCapabilities({
+              optionDescriptors: [
+                {
+                  id: "variant",
+                  label: "Variant",
+                  type: "select",
+                  options: [{ id: "high", label: "High", isDefault: true }],
+                },
+              ],
+            }),
+          },
+        ],
+      },
+      piModel.slug,
+      [{ id: "variant", value: "medium" }],
+      "medium",
+    ],
+    [
       "labels a Pi child's thinking level",
       pi,
       piModel.slug,

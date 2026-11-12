@@ -251,10 +251,8 @@ export function formatSubagentEffort(input: {
   ).find(Boolean);
   if (!statedEffort) return null;
   if (provider?.models.some((model) => model.slug === modelSlug && model.capabilities)) {
-    return (
-      formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models) ??
-      statedEffort
-    );
+    const label = formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+    return label && label !== "Unknown" ? label : statedEffort;
   }
   return statedEffort;
 }
