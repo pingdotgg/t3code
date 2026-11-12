@@ -4115,32 +4115,35 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("keeps an input dialog's title as the header above its placeholder", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-input-placeholder",
-        method: "input",
-        title: "Name",
-        placeholder: "Your name",
-      });
-      const event = yield* takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
-      );
-      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
-        return assert.fail("expected a user input request");
-      }
-      assert.equal(event.turnItem.questions[0]?.header, "Name");
-      assert.equal(event.turnItem.questions[0]?.question, "Your name");
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  it.effect.each(["Name", "   "])(
+    "keeps input placeholder text answerable with title '%s'",
+    (title) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "ui-input-placeholder",
+          method: "input",
+          title,
+          placeholder: "Your name",
+        });
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+          return assert.fail("expected a user input request");
+        }
+        const question = decodeUserInputQuestions(event.turnItem.questions)[0]!;
+        assert.equal(question.header, title.trim() ? title : "Question");
+        assert.equal(question.question, "Your name");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("emits a valid empty select option and returns its original value", () =>
@@ -4186,39 +4189,44 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("asks an input dialog's title when its placeholder is blank", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      const title = "Which database?\n1. Postgres\n2. Type something.\nType your answer:";
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "ui-input",
-        method: "input",
-        title,
-        placeholder: "",
-      });
-      const event = yield* takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
-      );
-      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
-        return assert.fail("expected a user input request");
-      }
-      assert.equal(decodeUserInputQuestions(event.turnItem.questions)[0]?.header, "Question");
-      assert.equal(decodeUserInputQuestions(event.turnItem.questions)[0]?.question, title);
-      yield* runtime.respondToRuntimeRequest({
-        requestId: event.turnItem.requestId,
-        answers: { "ui-input": "SQLite" },
-      });
-      const response = yield* fake.takeRequest("extension_ui_response");
-      assert.equal(response["value"], "SQLite");
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  it.effect.each(["Which database?\n1. Postgres\n2. Type something.\nType your answer:", "   "])(
+    "asks an input dialog's title when its placeholder is blank, with title '%s'",
+    (title) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "ui-input",
+          method: "input",
+          title,
+          placeholder: "",
+        });
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+          return assert.fail("expected a user input request");
+        }
+        const question = decodeUserInputQuestions(event.turnItem.questions)[0]!;
+        assert.equal(question.header, "Question");
+        assert.equal(question.question, title.trim() ? title : "Question");
+        yield* runtime.respondToRuntimeRequest({
+          requestId: event.turnItem.requestId,
+          answers: { "ui-input": "SQLite" },
+        });
+        const response = yield* fake.takeRequest("extension_ui_response");
+        assert.equal(response["value"], "SQLite");
+        assert.isUndefined(response["cancelled"]);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("keeps the complete editor prefill editable and returns exact edited text", () =>
