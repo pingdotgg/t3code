@@ -44,6 +44,7 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
@@ -100,6 +101,7 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
     Layer.mergeAll(
       Layer.mock(ProjectService.ProjectService)({}),
       Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+      Layer.mock(PullRequestService.PullRequestService)({}),
       Layer.mock(Orchestrator.OrchestratorV2)({}),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
       NodeServices.layer,
@@ -530,6 +532,26 @@ it.effect("saves the uncapped screenshot while the agent sees the capped one", (
         type: "image",
         mimeType: "image/png",
         data: new Uint8Array(Buffer.from(capped, "base64")),
+      });
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("names the screenshot destination when saving it fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      yield* (yield* FileSystem.FileSystem).writeFileString(config.browserArtifactsDir, "occupied");
+      yield* serveSnapshots("mcp-save-failure-client", snapshotResult);
+
+      const snapshot = yield* callSnapshot({ tabId: alternateTabId, save: true });
+      const text = snapshot.content[0]?.type === "text" ? snapshot.content[0].text : "";
+
+      expect(snapshot.isError).toBe(true);
+      expect(text).toMatch(/^Preview snapshot failed: Could not save preview screenshot to /);
+      expect(text).toContain(config.browserArtifactsDir);
+      expect(snapshot.structuredContent).toMatchObject({
+        error: { _tag: "PreviewScreenshotSaveError", message: text.slice(25) },
       });
     }),
   ).pipe(Effect.provide(layerTest)),
@@ -1523,6 +1545,7 @@ it.effect("lists pull request watch tools only to threads that are not delegated
             McpToolAccessTestkit.liveThreadsLayer,
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+            Layer.mock(PullRequestService.PullRequestService)({}),
             Layer.mock(Orchestrator.OrchestratorV2)({}),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
             NodeServices.layer,
