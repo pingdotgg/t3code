@@ -5,6 +5,7 @@ import {
   STARTER_TEAM_TEMPLATES,
   TeamTemplateDefinition,
   WORKSHOP_TEAM_TEMPLATE,
+  formatWorkshopLeadPrompt,
   teamTemplateById,
 } from "./teamTemplates.ts";
 
@@ -20,5 +21,12 @@ describe("teamTemplates", () => {
   it("lists Workshop as the first starter team", () => {
     expect(STARTER_TEAM_TEMPLATES[0]?.id).toBe("workshop");
     expect(teamTemplateById("workshop").name).toBe("Workshop");
+  });
+
+  it("formats a Workshop lead prompt with specialist keys", () => {
+    const prompt = formatWorkshopLeadPrompt();
+    expect(prompt).toContain("Specialists:");
+    expect(prompt).toContain("`builder`");
+    expect(prompt).toContain("Workshop · QA");
   });
 });

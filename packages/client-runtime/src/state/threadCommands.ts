@@ -279,13 +279,22 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
-    launchTeamTemplate: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:commands:thread:launch-team-template",
-      tag: ORCHESTRATION_V2_WS_METHODS.launchTeamTemplate,
+    previewSpecialistTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:preview-specialist-template",
+      tag: ORCHESTRATION_V2_WS_METHODS.previewSpecialistTemplate,
       concurrency: {
         mode: "serial",
         key: ({ environmentId, input }) =>
-          JSON.stringify([environmentId, input.projectId, input.templateId]),
+          JSON.stringify([environmentId, input.projectId, input.source]),
+      },
+    }),
+    addSpecialistsFromTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:add-specialists-from-template",
+      tag: ORCHESTRATION_V2_WS_METHODS.addSpecialistsFromTemplate,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.source]),
       },
     }),
     interruptTurn: createEnvironmentCommand(runtime, {

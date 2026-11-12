@@ -60,7 +60,7 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
-  OrchestrationV2LaunchTeamTemplateError,
+  OrchestrationV2AddSpecialistsFromTemplateError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
@@ -2232,29 +2232,34 @@ export const layerWsRpc = (
                 ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.launchTeamTemplate]: (input) =>
+        [ORCHESTRATION_V2_WS_METHODS.previewSpecialistTemplate]: (input) =>
+          Effect.annotateCurrentSpan({
+            "orchestration_v2.project_id": input.projectId,
+            "orchestration_v2.specialist_template_source": input.source.kind,
+          }).pipe(Effect.andThen(teamTemplates.preview(input))),
+        [ORCHESTRATION_V2_WS_METHODS.addSpecialistsFromTemplate]: (input) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
-            "orchestration_v2.team_template_id": input.templateId,
+            "orchestration_v2.specialist_template_source": input.source.kind,
           }).pipe(
             Effect.andThen(
-              startup.enqueueCommand(teamTemplates.launch(input)).pipe(
+              startup.enqueueCommand(teamTemplates.add(input)).pipe(
                 Effect.catchTags({
                   ThreadManagementProviderInstanceDisabledError: (cause) =>
-                    new OrchestrationV2LaunchTeamTemplateError({
+                    new OrchestrationV2AddSpecialistsFromTemplateError({
                       commandId: input.commandId,
                       projectId: input.projectId,
-                      templateId: input.templateId,
+                      source: input.source,
                       message: cause.message,
                       cause,
                     }),
                   ServerRuntimeStartupError: (cause) =>
-                    new OrchestrationV2LaunchTeamTemplateError({
+                    new OrchestrationV2AddSpecialistsFromTemplateError({
                       commandId: input.commandId,
                       projectId: input.projectId,
-                      templateId: input.templateId,
-                      message: "Failed to launch team template",
+                      source: input.source,
+                      message: "Failed to add specialists from template",
                       cause,
                     }),
                 }),

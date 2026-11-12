@@ -80,8 +80,10 @@ import {
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
-  OrchestrationV2LaunchTeamTemplateInput,
-  OrchestrationV2LaunchTeamTemplateResult,
+  OrchestrationV2AddSpecialistsFromTemplateInput,
+  OrchestrationV2AddSpecialistsFromTemplateResult,
+  OrchestrationV2PreviewSpecialistTemplateInput,
+  OrchestrationV2PreviewSpecialistTemplateResult,
 } from "./teamTemplates.ts";
 import {
   TurnTokenUsage,
@@ -3677,7 +3679,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
-  launchTeamTemplate: "orchestration.launchTeamTemplate",
+  previewSpecialistTemplate: "orchestration.previewSpecialistTemplate",
+  addSpecialistsFromTemplate: "orchestration.addSpecialistsFromTemplate",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
@@ -4388,9 +4391,13 @@ export const OrchestrationV2RpcSchemas = {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
   },
-  launchTeamTemplate: {
-    input: OrchestrationV2LaunchTeamTemplateInput,
-    output: OrchestrationV2LaunchTeamTemplateResult,
+  previewSpecialistTemplate: {
+    input: OrchestrationV2PreviewSpecialistTemplateInput,
+    output: OrchestrationV2PreviewSpecialistTemplateResult,
+  },
+  addSpecialistsFromTemplate: {
+    input: OrchestrationV2AddSpecialistsFromTemplateInput,
+    output: OrchestrationV2AddSpecialistsFromTemplateResult,
   },
   subscribeShell: {
     input: OrchestrationV2SubscribeShellInput,

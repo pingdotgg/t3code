@@ -100,7 +100,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { useLaunchWorkshopTeam } from "../hooks/useLaunchWorkshopTeam";
+import { openAddSpecialistsFromTemplate } from "./AddSpecialistsFromTemplateDialog";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import {
@@ -459,7 +459,6 @@ function OpenCommandPaletteDialog(props: {
   });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const startTriage = useStartTriage();
-  const launchWorkshopTeam = useLaunchWorkshopTeam();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -715,17 +714,18 @@ function OpenCommandPaletteDialog(props: {
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     supportsTriage(triageEnvironmentId);
-  const workshopProjectRef = defaultProjectRef;
-  const workshopEnvironmentId = workshopProjectRef?.environmentId ?? null;
+  const specialistTemplateProjectRef = defaultProjectRef;
+  const specialistTemplateEnvironmentId = specialistTemplateProjectRef?.environmentId ?? null;
   const supportsTeamTemplates =
-    workshopEnvironmentId !== null &&
-    environments.find((environment) => environment.environmentId === workshopEnvironmentId)
-      ?.serverConfig?.environment.capabilities.teamTemplates === true;
-  const canLaunchWorkshopTeamPermission = useAtomValue(
-    threadEnvironment.launchTeamTemplate.permissionAtom(workshopEnvironmentId),
+    specialistTemplateEnvironmentId !== null &&
+    environments.find(
+      (environment) => environment.environmentId === specialistTemplateEnvironmentId,
+    )?.serverConfig?.environment.capabilities.teamTemplates === true;
+  const canAddSpecialistsPermission = useAtomValue(
+    threadEnvironment.addSpecialistsFromTemplate.permissionAtom(specialistTemplateEnvironmentId),
   );
-  const canLaunchWorkshopTeam =
-    workshopProjectRef !== null && supportsTeamTemplates && canLaunchWorkshopTeamPermission;
+  const canAddSpecialistsFromTemplate =
+    specialistTemplateProjectRef !== null && supportsTeamTemplates && canAddSpecialistsPermission;
   const currentProject = resolveCommandPaletteProject(
     projectByKey,
     currentProjectEnvironmentId,
@@ -1358,15 +1358,18 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (workshopProjectRef !== null && canLaunchWorkshopTeam) {
+  if (specialistTemplateProjectRef !== null && canAddSpecialistsFromTemplate) {
     actionItems.push({
       kind: "action",
-      value: "action:launch-workshop-team",
+      value: "action:add-specialists-from-template",
       searchTerms: [
         "workshop",
+        "specialist",
         "team",
         "template",
         "starter",
+        "contributor",
+        "bundle",
         "lead",
         "builder",
         "qa",
@@ -1374,10 +1377,12 @@ function OpenCommandPaletteDialog(props: {
         "multi agent",
         "openrig",
       ],
-      title: "Launch Workshop team",
-      description: "Pinned lead, builder, QA, and reviewer seats in this project",
+      title: "Add specialists from template…",
+      description: "Workshop or repo t3.contributor-bundle.json, with a preview first",
       icon: <UsersIcon className={ITEM_ICON_CLASS} />,
-      run: () => launchWorkshopTeam(workshopProjectRef),
+      run: async () => {
+        openAddSpecialistsFromTemplate({ projectRef: specialistTemplateProjectRef });
+      },
     });
   }
 
