@@ -57,19 +57,8 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
-  const total = windows.find((window) => window.id === "totalPercentUsed");
-  const pools = windows.filter((window) => window !== total);
-  // Unified plans report their one allowance as both the total and the auto pool. Keep the pool:
-  // it pools with split-plan accounts, and exhaustedUsageWindow reads the pools.
-  const visibleWindows =
-    total &&
-    pools.length === 1 &&
-    pools[0]?.id === "autoPercentUsed" &&
-    pools[0].usedPercent === total.usedPercent
-      ? pools
-      : windows;
-  return visibleWindows.length > 0
-    ? makeUsageLimits({ checkedAt, windows: visibleWindows })
+  return windows.length > 0
+    ? makeUsageLimits({ checkedAt, windows })
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
 
