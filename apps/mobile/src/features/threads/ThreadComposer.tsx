@@ -33,6 +33,7 @@ import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { I18nManager, Keyboard, Platform, View, type ViewStyle } from "react-native";
+import { KeyboardController } from "react-native-keyboard-controller";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -584,10 +585,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });
-  // Hiding the focused editor doesn't reliably close the Android IME, which would cover the dictation bar.
+  // Hiding the focused editor doesn't reliably close the Android IME. Let it finish closing first:
+  // the dictation bar's entering animation can drop while KeyboardStickyView tracks the IME.
   const startDictation = () => {
-    inputRef.current?.blur();
-    voiceInput.start();
+    void KeyboardController.dismiss().then(voiceInput.start);
   };
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
