@@ -233,9 +233,10 @@ import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
-import { projectEnvironment } from "../../state/projects";
+import { environmentProjects, projectEnvironment } from "../../state/projects";
 import {
   needsWorkspaceBasenameLookup,
+  pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
   workspaceLinkLookupQuery,
@@ -2924,51 +2925,77 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ) {
         const workspaceRoot = props.workspaceRoot;
         const originalPath = resolveWorkspaceFilePath(props.workspaceRoot, relativePath);
-        void executeAtomQuery(
-          appAtomRegistry,
-          projectEnvironment.searchEntries({
-            environmentId: props.environmentId,
-            input: {
-              cwd: workspaceRoot,
-              query: workspaceLinkLookupQuery(relativePath, workspaceRoot) ?? relativePath,
-              kind: "file",
-              limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+        const searchRoot = (root: string) =>
+          executeAtomQuery(
+            appAtomRegistry,
+            projectEnvironment.searchEntries({
+              environmentId: props.environmentId,
+              input: {
+                cwd: root,
+                query: workspaceLinkLookupQuery(relativePath, root) ?? relativePath,
+                kind: "file",
+                limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+              },
+            }),
+            { signal: request.signal, reportFailure: false, reportDefect: false },
+          ).then((result) => ({
+            root,
+            entries: result._tag === "Success" ? result.value.entries : [],
+          }));
+        const threadProjectId = appAtomRegistry.get(
+          environmentThreadShells.threadShellAtom(
+            scopeThreadRef(props.environmentId, props.threadId),
+          ),
+        )?.projectId;
+        const otherRoots = appAtomRegistry
+          .get(environmentProjects.projectsAtom)
+          .flatMap((project) =>
+            project.environmentId === props.environmentId &&
+            project.id !== threadProjectId &&
+            project.workspaceRoot !== workspaceRoot
+              ? [project.workspaceRoot]
+              : [],
+          );
+        void searchRoot(workspaceRoot)
+          .then(
+            async (own) =>
+              pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries) ??
+              (otherRoots.length === 0
+                ? null
+                : pickProjectLinkMatch(
+                    relativePath,
+                    await Promise.all(otherRoots.map(searchRoot)),
+                  )),
+          )
+          .then(
+            (match) => {
+              if (!match || match === relativePath) {
+                openAt(relativePath);
+                return;
+              }
+              if (request.signal.aborted) return;
+              void executeAtomQuery(
+                appAtomRegistry,
+                projectEnvironment.fileMetadata({
+                  environmentId: props.environmentId,
+                  input: { path: originalPath },
+                }),
+                { signal: request.signal, reportFailure: false, reportDefect: false },
+              ).then(
+                (metadata) =>
+                  openAt(
+                    metadata._tag === "Success" &&
+                      (needsWorkspaceBasenameLookup(relativePath)
+                        ? metadata.value?.kind !== "directory"
+                        : metadata.value === null)
+                      ? match
+                      : relativePath,
+                  ),
+                () => openAt(relativePath),
+              );
             },
-          }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
-        ).then(
-          (result) => {
-            const match =
-              result._tag === "Success"
-                ? pickWorkspaceLinkMatch(relativePath, workspaceRoot, result.value.entries)
-                : null;
-            if (!match || match === relativePath) {
-              openAt(relativePath);
-              return;
-            }
-            if (request.signal.aborted) return;
-            void executeAtomQuery(
-              appAtomRegistry,
-              projectEnvironment.fileMetadata({
-                environmentId: props.environmentId,
-                input: { path: originalPath },
-              }),
-              { signal: request.signal, reportFailure: false, reportDefect: false },
-            ).then(
-              (metadata) =>
-                openAt(
-                  metadata._tag === "Success" &&
-                    (needsWorkspaceBasenameLookup(relativePath)
-                      ? metadata.value?.kind !== "directory"
-                      : metadata.value === null)
-                    ? match
-                    : relativePath,
-                ),
-              () => openAt(relativePath),
-            );
-          },
-          () => openAt(relativePath),
-        );
+            () => openAt(relativePath),
+          );
       } else openAt(relativePath ?? path);
       return;
     }
