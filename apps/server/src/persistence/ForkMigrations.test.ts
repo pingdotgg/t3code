@@ -3,11 +3,18 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { forkMigrationManifest, migrationManifest, runMigrations } from "./Migrations.ts";
+import {
+  forkMigrationManifest,
+  migrationManifest,
+  runMigrations,
+  upstreamMigrations,
+} from "./Migrations.ts";
 import titleState from "./Migrations/052_ProjectionThreadTitleState.ts";
+import upstreamOrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
 import { FORK_MIGRATIONS_TABLE, legacyForkLedger } from "./splitLegacyForkLedger.ts";
 
 const FIRST_LEGACY_FORK_ID = 52;
@@ -253,6 +260,48 @@ describe("fork migration ledger", () => {
           ),
         );
         assert.deepStrictEqual(yield* schema, fresh.schema);
+      }).pipe(Effect.provide(memory));
+    }),
+  );
+
+  it.effect("brings a database written by upstream to the fork's schema", () =>
+    Effect.gen(function* () {
+      const tableColumns = Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // Upstream adds columns in a different order, so compare sets, not CREATE text.
+        return yield* sql<{
+          readonly type: string;
+          readonly name: string;
+          readonly columns: string;
+        }>`
+          SELECT m.type, m.name,
+            coalesce((SELECT group_concat(name) FROM (
+              SELECT name FROM pragma_table_info(m.name) ORDER BY name
+            )), '') AS columns
+          FROM sqlite_master m
+          WHERE m.name NOT LIKE 'sqlite_%'
+            AND m.name NOT IN ('effect_sql_migrations', ${FORK_MIGRATIONS_TABLE})
+          ORDER BY m.type, m.name
+        `;
+      });
+      const fresh = yield* Effect.gen(function* () {
+        yield* runMigrations();
+        // Only fork databases stage this; ScheduledTaskService imports and drops it at startup.
+        return (yield* tableColumns).filter((entry) => entry.name !== "legacy_scheduled_tasks");
+      }).pipe(Effect.provide(memory));
+      yield* Effect.gen(function* () {
+        yield* Migrator.make({})({
+          loader: Migrator.fromRecord(
+            Object.fromEntries(
+              upstreamMigrations.map(([id, name, migration]) => [
+                `${id}_${name}`,
+                id === 55 ? upstreamOrchestrationV2 : migration,
+              ]),
+            ),
+          ),
+        });
+        yield* runMigrations();
+        assert.deepStrictEqual(yield* tableColumns, fresh);
       }).pipe(Effect.provide(memory));
     }),
   );

@@ -13,11 +13,22 @@ import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { readPairingAppLink } from "@t3tools/shared/remote";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+
+const isProcessAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: alive, owned by another user.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 export class DesktopLaunchLinks extends Context.Service<
   DesktopLaunchLinks,
@@ -38,16 +49,37 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const electronApp = yield* ElectronApp.ElectronApp;
   const shell = yield* ElectronShell.ElectronShell;
+  const dialog = yield* ElectronDialog.ElectronDialog;
 
   // The single-instance lock is keyed by userData, so set it before taking the lock.
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
   yield* electronApp.setPath("userData", userDataPath);
 
+  const app = environment.branding.baseName;
   // Interrupt before runtime construction because quit is asynchronous.
   if (!(yield* electronApp.requestSingleInstanceLock)) {
+    const holder = DesktopUserData.otherProfileOwner({
+      recorded: yield* DesktopUserData.readProfileOwner(userDataPath),
+      app,
+      isAlive: isProcessAlive,
+    });
+    // Otherwise the other app only raises its own window, and this one seems not to open.
+    if (holder !== null) {
+      yield* electronApp.whenReady.pipe(
+        Effect.andThen(
+          dialog.showMessageBox({
+            type: "info",
+            message: `Quit ${holder} to open ${app}`,
+            detail: `${app} and ${holder} share your threads, settings and paired devices, so only one of them can run at a time.`,
+          }),
+        ),
+        Effect.ignore({ log: true }),
+      );
+    }
     yield* electronApp.quit;
     return yield* Effect.interrupt;
   }
+  yield* DesktopUserData.recordProfileOwner({ userDataPath, app, pid: process.pid });
   // Chromium opens these caches at the first event-loop turn, before ready.
   yield* DesktopUserData.clearStaleGpuCaches({
     userDataPath,

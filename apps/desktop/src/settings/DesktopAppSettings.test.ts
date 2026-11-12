@@ -40,8 +40,9 @@ const DesktopSettingsPatch = Schema.Struct({
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
 const encodeDesktopSettingsPatch = Schema.encodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
 
-function layerEnvironment(baseDir: string, appVersion = "0.0.17") {
+function layerEnvironment(baseDir: string, appVersion = "0.0.17", brand?: string) {
   return DesktopEnvironment.layer({
+    ...(brand === undefined ? {} : { brand }),
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -68,7 +69,7 @@ const withSettings = <A, E, R>(
     E,
     R | DesktopAppSettings.DesktopAppSettings | DesktopEnvironment.DesktopEnvironment
   >,
-  options?: { readonly appVersion?: string },
+  options?: { readonly appVersion?: string; readonly brand?: string },
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -78,7 +79,7 @@ const withSettings = <A, E, R>(
     return yield* effect.pipe(
       Effect.provide(
         DesktopAppSettings.layer.pipe(
-          Layer.provideMerge(layerEnvironment(baseDir, options?.appVersion)),
+          Layer.provideMerge(layerEnvironment(baseDir, options?.appVersion, options?.brand)),
           Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
@@ -354,6 +355,25 @@ describe("DesktopSettings", () => {
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
+    ),
+  );
+
+  it.effect("keeps a nightly-only build on nightly when T3 Code left Stable selected", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          serverExposureMode: "local-only",
+          updateChannel: "latest",
+          updateChannelConfiguredByUser: true,
+        });
+
+        assert.equal((yield* settings.load).updateChannel, "nightly");
+        const change = yield* settings.setUpdateChannel("latest");
+        assert.isFalse(change.changed);
+        assert.equal(change.settings.updateChannel, "nightly");
+      }),
+      { appVersion: "0.1.9-nightly.20261112.463001", brand: "agents" },
     ),
   );
 

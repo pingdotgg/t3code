@@ -36,77 +36,23 @@ you want the project those words describe, use [the original](https://github.com
 > - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
 > - fx: install [fx](https://fx.sh) and run `fx login` on the machine running the T3 Code server ([setup guide](./docs/user/providers-fx.md))
 
-### Command line
-
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
-```
-
-On Windows, in PowerShell:
-
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
-
-To try it once without installing, run `npx t3@latest`. It offers to install the `t3` command for you.
-
 ### Desktop app
 
-Install the latest version of the desktop app from this fork's [GitHub Releases](https://github.com/jayleaton/t3code/releases), or from your favorite package registry. Upstream releases live at [pingdotgg/t3code](https://github.com/pingdotgg/t3code/releases):
+Download T3 Agents from this fork's [GitHub Releases](https://github.com/jayleaton/t3code/releases): the `.dmg` on macOS, the `.exe` on Windows, or the `.AppImage` or `.deb` on Linux. Its updater then follows this fork's nightly releases; there is no Stable track yet.
 
-#### Windows (`winget`)
+`winget`, Homebrew, the AUR, Nix, `t3.codes/install.sh` and `npx t3` all install upstream T3 Code, not T3 Agents.
 
-```bash
-winget install T3Tools.T3Code
-```
+### Command line
 
-#### Windows (`scoop`)
+The desktop app includes the `t3` command (**Settings → About → t3 command**). `t3 update` and `t3 service install` download this fork's releases. For a Linux machine without a desktop, see [Headless Linux host](./docs/operations/headless-linux.md).
 
-```bash
-scoop install extras/t3code
-```
+### Switching from T3 Code
 
-#### macOS (Homebrew)
+T3 Agents uses the same data directory (`~/.t3`), so your projects, threads, settings, provider sign-ins and paired devices carry over, and phones and other machines still recognise this one. Your database is upgraded the first time T3 Agents starts.
 
-```bash
-brew install --cask t3-code
-```
-
-#### Debian, Ubuntu (`.deb`)
-
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
-
-```bash
-sudo apt install ./T3-Code-*.deb
-```
-
-#### Arch Linux (AUR)
-
-Stable:
-
-```bash
-yay -S t3code-bin
-```
-
-Nightly:
-
-```bash
-yay -S t3code-nightly-bin
-```
-
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
-
-#### Nix (nixpkgs)
-
-```bash
-nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code
-```
-
-The package is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code)
-and includes the desktop app (`t3code-desktop`) and the `t3` command.
-See [Nix installation](./docs/user/install.md#nix-nixpkgs) for NixOS configuration and updates.
+- Quit T3 Code first. The two apps share one profile, so only one of them can run at a time.
+- If you installed T3 Code's background service, run `t3 service uninstall` before opening T3 Agents. Otherwise that service keeps using your data directory and T3 Agents cannot start its own server.
+- T3 Agents does not include T3 Connect. Devices you paired through T3 Connect need to pair again over your local network or tailnet ([remote access](./docs/user/remote-access.md)).
 
 ## Some notes
 

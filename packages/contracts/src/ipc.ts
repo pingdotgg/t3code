@@ -293,6 +293,8 @@ export interface DesktopUpdateState {
   notAppliedVersion?: string;
   /** Off only because a managed policy rules out this channel; switching channels turns it on. */
   channelBlockedByPolicy?: true;
+  /** This build's feed publishes no Stable releases. */
+  nightlyOnly?: true;
 }
 
 export interface DesktopUpdateReleaseNote {

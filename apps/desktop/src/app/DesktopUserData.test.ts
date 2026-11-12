@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
-import { clearStaleGpuCaches, resolveUserDataPath } from "./DesktopUserData.ts";
+import { clearStaleGpuCaches, otherProfileOwner, resolveUserDataPath } from "./DesktopUserData.ts";
 
 it.effect.each(["t3code", "T3 Code (Alpha)"])(
   "preserves Windows credential keys from %s without copying browser databases",
@@ -138,3 +138,19 @@ it.effect("retries on the next launch when a GPU cache cannot be removed", () =>
     assert.deepStrictEqual(writes, []);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.each([
+  ["T3 Code running, never recorded", undefined, "T3 Agents", null, "T3 Code"],
+  ["a live T3 Agents window", '{"app":"T3 Agents","pid":7}', "T3 Agents", 7, null],
+  [
+    "T3 Code after a T3 Agents that exited",
+    '{"app":"T3 Agents","pid":7}',
+    "T3 Agents",
+    null,
+    "T3 Code",
+  ],
+  ["a live T3 Agents, seen from T3 Code", '{"app":"T3 Agents","pid":7}', "T3 Code", 7, "T3 Agents"],
+  ["an older T3 Code window", undefined, "T3 Code", null, null],
+] as const)("names the app holding the shared profile: %s", (_, recorded, app, alive, expected) => {
+  assert.equal(otherProfileOwner({ recorded, app, isAlive: (pid) => pid === alive }), expected);
+});

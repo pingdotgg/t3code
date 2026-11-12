@@ -184,5 +184,29 @@
       "packages/client-runtime/src/connection/supervisor.ts",
       "packages/client-runtime/src/connection/presentation.ts"
     ]
+  },
+  {
+    "fix": "#207",
+    "protects": "a database T3 Code migrated gets the fork's scheduled-task columns",
+    "test": "apps/server/src/persistence/ForkMigrations.test.ts",
+    "title": "brings a database written by upstream to the fork's schema",
+    "sha256": "ccec8bac5170771dc5c3d39109d9d2d29c51a4b9cfa2eaabb741e9dadba200ba",
+    "sources": ["apps/server/src/persistence/Migrations.ts"]
+  },
+  {
+    "fix": "#207",
+    "protects": "the fork desktop never follows a Stable track it has no feed for",
+    "test": "apps/desktop/src/settings/DesktopAppSettings.test.ts",
+    "title": "keeps a nightly-only build on nightly when T3 Code left Stable selected",
+    "sha256": "874179da7422534124f4452a174cfce61e90896f2616510292c8d9b589a2a342",
+    "sources": ["apps/desktop/src/settings/DesktopAppSettings.ts"]
+  },
+  {
+    "fix": "#207",
+    "protects": "t3 update and server self-update install fork builds, never upstream's",
+    "test": "apps/server/src/cli/update.test.ts",
+    "title": "authenticates each release page until the requested channel is found",
+    "sha256": "27087ffcad39c66a702a1d45e6758a96a762a75fbcf0c659e5deb8874b7f9842",
+    "sources": ["packages/shared/src/cliRelease.ts"]
   }
 ]

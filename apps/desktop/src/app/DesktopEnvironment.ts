@@ -55,6 +55,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly baseDir: string;
     readonly stateDir: string;
     readonly desktopSettingsPath: string;
+    /** The agents brand publishes only nightlies, so a Stable track would never update. */
+    readonly nightlyOnlyUpdates: boolean;
     readonly clientSettingsPath: string;
     readonly savedEnvironmentRegistryPath: string;
     readonly serverSettingsPath: string;
@@ -211,6 +213,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     stateDir,
     desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
+    nightlyOnlyUpdates: (input.brand ?? desktopBrand) === "agents",
     clientSettingsPath: path.join(stateDir, "client-settings.json"),
     savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
     serverSettingsPath: path.join(stateDir, "settings.json"),
