@@ -1,4 +1,4 @@
-import { ThreadId, type ProjectId } from "@t3tools/contracts";
+import { ThreadId, type ProjectId, type TerminalCwdNotFoundError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -158,7 +158,7 @@ export const makePrepareTerminalLaunch = Effect.fn(
     ) {
       return { input, recover: TerminalCwdRecovery.defaultValue() };
     }
-    const recover: TerminalCwdRecovery["Service"] = (error) =>
+    const recover = (error: TerminalCwdNotFoundError) =>
       restoreMissingWorktree(thread).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("failed to recreate missing worktree", {

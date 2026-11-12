@@ -488,8 +488,8 @@ it.layer(
         const launch = prepareLaunch(input).pipe(
           Effect.flatMap(({ input, recover }) =>
             (method === "attach"
-              ? manager.attachStream(input, () => Effect.void)
-              : manager.open(input)
+              ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
+              : manager.open(input).pipe(Effect.asVoid)
             ).pipe(Effect.provideService(TerminalManager.TerminalCwdRecovery, recover)),
           ),
         );
