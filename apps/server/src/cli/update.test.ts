@@ -150,6 +150,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
   ) =>
     runUpdate({
       baseDir: "/unused",
+      stateDir: "/unused/userdata",
       logsDir: "/unused",
       serverRuntimeStatePath: "/unused",
       channel: input.channel,
@@ -538,6 +539,7 @@ it.layer(NodeServices.layer)("t3 update with a background service", (it) => {
 
       const output = yield* runUpdate({
         baseDir,
+        stateDir: path.join(baseDir, "userdata"),
         logsDir: baseDir,
         serverRuntimeStatePath: path.join(baseDir, "server-runtime.json"),
         channel: undefined,

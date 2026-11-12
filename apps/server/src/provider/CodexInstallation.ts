@@ -29,6 +29,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeCrypto from "node:crypto";
 import * as ServerConfig from "../config.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 
@@ -151,12 +152,13 @@ export class CodexInstallation extends Context.Service<
     CodexInstallation,
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
-      return yield* makeCodexInstallation({ baseDir: config.baseDir });
+      return yield* makeCodexInstallation({ baseDir: config.baseDir, stateDir: config.stateDir });
     }),
   );
 }
 export interface CodexInstallationOptions {
   readonly baseDir: string;
+  readonly stateDir: string;
   readonly releaseAsset?: CodexReleaseAsset | null;
   readonly validate?: (
     executable: CodexExecutable,
@@ -525,27 +527,52 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       const hash = NodeCrypto.createHash("sha256");
       let downloadedBytes = 0;
       let lastProgressAt = yield* Clock.currentTimeMillis;
-      const response = yield* http
-        .execute(HttpClientRequest.get(release.url))
-        .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-      yield* response.stream.pipe(
-        Stream.tap((chunk) =>
-          Effect.gen(function* () {
-            downloadedBytes += chunk.byteLength;
-            if (downloadedBytes > release.archiveBytes)
-              return yield* installationError(
-                "download",
-                "The Codex download exceeded the expected release size.",
-              );
-            hash.update(chunk);
-            const now = yield* Clock.currentTimeMillis;
-            if (now - lastProgressAt >= 250 || downloadedBytes === release.archiveBytes) {
-              lastProgressAt = now;
-              yield* SubscriptionRef.update(state, (current) => ({ ...current, downloadedBytes }));
-            }
-          }),
-        ),
-        Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
+      yield* Effect.gen(function* () {
+        const response = yield* http
+          .execute(HttpClientRequest.get(release.url))
+          .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+        yield* response.stream.pipe(
+          Stream.tap((chunk) =>
+            Effect.gen(function* () {
+              downloadedBytes += chunk.byteLength;
+              if (downloadedBytes > release.archiveBytes)
+                return yield* installationError(
+                  "download",
+                  "The Codex download exceeded the expected release size.",
+                );
+              hash.update(chunk);
+              const now = yield* Clock.currentTimeMillis;
+              if (now - lastProgressAt >= 250 || downloadedBytes === release.archiveBytes) {
+                lastProgressAt = now;
+                yield* SubscriptionRef.update(state, (current) => ({
+                  ...current,
+                  downloadedBytes,
+                }));
+              }
+            }),
+          ),
+          Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
+        );
+        const sha256 = hash.digest("hex");
+        if (downloadedBytes !== release.archiveBytes || sha256 !== release.sha256)
+          return yield* installationError(
+            "download",
+            "The Codex download failed its size or SHA-256 check. Nothing was installed.",
+          );
+        yield* Effect.promise(() =>
+          auditDownload(
+            { stateDir: options.stateDir },
+            {
+              url: release.url,
+              status: response.status,
+              bytes: downloadedBytes,
+              contentType: response.headers["content-type"] ?? null,
+              sha256,
+            },
+          ),
+        );
+        return response;
+      }).pipe(
         Effect.timeout("45 minutes"),
         Effect.catchTags({
           TimeoutError: (cause) =>
@@ -555,12 +582,15 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
               cause,
             ),
         }),
+        Effect.tapCause((cause) =>
+          Effect.promise(() =>
+            auditDownload(
+              { stateDir: options.stateDir },
+              { url: release.url, bytes: downloadedBytes, error: Cause.pretty(cause) },
+            ),
+          ),
+        ),
       );
-      if (downloadedBytes !== release.archiveBytes || hash.digest("hex") !== release.sha256)
-        return yield* installationError(
-          "download",
-          "The Codex download failed its size or SHA-256 check. Nothing was installed.",
-        );
       yield* SubscriptionRef.update(
         state,
         (current) =>

@@ -22,6 +22,7 @@ import { T3_LEARN_COMMAND, T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3Learn
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
     baseDir: config.baseDir,
+    stateDir: config.stateDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
   }).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(FetchHttpClient.layer));

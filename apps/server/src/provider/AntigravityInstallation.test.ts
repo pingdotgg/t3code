@@ -168,6 +168,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   });
   const installation = yield* AntigravityInstallation.makeAntigravityInstallation({
     baseDir,
+    stateDir: `${baseDir}/userdata`,
     releaseAsset: asset,
     ...(options.useDefaultValidation
       ? {}
@@ -259,15 +260,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     Effect.gen(function* () {
       const enteredValidation = yield* Deferred.make<void>();
       const finishValidation = yield* Deferred.make<void>();
-      const { installation, fs, path, validations, requests, stagingReleased } = yield* makeHarness(
-        {
+      const { installation, fs, path, baseDir, validations, requests, stagingReleased } =
+        yield* makeHarness({
           previous: true,
           validate: () =>
             Deferred.succeed(enteredValidation, undefined).pipe(
               Effect.andThen(Deferred.await(finishValidation)),
             ),
-        },
-      );
+        });
       const initial = yield* installation.changes.pipe(
         Stream.runHead,
         Effect.map(Option.getOrThrow),
@@ -300,6 +300,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
       );
       expect(requests).toEqual([(yield* releaseAsset()).url]);
+      const auditFiles = yield* fs.readDirectory(`${baseDir}/userdata/audit`);
+      const audit = JSON.parse(
+        yield* fs.readFileString(`${baseDir}/userdata/audit/${auditFiles[0]!}`),
+      ) as {
+        url: string;
+        sha256: string;
+      };
+      expect(audit.url).toBe((yield* releaseAsset()).url);
+      expect(audit.sha256).toBe((yield* releaseAsset()).sha256);
     }),
   );
 
@@ -331,11 +340,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     { name: "path traversal", archive: Buffer.from(zipFixtures.traversal, "base64") },
     { name: "symbolic link", archive: Buffer.from(zipFixtures.symlink, "base64") },
     { name: "oversized member", archive: Buffer.from(zipFixtures.oversizedMember, "base64") },
-  ])("rejects $name before runtime validation", ({ completeAsset, ...options }) =>
+  ])("rejects $name before runtime validation", ({ name, completeAsset, ...options }) =>
     Effect.gen(function* () {
       const asset =
         completeAsset === undefined ? undefined : { ...(yield* releaseAsset()), ...completeAsset };
-      const { installation, validations, stagingReleased, fs, path } = yield* makeHarness({
+      const { installation, validations, stagingReleased, fs, path, baseDir } = yield* makeHarness({
         ...options,
         ...(asset === undefined ? {} : { asset }),
         previous: true,
@@ -350,6 +359,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
         [previousReleaseId],
       );
+      if (
+        [
+          "checksum mismatch",
+          "short download",
+          "oversized download",
+          "wrong Content-Length",
+        ].includes(name)
+      ) {
+        const auditFiles = yield* fs.readDirectory(`${baseDir}/userdata/audit`);
+        const audit = JSON.parse(
+          yield* fs.readFileString(`${baseDir}/userdata/audit/${auditFiles[0]!}`),
+        ) as { url: string; bytes: number; error?: string };
+        expect(audit).toMatchObject({
+          url: (yield* releaseAsset()).url,
+          error: expect.any(String),
+        });
+        if (name === "checksum mismatch") expect(audit.bytes).toBeGreaterThan(0);
+      }
     }),
   );
 

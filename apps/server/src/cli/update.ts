@@ -288,6 +288,7 @@ export const updateCommand = Command.make("update", {
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUpdate({
         baseDir: config.baseDir,
+        stateDir: config.stateDir,
         logsDir: config.logsDir,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
         channel: Option.getOrUndefined(flags.channel),
@@ -358,6 +359,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 
 export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly baseDir: string;
+  readonly stateDir: string;
   readonly logsDir: string;
   readonly serverRuntimeStatePath: string;
   readonly channel: CliReleaseChannel | undefined;
@@ -503,6 +505,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const runtime = yield* ensurePinnedRuntimeInstalled({
     onProgress: progress.report,
     baseDir: input.baseDir,
+    stateDir: input.stateDir,
     version: targetVersion,
     fs,
     path,
@@ -572,6 +575,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       Effect.provide(
         BootService.layer({
           baseDir: input.baseDir,
+          stateDir: input.stateDir,
           logsDir: input.logsDir,
           cliVersion: targetVersion,
         }),

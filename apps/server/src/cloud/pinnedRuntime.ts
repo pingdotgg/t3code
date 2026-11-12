@@ -25,6 +25,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
@@ -104,6 +105,7 @@ export type PinnedRuntimeProgress =
 
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
+  readonly stateDir: string;
   readonly version: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -159,7 +161,11 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
           bytes.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        return bytes;
+        return {
+          bytes,
+          status: response.status,
+          contentType: response.headers["content-type"] ?? null,
+        };
       }),
     ),
     Effect.mapError(
@@ -193,23 +199,53 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   const httpClient = input.httpClient;
   input.onProgress?.({ stage: "download", received: 0, total: undefined });
   const { fileName, expected } = yield* publishedArchive(input, platformKey);
-  const archive = yield* fetchReleaseAsset(
-    httpClient,
-    cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl),
-    "downloading the t3 release archive",
-    input.onProgress,
-  );
-  input.onProgress?.({ stage: "verify" });
-  const digest = yield* Effect.tryPromise({
-    try: () => crypto.subtle.digest("SHA-256", archive),
-    catch: (cause) =>
-      new PinnedRuntimeInstallError({ step: "verifying the t3 release archive", cause }),
-  });
-  if (Hex.encode(new Uint8Array(digest)) !== expected) {
-    return yield* new PinnedRuntimeInstallError({
-      step: "verifying the t3 release archive checksum",
+  const archiveUrl = cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl);
+  let archiveBytes = 0;
+  const archiveResult = yield* Effect.gen(function* () {
+    const result = yield* fetchReleaseAsset(
+      httpClient,
+      archiveUrl,
+      "downloading the t3 release archive",
+      (progress) => {
+        if (progress.stage === "download") archiveBytes = progress.received;
+        input.onProgress?.(progress);
+      },
+    );
+    input.onProgress?.({ stage: "verify" });
+    const digest = yield* Effect.tryPromise({
+      try: () => crypto.subtle.digest("SHA-256", result.bytes),
+      catch: (cause) =>
+        new PinnedRuntimeInstallError({ step: "verifying the t3 release archive", cause }),
     });
-  }
+    const sha256 = Hex.encode(new Uint8Array(digest));
+    if (sha256 !== expected)
+      return yield* new PinnedRuntimeInstallError({
+        step: "verifying the t3 release archive checksum",
+      });
+    yield* Effect.promise(() =>
+      auditDownload(
+        { stateDir: input.stateDir },
+        {
+          url: archiveUrl,
+          status: result.status,
+          bytes: result.bytes.byteLength,
+          contentType: result.contentType,
+          sha256,
+        },
+      ),
+    );
+    return result;
+  }).pipe(
+    Effect.tapCause((cause) =>
+      Effect.promise(() =>
+        auditDownload(
+          { stateDir: input.stateDir },
+          { url: archiveUrl, bytes: archiveBytes, error: Cause.pretty(cause) },
+        ),
+      ),
+    ),
+  );
+  const archive = archiveResult.bytes;
 
   const archivePath = path.join(stagingDir, PINNED_RUNTIME_ARCHIVE_FILE);
   yield* fs
@@ -250,12 +286,38 @@ const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(fun
   platformKey: CliArchivePlatformKey,
 ) {
   const fileName = cliArchiveFileName(input.version, platformKey);
-  const checksums = parseChecksums(
-    new TextDecoder().decode(
-      yield* fetchReleaseAsset(
-        input.httpClient,
-        cliReleaseAssetUrl(input.version, CLI_RELEASE_CHECKSUMS_FILE, input.releaseBaseUrl),
-        "downloading the t3 release checksums",
+  const checksumsUrl = cliReleaseAssetUrl(
+    input.version,
+    CLI_RELEASE_CHECKSUMS_FILE,
+    input.releaseBaseUrl,
+  );
+  const checksums = yield* Effect.gen(function* () {
+    const result = yield* fetchReleaseAsset(
+      input.httpClient,
+      checksumsUrl,
+      "downloading the t3 release checksums",
+    );
+    const checksums = parseChecksums(new TextDecoder().decode(result.bytes));
+    yield* Effect.promise(() =>
+      auditDownload(
+        { stateDir: input.stateDir },
+        {
+          url: checksumsUrl,
+          status: result.status,
+          bytes: result.bytes.byteLength,
+          contentType: result.contentType,
+          body: result.bytes,
+        },
+      ),
+    );
+    return checksums;
+  }).pipe(
+    Effect.tapCause((cause) =>
+      Effect.promise(() =>
+        auditDownload(
+          { stateDir: input.stateDir },
+          { url: checksumsUrl, error: Cause.pretty(cause) },
+        ),
       ),
     ),
   );

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -17,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { expandHomePath } from "../os-jank.ts";
 import type { SpeechModel } from "./model.ts";
 
@@ -175,7 +177,7 @@ const make = Effect.gen(function* () {
     url: string,
     partialPath: string,
     offset: number,
-    onProgress?: (downloaded: number) => void,
+    onProgress?: (downloaded: number, bytes: number) => void,
   ) {
     const request = HttpClientRequest.get(url).pipe(
       offset > 0 ? HttpClientRequest.setHeader("Range", `bytes=${offset}-`) : (r) => r,
@@ -207,18 +209,23 @@ const make = Effect.gen(function* () {
     )
       return yield* new SpeechModelDownloadError({ modelId: model.id, reason: "size" });
     let downloaded = start;
-    onProgress?.(downloaded);
+    onProgress?.(downloaded, 0);
     yield* response.stream.pipe(
       Stream.tap((chunk) => {
         downloaded += chunk.byteLength;
         if (downloaded > model.size)
           return Effect.fail(new SpeechModelDownloadError({ modelId: model.id, reason: "size" }));
-        onProgress?.(downloaded);
+        onProgress?.(downloaded, downloaded - start);
         return Effect.void;
       }),
       Stream.run(fs.sink(partialPath, { flag: resumed ? "a" : "w", mode: 0o600 })),
     );
-    return downloaded;
+    return {
+      downloaded,
+      bytes: downloaded - start,
+      status: response.status,
+      contentType: response.headers["content-type"] ?? null,
+    };
   });
 
   const filesUnder = Effect.fn("SpeechModelStore.filesUnder")(function* (source: string) {
@@ -298,29 +305,71 @@ const make = Effect.gen(function* () {
       }
       const partialPath = `${finalPath}.${yield* random.uuidV4()}.part`;
       const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
+      let attemptBytes = 0;
+      const attempts: Array<{
+        readonly bytes: number;
+        readonly status: number;
+        readonly contentType: string | null;
+      }> = [];
       return yield* Effect.gen(function* () {
         for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
           const offset = Number((yield* statFile(partialPath))?.size ?? 0);
           if (offset === model.size) break;
           // Transport and disk failures resume from the partial file; a bad response does not.
-          const downloaded = yield* fetchInto(
-            model,
-            url,
-            partialPath,
-            offset,
-            progress.onProgress,
-          ).pipe(
+          attemptBytes = 0;
+          const result = yield* fetchInto(model, url, partialPath, offset, (downloaded, bytes) => {
+            attemptBytes = bytes;
+            progress.onProgress?.(downloaded);
+          }).pipe(
+            Effect.tapCause((cause) =>
+              Effect.promise(() =>
+                auditDownload(
+                  { stateDir: config.stateDir },
+                  { url, bytes: attemptBytes, error: Cause.pretty(cause) },
+                ),
+              ),
+            ),
             Effect.catchIf(
               (error) => attempt < DOWNLOAD_ATTEMPTS && error._tag !== "SpeechModelDownloadError",
-              () => Effect.succeed(-1),
+              () =>
+                Effect.succeed({
+                  downloaded: -1,
+                  bytes: attemptBytes,
+                  status: 0,
+                  contentType: null,
+                }),
             ),
           );
-          if (downloaded === model.size) break;
+          attemptBytes = result.bytes;
+          if (result.downloaded >= 0) attempts.push(result);
+          if (result.downloaded === model.size) break;
         }
         progress.onVerificationStart?.();
         const complete = yield* expectedFile(model, partialPath);
-        if (!complete || !(yield* digestMatches(model, partialPath)))
-          return yield* new SpeechModelDownloadError({ modelId: model.id, reason: "verification" });
+        if (!complete || !(yield* digestMatches(model, partialPath))) {
+          const error = new SpeechModelDownloadError({ modelId: model.id, reason: "verification" });
+          yield* Effect.promise(() =>
+            auditDownload(
+              { stateDir: config.stateDir },
+              { url, bytes: attemptBytes, error: error.message },
+            ),
+          );
+          return yield* error;
+        }
+        yield* Effect.forEach(attempts, (attempt) =>
+          Effect.promise(() =>
+            auditDownload(
+              { stateDir: config.stateDir },
+              {
+                url,
+                bytes: attempt.bytes,
+                contentType: attempt.contentType,
+                sha256: model.sha256,
+                status: attempt.status,
+              },
+            ),
+          ),
+        );
         yield* fs.rename(partialPath, finalPath);
         yield* fs.remove(`${finalPath}.source`, { force: true }).pipe(Effect.ignore);
         // Rename changes file metadata, so record the verified file's final identity.

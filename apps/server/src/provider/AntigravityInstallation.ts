@@ -29,6 +29,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ServerConfig from "../config.ts";
+import { auditDownload } from "../course/downloadAudit.ts";
 import { openZipArchive } from "../zipArchive.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
@@ -113,13 +114,17 @@ export class AntigravityInstallation extends Context.Service<
     AntigravityInstallation,
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
-      return yield* makeAntigravityInstallation({ baseDir: config.baseDir });
+      return yield* makeAntigravityInstallation({
+        baseDir: config.baseDir,
+        stateDir: config.stateDir,
+      });
     }),
   );
 }
 
 export interface AntigravityInstallationOptions {
   readonly baseDir: string;
+  readonly stateDir: string;
   readonly releaseAsset?: AntigravityReleaseAsset | null;
   readonly validate?: (
     executable: AntigravityExecutable,
@@ -599,13 +604,36 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           ),
           Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
         );
-      }).pipe(Effect.timeout(DOWNLOAD_TIMEOUT));
-      if (downloadedBytes !== asset.archiveBytes || hash.digest("hex") !== asset.sha256) {
-        return yield* installationError(
-          "download",
-          "The Antigravity download failed its size or SHA-256 check. Nothing was installed.",
+        const sha256 = hash.digest("hex");
+        if (downloadedBytes !== asset.archiveBytes || sha256 !== asset.sha256)
+          return yield* installationError(
+            "download",
+            "The Antigravity download failed its size or SHA-256 check. Nothing was installed.",
+          );
+        yield* Effect.promise(() =>
+          auditDownload(
+            { stateDir: options.stateDir },
+            {
+              url: asset.url,
+              status: response.status,
+              bytes: downloadedBytes,
+              contentType: response.headers["content-type"] ?? null,
+              sha256,
+            },
+          ),
         );
-      }
+        return response;
+      }).pipe(
+        Effect.timeout(DOWNLOAD_TIMEOUT),
+        Effect.tapCause((cause) =>
+          Effect.promise(() =>
+            auditDownload(
+              { stateDir: options.stateDir },
+              { url: asset.url, bytes: downloadedBytes, error: Cause.pretty(cause) },
+            ),
+          ),
+        ),
+      );
 
       yield* report("extracting", "Extracting the verified runtime.");
       yield* Effect.gen(function* () {

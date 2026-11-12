@@ -125,6 +125,22 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
     ]);
     const pinnedUrl = `https://huggingface.co/${h.model.id}/resolve/${h.model.revision}/${h.model.filename}`;
     expect(h.requests.map((request) => request.url)).toEqual([pinnedUrl, pinnedUrl]);
+    const auditFiles = yield* h.fs.readDirectory(`${h.directory}/../../audit`);
+    const auditLines = (yield* h.fs.readFileString(`${h.directory}/../../audit/${auditFiles[0]!}`))
+      .split("\n")
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as { url: string; bytes?: number; error?: string; sha256?: string },
+      );
+    const failedAudit = auditLines.find((line) => line.error !== undefined);
+    expect(failedAudit).toMatchObject({ url: pinnedUrl, bytes: SPLIT, error: expect.any(String) });
+    const audit = auditLines.find((line) => typeof line.sha256 === "string");
+    expect(audit).toMatchObject({
+      url: pinnedUrl,
+      bytes: bytes.length - SPLIT,
+      sha256: h.model.sha256,
+    });
     expect(progress.at(0)).toBe(0);
     expect(progress.at(-1)).toBe(bytes.length);
     expect([...(yield* h.fs.readFile(installed))]).toEqual([...bytes]);
@@ -148,6 +164,13 @@ it.effect("rejects a same-size download whose SHA-256 differs from the catalog",
     expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "verification" } });
     expect(yield* h.fs.readDirectory(h.directory)).toEqual(["model.gguf"]);
     expect(yield* h.store.installedPath(h.model)).toBeUndefined();
+    const auditFiles = yield* h.fs.readDirectory(`${h.directory}/../../audit`);
+    const auditLines = yield* h.fs.readFileString(`${h.directory}/../../audit/${auditFiles[0]!}`);
+    const audit = JSON.parse(auditLines.split("\n")[0]!) as { url: string; error?: string };
+    expect(audit).toMatchObject({
+      url: expect.stringContaining("huggingface.co"),
+      error: expect.any(String),
+    });
   }).pipe(Effect.provide(dependencies)),
 );
 
