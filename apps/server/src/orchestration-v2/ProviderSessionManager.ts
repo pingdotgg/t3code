@@ -262,7 +262,7 @@ export class ProviderSessionManagerV2 extends Context.Service<
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
 interface LiveSessionEntry {
-  readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
+  readonly instanceRevision: unknown;
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** null marks an unknown catalog; undefined means MCP refresh is not configured. */
@@ -1971,15 +1971,16 @@ export const layerWithOptions = (
         );
       });
 
-      // A rebuilt instance has a new adapter; a session it opened would keep the old settings.
+      const readInstanceRevision = (instanceId: ProviderInstanceId) =>
+        registry.revision === undefined ? Effect.undefined : registry.revision(instanceId);
+
+      // A session opened before its instance was rebuilt would keep the old settings.
       const releaseForRebuiltInstance = Effect.fn(
         "ProviderSessionManager.releaseForRebuiltInstance",
       )(function* (entry: LiveSessionEntry) {
         if (entry.runtime.canResumeAfterRestart === false || entry.busyTurns.size > 0) return;
-        const current = yield* registry
-          .get(entry.runtime.instanceId)
-          .pipe(Effect.orElseSucceed(() => entry.adapter));
-        if (current === entry.adapter) return;
+        const current = yield* readInstanceRevision(entry.runtime.instanceId);
+        if (current === undefined || current === entry.instanceRevision) return;
         yield* releaseIdleForReopen(
           entry,
           "Provider instance settings changed; reopening the provider session.",
@@ -2781,6 +2782,8 @@ export const layerWithOptions = (
                 return existing.exposedRuntime;
               }
 
+              // Before get: a rebuild in between costs one extra reopen, not a missed one.
+              const instanceRevision = yield* readInstanceRevision(input.modelSelection.instanceId);
               const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -2865,7 +2868,7 @@ export const layerWithOptions = (
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const entry: LiveSessionEntry = {
-                adapter,
+                instanceRevision,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 openedWithLinkedEnvironments,

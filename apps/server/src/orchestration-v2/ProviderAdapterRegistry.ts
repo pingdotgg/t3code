@@ -43,6 +43,8 @@ export interface ProviderAdapterRegistryV2Shape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2["Service"], ProviderAdapterRegistryV2Error>;
   readonly list: () => Effect.Effect<ReadonlyArray<ProviderInstanceId>>;
+  /** Changes only when the instance is rebuilt; omitted by registries that never rebuild. */
+  readonly revision?: (instanceId: ProviderInstanceId) => Effect.Effect<unknown>;
   readonly getMetadata?: (instanceId: ProviderInstanceId) => Effect.Effect<
     {
       readonly driver: ProviderAdapter.ProviderAdapterV2["Service"]["driver"];
@@ -67,8 +69,6 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
   ProviderAdapterRegistryV2,
   Effect.gen(function* () {
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-    // One wrapper per built instance: session reuse compares adapters to detect a rebuild.
-    const wrapped = new WeakMap<object, ProviderAdapter.ProviderAdapterV2["Service"]>();
     return ProviderAdapterRegistryV2.of({
       get: Effect.fn("ProviderAdapterRegistryV2.get")(function (instanceId) {
         return instances.getInstance(instanceId).pipe(
@@ -78,9 +78,7 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
             const adapter = instance.orchestrationAdapter;
             const auth = instance.auth;
             if (!auth) return Effect.succeed(adapter);
-            const cached = wrapped.get(instance);
-            if (cached !== undefined) return Effect.succeed(cached);
-            const wrapper = {
+            return Effect.succeed({
               ...adapter,
               openSession: (input) => {
                 const open = Effect.gen(function* () {
@@ -126,11 +124,12 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
                   ),
                 );
               },
-            } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
-            wrapped.set(instance, wrapper);
-            return Effect.succeed(wrapper);
+            } satisfies ProviderAdapter.ProviderAdapterV2["Service"]);
           }),
         );
+      }),
+      revision: Effect.fn("ProviderAdapterRegistryV2.revision")(function* (instanceId) {
+        return (yield* instances.getInstance(instanceId))?.orchestrationAdapter;
       }),
       list: Effect.fn("ProviderAdapterRegistryV2.list")(function () {
         return instances.listInstances.pipe(
