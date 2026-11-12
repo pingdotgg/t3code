@@ -2153,7 +2153,7 @@ function isLessonStatusLine(text: string) {
 function stripLessonNarration(text: string) {
   const narration =
     /^(?:I(?:['’](?:m|ll|ve|d)\b| (?!is\b)[a-z])|(?:[Ll]et me|[Tt]he (?:learner|user|student)|[Tt]hey (?:got|answered|picked|said|chose))\b)/u;
-  const firstPerson = /\b(?:I(?!\s*(?:=|[×*/+\-]))|I['’](?:m|ll|ve|d)|me|my)\b/iu;
+  const firstPerson = /\b(?:I['’](?:m|ll|ve|d)|I (?!is\b|was\b)[a-z]+|[Mm]e|[Mm]y)\b/u;
   return text
     .split("\n")
     .map((line) => {
