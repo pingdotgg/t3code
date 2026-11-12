@@ -3891,8 +3891,8 @@ export type OrchestrationV2ThreadFamily = typeof OrchestrationV2ThreadFamily.Typ
 
 export const OrchestrationV2ListPreviousAgentsInput = Schema.Struct({
   threadId: ThreadId,
-  cursor: Schema.optional(NonNegativeInt),
-  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(100)),
+  // Grows by one page per "Show more"; the cap only bounds a single response.
+  limit: PositiveInt.check(Schema.isLessThanOrEqualTo(10_000)),
 });
 export type OrchestrationV2ListPreviousAgentsInput =
   typeof OrchestrationV2ListPreviousAgentsInput.Type;
@@ -3910,7 +3910,6 @@ export const OrchestrationV2PreviousAgentsPage = Schema.Struct({
   agents: Schema.Array(OrchestrationV2PreviousAgent),
   total: NonNegativeInt,
   failedCount: NonNegativeInt,
-  nextCursor: Schema.NullOr(NonNegativeInt),
 });
 export type OrchestrationV2PreviousAgentsPage = typeof OrchestrationV2PreviousAgentsPage.Type;
 

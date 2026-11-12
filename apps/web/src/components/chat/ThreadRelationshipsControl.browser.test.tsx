@@ -33,7 +33,7 @@ const state = vi.hoisted(() => ({
   >(),
   historyRequests: [] as Array<{
     key: string;
-    cursor: number;
+    limit: number;
     resolve: (page: OrchestrationV2PreviousAgentsPage) => void;
     reject: (error: Error) => void;
   }>,
@@ -46,13 +46,13 @@ vi.mock(import("../../state/orchestration"), async (original) => {
       ...actual.orchestrationEnvironment,
       previousAgents: ((target: {
         environmentId: string;
-        input: { threadId: string; cursor: number };
+        input: { threadId: string; limit: number };
       }) => {
         if (!state.controlledHistory) return state.historyQuery;
         const key = JSON.stringify([
           target.environmentId,
           target.input.threadId,
-          target.input.cursor,
+          target.input.limit,
         ]);
         let atom = state.historyAtoms.get(key);
         if (!atom) {
@@ -60,7 +60,7 @@ vi.mock(import("../../state/orchestration"), async (original) => {
             Effect.tryPromise({
               try: () =>
                 new Promise<OrchestrationV2PreviousAgentsPage>((resolve, reject) => {
-                  state.historyRequests.push({ key, cursor: target.input.cursor, resolve, reject });
+                  state.historyRequests.push({ key, limit: target.input.limit, resolve, reject });
                 }),
               catch: (cause) => new HistoryQueryFailed({ cause }),
             }),
@@ -484,25 +484,22 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
 });
 
-function previousAgentsPage(cursor: number, total = 24): OrchestrationV2PreviousAgentsPage {
+function previousAgentsPage(limit: number, total = 24): OrchestrationV2PreviousAgentsPage {
   return {
-    agents: Array.from({ length: Math.max(0, Math.min(12, total - cursor)) }, (_, index) => ({
-      childThreadId: ThreadId.make(`historical-${cursor + index}`),
+    agents: Array.from({ length: Math.min(limit, total) }, (_, index) => ({
+      childThreadId: ThreadId.make(`historical-${index}`),
       remoteChild: null,
-      title: `Historical agent ${cursor + index}`,
+      title: `Historical agent ${index}`,
       status: "completed",
       providerInstanceId: null,
     })),
     total,
     failedCount: 0,
-    nextCursor: cursor + 12 < total ? cursor + 12 : null,
   };
 }
 
-it("keeps the answered history page and pager during a delayed next page", async () => {
-  setup();
-  state.controlledHistory = true;
-  await using screen = await render(
+const renderHistoryPanel = () =>
+  render(
     <ThreadRelationshipsPanel
       environmentId={environmentId}
       threadId={threadId}
@@ -510,35 +507,26 @@ it("keeps the answered history page and pager during a delayed next page", async
       showSideChats
     />,
   );
-  await vi.waitFor(() => expect(state.historyRequests.length).toBeGreaterThan(0));
-  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(0)));
-  await screen.getByRole("button", { name: /Previous agents/ }).click();
-  await expect.element(screen.getByText("1–12 of 24")).toBeVisible();
-  await screen.getByRole("button", { name: "Next page" }).click();
-  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.cursor).toBe(12));
-  await expect.element(screen.getByRole("button", { name: /Historical agent 0/ })).toBeVisible();
-  await expect.element(screen.getByText("1–12 of 24")).toBeVisible();
-  await expect.element(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+
+it("counts and reveals previous agents beyond the loaded transcript", async () => {
+  setup();
+  state.controlledHistory = true;
+  await using screen = await renderHistoryPanel();
+  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.limit).toBe(6));
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(6)));
   await expect
     .element(screen.getByRole("button", { name: /Previous agents/ }))
-    .not.toHaveTextContent("loaded");
-  expect(
-    screen.container.querySelector(
-      'ul[aria-label="Related threads"] button[aria-label="Next page"]',
-    ),
-  ).toBeNull();
-  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(12)));
-  await expect.element(screen.getByText("13–24 of 24")).toBeVisible();
-  await screen.getByRole("button", { name: "Previous page" }).click();
-  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.cursor).toBe(0));
-  await expect.element(screen.getByRole("button", { name: /Historical agent 12/ })).toBeVisible();
-  await act(() => state.historyRequests.at(-1)!.reject(new Error("Disconnected")));
-  await expect
-    .element(screen.getByRole("button", { name: /Historical agent 12/ }))
-    .not.toBeInTheDocument();
+    .toHaveTextContent("Previous agents24");
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: "Show 12 more" }).click();
+  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.limit).toBe(18));
+  await expect.element(screen.getByRole("button", { name: /Historical agent 5/ })).toBeVisible();
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(18)));
+  await expect.element(screen.getByRole("button", { name: /Historical agent 17/ })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Show 6 more" })).toBeVisible();
 });
 
-it("refreshes the current history page on status changes and clamps a shrunken result", async () => {
+it("refreshes previous agents at the shown limit when a child's status changes", async () => {
   setup();
   state.controlledHistory = true;
   const activeChild = {
@@ -549,26 +537,14 @@ it("refreshes the current history page on status changes and clamps a shrunken r
     activityRunStatus: "running",
   };
   state.relatedShells = [activeChild];
-  await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={threadId}
-      showLineage
-      showSideChats
-    />,
-  );
-  await vi.waitFor(() => expect(state.historyRequests.length).toBeGreaterThan(0));
-  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(0, 36)));
+  await using screen = await renderHistoryPanel();
+  await vi.waitFor(() => expect(state.historyRequests).toHaveLength(1));
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(6)));
   await screen.getByRole("button", { name: /Previous agents/ }).click();
-  await screen.getByRole("button", { name: "Next page" }).click();
-  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.cursor).toBe(12));
-  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(12, 36)));
-  await expect.element(screen.getByText("13–24 of 36")).toBeVisible();
-  state.projection = {
-    ...(state.projection as object),
-    thread: { ...(state.projection as { thread: object }).thread, status: "running" },
-  };
-  const requestCount = state.historyRequests.length;
+  await screen.getByRole("button", { name: "Show 12 more" }).click();
+  await vi.waitFor(() => expect(state.historyRequests).toHaveLength(2));
+  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(18)));
+  state.relatedShells = [{ ...activeChild, status: "idle", activityRunStatus: "completed" }];
   await screen.rerender(
     <ThreadRelationshipsPanel
       environmentId={environmentId}
@@ -577,81 +553,7 @@ it("refreshes the current history page on status changes and clamps a shrunken r
       showSideChats
     />,
   );
-  await vi.waitFor(() => expect(state.historyRequests.length).toBeGreaterThan(requestCount));
-  expect(state.historyRequests.at(-1)?.cursor).toBe(12);
-  await expect.element(screen.getByText("13–24 of 36")).toBeVisible();
-  expect(state.historyRequests).toHaveLength(requestCount + 1);
-  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(12, 36)));
-  state.relatedShells = [{ ...activeChild, status: "waiting", activityRunStatus: "waiting" }];
-  await screen.rerender(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={threadId}
-      showLineage
-      showSideChats
-    />,
-  );
-  await vi.waitFor(() => expect(state.historyRequests).toHaveLength(requestCount + 2));
-  expect(state.historyRequests.at(-1)?.cursor).toBe(12);
-  await expect.element(screen.getByText("13–24 of 36")).toBeVisible();
-  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(12, 12)));
-  await vi.waitFor(() => expect(state.historyRequests.at(-1)?.cursor).toBe(0));
-  await expect.element(screen.getByText("13–12 of 12")).not.toBeInTheDocument();
-  await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(0, 12)));
-  await expect.element(screen.getByRole("button", { name: /Historical agent 0/ })).toBeVisible();
-  expect(state.historyRequests).toHaveLength(requestCount + 3);
+  await vi.waitFor(() => expect(state.historyRequests).toHaveLength(3));
+  expect(state.historyRequests.at(-1)?.limit).toBe(18);
+  await expect.element(screen.getByRole("button", { name: /Historical agent 17/ })).toBeVisible();
 });
-
-it.each([
-  ["environment", "other-thread", false],
-  ["other-environment", "fork", true],
-])(
-  "fetches history once per page and scopes it to %s/%s",
-  async (nextEnvironmentId, nextThreadId, delayedProjection) => {
-    setup();
-    state.controlledHistory = true;
-    const initialProjection = state.projection;
-    if (delayedProjection) state.projection = null;
-    await using screen = await render(
-      <ThreadRelationshipsPanel
-        environmentId={environmentId}
-        threadId={threadId}
-        showLineage
-        showSideChats
-      />,
-    );
-    await vi.waitFor(() => expect(state.historyRequests.length).toBeGreaterThan(0));
-    if (delayedProjection) {
-      state.projection = initialProjection;
-      await screen.rerender(
-        <ThreadRelationshipsPanel
-          environmentId={environmentId}
-          threadId={threadId}
-          showLineage
-          showSideChats
-        />,
-      );
-    }
-    await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(0)));
-    await screen.getByRole("button", { name: /Previous agents/ }).click();
-    expect(state.historyRequests).toHaveLength(1);
-    await screen.getByRole("button", { name: "Next page" }).click();
-    await vi.waitFor(() => expect(state.historyRequests.at(-1)?.cursor).toBe(12));
-    await act(() => state.historyRequests.at(-1)!.resolve(previousAgentsPage(12)));
-    await expect.element(screen.getByText("13–24 of 24")).toBeVisible();
-    expect(state.historyRequests).toHaveLength(2);
-    await screen.rerender(
-      <ThreadRelationshipsPanel
-        environmentId={EnvironmentId.make(nextEnvironmentId)}
-        threadId={ThreadId.make(nextThreadId)}
-        showLineage
-        showSideChats
-      />,
-    );
-    await vi.waitFor(() => expect(state.historyRequests).toHaveLength(3));
-    expect(state.historyRequests[2]?.cursor).toBe(0);
-    await expect
-      .element(screen.getByRole("button", { name: /Historical agent 12/ }))
-      .not.toBeInTheDocument();
-  },
-);

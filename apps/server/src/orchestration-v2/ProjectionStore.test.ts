@@ -3700,26 +3700,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.equal(first.total, 141);
       assert.equal(first.failedCount, 2);
       assert.equal(first.agents.length, 12);
-      assert.equal(first.nextCursor, 12);
-      const identities: Array<string> = [];
-      for (let cursor = 0; cursor < first.total; cursor += 12) {
-        const page = yield* store.listPreviousAgents({ threadId, cursor, limit: 12 });
-        assert.equal(page.total, 141);
-        assert.isAtMost(page.agents.length, 12);
-        identities.push(
-          ...page.agents.map((agent) =>
-            JSON.stringify([agent.childThreadId, agent.remoteChild?.environmentId]),
-          ),
-        );
-        assert.isBelow(JSON.stringify(page).length, 6000);
-        assert.equal(page.nextCursor, cursor + 12 < first.total ? cursor + 12 : null);
-      }
-      assert.equal(identities.length, 141);
+      assert.isBelow(JSON.stringify(first).length, 6000);
+      const all = yield* store.listPreviousAgents({ threadId, limit: 200 });
+      assert.deepEqual(all.agents.slice(0, 12), first.agents);
+      const identities = all.agents.map((agent) =>
+        JSON.stringify([agent.childThreadId, agent.remoteChild?.environmentId]),
+      );
       assert.equal(new Set(identities).size, 141);
-      const repeated = yield* store.listPreviousAgents({ threadId, limit: 12 });
-      assert.deepEqual(repeated, first);
-      const empty = yield* store.listPreviousAgents({ threadId, cursor: 141, limit: 12 });
-      assert.deepEqual(empty, { agents: [], total: 141, failedCount: 2, nextCursor: null });
     }),
   );
   it.effect("record reads select subagents by id", () => subagentRecordsSelectById);

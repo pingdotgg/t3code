@@ -8799,7 +8799,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const listPreviousAgents: ProjectionStoreV2Shape["listPreviousAgents"] = Effect.fn(
       "ProjectionStore.listPreviousAgents",
-    )(function* ({ threadId, cursor = 0, limit }) {
+    )(function* ({ threadId, limit }) {
       const rows = yield* sql<PayloadRow>`
         WITH tasks AS (
           SELECT task.child_thread_id, task.subagent_id, task.status, task.updated_at, task.started_at,
@@ -8871,7 +8871,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND live.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
             )
         ), page AS (
-          SELECT * FROM previous ORDER BY created_at DESC, identity ASC LIMIT ${limit} OFFSET ${cursor}
+          SELECT * FROM previous ORDER BY created_at DESC, identity ASC LIMIT ${limit}
         )
         SELECT json_object(
           'agents', json((SELECT json_group_array(json_object(
@@ -8879,9 +8879,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             'title', title, 'status', status, 'providerInstanceId', provider_instance_id
           )) FROM page)),
           'total', (SELECT COUNT(*) FROM previous),
-          'failedCount', (SELECT COUNT(*) FROM previous WHERE status IN ('failed', 'error')),
-          'nextCursor', CASE WHEN ${cursor + limit} < (SELECT COUNT(*) FROM previous)
-            THEN ${cursor + limit} ELSE NULL END
+          'failedCount', (SELECT COUNT(*) FROM previous WHERE status IN ('failed', 'error'))
         ) AS payload_json
       `;
       return yield* decodePreviousAgentsPage(rows[0]!.payload_json);
