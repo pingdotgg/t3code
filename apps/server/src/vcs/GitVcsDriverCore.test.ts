@@ -1599,6 +1599,49 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
   ),
 );
 
+it.effect("names a pending SSH key approval when a fetch times out on it", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (!ChildProcess.isStandardCommand(command))
+          return yield* Effect.die("expected Git command");
+        if (command.args[0] !== "fetch") return makeNonRepositoryHandle();
+        yield* Deferred.succeed(started, undefined);
+        // ssh has offered the key and waits on an agent that is showing an approval prompt.
+        return ChildProcessSpawner.makeHandle({
+          ...makeNonRepositoryHandle(),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          stderr: Stream.encodeText(
+            Stream.make(
+              "debug1: Server accepts key: test-key ED25519 SHA256:test\n" +
+                "debug3: sign_and_send_pubkey: signing using ssh-ed25519 SHA256:test\n",
+            ),
+          ),
+        });
+      }),
+    );
+    const driver = yield* makeGitVcsDriverCore().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const cwd = yield* makeTmpDir();
+    const fetching = yield* driver
+      .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+      .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("31 seconds");
+    const error = yield* Fiber.join(fetching);
+    assert.match(error.detail, /SSH key/i);
+  }).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("does not fetch for status when the branch tracks a local branch", () =>
   Effect.scoped(
     Effect.gen(function* () {
