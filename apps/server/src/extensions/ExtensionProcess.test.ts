@@ -40,6 +40,7 @@ it.live("cancels nested service calls and closes helper processes on stop and cr
       const helperPids: number[] = [];
       try {
         for (const ending of ["stop", "crash"] as const) {
+          const logs: string[] = [];
           const host = new ExtensionProcess({
             cwd: directory,
             platform: platform,
@@ -48,7 +49,10 @@ it.live("cancels nested service calls and closes helper processes on stop and cr
               args: [NodeURL.fileURLToPath(new URL("./hostMain.ts", import.meta.url))],
             },
             hostCall: (method, _input, signal) => {
-              if (method === "fail") return Promise.reject(new Error("Thread fixture is missing."));
+              if (method === "fail")
+                return Promise.reject(
+                  new Error("Thread fixture is missing. fixture-credential=secret-service-value"),
+                );
               started.resolve();
               return new Promise((_, reject) => {
                 signal.addEventListener(
@@ -63,7 +67,7 @@ it.live("cancels nested service calls and closes helper processes on stop and cr
             },
             event: () => {},
             failed: () => {},
-            log: () => {},
+            log: (chunk) => logs.push(chunk),
           });
           children.push(host);
           await host.ready;
@@ -86,6 +90,8 @@ it.live("cancels nested service calls and closes helper processes on stop and cr
             await expect(
               host.request("invoke", { kind: "command", name: "fail", input: {} }),
             ).rejects.toThrow("Thread fixture is missing.");
+            expect(logs.join("")).not.toContain("secret-service-value");
+            expect(logs.join("")).toContain("T3 service call failed (runtime-failed).");
           }
           const connected = NodeEvents.EventEmitter.once(server, "connection");
           const pid = await host.request("invoke", {

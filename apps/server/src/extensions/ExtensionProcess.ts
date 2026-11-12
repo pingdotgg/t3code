@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { ownWindowsProcessTree } from "./windowsProcessTree.ts";
 import { extensionDiagnostic } from "./diagnostic.ts";
+import { extensionFailureReason } from "./failureReason.ts";
 export interface ExtensionHostLaunch {
   readonly command: string;
   readonly args: readonly string[];
@@ -116,7 +117,7 @@ export class ExtensionProcess {
               (result) => this.send({ type: "host-response", requestId, result }),
               (cause: unknown) => {
                 const detail = extensionDiagnostic(cause);
-                options.log(`T3 service call ${message.method} failed: ${detail}\n`);
+                options.log(`T3 service call failed (${extensionFailureReason(cause)}).\n`);
                 this.send({ type: "host-response", requestId, error: detail });
               },
             )

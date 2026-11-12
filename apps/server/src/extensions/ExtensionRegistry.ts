@@ -16,7 +16,7 @@ import {
   type ExtensionHostLaunch,
 } from "./ExtensionProcess.ts";
 import { ExtensionEventLane } from "./ExtensionEventLane.ts";
-import { extensionDiagnostic } from "./diagnostic.ts";
+import { extensionFailureReason } from "./failureReason.ts";
 
 const z = NodeModule.createRequire(import.meta.url)("zod") as typeof import("zod");
 
@@ -143,7 +143,7 @@ export class ExtensionRegistry {
             });
             this.options.log(
               entry.manifest.id,
-              `Extension load failed: ${extensionDiagnostic(cause)}\n`,
+              `Extension load failed (${extensionFailureReason(cause)}).\n`,
             );
           }
         }
@@ -324,7 +324,7 @@ export class ExtensionRegistry {
       }
       this.states.set(id, { status: "running", runtimeId: NodeCrypto.randomUUID() });
     } catch (cause) {
-      this.options.log(id, `Activation failed: ${extensionDiagnostic(cause)}\n`);
+      this.options.log(id, `Activation failed (${extensionFailureReason(cause)}).\n`);
       await host?.stop();
       this.processes.delete(id);
       this.states.set(id, {
@@ -539,7 +539,8 @@ export class ExtensionRegistry {
           lane = new ExtensionEventLane({
             maxEvents: 128,
             maxBytes: 2 * 1024 * 1024,
-            onError: (cause) => this.options.log(id, `Event handler failed: ${String(cause)}\n`),
+            onError: (cause) =>
+              this.options.log(id, `Event handler failed (${extensionFailureReason(cause)}).\n`),
             onOverflow: () => {
               this.states.set(id, {
                 ...this.states.get(id)!,

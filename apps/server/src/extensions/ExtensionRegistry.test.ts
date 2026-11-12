@@ -60,7 +60,7 @@ it.live(
           NodePath.join(source, "extension.mjs"),
           `export default {activate(context) {
     let received = 0;
-    context.onEvent(async ({data}) => {if (data.hang) await new Promise(() => {}); received++;});
+    context.onEvent(async ({data}) => {if (data.fail) throw new Error('fixture-credential=secret-event-value'); if (data.hang) await new Promise(() => {}); received++;});
     context.registerCommand('crash', () => {process.exit(13);});
     context.registerCommand('echo', (input) => {if (input?.hang) while (true) {} return {input, greeting: context.settings.greeting, received};});
     context.registerTool('host', async () => ({pid: process.pid, value: await context.callT3('test', {})}));
@@ -121,6 +121,9 @@ it.live(
           ).rejects.toMatchObject({ reason: "invalid-input" });
           await registry.publish({ type: "ignored", data: {} });
           await registry.publish({ type: "test.event", data: {} });
+          await registry.publish({ type: "test.event", data: { fail: true } });
+          expect(logs.join("")).not.toContain("secret-event-value");
+          expect(logs.join("")).toContain("Event handler failed (runtime-failed).");
           expect(
             await registry.invoke({ id: manifest.id, kind: "command", name: "echo", input: null }),
           ).toMatchObject({ received: 1 });
@@ -204,7 +207,8 @@ it.live(
           await restored.manage(manifest.id, "reload");
           expect(restored.list()[0]?.status).toBe("failed");
           expect(JSON.stringify(restored.list())).not.toContain("secret-activation-value");
-          expect(logs.join("")).toContain("secret-activation-value");
+          expect(logs.join("")).not.toContain("secret-activation-value");
+          expect(logs.join("")).toContain("Activation failed (runtime-failed).");
           await restored.close();
           await NodeFSP.writeFile(
             NodePath.join(source, "t3-extension.json"),
@@ -217,7 +221,8 @@ it.live(
             "Could not load extension. Check the server logs.",
           );
           expect(JSON.stringify(restored.list())).not.toContain("secret-load-value");
-          expect(logs.join("")).toContain("secret-load-value");
+          expect(logs.join("")).not.toContain("secret-load-value");
+          expect(logs.join("")).toContain("Extension load failed (invalid-manifest).");
           await restored.manage(manifest.id, "uninstall");
           expect(restored.list()).toEqual([]);
           expect(await NodeFSP.readFile(NodePath.join(source, "panel.html"), "utf8")).toContain(
