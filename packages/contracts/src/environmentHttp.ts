@@ -56,6 +56,7 @@ import {
   CloudSpeechModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
@@ -523,6 +524,10 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   linkRevoked: Schema.optional(Schema.Boolean),
   /** The latest check the server ran on its own, absent until one finishes. */
   reachability: Schema.optional(EnvironmentConnectReachability),
+  /** The tunnel's public hostname, once cloudflared has connected. Older servers omit it. */
+  tunnelHostname: Schema.optional(Schema.String),
+  /** Whether this is the desktop app's own session, which may link from where it is. */
+  linkableHere: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
@@ -649,6 +654,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   .add(HttpApiEndpoint.get("authorize", "/oauth/mcp/authorize"))
   .add(
     HttpApiEndpoint.post("approval", "/oauth/mcp/approval", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpAuthorizationRequest,
       success: [AuthMcpApprovalDetails, AuthMcpApprovalRedirect],
       error: AuthMcpApprovalError,
@@ -656,6 +663,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   )
   .add(
     HttpApiEndpoint.post("decision", "/oauth/mcp/decision", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpApprovalDecisionRequest,
       success: AuthMcpApprovalRedirect,
       error: AuthMcpApprovalError,
@@ -673,19 +682,19 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
-const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
   omitIdleSubagents: Schema.optionalKey(Schema.String),
   omitOlderSettled: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   deferWork: Schema.optionalKey(Schema.String),
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
   compactIds: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
   view: Schema.optional(Schema.Literals(["conversation", "activity", "work"])),
@@ -876,6 +885,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("removeModel", "/api/voice/models/remove", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("linkModels", "/api/voice/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
       success: EnvironmentSpeechModels,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
