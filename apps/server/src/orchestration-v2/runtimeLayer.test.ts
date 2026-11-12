@@ -68,6 +68,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
@@ -1094,6 +1095,132 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       };
     });
 
+  it.effect("deleting a thread removes its checkpoint refs and keeps other threads' refs", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const checkpointStore = yield* CheckpointStore.CheckpointStore;
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-refs-" });
+      for (const args of [
+        ["init", "-q", "-b", "main"],
+        [
+          "-c",
+          "user.email=t3@example.com",
+          "-c",
+          "user.name=T3",
+          "commit",
+          "-q",
+          "--allow-empty",
+          "-m",
+          "init",
+        ],
+      ]) {
+        yield* vcsProcess.run({
+          operation: "test.git",
+          command: "git",
+          cwd,
+          args,
+          timeoutMs: 10_000,
+        });
+      }
+      const deletedThreadId = ThreadId.make("checkpoint-refs-deleted");
+      const survivingThreadId = ThreadId.make("checkpoint-refs-surviving");
+      const refs = new Map<ThreadId, CheckpointRef>();
+      for (const threadId of [deletedThreadId, survivingThreadId]) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}-create`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          projectId: ProjectId.make("checkpoint-refs-project"),
+          title: "Checkpoint refs",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}-message`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          messageId: MessageId.make(`${threadId}-message`),
+          text: "Open a checkpoint scope.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* outbox.cancelUnsettled({
+          threadId,
+          effectTypes: ["provider-turn.start"],
+          reason: "not under test",
+        });
+        const scope = (yield* orchestrator.getThreadProjection(threadId)).checkpointScopes[0]!;
+        const ref = yield* CheckpointService.checkpointRefForScopeOrdinal({
+          scopeId: scope.id,
+          ordinalWithinScope: 0,
+        });
+        yield* checkpointStore.captureCheckpoint({ cwd, checkpointRef: ref });
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          commandId: CommandId.make(`${threadId}-seed`),
+          events: [
+            {
+              id: EventId.make(`${threadId}-checkpoint-event`),
+              type: "checkpoint.captured",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: CheckpointId.make(`${threadId}-checkpoint`),
+                threadId,
+                scopeId: scope.id,
+                runId: null,
+                nodeId: scope.nodeId,
+                parentCheckpointId: null,
+                ordinalWithinScope: 0,
+                appRunOrdinal: null,
+                ref,
+                status: "ready",
+                files: [],
+                capturedAt: now,
+              },
+            },
+          ],
+        });
+        refs.set(threadId, ref);
+      }
+
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("checkpoint-refs-delete"),
+        threadId: deletedThreadId,
+      });
+      yield* worker.drain();
+
+      assert.isNotNull((yield* orchestrator.getThreadProjection(deletedThreadId)).thread.deletedAt);
+      const hasRef = (threadId: ThreadId) =>
+        checkpointStore.hasCheckpointRef({ cwd, checkpointRef: refs.get(threadId)! });
+      assert.isFalse(yield* hasRef(deletedThreadId), "deleted thread's checkpoint ref remains");
+      assert.isTrue(yield* hasRef(survivingThreadId));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerTest),
+          layerCheckpointStoreTest,
+          VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)),
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("projects a rollback that fails every attempt and clears it on the next one", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1341,7 +1468,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         rollbackThread.mock.calls[1]![0].providerThreadTurns.map((turn) => turn.id),
         [ProviderTurnId.make("non-git-resent-turn")],
       );
-    }).pipe(Effect.provide(Layer.merge(Layer.fresh(layerTest), NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.merge(layerCheckpointStoreTest, VcsProcess.layer).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect("rejects non-ready rollback targets before persisting events or effects", () =>
