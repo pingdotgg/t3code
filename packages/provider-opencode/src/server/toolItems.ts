@@ -1,6 +1,29 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  MAX_TOOL_OUTPUT_IMAGES,
+  readToolOutputImage,
+  type ToolOutputImage,
+} from "@t3tools/shared/toolOutput";
+
+export function openCodeToolOutput(
+  output: string | undefined,
+  files: ReadonlyArray<{ readonly uri: string; readonly mime: string }> = [],
+) {
+  const images: Array<ToolOutputImage & { type: "image" }> = [];
+  for (const file of files) {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(file.uri);
+    if (match?.[1]?.toLowerCase() !== file.mime.toLowerCase()) continue;
+    const image = readToolOutputImage({ type: "image", mimeType: file.mime, data: match?.[2] });
+    if (image === null) continue;
+    images.push({ type: "image", ...image });
+    if (images.length === MAX_TOOL_OUTPUT_IMAGES) break;
+  }
+  return images.length === 0
+    ? output
+    : { content: [...(output ? [{ type: "text", text: output }] : []), ...images] };
+}
 
 // Search results stay on the timeline wire, so keep their text a preview.
 const SEARCH_PREVIEW_MAX_CHARS = 8_000;
@@ -13,7 +36,7 @@ type ToolItemBase = Omit<
 function openCodeToolProjectionKind(
   toolName: string,
 ): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
-  if (resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
+  if (toolName.startsWith("mcp__") || resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
   const normalized = toolName.toLowerCase();
   if (normalized === "todowrite") {
     return "dynamic_tool";
@@ -46,6 +69,14 @@ function recordString(input: unknown, ...keys: ReadonlyArray<string>): string | 
   for (const key of keys) {
     const value = (input as Record<string, unknown>)[key];
     if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
+function recordText(input: Record<string, unknown>, ...keys: ReadonlyArray<string>) {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string") return value;
   }
   return undefined;
 }
@@ -98,6 +129,7 @@ export function openCodeToolTurnItem(
     readonly input: Record<string, unknown>;
     readonly output: string | undefined;
     readonly completedMetadata: unknown;
+    readonly files?: ReadonlyArray<{ readonly uri: string; readonly mime: string }> | undefined;
   },
 ): OrchestrationV2TurnItem {
   const { input, output } = tool;
@@ -113,8 +145,8 @@ export function openCodeToolTurnItem(
       };
     }
     case "file_change": {
-      const oldStr = recordString(input, "oldString", "oldText");
-      const newStr = recordString(input, "newString", "content", "newText");
+      const oldStr = recordText(input, "oldString", "oldText");
+      const newStr = recordText(input, "newString", "content", "newText");
       const diffStr =
         recordString(tool.completedMetadata, "diff", "patch") ??
         (base.status === "failed" && output?.trim() ? output : undefined);
@@ -178,7 +210,9 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(cleanedOutput === undefined ? {} : { output: cleanedOutput }),
+        ...(cleanedOutput === undefined && !tool.files?.length
+          ? {}
+          : { output: openCodeToolOutput(cleanedOutput, tool.files) }),
       };
     }
   }

@@ -386,3 +386,119 @@ it.effect(
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, TestClock.layer())),
     ),
 );
+
+it.effect.each([
+  {
+    name: "a Windows PowerShell login shell",
+    exitCode: 1,
+    stderr: "sh : The term 'sh' is not recognized as the name of a cmdlet\r\n",
+    shellEcho: "%OS%\r\nWindows_NT\r\n",
+    nodePlatform: null,
+    windows: true,
+  },
+  {
+    name: "a Windows cmd login shell",
+    exitCode: 1,
+    stderr: "'sh' is not recognized as an internal or external command,\r\n",
+    shellEcho: "Windows_NT $env:OS\r\n",
+    nodePlatform: null,
+    windows: true,
+  },
+  {
+    name: "a Windows cmd login shell returning 9009",
+    exitCode: 9009,
+    stderr: "'sh' is not recognized as an internal or external command,\r\n",
+    shellEcho: "Windows_NT $env:OS\r\n",
+    nodePlatform: null,
+    windows: true,
+  },
+  {
+    name: "a Windows Git Bash login shell without a spawnable npm",
+    exitCode: 1,
+    stderr: "npm is missing from the non-interactive SSH PATH\n",
+    shellEcho: "%OS% :OS\n",
+    nodePlatform: "win32",
+    windows: true,
+  },
+  {
+    name: "a Linux host without npm",
+    exitCode: 1,
+    stderr: "npm is missing from the non-interactive SSH PATH\n",
+    shellEcho: "%OS% :OS\n",
+    nodePlatform: "linux",
+    windows: false,
+  },
+  {
+    name: "a POSIX host without Node",
+    exitCode: 1,
+    stderr: "Node is missing from the non-interactive SSH PATH\n",
+    shellEcho: "%OS% :OS\n",
+    nodePlatform: null,
+    windows: false,
+  },
+  {
+    name: "a connection failure",
+    exitCode: 255,
+    stderr: "Connection refused\n",
+    shellEcho: "Windows_NT\n",
+    nodePlatform: "win32",
+    windows: false,
+  },
+])(
+  "probe failure on $name keeps the SSH cause",
+  ({ exitCode, stderr, shellEcho, nodePlatform, windows }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const shellChecks: string[] = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+          const remote = command.args.slice(command.args.indexOf("test.example") + 1).join(" ");
+          const shellCheck = remote === "echo %OS% $env:OS";
+          const platformCheck = remote === "node -p process.platform";
+          if (shellCheck || platformCheck) shellChecks.push(remote);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(123),
+            stdout: Stream.make(
+              new TextEncoder().encode(
+                shellCheck ? shellEcho : platformCheck ? `${nodePlatform ?? ""}\n` : "",
+              ),
+            ),
+            stderr: Stream.make(
+              new TextEncoder().encode(shellCheck || platformCheck ? "" : stderr),
+            ),
+            all: Stream.empty,
+            exitCode: Effect.succeed(
+              ChildProcessSpawner.ExitCode(
+                shellCheck ? 0 : platformCheck ? (nodePlatform === null ? 1 : 0) : exitCode,
+              ),
+            ),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        }),
+      );
+      const failure = yield* SshDeviceHost.probe({
+        kind: "ssh",
+        id: "test",
+        label: "Test",
+        target: "test.example",
+      }).pipe(
+        Effect.provide(ServerConfig.layerTest(home, home)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ _tag: "DeviceHostError", step: "probe" });
+      const sshFailure = { _tag: "SshCommandError", exitCode, stderr };
+      expect(failure.cause).toMatchObject(
+        windows ? { _tag: "SshWindowsHostError", cause: sshFailure } : sshFailure,
+      );
+      // A transport failure has no remote shell to ask.
+      if (exitCode === 255) expect(shellChecks).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
