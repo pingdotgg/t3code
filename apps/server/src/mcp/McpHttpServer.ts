@@ -44,6 +44,8 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
+import * as McpToolExposure from "./McpToolExposure.ts";
+import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -70,6 +72,8 @@ import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
+import * as ToolSearchHandlers from "./toolkits/toolSearch/handlers.ts";
+import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
@@ -1294,4 +1298,44 @@ export const layerTools = Layer.mergeAll(
   layerHtmlToolkit,
 );
 
-export const layer = layerMcpTransport(layerTools);
+const layerToolExposure = Layer.effect(
+  McpToolExposure.McpToolExposure,
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    return McpToolExposure.make(
+      () =>
+        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+      () => server.notifications["notifications/tools/list_changed"]({}),
+    );
+  }),
+);
+
+/**
+ * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
+ * the direct tools and what its `tool_search` calls loaded. Calls are never
+ * gated, and every other client lists everything but `tool_search`.
+ */
+const layerDeferredListing = McpServer.visibility(
+  Effect.gen(function* () {
+    const exposure = yield* McpToolExposure.McpToolExposure;
+    // Untraced: it runs once per tool on every list request.
+    return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
+      if (method !== "tools/list") return true;
+      const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
+      if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
+        return target !== McpToolExposure.TOOL_SEARCH;
+      }
+      return exposure.isListed(providerSessionId, target);
+    });
+  }),
+  { global: true },
+);
+
+/** Outside layerTools: the clients its budget measures never list `tool_search`. */
+export const layerToolSearch = Layer.mergeAll(
+  toolkitRegistration(ToolSearchToolkit, ToolSearchHandlers.layer),
+  layerDeferredListing,
+).pipe(Layer.provide(layerToolExposure));
+
+export const layer = layerMcpTransport(Layer.mergeAll(layerTools, layerToolSearch));

@@ -88,6 +88,8 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as DeviceHost from "../device/DeviceHost.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
@@ -368,8 +370,59 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
     ),
   ),
 );
+const bootedSimulatorReady: DeviceHost.DeviceHostAgentReady = {
+  nodePath: process.execPath,
+  hub: { origin: "http://device.test" },
+  agentDevice: null,
+  helpers: { serveSimAxSettings: null, serveSimCli: null },
+  run: () => Effect.die("Thread cleanup must not run host commands"),
+  releaseAgentSession: () => Effect.void,
+  devices: {
+    list: Effect.succeed({
+      devices: [
+        {
+          id: "phone",
+          name: "iPhone",
+          platform: "ios",
+          version: "26",
+          booted: true,
+          physical: false,
+        },
+      ],
+      detail: undefined,
+    }),
+    boot: () => Effect.die("The simulator is already booted"),
+    attach: () => Effect.void,
+    shutdown: () => Effect.die("Thread cleanup must keep the simulator booted"),
+    screenshot: () => Effect.die("unused screenshot"),
+  },
+};
+const bootedSimulatorHost = DeviceHost.DeviceHost.of({
+  id: "local",
+  label: "Local",
+  summary: Effect.succeed({
+    id: "local",
+    label: "Local",
+    kind: "local",
+    hubInstalled: true,
+    agentDeviceInstalled: true,
+    platforms: [{ platform: "ios", available: true }],
+  }),
+  platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+  ensureReady: () => Effect.succeed(bootedSimulatorReady),
+  ensureAgentReady: () => Effect.succeed(bootedSimulatorReady),
+  current: Effect.succeed(bootedSimulatorReady),
+  stopAgent: Effect.void,
+  stop: Effect.void,
+});
 const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
   Layer.provideMerge(layerScheduledTasksTest),
+  Layer.provideMerge(
+    Layer.effect(
+      DeviceService.DeviceService,
+      DeviceService.makeWithHosts(new Map([[bootedSimulatorHost.id, bootedSimulatorHost]])),
+    ),
+  ),
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
@@ -542,6 +595,61 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           (yield* tasks.list()).tasks.map((task) => task.id),
           remainingIds,
         );
+      }),
+  );
+
+  it.effect.each(["archive", "thread delete", "project delete"] as const)(
+    "%s releases the thread's devices and keeps them booted",
+    (lifecycle) =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectService.ProjectService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const devices = yield* DeviceService.DeviceService;
+        yield* devices.configure({ enabled: true, agentAccessEnabled: true });
+        const projectId = ProjectId.make(`device-cleanup-project:${lifecycle}`);
+        const threadId = ThreadId.make(`device-cleanup-thread:${lifecycle}`);
+        const otherThreadId = ThreadId.make(`device-surviving-thread:${lifecycle}`);
+        yield* projects.create({
+          commandId: CommandId.make(`device-cleanup-create-project:${lifecycle}`),
+          projectId,
+          title: "Device cleanup",
+          workspaceRoot: `/work/device-cleanup/${lifecycle}`,
+        });
+        for (const id of [threadId, otherThreadId]) {
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`device-cleanup-create:${id}`),
+            createdBy: "user",
+            creationSource: "web",
+            threadId: id,
+            projectId: id === threadId ? projectId : ProjectId.make("device-cleanup-other-project"),
+            title: "Device user",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* devices.open({ threadId: id, deviceId: "phone", platform: "ios" });
+        }
+        const otherSessions = yield* devices.sessionsForThread(otherThreadId);
+
+        const commandId = CommandId.make(`device-cleanup:${lifecycle}`);
+        if (lifecycle === "project delete") {
+          yield* projects.delete({ commandId, projectId, force: true });
+        } else {
+          yield* orchestrator.dispatch({
+            type: lifecycle === "archive" ? "thread.archive" : "thread.delete",
+            commandId,
+            threadId,
+          });
+        }
+        yield* worker.drain();
+
+        assert.deepEqual(yield* devices.sessionsForThread(threadId), []);
+        assert.deepEqual(yield* devices.sessionsForThread(otherThreadId), otherSessions);
+        assert.isTrue((yield* devices.state).devices[0]?.booted);
       }),
   );
 
@@ -891,6 +999,7 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
           repositoryIdentityResolved: false,
         }),
       invalidate: () => Effect.void,
+      refreshRepositoryIdentity: () => Effect.void,
       subscribeChanges: Effect.never,
     }),
   ),
@@ -1520,6 +1629,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             providerThreadId: providerThread.id,
             providerTurnId: providerTurn.id,
             messageId: steerMessageId,
+            modelSelection: run.modelSelection,
+            steerFollowUpAfterRunOrdinal: run.ordinal,
           },
         ],
       );
@@ -3661,6 +3772,75 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
         yield* worker.drain();
       }),
+  );
+
+  it.effect("ends a watch on a closed pull request whose activity cannot be read", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-closed-unreadable");
+      const projectId = ProjectId.make("pr-watch-closed-unreadable-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch closed unreadable",
+        workspaceRoot: "/workspace/watch-closed-unreadable",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-closed-unreadable-create"),
+        threadId,
+        projectId,
+        title: "Watch closed unreadable",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-closed-unreadable-start"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 8,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
+      });
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              watchFingerprint: () => Effect.succeed(null),
+              detail: () =>
+                Effect.succeed({
+                  ...watchedPullRequestDetail({
+                    projectId,
+                    number: 8,
+                    at: "2026-10-02T12:00:00.000Z",
+                  }),
+                  state: "closed" as const,
+                }),
+              activity: () => Effect.die("host unreachable"),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+
+      const thread = yield* orchestrator.getThreadShell(threadId);
+      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.deepEqual(
+        messages.flatMap((message) => message.notification?.summary ?? []),
+        ["#8: closed, stopped watching"],
+      );
+    }),
   );
 
   it.effect("wakes once for a state it reported, across a restart and a new watch", () =>
