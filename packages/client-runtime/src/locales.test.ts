@@ -11,6 +11,7 @@ describe("resolveLocale", () => {
     [["zh-Hant"], "zh-TW"],
     [["zh-HK"], "zh-TW"],
     [["zh_TW"], "zh-TW"],
+    [["zh-TW", "zh"], "zh-TW"],
     [["zh-CN"], "zh"],
     [["zh-Hans-CN"], "zh"],
     [["zh"], "zh"],
