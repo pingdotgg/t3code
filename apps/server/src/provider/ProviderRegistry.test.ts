@@ -3566,6 +3566,33 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect.each([
+      {
+        name: "first nonempty line, without ANSI or repeated whitespace",
+        stderr:
+          "\n \t\r\n\u001b[31m  Error: claude\t native binary not installed. \u001b[0m\nRun claude install.\n",
+        detail: " Error: claude native binary not installed.",
+      },
+      {
+        name: "oversized line capped at 512 characters",
+        stderr: `Error: ${"x".repeat(10_000)}\nsecond line`,
+        detail: ` Error: ${"x".repeat(504)}…`,
+      },
+      { name: "blank stderr", stderr: " \t\n\u001b[0m ", detail: "" },
+    ])("adds the version probe's stderr to the failure message: $name", ({ stderr, detail }) =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities(),
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(
+          status.message,
+          `Claude Agent CLI is installed but failed to run.${detail}`,
+        );
+      }).pipe(Effect.provide(layerMockSpawner(() => ({ stdout: "", stderr, code: 1 })))),
+    );
+
     it.effect("adds models Claude Code reports that the catalog does not know", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
