@@ -666,10 +666,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // The newer request wins: a chapter outranks the citation it found open, and a citation
   // activated after the chapter outranks it.
   const chapterTarget = revealedChapter?.threadKey === routeThreadKey ? revealedChapter : null;
-  const revealedMessageId =
-    citationRequest && citationRequest.key !== chapterTarget?.citationKey
-      ? citationRequest.citation.messageId
-      : (chapterTarget?.messageId ?? null);
+  const citationOutranksChapter =
+    citationRequest !== null && citationRequest.key !== chapterTarget?.citationKey;
+  const revealedMessageId = citationOutranksChapter
+    ? citationRequest.citation.messageId
+    : (chapterTarget?.messageId ?? null);
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -1359,6 +1360,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   if (
     chapterReveal &&
     chapterReveal.threadKey === routeThreadKey &&
+    !citationOutranksChapter &&
     chapterFoldExpandedFor !== chapterReveal.nonce
   ) {
     const chapterEntry = timelineEntries.find(
@@ -1400,6 +1402,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ) {
       return;
     }
+    // A citation activated after this chapter owns the viewport now, so the chapter must not
+    // scroll there once its history loads.
+    if (citationOutranksChapter) {
+      clearChapterReveal(chapterReveal.nonce);
+      return;
+    }
     const rowIndex = rows.findIndex(
       (row) => row.kind === "message" && row.message.id === chapterReveal.messageId,
     );
@@ -1439,6 +1447,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     clearChapterReveal(chapterReveal.nonce);
   }, [
     chapterReveal,
+    citationOutranksChapter,
     clearChapterReveal,
     historyControls,
     listRef,

@@ -103,9 +103,15 @@ export function watchChatShellRun(
     // A shell that exited without printing the end marker is finished too, so the block stops at "Running…".
     const ended =
       session.status === "exited" || (session.status === "closed" && session.version > 0);
-    if (parsed.exitCode === null && !ended && session.error === null) return;
-    const failed = parsed.exitCode === null && session.error !== null;
-    finish(failed ? { ...parsed, error: String(session.error) } : parsed, session);
+    // Only the server's summary says the shell itself failed. `session.error` alone can be a
+    // failed attach query, which clears on the next output or snapshot while the command runs on.
+    const shellFailed = session.summary?.status === "error";
+    if (parsed.exitCode === null && !ended && !shellFailed) return;
+    const failed = parsed.exitCode === null && shellFailed;
+    finish(
+      failed ? { ...parsed, error: session.error ?? "The terminal failed to start." } : parsed,
+      session,
+    );
   });
   launchFailureHandlers.set(run.id, (error) =>
     finish({ text: "", exitCode: null, error }, EMPTY_TERMINAL_SESSION_STATE),
