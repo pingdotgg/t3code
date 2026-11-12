@@ -885,14 +885,28 @@
   min-height: 0;
   overflow: hidden;
 }
+/* One fixed column of equal tiles: New on top, the agents scroll, Scheduled stays at the bottom. */
 .agents-filters {
   display: flex;
   flex-direction: column;
-  width: var(--agents-profiles-width, 240px);
+  gap: 4px;
+  width: var(--agents-rail-width, 88px);
   flex-shrink: 0;
-  overflow-y: auto;
+  min-height: 0;
   border-right: 1px solid var(--border);
-  padding: 12px 8px;
+  padding: 8px;
+}
+.agents-rail-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -8px;
+  padding: 4px 8px;
+  border-block: 1px solid var(--border);
+  scrollbar-width: none;
 }
 
 .agents-threads h2 {
@@ -1065,42 +1079,11 @@
 .agent-thread-container[data-current="true"] {
   border-color: var(--ring);
 }
-.agent-mobile-filters {
-  display: none;
-}
-/* Narrow windows fold the agent filters behind the Agents button; the chat
-   list stays beside the chat so a selected chat always keeps a sidebar. */
-@media (max-width: 1023px) {
-  /* The folded filters take the chat list's slot and width. */
-  .agents-filters {
-    display: none;
-    width: var(--agents-threads-width, 360px);
-  }
-  .agents-pane-resize[data-pane="profiles"] {
-    display: none;
-  }
-  .agent-mobile-filters {
-    display: inline-flex;
-  }
-  .agents-threads > header {
-    flex-wrap: wrap;
-  }
-  .agents-threads-heading {
-    order: -1;
-    flex-basis: 100%;
-  }
-  .agents-page[data-show-filters="true"] .agents-filters {
-    display: flex;
-  }
-  .agents-page[data-show-filters="true"] .agents-threads {
-    display: none;
-  }
-}
-/* Phone widths: one pane at a time. */
+/* Phone widths: the rail and chat list, or the selected chat on its own. */
 @media (max-width: 767px) {
-  .agents-filters,
   .agents-threads {
-    width: 100%;
+    flex: 1;
+    width: auto;
     border-right: 0;
   }
   .agents-chat-pane,
@@ -1154,19 +1137,6 @@
 .agent-gateway button:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.agents-filters > * {
-  flex-shrink: 0;
-}
-/* Pinned under the agent list: pushed down when the list is short, stuck to the bottom when it scrolls. */
-.agents-filters-footer {
-  position: sticky;
-  bottom: -12px;
-  margin: auto -8px -12px;
-  padding: 8px;
-  border-top: 1px solid var(--border);
-  background: var(--background);
 }
 
 .agent-checkbox-row {

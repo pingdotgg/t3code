@@ -580,11 +580,10 @@ Agent names ignore case, so "Doug" and "doug" cannot coexist. When synchronizing
 agents with the same name together, the one created later is renamed with a number, such as
 "Doug (2)".
 
-Add a short **Specialization** under **Advanced** to show what an agent does on its details card and in MCP. This description does not replace its instructions.
+Add a short **Specialization** to show what an agent does on its details card and in MCP. This description does not replace its instructions.
 
 Hover or keyboard-focus an agent in the left rail, or tap it on a touch screen, to see its details
-and to edit, schedule, reorder, or delete it. Turn on **Group by role** beside the **Agents**
-heading to list agents under their roles; an agent with several roles appears under each.
+and to edit, schedule, reorder, or delete it. Its roles are listed on the same card.
 
 MCP assistants can discover agents with read access using `t3_list_agents`, or manage them using `t3_create_agent`, `t3_update_agent`, and `t3_delete_agent` with create
 or admin access. Agent writes share only to connected environments with one of those grants;

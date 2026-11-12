@@ -105,43 +105,6 @@ export function agentTagOptions(tags: ReadonlyArray<string>): string[] {
   return [...AGENT_ROLE_SUGGESTIONS, ...tags.filter((tag) => !suggested.has(tagKey(tag)))];
 }
 
-export interface AgentRoleGroup<T> {
-  /** Null for agents without a tag. */
-  readonly tag: string | null;
-  readonly label: string;
-  readonly profiles: readonly T[];
-}
-
-/**
- * Agents under each of their tags, in the given order. An agent with two tags
- * appears under both; untagged agents land in a trailing "Other" group.
- * Suggested roles come first in their canonical order, then custom tags A–Z.
- */
-export function groupAgentsByRole<T extends Pick<McpGatewayProfile, "tags">>(
-  profiles: ReadonlyArray<T>,
-): AgentRoleGroup<T>[] {
-  const groups = new Map<string, { label: string; profiles: T[] }>();
-  const other: T[] = [];
-  for (const profile of profiles) {
-    const tags = normalizeAgentTags(profile.tags ?? []);
-    if (tags.length === 0) other.push(profile);
-    for (const tag of tags) {
-      const key = tagKey(tag);
-      const group = groups.get(key);
-      if (group) group.profiles.push(profile);
-      else groups.set(key, { label: tag, profiles: [profile] });
-    }
-  }
-  const rank = (key: string) => {
-    const index = AGENT_ROLE_SUGGESTIONS.findIndex((role) => tagKey(role) === key);
-    return index < 0 ? AGENT_ROLE_SUGGESTIONS.length : index;
-  };
-  const ordered: AgentRoleGroup<T>[] = [...groups]
-    .sort(([a, left], [b, right]) => rank(a) - rank(b) || left.label.localeCompare(right.label))
-    .map(([, group]) => ({ tag: group.label, label: group.label, profiles: group.profiles }));
-  return other.length > 0 ? [...ordered, { tag: null, label: "Other", profiles: other }] : ordered;
-}
-
 /** Keeps the previous list when a config push leaves every agent as it was, so readers don't re-render. */
 function shareAgentProfiles(
   previous: ReadonlyArray<McpGatewayProfile> | undefined,

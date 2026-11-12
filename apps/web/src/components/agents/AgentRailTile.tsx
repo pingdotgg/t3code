@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDownIcon, ArrowUpIcon, Trash2Icon } from "lucide-react";
 import type { McpGatewayProfile } from "@t3tools/contracts";
 import { normalizeAgentTags } from "@t3tools/client-runtime/state/agentIdentity";
@@ -8,13 +8,37 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentIcon } from "./AgentIcon";
 
-/** One row of the agent rail: All, each agent, and Scheduled tasks share it so they line up. */
-export const agentRailRowClass =
-  "flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-accent/60 aria-[current]:bg-accent aria-[current]:font-medium";
-export const agentRailCountClass = "ms-auto shrink-0 text-xs tabular-nums text-muted-foreground";
-/** Holds a 16px glyph in the 20px slot the agent icons use. */
-export const agentRailGlyphClass =
-  "flex size-5 shrink-0 items-center justify-center text-muted-foreground [&_svg]:size-4";
+/** Every rail tile (New, All, each agent, Scheduled) is this exact size, so the column lines up. */
+export const agentRailTileClass =
+  "relative flex h-16 w-full shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 data-popup-open:bg-accent/60 aria-[current]:bg-accent";
+
+/** A tile's body: a 28px icon slot, a one-line label, and the count pinned top-right. */
+export function AgentRailTileBody({
+  icon,
+  label,
+  count,
+}: {
+  icon: ReactNode;
+  label: string;
+  count: number;
+}) {
+  return (
+    <>
+      <span className="flex size-7 shrink-0 items-center justify-center" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="w-full truncate text-center text-xs leading-4">{label}</span>
+      {count > 0 && (
+        <span
+          className="absolute top-1 right-1.5 text-2xs leading-4 tabular-nums text-muted-foreground"
+          aria-hidden="true"
+        >
+          {count}
+        </span>
+      )}
+    </>
+  );
+}
 
 export interface AgentRailTileActions {
   readonly editDisabled: boolean;
@@ -41,7 +65,7 @@ function machineSummary(ids: readonly string[], labels: ReadonlyMap<string, stri
 
 /**
  * One agent in the rail: icon, name, active count. Click or Enter filters; the details card
- * opens on hover, on tap, and on ArrowDown, which focuses its actions. Tab moves row to row.
+ * opens on hover, on tap, and on ArrowDown, which focuses its actions. Tab moves tile to tile.
  */
 export function AgentRailTile({
   profile,
@@ -90,7 +114,7 @@ export function AgentRailTile({
         render={
           <button
             type="button"
-            className={agentRailRowClass}
+            className={agentRailTileClass}
             aria-current={selected ? "true" : undefined}
             aria-keyshortcuts="ArrowDown"
             aria-label={`${profile.name}${activeCount ? `, ${activeCount} active` : ""}`}
@@ -108,19 +132,17 @@ export function AgentRailTile({
           setOpen(true);
         }}
         onClick={(event) => {
-          // The row filters; the card opens on hover or ArrowDown, and on touch the tap opens it instead.
+          // The tile filters; the card opens on hover or ArrowDown, and on touch the tap opens it instead.
           (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
           if (lastPointer.current === "touch") setOpen((current) => !current);
           else onSelect();
         }}
       >
-        <AgentIcon icon={profile.icon} iconId={profile.iconId} size="sm" />
-        <span className="min-w-0 flex-1 truncate">{profile.name}</span>
-        {activeCount > 0 && (
-          <span className={agentRailCountClass} aria-hidden="true">
-            {activeCount}
-          </span>
-        )}
+        <AgentRailTileBody
+          icon={<AgentIcon icon={profile.icon} iconId={profile.iconId} />}
+          label={profile.name}
+          count={activeCount}
+        />
       </PopoverTrigger>
       <PopoverPopup
         side="right"
