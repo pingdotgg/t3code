@@ -133,9 +133,8 @@ function Row({
       "group/banner-row grid min-h-4 w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-2 text-start",
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-xl [&:is(button)]:hover:bg-foreground/5 [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
-      // The icon hangs in the row's start padding, so actions that wrap start under the title.
-      layout === "wrap-actions" &&
-        "flex flex-wrap ps-(--composer-banner-text-inset) [--composer-banner-text-inset:calc(var(--composer-banner-icon-column)+--spacing(2))] *:data-[slot=composer-banner-content]:max-w-full *:data-[slot=composer-banner-content]:grow-999 *:data-[slot=composer-banner-icon]:-ms-(--composer-banner-text-inset)",
+      // Buttons wrap below the title, so the icon and the end controls hold the first line.
+      layout === "wrap-actions" && "items-start",
       layout === "approval" && "items-start gap-x-2 gap-y-3",
       className,
     ),
@@ -157,6 +156,7 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
       className={cn(
         "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-(--surface-tint) [&>svg]:size-3",
         "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning-foreground group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-[13px]",
+        "group-data-[composer-banner-layout=wrap-actions]/banner-row:h-7 sm:group-data-[composer-banner-layout=wrap-actions]/banner-row:h-6",
         className,
       )}
       {...props}
@@ -190,8 +190,6 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
       className={cn(
         "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1.5",
         "group-data-[composer-banner-layout=approval]/banner-row:self-center @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-start-2 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:col-end-4 @max-[560px]:group-data-[composer-banner-layout=approval]/banner-row:row-start-2",
-        // Beside the title this is as wide as its buttons; wrapped, it fills the line.
-        "group-data-[composer-banner-layout=wrap-actions]/banner-row:grow group-data-[composer-banner-layout=wrap-actions]/banner-row:justify-start",
         className,
       )}
       {...props}

@@ -103,11 +103,13 @@ export function NoticeText({
   className,
   detailsLabel,
   details,
+  detailsHeading,
 }: {
   readonly children: ReactNode;
   readonly className: string;
   readonly detailsLabel: string;
   readonly details?: ReactNode;
+  readonly detailsHeading?: ReactNode;
 }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
@@ -194,7 +196,10 @@ export function NoticeText({
             side="top"
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
           >
-            <ComposerBanner.Scroll>{details ?? children}</ComposerBanner.Scroll>
+            <ComposerBanner.Scroll>
+              {detailsHeading}
+              {details ?? children}
+            </ComposerBanner.Scroll>
           </PopoverPopup>
         </Popover>
       ) : null}
@@ -222,44 +227,49 @@ function NoticeCard({
     >
       <ComposerBanner.Row layout="wrap-actions">
         <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <ComposerBanner.Content className="whitespace-nowrap">
-          <NoticeText
-            detailsLabel={
-              typeof item.title === "string"
-                ? `Show full title: ${item.title}`
-                : "Show title details"
-            }
-            className="min-w-0 truncate text-foreground"
-          >
-            {item.title}
-          </NoticeText>
-          {item.description ? (
-            <NoticeText
-              detailsLabel={
-                typeof item.title === "string"
-                  ? `Show details: ${item.title}`
-                  : "Show notice details"
-              }
-              details={item.descriptionDetails}
-              className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[400px]:sr-only"
-            >
-              {item.description}
-            </NoticeText>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+          <ComposerBanner.Content className="min-h-7 max-w-full grow-999 whitespace-nowrap sm:min-h-6">
+            {item.description ? (
+              <>
+                <span className="min-w-0 truncate text-foreground">{item.title}</span>
+                <NoticeText
+                  detailsLabel={
+                    typeof item.title === "string"
+                      ? `Show details: ${item.title}`
+                      : "Show notice details"
+                  }
+                  details={item.descriptionDetails}
+                  detailsHeading={<span className="block text-foreground">{item.title}</span>}
+                  className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[400px]:sr-only"
+                >
+                  {item.description}
+                </NoticeText>
+              </>
+            ) : (
+              <NoticeText
+                detailsLabel={
+                  typeof item.title === "string"
+                    ? `Show full title: ${item.title}`
+                    : "Show title details"
+                }
+                className="min-w-0 truncate text-foreground"
+              >
+                {item.title}
+              </NoticeText>
+            )}
+          </ComposerBanner.Content>
+          {item.actions ? (
+            <span className="flex flex-wrap items-center gap-1.5">{item.actions}</span>
           ) : null}
-        </ComposerBanner.Content>
-        {item.actions || item.onDismiss || overflow ? (
-          <ComposerBanner.Actions className="min-w-14 sm:min-w-12">
-            {item.actions}
-            {overflow || item.onDismiss ? (
-              <span className="ms-auto flex items-center gap-1.5">
-                {overflow}
-                {item.onDismiss ? (
-                  <ComposerBanner.Dismiss
-                    aria-label={item.dismissLabel ?? "Dismiss warning"}
-                    onClick={item.onDismiss}
-                  />
-                ) : null}
-              </span>
+        </span>
+        {overflow || item.onDismiss ? (
+          <ComposerBanner.Actions>
+            {overflow}
+            {item.onDismiss ? (
+              <ComposerBanner.Dismiss
+                aria-label={item.dismissLabel ?? "Dismiss warning"}
+                onClick={item.onDismiss}
+              />
             ) : null}
           </ComposerBanner.Actions>
         ) : null}
