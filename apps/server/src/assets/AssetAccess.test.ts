@@ -1357,66 +1357,64 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect(
-    "reuses committed attachment URLs within a window for opted-in clients, never pending ones",
-    () =>
-      Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const committedId = "thread-1-00000000-0000-4000-8000-000000000003-pdf";
-        const pendingId = "pending-00000000-0000-4000-8000-000000000004-pdf";
-        yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
-        for (const id of [committedId, pendingId]) {
-          yield* fileSystem.writeFile(
-            path.join(config.attachmentsDir, `${id}.pdf`),
-            new Uint8Array([1]),
-          );
-        }
-        const issue = (
-          attachmentId: string,
-          disposition: "inline" | "attachment" = "inline",
-          reuseUrl = true,
-        ) =>
-          issueAssetUrl({
-            resource: {
-              _tag: "attachment",
-              attachmentId,
-              disposition,
-              ...(reuseUrl ? { reuseUrl: true as const } : {}),
-            },
-          });
-        const resolve = (relativeUrl: string) => {
-          const [token, fileName] = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/");
-          return resolveAsset(token!, fileName!);
-        };
-        const bucketMs = 5 * 60 * 1000;
-        yield* TestClock.setTime(bucketMs + 1);
-        const first = yield* issue(committedId);
-        const olderClient = yield* issue(committedId, "inline", false);
-        const pendingFirst = yield* issue(pendingId);
-        yield* TestClock.adjust("3 minutes");
-        const second = yield* issue(committedId);
-        const pendingSecond = yield* issue(pendingId);
-        const download = yield* issue(committedId, "attachment");
+  it.effect("shares committed attachment URLs with opted-in clients, never pending ones", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const committedId = "thread-1-00000000-0000-4000-8000-000000000003-pdf";
+      const pendingId = "pending-00000000-0000-4000-8000-000000000004-pdf";
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      for (const id of [committedId, pendingId]) {
+        yield* fileSystem.writeFile(
+          path.join(config.attachmentsDir, `${id}.pdf`),
+          new Uint8Array([1]),
+        );
+      }
+      const issue = (
+        attachmentId: string,
+        disposition: "inline" | "attachment" = "inline",
+        reuseUrl = true,
+      ) =>
+        issueAssetUrl({
+          resource: {
+            _tag: "attachment",
+            attachmentId,
+            disposition,
+            ...(reuseUrl ? { reuseUrl: true as const } : {}),
+          },
+        });
+      const resolve = (relativeUrl: string) => {
+        const [token, fileName] = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/");
+        return resolveAsset(token!, fileName!);
+      };
+      const bucketMs = 5 * 60 * 1000;
+      yield* TestClock.setTime(bucketMs + 1);
+      const first = yield* issue(committedId);
+      const olderClient = yield* issue(committedId, "inline", false);
+      const pendingFirst = yield* issue(pendingId);
+      yield* TestClock.adjust("3 minutes");
+      const second = yield* issue(committedId);
+      const pendingSecond = yield* issue(pendingId);
+      const download = yield* issue(committedId, "attachment");
 
-        expect(second.relativeUrl).toBe(first.relativeUrl);
-        expect(olderClient.relativeUrl).not.toBe(first.relativeUrl);
-        expect(first.expiresAt).toBe(13 * bucketMs);
-        expect(download.relativeUrl).not.toBe(first.relativeUrl);
-        expect(pendingSecond.relativeUrl).not.toBe(pendingFirst.relativeUrl);
-        // Browser freshness ends when the shared URL's token does.
-        expect(yield* resolve(second.relativeUrl)).toMatchObject({ maxAgeSeconds: 3419 });
+      expect(second.relativeUrl).toBe(first.relativeUrl);
+      expect(olderClient.relativeUrl).not.toBe(first.relativeUrl);
+      expect(first.expiresAt).toBe(13 * bucketMs);
+      expect(download.relativeUrl).not.toBe(first.relativeUrl);
+      expect(pendingSecond.relativeUrl).not.toBe(pendingFirst.relativeUrl);
+      // Browser freshness ends when the shared URL's token does.
+      expect(yield* resolve(second.relativeUrl)).toMatchObject({ maxAgeSeconds: 3419 });
 
-        yield* TestClock.adjust("2 minutes");
-        expect((yield* issue(committedId)).relativeUrl).not.toBe(first.relativeUrl);
-        yield* TestClock.setTime(first.expiresAt);
-        expect(yield* resolve(first.relativeUrl)).toBeNull();
+      yield* TestClock.adjust("2 minutes");
+      expect((yield* issue(committedId)).relativeUrl).not.toBe(first.relativeUrl);
+      yield* TestClock.setTime(first.expiresAt);
+      expect(yield* resolve(first.relativeUrl)).toBeNull();
 
-        yield* fileSystem.remove(path.join(config.attachmentsDir, `${committedId}.pdf`));
-        const missing = yield* Effect.flip(issue(committedId));
-        expect(missing._tag).toBe("AssetAttachmentNotFoundError");
-      }).pipe(Effect.provide(layerTest)),
+      yield* fileSystem.remove(path.join(config.attachmentsDir, `${committedId}.pdf`));
+      const missing = yield* Effect.flip(issue(committedId));
+      expect(missing._tag).toBe("AssetAttachmentNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
   );
   it.effect("issues project favicon capabilities with a signed fallback", () =>
     Effect.gen(function* () {
