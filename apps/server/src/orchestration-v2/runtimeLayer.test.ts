@@ -9112,7 +9112,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-create"),
         threadId,
         projectId,
-        title: "Snoozed thread",
+        title: "New thread",
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",

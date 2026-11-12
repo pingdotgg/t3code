@@ -283,6 +283,66 @@ describe("formatThreadTitleContext", () => {
 });
 
 describe("ThreadTitleRegenerationService", () => {
+  it.effect("refines a title set before the first message instead of replacing it", () =>
+    Effect.gen(function* () {
+      const issueTitle = "[API] #4821 — retry webhook deliveries after a timeout";
+      const harness = makeHarness({ generateTitle: () => Effect.succeed({ title: issueTitle }) });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        // An MCP launch names the thread and sends no message.
+        const threadId = ThreadId.make("thread:title:preset");
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("command:title:preset:create"),
+          threadId,
+          projectId,
+          title: issueTitle,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const requestId = CommandId.make("command:title:preset:message");
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: requestId,
+          threadId,
+          messageId: MessageId.make("command:title:preset:message:message"),
+          text: "work on this and pr to dev",
+          titleSeed: "work on this and pr to dev",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+
+        const armed = yield* threads.getThreadProjection(threadId);
+        assert.equal(armed.thread.title, issueTitle);
+        assert.equal(armed.thread.titleRegeneration?.requestId, requestId);
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(requestId))
+            .map((effect) => effect.request)
+            .filter((request) => request.type === "thread-title.generate"),
+          [{ type: "thread-title.generate", kind: { type: "regenerate" } }],
+        );
+
+        yield* service.execute({ threadId, requestId, kind: { type: "regenerate" } });
+        const call = harness.generateThreadTitle.mock.calls[0]?.[0];
+        assert.equal(call?.previousTitle, issueTitle);
+        assert.include(call?.message, "work on this and pr to dev");
+        const settled = yield* threads.getThreadProjection(threadId);
+        assert.equal(settled.thread.title, issueTitle);
+        assert.isNull(settled.thread.titleRegeneration);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect(
     "titles an image-only first message without sending bootstrap text to the title model",
     () =>

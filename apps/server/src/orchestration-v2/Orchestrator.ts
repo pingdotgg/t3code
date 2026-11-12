@@ -701,6 +701,23 @@ function pendingThreadTitleGenerationEffect(
   };
 }
 
+// Clients seed a new thread with its first message, and empty threads start as "New thread".
+// Any other title on a thread without messages was chosen on purpose. Forks and side chats are
+// titled from their source history instead.
+function hasTitleSetBeforeFirstMessage(
+  thread: OrchestrationV2AppThread,
+  titleSeed: string | undefined,
+): boolean {
+  const title = thread.title.trim();
+  return (
+    thread.forkedFrom === null &&
+    thread.lineage.sideChat !== true &&
+    title.length > 0 &&
+    title !== "New thread" &&
+    title !== titleSeed?.trim()
+  );
+}
+
 function delegatedTasksStopEffect(command: {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
@@ -6424,18 +6441,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const userMessages = projection.messages.filter((message) => message.role === "user");
     const onlyMaintenanceHistory =
       userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
+    const seedsEmptyThread =
+      command.titleSeed !== undefined &&
+      (yield* projectionStore.getMessageCount(command.threadId).pipe(mapDispatchError(command))) ===
+        0;
     if (
       !isNativeMaintenanceCommand(command) &&
-      ((command.titleSeed !== undefined &&
-        (yield* projectionStore
-          .getMessageCount(command.threadId)
-          .pipe(mapDispatchError(command))) === 0) ||
-        (command.createdBy === "user" && onlyMaintenanceHistory))
+      (seedsEmptyThread || (command.createdBy === "user" && onlyMaintenanceHistory))
     ) {
+      // A thread named before its first message (for example by an MCP launch that tracks an
+      // issue) keeps that name, and the title model refines it from the first message instead of
+      // replacing it with a guess from a terse prompt such as "work on this".
+      const keepsTitle =
+        seedsEmptyThread && hasTitleSetBeforeFirstMessage(projection.thread, command.titleSeed);
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
-        title: command.titleSeed ?? projection.thread.title,
+        title: keepsTitle
+          ? projection.thread.title
+          : (command.titleSeed ?? projection.thread.title),
         titleRegeneration: { requestId: command.commandId, startedAt: now },
         updatedAt: now,
       };
@@ -6451,10 +6475,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,
-        pendingThreadTitleGenerationEffect(command.commandId, command.threadId, {
-          type: "initial",
-          messageId: command.messageId,
-        }),
+        pendingThreadTitleGenerationEffect(
+          command.commandId,
+          command.threadId,
+          keepsTitle ? { type: "regenerate" } : { type: "initial", messageId: command.messageId },
+        ),
       ]);
       projection = applyToProjection(projection, event);
     }
