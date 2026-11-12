@@ -18303,11 +18303,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("records explicit effort, else the effort a subagent's transcript reports", () =>
-    Effect.scoped(
+  it.effect("records explicit effort, else the effort a subagent's transcript reports", () => {
+    const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
+    const firstRead = Deferred.makeUnsafe<void>();
+    return Effect.scoped(
       Effect.gen(function* () {
         const OUTER_TOOL_USE_ID = "toolu-effort-outer";
-        const UNSPECIFIED_TOOL_USE_ID = "toolu-effort-nested-unspecified";
         const OVERRIDING_TOOL_USE_ID = "toolu-effort-nested-overriding";
         const fileSystem = yield* FileSystem.FileSystem;
         const configDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -18321,9 +18322,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "subagents",
         );
         yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+        const transcriptPath = NodePath.join(
+          subagentsDir,
+          `agent-task-${UNSPECIFIED_TOOL_USE_ID}.jsonl`,
+        );
         yield* fileSystem.writeFileString(
-          NodePath.join(subagentsDir, `agent-task-${UNSPECIFIED_TOOL_USE_ID}.jsonl`),
-          `${"x".repeat(512 * 1024 + 1)}\n{"type":"assistant","effort":"low","uuid":"effort-line-1","message":{"role":"assistant","id":"msg_effort_child","content":[{"type":"text","text":"OK"}]}}\n`,
+          transcriptPath,
+          `{"type":"user","uuid":"effort-line-0","message":{"role":"user","content":"Check one thing."}}\n`,
         );
         const harness = yield* makeWakeHarnessWithOptions({
           environment: { CLAUDE_CONFIG_DIR: configDir },
@@ -18424,6 +18429,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* Queue.offer(harness.sdkMessages, frame);
         }
         yield* Queue.take(harness.terminalReceipts);
+        // The settled subagent's reply lands after the first lookup, beyond one read's cap.
+        yield* Deferred.await(firstRead);
+        NodeFS.appendFileSync(
+          transcriptPath,
+          `${"x".repeat(512 * 1024 + 1)}\n{"type":"assistant","effort":"low","uuid":"effort-line-1","message":{"role":"assistant","id":"msg_effort_child","content":[{"type":"text","text":"OK"}]}}\n`,
+        );
+        yield* TestClock.adjust(500);
         yield* harness.until(() =>
           harness.events.some(
             (event) =>
@@ -18458,6 +18470,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(childEfforts, ["low", undefined, "max"]);
       }).pipe(
+        Effect.provideService(WorkflowAgentTranscriptReadObserver, (read) =>
+          read.agentId === `task-${UNSPECIFIED_TOOL_USE_ID}`
+            ? Deferred.succeed(firstRead, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
         Effect.provide(
           Layer.mergeAll(
             IdAllocator.layer,
@@ -18467,8 +18484,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
-    ),
-  );
+    );
+  });
 
   it.effect.each([
     {

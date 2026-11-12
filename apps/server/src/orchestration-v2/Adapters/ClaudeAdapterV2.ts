@@ -7311,19 +7311,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.nativeThreadId,
             "subagents",
           );
-          let cursor = initialWorkflowAgentTranscriptCursor;
           let effort: string | undefined;
-          while (effort === undefined) {
-            const read = yield* readWorkflowAgentTranscript({
-              transcriptDir,
-              agentId: taskId,
-              cursor,
-              ...(configDir === undefined ? {} : { configDir }),
-            }).pipe(Effect.option);
-            if (Option.isNone(read)) return;
-            effort = mergeWorkflowAgentMetadata(read.value.lines).effort;
-            if (!read.value.truncated || read.value.cursor.offset === cursor.offset) break;
-            cursor = read.value.cursor;
+          // A subagent can settle before its transcript flush lands, so look once more after it.
+          for (let attempt = 0; effort === undefined && attempt < 2; attempt++) {
+            if (attempt > 0) yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+            let cursor = initialWorkflowAgentTranscriptCursor;
+            while (effort === undefined) {
+              const read = yield* readWorkflowAgentTranscript({
+                transcriptDir,
+                agentId: taskId,
+                cursor,
+                ...(configDir === undefined ? {} : { configDir }),
+              }).pipe(Effect.option);
+              if (Option.isNone(read)) break;
+              effort = mergeWorkflowAgentMetadata(read.value.lines).effort;
+              if (!read.value.truncated || read.value.cursor.offset === cursor.offset) break;
+              cursor = read.value.cursor;
+            }
           }
           if (effort === undefined) return;
           yield* sdkMessageLock.withPermits(1)(
