@@ -992,6 +992,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  const showLocalMachineIcon = useClientSettings(
+    (settings) => settings.sidebarLocalMachineIconEnabled,
+  );
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -3392,6 +3395,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null
                             }
                             currentEnvironmentId={primaryEnvironmentId}
+                            showLocalMachineIcon={showLocalMachineIcon}
                             environmentLabel={
                               environmentLabelById.get(thread.environmentId) ?? null
                             }

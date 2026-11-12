@@ -497,6 +497,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarLocalMachineIconEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarLocalMachineIconEnabled
+      ? ["Machine icon on local threads"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -671,6 +675,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarLocalMachineIconEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarLocalMachineIconEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -913,6 +918,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("local-machine-icon")}
+          description="Also show the machine icon on threads from this device. Threads from other environments always show theirs."
+          resetAction={
+            settings.sidebarLocalMachineIconEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarLocalMachineIconEnabled ? (
+              <SettingResetButton
+                label="machine icon on local threads"
+                onClick={() =>
+                  updateSettings({
+                    sidebarLocalMachineIconEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarLocalMachineIconEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarLocalMachineIconEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarLocalMachineIconEnabled: Boolean(checked) })
+              }
+              aria-label="Machine icon on local threads"
             />
           }
         />
