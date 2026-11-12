@@ -243,9 +243,15 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     if (isForkCopy(state, timestampMs)) return [];
     const responseId = payloadRecord["response_id"];
     if (typeof responseId === "string" && responseId.length > 0) {
+      const pending = state.unreportedRequests ?? [];
       state.requestLedgerActive = true;
+      for (const request of pending) {
+        state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, request.usage);
+      }
+      state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, usage);
       delete state.unreportedRequests;
       return [
+        ...pending.map((request) => codexRequestRecord(state, request.usage, request)),
         {
           ...codexRequestRecord(state, usage, codexAttribution(state, timestampMs)),
           dedupeKey: JSON.stringify(["codex", state.sessionId, responseId]),

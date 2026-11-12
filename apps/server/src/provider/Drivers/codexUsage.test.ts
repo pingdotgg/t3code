@@ -485,6 +485,19 @@ describe("parseCodexLine", () => {
     expect(
       parseCodexLine(counted(counters(20, 2), counters(630, 117)), state)?.totals.outputTokens,
     ).toBe(2);
+    expect(
+      parseCodexLine(request("interrupted", counters(40, 4)), state)?.totals.outputTokens,
+    ).toBe(4);
+    parseCodexLine(turnContext, state);
+    expect(
+      parseCodexLine(counted(counters(10, 1), counters(680, 122)), state)?.totals.outputTokens,
+    ).toBe(1);
+    expect(parseCodexLine(request("", counters(15, 3)), state)).toBeNull();
+    parseCodexLine(turnContext, state);
+    const transition = parseCodexRecords(request("upgraded", counters(25, 5)), state);
+    expect(transition.map((record) => record.totals.outputTokens)).toEqual([3, 5]);
+    expect(parseCodexLine(counted(counters(25, 5), counters(720, 130)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(0);
   });
 
   it("does not bill a context-window estimate or lose the following real request", () => {
