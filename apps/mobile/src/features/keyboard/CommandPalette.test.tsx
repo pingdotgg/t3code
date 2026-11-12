@@ -6,7 +6,7 @@ import type { CommandPaletteResult } from "./commandPaletteItems";
 const { Wrap, invoke, draft } = vi.hoisted(() => ({
   Wrap: ({ children }: { children?: ReactNode }) => children,
   invoke: vi.fn(),
-  draft: { environmentId: "remote", active: true },
+  draft: { projectLoaded: true, active: true, stampedEnvironmentId: "remote" as string | null },
 }));
 vi.mock("react-native", () => ({
   View: Wrap,
@@ -92,7 +92,8 @@ vi.mock("../threads/threadMessageJump", () => ({ requestThreadMessageJump: () =>
 vi.mock("../triage/useStartTriage", () => ({ useStartTriage: () => vi.fn() }));
 vi.mock("../threads/new-task-flow-provider", () => ({
   useNewTaskFlow: () => ({
-    selectedProject: { environmentId: draft.environmentId, id: "remote-project" },
+    stampedEnvironmentId: draft.stampedEnvironmentId,
+    selectedProject: draft.projectLoaded ? { environmentId: "remote", id: "remote-project" } : null,
   }),
 }));
 vi.mock("../../state/active-new-task", () => ({
@@ -131,30 +132,36 @@ vi.mock("../../state/query", () => ({
 
 import { CommandPalette } from "./CommandPalette";
 
-it("lists and invokes commands on the draft owner with another environment connected first", async () => {
-  draft.active = true;
-  draft.environmentId = "remote";
-  invoke.mockClear();
-  const container = document.createElement("div");
-  const root = createRoot(container);
-  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  await act(async () =>
-    root.render(
-      <CommandPalette pathname="/draft/fixture" onClose={() => {}} onCommand={() => {}} />,
-    ),
-  );
-  const command = [...container.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Read remote notes"),
-  );
-  expect(command).toBeDefined();
-  await act(async () => command?.click());
-  await act(async () => container.querySelector<HTMLButtonElement>("[data-dismiss]")?.click());
-  expect(invoke).toHaveBeenCalledWith(
-    "remote",
-    expect.objectContaining({
-      manifest: { id: "fixture", name: "Fixture", commands: expect.any(Array) },
-    }),
-    expect.objectContaining({ id: "read" }),
-    { projectId: "remote-project" },
-  );
+it("keeps draft commands on their owner while the project loads, with fallbacks outside a bound draft", async () => {
+  for (const state of [
+    { active: true, projectLoaded: true, stampedEnvironmentId: "remote", owner: "remote" },
+    { active: true, projectLoaded: false, stampedEnvironmentId: "remote", owner: "remote" },
+    { active: true, projectLoaded: false, stampedEnvironmentId: null, owner: "primary" },
+    { active: false, projectLoaded: true, stampedEnvironmentId: "remote", owner: "primary" },
+  ]) {
+    Object.assign(draft, state);
+    invoke.mockClear();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    await act(async () =>
+      root.render(
+        <CommandPalette pathname="/draft/fixture" onClose={() => {}} onCommand={() => {}} />,
+      ),
+    );
+    const command = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes(`Read ${state.owner} notes`),
+    );
+    expect(command).toBeDefined();
+    await act(async () => command?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-dismiss]")?.click());
+    expect(invoke).toHaveBeenCalledWith(
+      state.owner,
+      expect.objectContaining({
+        manifest: { id: "fixture", name: "Fixture", commands: expect.any(Array) },
+      }),
+      expect.objectContaining({ id: "read" }),
+      state.active && state.projectLoaded ? { projectId: "remote-project" } : undefined,
+    );
+  }
 });

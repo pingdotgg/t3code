@@ -272,8 +272,12 @@ export function CommandPalette(props: {
   );
   const serverConfigs = useServerConfigs();
   const newTaskFlow = useNewTaskFlow();
-  const draftProject = useActiveNewTask() === null ? null : newTaskFlow.selectedProject;
-  const draftEnvironmentId = draftProject?.environmentId ?? null;
+  const activeNewTask = useActiveNewTask();
+  const draftProject = activeNewTask === null ? null : newTaskFlow.selectedProject;
+  const draftEnvironmentId =
+    activeNewTask === null
+      ? null
+      : (draftProject?.environmentId ?? newTaskFlow.stampedEnvironmentId);
   const extensionEnvironmentId =
     activeThreadRef?.environmentId ?? draftEnvironmentId ?? searchEnvironmentIds[0];
   const extensionSupported =
