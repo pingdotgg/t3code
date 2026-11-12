@@ -49,16 +49,17 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
   {
     repo_conventions: {
       label: "Repository conventions",
-      description: "In each project, matches recent change descriptions and change request titles.",
+      description:
+        "Commit messages and pull request titles and descriptions match each project's history.",
     },
     conventional_commits: {
       label: "Conventional Commits",
-      description: "Use Conventional Commit prefixes and keep change request text concise.",
+      description: "Conventional Commit prefixes, with short pull request titles and descriptions.",
     },
     custom: {
       label: "Custom instructions",
       description:
-        "Use your instructions for change descriptions and change requests in every project.",
+        "Your instructions shape commit messages and pull request titles and descriptions.",
     },
   };
 
@@ -193,7 +194,7 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection id="source-control-text-generation" title="Writing & review">
+    <SettingsSection id="source-control-text-generation" title="Commits & pull requests">
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}
@@ -203,7 +204,7 @@ export function SourceControlWritingSettingsSection() {
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
-              label="source control writing style"
+              label="commit and pull request writing"
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -231,7 +232,7 @@ export function SourceControlWritingSettingsSection() {
             <SelectTrigger
               size="sm"
               className="w-full sm:w-56"
-              aria-label="Source control writing style"
+              aria-label="Commit and pull request writing"
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
@@ -257,7 +258,7 @@ export function SourceControlWritingSettingsSection() {
                   value={allInstructions ?? ""}
                   onChange={(event) => setAllInstructions(event.target.value)}
                   rows={4}
-                  aria-label="Custom source control instructions for all selected environments"
+                  aria-label="Custom commit and pull request instructions for all selected environments"
                   placeholder="Write the instructions each selected environment should use."
                 />
                 <Button
@@ -304,8 +305,8 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep titles concise. Use short bullet points in descriptions."
-              aria-label="Custom source control writing instructions"
+              placeholder="Keep commit subjects under 60 characters. Keep pull request descriptions short and plain."
+              aria-label="Custom commit and pull request instructions"
             />
           </div>
         ) : null}
@@ -481,12 +482,12 @@ export function SourceControlWritingSettingsSection() {
           settingKeys={["sourceControlWritingStyle"]}
           mixed={templatesMixed}
           {...searchableSetting("follow-change-request-templates")}
-          description="Use the repository's template for change request descriptions when available."
+          description="Use the repository's pull request template when it has one."
           resetAction={
             templatesMixed ||
             style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
               <SettingResetButton
-                label="change request templates"
+                label="pull request templates"
                 onClick={() =>
                   updateSettings({
                     sourceControlWritingStyle: {
@@ -508,7 +509,7 @@ export function SourceControlWritingSettingsSection() {
                   },
                 })
               }
-              aria-label="Follow change request templates"
+              aria-label="Follow pull request templates"
             />
           }
         />
@@ -517,7 +518,7 @@ export function SourceControlWritingSettingsSection() {
           serverScoped
           settingKeys={["sourceControlWriterModelSelection"]}
           {...searchableSetting("source-control-writer-model")}
-          description="Model for source control text and branch or bookmark names. When disabled, use the text generation model configured for this environment."
+          description="Model for commit messages, pull request text, and branch or bookmark names. When disabled, use the text generation model configured for this environment."
           control={
             !hasServerTargets ? (
               <span className="text-sm text-muted-foreground">

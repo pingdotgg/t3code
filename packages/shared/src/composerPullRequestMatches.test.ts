@@ -26,6 +26,17 @@ describe("filterComposerPullRequestMatches", () => {
     });
     expect(result.map((match) => match.number)).toEqual([123, 1234, 1230]);
   });
+
+  it("orders by update instant when timestamps carry different UTC offsets", () => {
+    const result = filterComposerPullRequestMatches({
+      entries: [entry(401, "2026-10-25T02:50:00+02:00"), entry(499, "2026-10-25T02:10:00+01:00")],
+      projectId: "p1",
+      repository: "owner/repo",
+      query: "4",
+      limit: 1,
+    });
+    expect(result.map((match) => match.number)).toEqual([499]);
+  });
 });
 
 describe("linked pull requests", () => {

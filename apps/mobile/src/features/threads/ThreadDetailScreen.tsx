@@ -114,7 +114,10 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useBarOverlap } from "../../components/ui/useBarInset";
-import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
+import {
+  useWorkspaceContentWidth,
+  WorkspaceSettledContentWidthContext,
+} from "../layout/workspace-content-width";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import {
@@ -173,6 +176,8 @@ import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
+import { Notice } from "../../components/ui/Notice";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -210,12 +215,13 @@ import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
   readonly draftMode?: {
+    /** viewportHeight excludes the composer so draft chrome can resize it without feedback. */
     readonly content: (
       headerInset: number,
       bottomInset: number,
-      availableHeight: number,
+      viewportHeight: number,
     ) => React.ReactNode;
-    readonly controls: React.ReactNode;
+    readonly controls: (viewportHeight: number) => React.ReactNode;
     readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
     readonly sendBlockedReason: string | null;
     readonly interactionLocked: boolean;
@@ -240,6 +246,12 @@ export interface ThreadDetailScreenProps {
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
   readonly extensionStatuses?: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
   readonly isCompacting: boolean;
+  /** Set while the next send compacts the thread first. */
+  readonly compactBeforeSend?: {
+    readonly tokens: number;
+    readonly keepFullHistory: boolean;
+    readonly toggleKeepFullHistory: () => void;
+  } | null;
   readonly creationState:
     | {
         readonly kind: "preparing";
@@ -316,6 +328,17 @@ export interface ThreadDetailScreenProps {
 
 // iOS questions overlay the controls; Android questions stack with child approvals.
 const ComposerPanels = Platform.OS === "android" ? Animated.ScrollView : Animated.View;
+
+/** Hands the feed the screen width measured for a native column; elsewhere keeps the inherited one. */
+function ColumnWidth(props: { readonly width: number | null; readonly children: React.ReactNode }) {
+  return props.width === null ? (
+    props.children
+  ) : (
+    <WorkspaceSettledContentWidthContext value={props.width}>
+      {props.children}
+    </WorkspaceSettledContentWidthContext>
+  );
+}
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
 
@@ -1021,10 +1044,16 @@ function ThreadDetailBody(
   // Android lays the screen out below its opaque header and reports a zero
   // header height, so the window height overstates the room by the header.
   const [screenHeight, setScreenHeight] = useState<number | null>(null);
+  const [screenWidth, setScreenWidth] = useState<number | null>(null);
   const handleScreenLayout = (event: LayoutChangeEvent) => {
     setScreenHeight(event.nativeEvent.layout.height);
+    const width = Math.round(event.nativeEvent.layout.width);
+    setScreenWidth((current) =>
+      current !== null && Math.abs(current - width) <= 1 ? current : width,
+    );
   };
   const screenAreaHeight = screenHeight ?? windowHeight;
+  const draftViewportHeight = screenAreaHeight - navigationHeaderHeight - liveKeyboardHeight;
   // The question card reads the keyboard frame on the UI thread, in the same frame the sticky
   // view translates, so it gets the full height while the keyboard is closed and never crosses
   // the header while the keyboard moves.
@@ -1209,6 +1238,13 @@ function ThreadDetailBody(
         }
       : { width: "auto", right: controlInsets.right },
   );
+  // A native column resizes the screen before JS hears of it. The feed and the composer take the
+  // measured width in one render, so they change size together rather than the composer first.
+  const columnWidth = usesNativeWorkspaceColumns && isSplitLayout ? screenWidth : null;
+  const columnComposerWidthStyle =
+    columnWidth === null
+      ? null
+      : { width: Math.max(0, columnWidth - controlInsets.left - controlInsets.right) };
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useAtomMount(threadStreamHaptics(props.selectedThreadDetailRef));
   const selectedProviderSkills = (() => {
@@ -1404,11 +1440,7 @@ function ThreadDetailBody(
         props.draftMode.content(
           navigationHeaderHeight,
           liveKeyboardHeight + estimatedOverlayHeight + 24,
-          screenAreaHeight -
-            navigationHeaderHeight -
-            liveKeyboardHeight -
-            estimatedOverlayHeight -
-            24,
+          draftViewportHeight,
         )
       ) : showContent ? (
         <View
@@ -1438,54 +1470,57 @@ function ThreadDetailBody(
             )}
           >
             <WorkspaceMutationIdProvider threadRef={props.selectedThreadDetailRef}>
-              <ThreadFeed
-                toolCallVisibility={toolCallVisibility}
-                environmentId={props.environmentId}
-                threadId={props.selectedThread.id}
-                detailRef={props.selectedThreadDetailRef}
-                workspaceRoot={props.threadCwd}
-                feed={props.selectedThreadFeed}
-                pendingHandoff={props.pendingHandoff}
-                worktreeSetup={props.worktreeSetup}
-                setupWorkingStartedAt={props.setupWorkingStartedAt}
-                queuedMessages={props.queuedMessages}
-                dispatchingMessageId={props.dispatchingMessageId}
-                // A native subagent has no composer to edit a pending message in;
-                // Cancel on the edit banner would discard it.
-                onEditPendingMessage={
-                  isProviderSubagent || pendingMessageEditBlocked ? null : handleEditPendingMessage
-                }
-                contentPresentation={props.contentPresentation}
-                threadTitle={props.selectedThread.title}
-                latestRun={props.activityRun}
-                activeWorkStartedAt={props.activeWorkStartedAt}
-                runlessWorkActive={props.runlessWorkActive ?? false}
-                listRef={listRef}
-                freeze={freeze}
-                anchorMessageId={anchorMessageId}
-                jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
-                onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
-                contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
-                keyboardOffset={composerKeyboardOffset}
-                sendingWithKeyboard={sendingWithKeyboard}
-                fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
-                contentTopInset={0}
-                contentBottomInset={
-                  questionInFlow
-                    ? 0
-                    : estimatedOverlayHeight +
-                      (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
-                }
-                contentMaxWidth={contentMaxWidth}
-                historyControls={props.historyControls}
-                contentSideInsets={nativeMetrics?.safeArea}
-                layoutVariant={layoutVariant}
-                usesAutomaticContentInsets={props.usesAutomaticContentInsets}
-                onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-                onIsAtEndChange={setIsAtEnd}
-                skills={selectedProviderSkills}
-                onUseArtifactTemplate={handleUseArtifactTemplate}
-              />
+              <ColumnWidth width={columnWidth}>
+                <ThreadFeed
+                  toolCallVisibility={toolCallVisibility}
+                  environmentId={props.environmentId}
+                  threadId={props.selectedThread.id}
+                  detailRef={props.selectedThreadDetailRef}
+                  workspaceRoot={props.threadCwd}
+                  feed={props.selectedThreadFeed}
+                  pendingHandoff={props.pendingHandoff}
+                  worktreeSetup={props.worktreeSetup}
+                  setupWorkingStartedAt={props.setupWorkingStartedAt}
+                  queuedMessages={props.queuedMessages}
+                  dispatchingMessageId={props.dispatchingMessageId}
+                  // A native subagent has no composer to edit a pending message in;
+                  // Cancel on the edit banner would discard it.
+                  onEditPendingMessage={
+                    isProviderSubagent || pendingMessageEditBlocked
+                      ? null
+                      : handleEditPendingMessage
+                  }
+                  contentPresentation={props.contentPresentation}
+                  threadTitle={props.selectedThread.title}
+                  latestRun={props.activityRun}
+                  activeWorkStartedAt={props.activeWorkStartedAt}
+                  runlessWorkActive={props.runlessWorkActive ?? false}
+                  listRef={listRef}
+                  freeze={freeze}
+                  anchorMessageId={anchorMessageId}
+                  jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
+                  onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
+                  contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
+                  keyboardOffset={composerKeyboardOffset}
+                  sendingWithKeyboard={sendingWithKeyboard}
+                  fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
+                  contentBottomInset={
+                    questionInFlow
+                      ? 0
+                      : estimatedOverlayHeight +
+                        (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+                  }
+                  contentMaxWidth={contentMaxWidth}
+                  historyControls={props.historyControls}
+                  contentSideInsets={nativeMetrics?.safeArea}
+                  layoutVariant={layoutVariant}
+                  usesAutomaticContentInsets={props.usesAutomaticContentInsets}
+                  onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
+                  onIsAtEndChange={setIsAtEnd}
+                  skills={selectedProviderSkills}
+                  onUseArtifactTemplate={handleUseArtifactTemplate}
+                />
+              </ColumnWidth>
             </WorkspaceMutationIdProvider>
           </RenderErrorBoundary>
         </View>
@@ -1535,18 +1570,25 @@ function ThreadDetailBody(
               pointerEvents="box-none"
               style={
                 questionInFlow
-                  ? isSplitLayout
-                    ? composerWidthStyle
-                    : undefined
-                  : [
-                      {
-                        position: "absolute",
-                        bottom: controlInsets.bottom,
-                        left: controlInsets.left,
-                        right: controlInsets.right,
-                      },
-                      composerWidthStyle,
-                    ]
+                  ? (columnComposerWidthStyle ?? (isSplitLayout ? composerWidthStyle : undefined))
+                  : columnComposerWidthStyle
+                    ? [
+                        {
+                          position: "absolute",
+                          bottom: controlInsets.bottom,
+                          left: controlInsets.left,
+                        },
+                        columnComposerWidthStyle,
+                      ]
+                    : [
+                        {
+                          position: "absolute",
+                          bottom: controlInsets.bottom,
+                          left: controlInsets.left,
+                          right: controlInsets.right,
+                        },
+                        composerWidthStyle,
+                      ]
               }
             >
               {/* No paddingTop here: the overlay's measured height becomes the
@@ -1647,6 +1689,25 @@ function ThreadDetailBody(
                     {freshSessionAvailable ? (
                       <FreshSessionNotice threadKey={selectedThreadKey} />
                     ) : null}
+                    {props.compactBeforeSend ? (
+                      <View className="px-4 pb-3">
+                        <Notice
+                          message={
+                            props.compactBeforeSend.keepFullHistory
+                              ? `Your next message keeps all ${formatTokens(props.compactBeforeSend.tokens)} tokens of history.`
+                              : `Your next message compacts ${formatTokens(props.compactBeforeSend.tokens)} tokens of history first.`
+                          }
+                          icon="arrow.down.right.and.arrow.up.left"
+                          floating
+                          onDismiss={props.compactBeforeSend.toggleKeepFullHistory}
+                          dismissLabel={
+                            props.compactBeforeSend.keepFullHistory
+                              ? "Compact first"
+                              : "Keep the full history"
+                          }
+                        />
+                      </View>
+                    ) : null}
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice
                         threadKey={selectedThreadKey}
@@ -1731,6 +1792,8 @@ function ThreadDetailBody(
                         {props.activePendingUserInput ? (
                           <PendingUserInputCard
                             environmentId={props.environmentId}
+                            threadId={props.selectedThread.id}
+                            workspaceRoot={props.threadCwd}
                             canOperateThread={props.canOperateThread}
                             pendingUserInput={props.activePendingUserInput}
                             maxHeight={pendingUserInputMaxHeight}
@@ -1810,7 +1873,7 @@ function ThreadDetailBody(
                             : "Ask anything"
                         }
                         contentMaxWidth={contentMaxWidth}
-                        draftControls={props.draftMode?.controls}
+                        draftControls={props.draftMode?.controls(draftViewportHeight)}
                         connectionState={props.connectionStateLabel}
                         environmentLabel={props.environmentLabel}
                         selectedThread={props.selectedThread}
