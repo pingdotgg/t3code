@@ -60,7 +60,6 @@ function routesList(routes: ReadonlyArray<ConnectionRoute>) {
     environmentId: ENVIRONMENT_ID,
     label: "Desk",
     displayUrl: null,
-    relayManaged: false,
     entry,
     connection: { phase: "available", error: null, traceId: null },
     serverConfig: null,

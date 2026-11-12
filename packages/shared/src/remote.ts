@@ -7,7 +7,7 @@ const PAIRING_APP_LINK_PARAM = "pairingUrl";
 const APP_LINK_PROTOCOL = /^t3code(?:-[a-z]+)?:$/;
 const SUPPORTED_REMOTE_BACKEND_PROTOCOLS = new Set(["http:", "https:", "ws:", "wss:"]);
 
-export const readHashParams = (url: URL): URLSearchParams =>
+const readHashParams = (url: URL): URLSearchParams =>
   new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
 
 export class RemoteBackendUrlMissingError extends Schema.TaggedError<RemoteBackendUrlMissingError>()(

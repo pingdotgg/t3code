@@ -134,6 +134,18 @@ describe("mobile connection catalog storage", () => {
               bearerToken: "legacy-token",
               authenticationMethod: "bearer",
             },
+            {
+              environmentId: "connect-environment",
+              environmentLabel: "Cloud Mac",
+              pairingUrl: "https://relay.example.test",
+              displayUrl: "https://relay.example.test",
+              httpBaseUrl: "https://relay.example.test",
+              wsBaseUrl: "wss://relay.example.test",
+              bearerToken: null,
+              authenticationMethod: "dpop",
+              dpopAccessToken: "relay-minted-token",
+              relayManaged: true,
+            },
           ],
         }),
       });
@@ -141,7 +153,14 @@ describe("mobile connection catalog storage", () => {
         Effect.provideService(MobileSecureStorage.MobileSecureStorage, memory.storage),
       );
 
-      expect((yield* catalog.read).targets).toHaveLength(1);
+      const migrated = yield* catalog.read;
+      expect(migrated.targets.map((target) => target.environmentId)).toEqual([
+        "legacy-environment",
+      ]);
+      expect(migrated.connectOnlyEnvironments).toEqual([
+        { environmentId: "connect-environment", label: "Cloud Mac" },
+      ]);
+      expect(memory.values.get(CONNECTION_CATALOG_KEY)).not.toContain("relay-minted-token");
       expect(memory.deleted).toEqual([CONNECTION_CATALOG_KEY, LEGACY_CONNECTIONS_KEY]);
 
       yield* catalog.update((document) => document);

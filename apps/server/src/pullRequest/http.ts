@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { annotateEnvironmentRequest, requireEnvironmentScope } from "../auth/http.ts";
-import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 
 // Large patches benefit from HTTP compression and flow control.
@@ -17,7 +16,7 @@ export const layer = HttpApiBuilder.group(
       Effect.fn("environment.pullRequests.diff")(function* (args) {
         yield* annotateEnvironmentRequest(args.endpoint.name);
         yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-        return yield* pullRequests.diff(args.payload).pipe(traceLocalHandlerWork);
+        return yield* pullRequests.diff(args.payload);
       }),
     );
   }),

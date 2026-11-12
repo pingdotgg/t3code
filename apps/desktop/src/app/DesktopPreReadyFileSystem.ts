@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Effect's Node FileSystem is async, and pre-ready startup must not yield before the Clerk bridge registers its privileged scheme.
+// @effect-diagnostics nodeBuiltinImport:off -- Effect's Node FileSystem is async, and pre-ready startup must take the single-instance lock before Electron is ready.
 import * as NodeFS from "node:fs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -49,6 +49,13 @@ export const make = FileSystem.makeNoop({
     syncFs("makeDirectory", path, () => {
       NodeFS.mkdirSync(path, { recursive: options?.recursive ?? false });
     }),
+  remove: (path, options) =>
+    syncFs("remove", path, () =>
+      NodeFS.rmSync(path, {
+        recursive: options?.recursive ?? false,
+        force: options?.force ?? false,
+      }),
+    ),
   writeFileString: (path, data, options) =>
     syncFs("writeFileString", path, () =>
       NodeFS.writeFileSync(path, data, { flag: options?.flag ?? "w" }),

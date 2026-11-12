@@ -63,6 +63,194 @@ const layerTest = Layer.mergeAll(
   ),
 );
 
+it.effect.each(
+  (["provider.switch", "thread.model-selection.set"] as const).flatMap((type) =>
+    [
+      { active: true, selectionChange: "instance" },
+      { active: false, selectionChange: "instance" },
+      { active: true, selectionChange: "next-turn" },
+      { active: true, selectionChange: "restart" },
+    ].map((scenario) => ({ type, ...scenario })),
+  ),
+)("$type $selectionChange ($active)", ({ type, active, selectionChange }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const threadId = ThreadId.make("thread:instance-switch");
+    const now = yield* DateTime.now;
+    const sessionId = ProviderSessionId.make("session:instance-switch");
+    const providerThreadId = ProviderThreadId.make("provider-thread:instance-switch");
+    const runId = RunId.make("run:instance-switch");
+    const nodeId = NodeId.make("node:instance-switch");
+    const attemptId = RunAttemptId.make("attempt:instance-switch");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-instance-switch"),
+      threadId,
+      projectId: ProjectId.make("project:instance-switch"),
+      title: "Instance switch",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("instance-switch:session"),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: sessionId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd: "/repo",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("instance-switch:provider-thread"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerThreadId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        providerSessionId: sessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: {
+          driver: adapter.driver,
+          nativeId: "native:instance-switch",
+          strength: "strong",
+        },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    if (active) {
+      yield* projections.apply({
+        id: EventId.make("instance-switch:run"),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make("message:instance-switch"),
+          rootNodeId: nodeId,
+          activeAttemptId: attemptId,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("instance-switch:turn"),
+        type: "provider-turn.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: ProviderTurnId.make("provider-turn:instance-switch"),
+          providerThreadId,
+          nodeId,
+          runAttemptId: attemptId,
+          nativeTurnRef: { driver: adapter.driver, nativeId: "native:turn", strength: "strong" },
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+    }
+    const before = yield* projections.getThreadProjection(threadId);
+    const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+    const commandId = CommandId.make("switch-instance");
+    const target = {
+      instanceId:
+        selectionChange === "instance" ? ProviderInstanceId.make("codex-other") : instanceId,
+      model: selectionChange === "instance" ? modelSelection.model : "gpt-6",
+    };
+    const outcome = yield* orchestrator
+      .dispatch({
+        type,
+        commandId,
+        threadId,
+        modelSelection: target,
+      })
+      .pipe(Effect.result);
+    const after = yield* projections.getThreadProjection(threadId);
+    if (active && selectionChange !== "next-turn") {
+      assert.deepEqual(
+        after,
+        before,
+        "a refused switch must preserve the turn, session and selection",
+      );
+      assert.deepEqual(
+        yield* outbox.listByCommandId(commandId),
+        [],
+        "a refused switch must not release the provider session",
+      );
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+      assert.ok(Result.isFailure(outcome));
+      assert.instanceOf(outcome.failure, Orchestrator.OrchestratorProviderSelectionBusyError);
+    } else {
+      assert.ok(Result.isSuccess(outcome));
+      assert.deepEqual(after.thread.modelSelection, target);
+      assert.equal(after.thread.providerInstanceId, target.instanceId);
+      assert.deepEqual(after.runs, before.runs);
+      assert.deepEqual(after.providerTurns, before.providerTurns);
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerDatabase,
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "instance-switch" },
+          ProviderAdapterRegistry.layerFromAdapters([
+            {
+              ...adapter,
+              planSelectionTransition: () =>
+                Effect.succeed(
+                  selectionChange === "restart"
+                    ? { type: "restart_session" as const }
+                    : { type: "apply_on_next_turn" as const },
+                ),
+            },
+            { ...adapter, instanceId: ProviderInstanceId.make("codex-other") },
+          ]),
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        ),
+      ),
+    ),
+  ),
+);
+
 it.effect(
   "records approval feedback and targets only its runtime request without dispatching a parent turn",
   () =>

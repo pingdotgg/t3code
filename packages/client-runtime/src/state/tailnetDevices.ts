@@ -3,7 +3,11 @@ import * as Effect from "effect/Effect";
 import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 
 /** Your tailnet devices as one environment sees them, and the changes it can make. */
 export function createTailnetDeviceAtoms<R, E>(
@@ -16,15 +20,26 @@ export function createTailnetDeviceAtoms<R, E>(
   });
   return {
     list,
+    /** The snapshot now and after every change, pushed by the environment. */
+    snapshot: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:tailnet-devices:snapshot",
+      tag: WS_METHODS.subscribeTailnetDevices,
+    }),
     setAccess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:tailnet-devices:set-access",
       tag: WS_METHODS.tailnetDevicesSetAccess,
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),
-    updateSettings: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:tailnet-devices:update-settings",
-      tag: WS_METHODS.tailnetDevicesUpdateSettings,
+    admit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:tailnet-devices:admit",
+      tag: WS_METHODS.tailnetDevicesAdmit,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+    }),
+    setAppAccess: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:tailnet-devices:set-app-access",
+      tag: WS_METHODS.tailnetDevicesSetAppAccess,
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),

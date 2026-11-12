@@ -85,6 +85,7 @@ import Migration0077 from "./Migrations/077_RepairBooleanSettledOverride.ts";
 import Migration0078 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
 import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
 import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
+import Migration0081 from "./Migrations/081_ProjectionMessageSearchText.ts";
 
 import ForkMigration001 from "./Migrations/fork/001_AgentProfileAndPullRequestCompatibility.ts";
 import ForkMigration002 from "./Migrations/fork/002_RepairAgentUpgradeSchema.ts";
@@ -102,6 +103,10 @@ import ForkMigration013 from "./Migrations/fork/013_TailnetDevicePolicy.ts";
 import ForkMigration014 from "./Migrations/fork/014_ThreadTaskDepartures.ts";
 import ForkMigration015 from "./Migrations/fork/015_ThreadAutoArchiveIndex.ts";
 import ForkMigration016 from "./Migrations/fork/016_GuardThreadPayloadIndexes.ts";
+import ForkMigration017 from "./Migrations/fork/017_NetworkMembers.ts";
+import ForkMigration018 from "./Migrations/fork/018_NetworkLifecycle.ts";
+import ForkMigration019 from "./Migrations/fork/019_NetworkAppReplacement.ts";
+import ForkMigration020 from "./Migrations/fork/020_RepairStringifiedModelSelectionOptions.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -184,6 +189,7 @@ const migrationEntries = [
   [78, "DropOrchestrationEventCorrelationIndex", Migration0078],
   [79, "DelegatedRecoveryIndexes", Migration0079],
   [80, "ScheduledTaskThreadMode", Migration0080],
+  [81, "ProjectionMessageSearchText", Migration0081],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -206,6 +212,10 @@ const forkMigrationEntries = [
   [14, "ThreadTaskDepartures", ForkMigration014, 72],
   [15, "ThreadAutoArchiveIndex", ForkMigration015, 76],
   [16, "GuardThreadPayloadIndexes", ForkMigration016, 80],
+  [17, "NetworkMembers", ForkMigration017, 80],
+  [18, "NetworkLifecycle", ForkMigration018, 80],
+  [19, "NetworkAppReplacement", ForkMigration019, 80],
+  [20, "RepairStringifiedModelSelectionOptions", ForkMigration020, 81],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(
@@ -327,6 +337,34 @@ const recordedHistory = Effect.fn("recordedMigrationHistory")(function* (ledger:
     readonly migration_id: number;
     readonly name: string;
   }>`SELECT migration_id, name FROM ${sql(table)}`;
+});
+
+const latestIds: Record<Ledger, number> = {
+  upstream: Math.max(...migrationEntries.map(([id]) => id)),
+  fork: Math.max(...forkMigrationEntries.map(([id]) => id)),
+};
+
+/**
+ * Mirrors runMigrations: a missing ledger (fresh, or a legacy one the split
+ * rewrites), an id above either ledger's highest recorded, or the V2-preview
+ * reconciliation means it would write.
+ */
+export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name IN ('effect_sql_migrations', ${FORK_MIGRATIONS_TABLE})
+  `;
+  if (tables.length < 2) return true;
+  const [preview] = yield* sql<{ readonly rows: number | null }>`
+    SELECT SUM(name = 'OrchestrationV2' AND migration_id IN (53, 54)) AS rows
+    FROM effect_sql_migrations
+  `;
+  return (
+    (preview?.rows ?? 0) > 0 ||
+    (yield* latestRecordedId("upstream")) < latestIds.upstream ||
+    (yield* latestRecordedId("fork")) < latestIds.fork
+  );
 });
 
 export interface RunMigrationsOptions {

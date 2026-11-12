@@ -115,7 +115,6 @@ describe("searchSettings", () => {
 
   it("hides settings whose controls are unavailable", () => {
     const available = filterAvailableSettingsSearchItems({
-      hasCloudPublicConfig: false,
       hasEnvironment: false,
       hasProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
@@ -127,27 +126,23 @@ describe("searchSettings", () => {
       "follow-change-request-templates",
       "git-fetch-interval",
       "network-access",
-      "publish-agent-activity",
       "provider-health-check-interval",
       "source-control-writer-model",
       "review-guide-model",
       "review-guide-instructions",
       "source-control-writing-style",
-      "t3-connect",
-      "hold-webhooks-while-offline",
       "tailscale-https",
       "wsl-backend",
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
-      "linked-environments",
+      "device-network",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
-  it("finds linked environments on a remote host without local maintenance access", () => {
+  it("finds the device network on a remote host without local maintenance access", () => {
     const availability = {
-      hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
       canManageLocalBackend: false,
@@ -155,24 +150,27 @@ describe("searchSettings", () => {
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
-    const results = (hasPeerLinkHost: boolean) =>
+    const results = (query: string, hasPeerLinkHost: boolean) =>
       searchSettings(
-        "linked environments",
+        query,
         filterAvailableSettingsSearchItems({ ...availability, hasPeerLinkHost }),
       );
-    expect(results(false).map((item) => item.id)).not.toContain("linked-environments");
-    expect(results(true)).toContainEqual(
-      expect.objectContaining({
-        id: "linked-environments",
-        to: "/settings/connections",
-        targetId: "linked-environments",
-      }),
+    expect(results("linked environments", false).map((item) => item.id)).not.toContain(
+      "device-network",
     );
+    for (const query of ["linked environments", "tailscale network"]) {
+      expect(results(query, true)).toContainEqual(
+        expect.objectContaining({
+          id: "device-network",
+          to: "/settings/connections",
+          targetId: "device-network",
+        }),
+      );
+    }
   });
 
   it("finds the Welcome page only where a primary computer can open it", () => {
     const availability = {
-      hasCloudPublicConfig: true,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
       canManageLocalBackend: false,
@@ -280,7 +278,6 @@ describe("auto-settlement search availability", () => {
     const availability = getThreadAutoSettlementSearchAvailability(environments);
     expect(availability.eligibleEnvironmentIds).toEqual([capable.environmentId]);
     const items = filterAvailableSettingsSearchItems({
-      hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
       canManageLocalBackend: false,
@@ -316,7 +313,6 @@ describe("auto-settlement search availability", () => {
       isTargetAvailable: false,
     });
     const items = filterAvailableSettingsSearchItems({
-      hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
       canManageLocalBackend: false,

@@ -5,60 +5,28 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import packageJson from "../../package.json" with { type: "json" };
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as BootService from "../cloud/bootService.ts";
-import * as CliState from "../cloud/CliState.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED } from "../cloud/config.ts";
-import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
-import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
+import * as BootService from "../service/bootService.ts";
+import { compareExactServiceVersions } from "../service/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import {
-  connectSubcommands,
-  disconnectCloud,
-  headlessFlag,
-  linkEnvironmentForConnect,
-  requireConnectAllowed,
-  runCloudCommand,
-  waitForReachability,
-} from "./connect.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
-
-type Route = "connect" | "lan";
-type Routes = Readonly<Record<Route, boolean>>;
 
 /** How other devices reach this machine now. */
 interface Setup {
   readonly service: BootService.BootServiceStatus;
-  /** Null in builds without T3 Connect. Off when T3 Connect revoked the link. */
-  readonly connect: boolean | null;
-  /** T3 Connect revoked the link; `t3 connect` links again. */
-  readonly connectRevoked: boolean;
   readonly lan: boolean;
   /** An installed service with no T3CODE_LAN keeps the old default: on. */
   readonly lanFromOldDefault: boolean;
   readonly host: string | undefined;
 }
-
-/**
- * T3 Connect is on when this CLI asked for a managed link, or when the desktop or
- * web app made one: that saves the tunnel config but no CLI marker. Revoked is off.
- */
-export const connectEnabled = (link: {
-  readonly cliDesired: boolean;
-  readonly cliMode: CliState.CliDesiredLinkMode;
-  readonly managedTunnel: boolean;
-  readonly revoked: boolean;
-}) =>
-  // The server starts no tunnel for a CLI publish-only link, even with an old tunnel config.
-  !link.revoked && (link.cliDesired ? link.cliMode === "managed" : link.managedTunnel);
 
 const readSetup = Effect.fn("cli.up.read_setup")(function* () {
   const { baseDir } = yield* ServerConfig.ServerConfig;
@@ -68,62 +36,24 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
   const lan = yield* Config.Boolean("T3CODE_LAN")
     .pipe(Config.option)
     .parse(ConfigProvider.fromEnv({ env: entries }));
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const connectRevoked =
-    hasCloudPublicConfig && Option.isSome(yield* secrets.get(CLOUD_LINK_REVOKED));
-  const connect = hasCloudPublicConfig
-    ? connectEnabled({
-        cliDesired: yield* CliState.readCliDesiredCloudLink,
-        cliMode: yield* CliState.readCliDesiredLinkMode,
-        managedTunnel: Option.isSome(yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)),
-        revoked: connectRevoked,
-      })
-    : null;
   // Another home's service doesn't read this home's service.env.
   const servesThisHome = service.installed && service.otherBaseDir === undefined;
   return {
     service,
-    connect,
-    connectRevoked,
     lan: Option.getOrElse(lan, () => servesThisHome),
     lanFromOldDefault: Option.isNone(lan) && servesThisHome,
     host: entries.T3CODE_HOST,
   } satisfies Setup;
 });
 
-/**
- * The routes `t3 up` starts from. With no route flag it asks about every
- * route, starting a machine with no service from T3 Connect. Any route flag
- * means it asks nothing and keeps the routes not named as they are.
- */
-export const planRoutes = (
-  setup: { readonly installed: boolean; readonly connect: boolean | null; readonly lan: boolean },
-  flags: { readonly connect: Option.Option<boolean>; readonly lan: Option.Option<boolean> },
-) => {
-  const ask = Option.isNone(flags.connect) && Option.isNone(flags.lan);
-  const start = {
-    connect: setup.connect === true || (ask && !setup.installed && setup.connect !== null),
-    lan: setup.lan,
-  };
-  return {
-    routes: {
-      connect: Option.getOrElse(flags.connect, () => start.connect),
-      lan: Option.getOrElse(flags.lan, () => start.lan),
-    } satisfies Routes,
-    ask: ask
-      ? (["connect", "lan"] as const).filter((r) => r !== "connect" || setup.connect !== null)
-      : [],
-  };
-};
-
-/** A running service reads T3CODE_LAN and its T3 Connect link only when it starts. */
-const needsRestart = (before: Routes, after: Routes) =>
-  after.lan !== before.lan || (after.connect && !before.connect);
-
-const CHOICES = {
-  connect: { title: "T3 Connect", description: "Creates a tunnel to control your PC." },
-  lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
-} satisfies Record<Route, { readonly title: string; readonly description: string }>;
+/** Local network access after `t3 up`: the flag when given, otherwise as it is now and asked. */
+const planLan = (
+  setup: { readonly lan: boolean },
+  flags: { readonly lan: Option.Option<boolean> },
+) => ({
+  lan: Option.getOrElse(flags.lan, () => setup.lan),
+  ask: Option.isNone(flags.lan),
+});
 
 const formatSetup = (setup: Setup) => {
   const { service } = setup;
@@ -144,18 +74,6 @@ const formatSetup = (setup: Setup) => {
           ? `installed · t3@${service.installedVersion ?? packageJson.version}`
           : "not installed",
     ],
-    ...(setup.connect === null
-      ? []
-      : [
-          [
-            "T3 Connect",
-            setup.connect
-              ? "on · your T3 account"
-              : setup.connectRevoked
-                ? "off · link revoked. Run `t3 connect`."
-                : "off",
-          ] as const,
-        ]),
     [
       "Local network",
       setup.host !== undefined
@@ -181,29 +99,19 @@ const formatSetup = (setup: Setup) => {
   ].join("\n");
 };
 
-const formatNextSteps = (routes: Routes, serviceInstalled: boolean, pairCommand: string) =>
-  [
-    ...(routes.connect
-      ? ["On your other device, sign in to T3 Connect with the same account."]
-      : []),
-    ...(routes.lan ? [`Run \`${pairCommand}\`. Use the code on your other device.`] : []),
-    ...(routes.connect || routes.lan
-      ? []
-      : [
-          serviceInstalled
-            ? "Remote access is off. T3 Code still runs here in the background."
-            : "Remote access is off. Run `t3` to use T3 Code here.",
-        ]),
-  ].join("\n");
+const formatNextSteps = (lan: boolean, serviceInstalled: boolean, pairCommand: string) =>
+  lan
+    ? `Run \`${pairCommand}\`. Use the code on your other device.`
+    : serviceInstalled
+      ? "Remote access is off. T3 Code still runs here in the background."
+      : "Remote access is off. Run `t3` to use T3 Code here.";
 
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 const setUp = Effect.fn("cli.up")(function* (flags: {
   readonly baseDir: Option.Option<string>;
-  readonly connect: Option.Option<boolean>;
   readonly lan: Option.Option<boolean>;
   readonly yes: boolean;
-  readonly headless: boolean;
 }) {
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
@@ -220,61 +128,36 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       baseDir,
     });
   }
-  if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
-    return yield* new CliError.UserError({
-      cause: "connect",
-      userMessage: "T3 Connect is unavailable in this build.",
-    });
-  }
-
-  const current = { connect: before.connect === true, lan: before.lan };
-  // A publish-only link is not "on", but a rollback must put it back.
-  const priorPublishOnly =
-    hasCloudPublicConfig &&
-    (yield* CliState.readCliDesiredCloudLink) &&
-    (yield* CliState.readCliDesiredLinkMode) === "publish_only";
-  const plan = planRoutes({ ...before, installed: before.service.installed }, flags);
+  const plan = planLan(before, flags);
   const interactive = !flags.yes && interactiveTerminal();
-  let routes = plan.routes;
-  if (plan.ask.length > 0 && interactive) {
+  let lan = plan.lan;
+  if (plan.ask && interactive) {
     if (before.service.installed) yield* Console.log(`Current setup\n${formatSetup(before)}\n`);
     const picked = yield* Prompt.run(
-      Prompt.MultiSelect({
-        message: "Allow connections through:",
-        selectAll: "Select all",
-        selectNone: "Clear all",
-        inverseSelection: "Invert selection",
-        choices: plan.ask.map((route) => ({
-          ...CHOICES[route],
-          value: route,
-          selected: plan.routes[route],
-        })),
+      Prompt.Confirm({
+        message: "Allow LAN and tailnet connections? A pairing code is the only lock.",
+        initial: plan.lan,
       }),
     ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(null) }));
     if (picked === null) return yield* Console.log("Nothing changed.");
-    routes = { connect: picked.includes("connect"), lan: picked.includes("lan") };
-  } else if (plan.ask.length > 0 && !flags.yes && !before.service.installed) {
+    lan = picked;
+  } else if (plan.ask && !flags.yes && !before.service.installed) {
     return yield* new CliError.UserError({
       cause: "routes",
-      userMessage: `No terminal. Choose access with ${
-        before.connect === null ? "--lan" : "--connect or --lan"
-      }, or use --yes for the default. See \`t3 up --help\`.`,
+      userMessage:
+        "No terminal. Choose access with --lan or --no-lan, or use --yes for the default. See `t3 up --help`.",
     });
   }
-  if (routes.connect && !current.connect) yield* requireConnectAllowed;
-  if (routes.lan && !current.lan) {
+  if (lan && !before.lan) {
     const policy = yield* ManagedPolicy.ManagedPolicy;
     if (!ManagedLimits.allowsRemoteClients(policy)) {
       return yield* ManagedLimits.refuseRemoteClients(policy);
     }
   }
-  // Nothing to run in the background, but a route left on still gets turned off.
-  if (!before.service.installed && !routes.connect && !routes.lan) {
-    if (current.connect || before.connectRevoked) {
-      yield* disconnectCloud({ clearAuthorization: false });
-    }
-    if (current.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
-    return yield* Console.log(formatNextSteps(routes, false, pairCommand));
+  // Nothing to run in the background, but local network access left on still gets turned off.
+  if (!before.service.installed && !lan) {
+    if (before.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
+    return yield* Console.log(formatNextSteps(false, false, pairCommand));
   }
   const { installedVersion } = before.service;
   const newer =
@@ -288,7 +171,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const restart =
     before.service.installed &&
     (before.service.current || newer) &&
-    (needsRestart(current, routes) || stopped);
+    (lan !== before.lan || stopped);
   // An older or broken service is reinstalled, which restarts it too.
   const update = before.service.installed && !before.service.current && !newer && !stopped;
   if ((restart || update) && interactive && !stopped) {
@@ -303,38 +186,13 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     if (!confirmed) return yield* Console.log("Nothing changed.");
   }
 
-  if (routes.connect && !current.connect) {
-    const linked = yield* linkEnvironmentForConnect({
-      headless: flags.headless,
-      installRelayClient: true,
-    });
-    if (linked === null) return;
-    yield* Console.log(
-      `✓ Signed in to T3 Connect${linked.identity ? ` as ${linked.identity}` : ""}`,
-    );
-  }
-  // A running server unlinks live; when that fails, only a restart stops its tunnel.
-  const unlinkFailed =
-    !routes.connect && (current.connect || before.connectRevoked)
-      ? (yield* disconnectCloud({ clearAuthorization: false })).status === "failed"
-      : false;
   const previousLan = (yield* CliService.readServiceEnv(baseDir)).entries.T3CODE_LAN;
   // Also with no service manager: the file records the choice that `t3 status` shows.
-  yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(routes.lan) });
+  yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: String(lan) });
   // When the service step fails, an installed service still runs with the old
   // value, so the file goes back to match it.
-  // A new T3 Connect link is undone too, with any tunnel the failed start saved, so a
-  // rerun sees it as a change and restarts. The sign-in stays.
   const restoreServiceEnv = before.service.installed
-    ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan }).pipe(
-        Effect.andThen(
-          !routes.connect || current.connect
-            ? Effect.void
-            : priorPublishOnly
-              ? CliState.setCliDesiredCloudLink(true, "publish_only")
-              : disconnectCloud({ clearAuthorization: false }).pipe(Effect.asVoid),
-        ),
-      )
+    ? CliService.writeServiceEnv(baseDir, { T3CODE_LAN: previousLan })
     : Effect.void;
   // A failed update or restart may still have started the service with the new
   // settings, so restart it once more on the old ones.
@@ -351,7 +209,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     const { command } = yield* resolveHostCliCommand("serve", [
       ...baseDirArgs,
       // Explicit either way, so a T3CODE_LAN in the shell cannot override the choice.
-      routes.lan ? "--lan" : "--no-lan",
+      lan ? "--lan" : "--no-lan",
     ]);
     yield* Console.log(`${reason} Keep this command running:\n  ${command}`);
     // A host wins over --lan and --no-lan, as it does in service.env.
@@ -362,7 +220,6 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       );
     }
   });
-  let started = false;
   if (!before.service.supported) {
     yield* printServeCommand("Background service unavailable.");
   } else {
@@ -392,45 +249,27 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
     } else if (result.changed) {
       yield* Console.log(CliService.formatServiceChange(result));
-      started = true;
-    } else if (restart || (unlinkFailed && before.service.installed)) {
-      const confirmed =
-        restart ||
-        !interactive ||
-        (yield* Prompt.run(
-          Prompt.Confirm({
-            message:
-              "The running service still has T3 Connect on. Restart it? Running agent turns will stop.",
-            initial: true,
-          }),
-        ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
-      if (!confirmed) {
-        const { command } = yield* resolveHostCliCommand("service restart", baseDirArgs);
-        yield* Console.log(`Run \`${command}\` to turn T3 Connect off.`);
-      } else {
-        if (!interactive && !stopped) {
-          yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
-        }
-        const outcome = yield* service.restart.pipe(Effect.tapError(() => rollBack));
-        if (outcome === "queued") {
-          yield* Console.log("Restart queued. This session will disconnect.");
-        }
-        if (outcome === "skipped") {
-          yield* Console.log(
-            "The installed service was not restarted. Run `t3 service status` to see why.",
-          );
-        }
-        started = outcome === "restarted";
+    } else if (restart) {
+      if (!interactive && !stopped) {
+        yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
+      }
+      const outcome = yield* service.restart.pipe(Effect.tapError(() => rollBack));
+      if (outcome === "queued") {
+        yield* Console.log("Restart queued. This session will disconnect.");
+      }
+      if (outcome === "skipped") {
+        yield* Console.log(
+          "The installed service was not restarted. Run `t3 service status` to see why.",
+        );
       }
     }
   }
-  if (started && routes.connect && !current.connect) yield* waitForReachability();
 
   const after = yield* readSetup();
   yield* Console.log(
     // From what took effect: a failed service step can undo a choice.
     `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(
-      { connect: after.connect === true, lan: after.lan },
+      after.lan,
       after.service.installed,
       pairCommand,
     )}`,
@@ -439,12 +278,6 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
 
 export const upCommand = Command.make("up", {
   ...projectLocationFlags,
-  connect: Flag.Boolean("connect").pipe(
-    Flag.withDescription(
-      "Allow access through T3 Connect with your T3 account. Turn off with --no-connect.",
-    ),
-    Flag.optional,
-  ),
   lan: Flag.Boolean("lan").pipe(
     Flag.withDescription(
       "Allow LAN and tailnet connections. Anyone there can reach the port; a pairing code is the only lock. Turn off with --no-lan.",
@@ -453,40 +286,37 @@ export const upCommand = Command.make("up", {
   ),
   yes: Flag.Boolean("yes").pipe(
     Flag.withDescription(
-      "Ask nothing. Keep the access settings; a new machine gets T3 Connect. A restart stops running agent turns.",
+      "Ask nothing. Keep the access settings. A restart stops running agent turns.",
     ),
     Flag.withDefault(false),
   ),
-  headless: headlessFlag,
 }).pipe(
   Command.withShortDescription("Set up remote access and the T3 Code background service."),
   Command.withDescription(
-    "Set up remote access and the T3 Code background service. Access flags skip the question, and routes not named keep their settings. Without a terminal, a needed restart runs without asking and stops running agent turns.",
+    "Set up remote access and the T3 Code background service. An access flag skips the question. Without a terminal, a needed restart runs without asking and stops running agent turns.",
   ),
   Command.withExamples([
     { command: "t3 up", description: "Choose remote access." },
-    { command: "t3 up --connect", description: "Turn on T3 Connect. Keep other settings." },
     { command: "t3 up --lan", description: "Allow LAN access with pairing codes." },
     { command: "t3 up --no-lan", description: "Stop LAN access." },
     { command: "t3 up --yes", description: "Take the defaults with no questions." },
     { command: "t3 status --json", description: "Read the settings from a script." },
   ]),
-  Command.withHandler((flags) => runCloudCommand(flags, setUp(flags), { quietLogs: true })),
-);
-
-export const connectCommand = Command.make("connect", {
-  ...projectLocationFlags,
-  headless: headlessFlag,
-}).pipe(
-  Command.withDescription("Set up T3 Connect for this machine. Same as `t3 up --connect`."),
-  Command.withHandler((flags) =>
-    runCloudCommand(
-      flags,
-      setUp({ ...flags, connect: Option.some(true), lan: Option.none(), yes: false }),
-      { quietLogs: true },
-    ),
+  Command.withHandler(
+    Effect.fn("cli.up.run")(function* (flags) {
+      const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel, {
+        quietLogs: true,
+      });
+      yield* setUp(flags).pipe(
+        Effect.provide(
+          Layer.merge(CliService.layer(config), ManagedPolicy.layer).pipe(
+            Layer.provideMerge(ServerConfig.layer(config)),
+            Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
+          ),
+        ),
+      );
+    }),
   ),
-  Command.withSubcommands(connectSubcommands),
 );
 
 /** `t3 status --json`, for scripts and agents. */
@@ -499,8 +329,6 @@ const setupJson = (setup: Setup) =>
         installedVersion: setup.service.installedVersion ?? null,
         otherBaseDir: setup.service.otherBaseDir ?? null,
       },
-      connect:
-        setup.connect === null ? null : { enabled: setup.connect, revoked: setup.connectRevoked },
       lan: {
         enabled: setup.lan,
         inheritedDefault: setup.lanFromOldDefault,
@@ -528,12 +356,9 @@ export const statusCommand = Command.make("status", {
       const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel, {
         quietLogs: flags.json,
       });
-      // Only what readSetup reads: no database, unlike the T3 Connect commands.
       const setup = yield* readSetup().pipe(
         Effect.provide(
-          Layer.merge(CliService.layer(config), ServerSecretStore.layer).pipe(
-            Layer.provideMerge(ServerConfig.layer(config)),
-          ),
+          CliService.layer(config).pipe(Layer.provideMerge(ServerConfig.layer(config))),
         ),
       );
       yield* Console.log(

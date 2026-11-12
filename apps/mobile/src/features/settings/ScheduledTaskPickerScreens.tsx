@@ -1,5 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
-import { isListedThreadLineage } from "@t3tools/contracts";
+import { scheduledTaskDestinationThreads } from "@t3tools/client-runtime/scheduled-task-destinations";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 import { FlatList, Platform } from "react-native";
@@ -216,22 +216,19 @@ export function ScheduledTaskThreadPickerRouteScreen() {
     ...(threadId !== null && currentLabel.toLocaleLowerCase().includes(needle)
       ? [{ key: threadId, title: currentLabel, thread: null }]
       : []),
-    ...shells
-      .filter(
-        (thread) =>
-          thread.environmentId === environmentId &&
-          thread.projectId === projectId &&
-          thread.id !== threadId &&
-          thread.archivedAt === null &&
-          isListedThreadLineage(thread.lineage) &&
-          thread.title.toLocaleLowerCase().includes(needle),
-      )
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((thread) => ({
-        key: thread.id,
-        title: thread.title.trim() || "Untitled thread",
-        thread,
-      })),
+    ...(environmentId === null || projectId === null
+      ? []
+      : scheduledTaskDestinationThreads(shells, {
+          environmentId,
+          projectId,
+          currentThreadId: threadId,
+          query,
+        })
+    ).map((thread) => ({
+      key: thread.id,
+      title: thread.title.trim() || "Untitled thread",
+      thread,
+    })),
   ];
   const selectedKey = threadId ?? (editor.draft.threadMode === "new_thread" ? "new-thread" : null);
 

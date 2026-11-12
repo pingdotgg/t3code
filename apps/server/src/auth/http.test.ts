@@ -11,6 +11,7 @@ import {
   AuthEnvironmentBootstrapTokenType,
   AuthAccessTokenType,
   EnvironmentHttpApi,
+  TailnetDevicesError,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -32,6 +33,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { layerServerEnvironmentHttpApi } from "../http.ts";
 import * as AuthHttp from "./http.ts";
+import * as TailnetDevices from "../peer/TailnetDevices.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
@@ -78,6 +80,18 @@ const layerServerEnvironment = Layer.effect(
 const layerRoutes = HttpApiBuilder.layer(AuthTestApi).pipe(
   Layer.provide(layerServerEnvironmentHttpApi),
   Layer.provide(AuthHttp.layer),
+  Layer.provide(
+    Layer.mock(TailnetDevices.TailnetDevices)({
+      // As the service answers when the app to pair again is no longer in the network.
+      inviteApp: () =>
+        Effect.fail(
+          new TailnetDevicesError({
+            reason: "unknown_device",
+            message: "The app to pair again is not in your network.",
+          }),
+        ),
+    }),
+  ),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provideMerge(layerEnvironmentAuth),
   Layer.provide(
@@ -297,4 +311,42 @@ it.effect(
         (environment) => Effect.promise(() => environment.dispose()),
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("pairing again for an app no longer listed is a client error, not a server failure", () =>
+  Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom;
+    const requestContext = makeRequestContext(random);
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.gen(function* () {
+          const admin = yield* Effect.promise(() =>
+            environment.handler(
+              postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+              requestContext,
+            ),
+          );
+          const adminCookie = admin.headers.getSetCookie()[0]?.split(";", 1)[0] ?? "";
+
+          const refused = yield* Effect.promise(() =>
+            environment.handler(
+              postJson(
+                "/api/auth/pairing-token",
+                { network: true, replacesAppId: "gone" },
+                { cookie: adminCookie },
+              ),
+              requestContext,
+            ),
+          );
+
+          expect(refused.status).toBe(400);
+          expect(yield* Effect.promise(() => refused.json())).toMatchObject({
+            _tag: "EnvironmentRequestInvalidError",
+            reason: "unknown_app",
+          });
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

@@ -1,5 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -10,6 +8,7 @@ import * as Stream from "effect/Stream";
 import * as McpGatewayBrokerModule from "../mcp/McpGatewayBroker.ts";
 import { McpGatewayBroker } from "../mcp/McpGatewayBroker.ts";
 import { manualSettledAt } from "./RemoteParentSettlement.ts";
+import { CODE_PAIRED_SUBJECT, layerDependencies } from "../mcp/McpGatewayBroker.testkit.ts";
 
 const pc = EnvironmentId.make("environment-pc");
 const laptop = EnvironmentId.make("environment-laptop");
@@ -48,19 +47,21 @@ const layer = Layer.effect(
   McpGatewayBroker,
   Effect.gen(function* () {
     const broker = yield* McpGatewayBrokerModule.make;
-    yield* broker.connect("desktop", { [pc]: ["read"], [laptop]: ["read"] }).pipe(
-      Stream.runForEach((event) =>
-        broker.respond("desktop", {
-          connectionId: event.connectionId,
-          invocationId: event.invocationId,
-          result: threads[`${String(event.args[0])}:${String(event.args[1])}`] ?? null,
-        }),
-      ),
-      Effect.forkScoped({ startImmediately: true }),
-    );
+    yield* broker
+      .connect("desktop", { [pc]: ["read"], [laptop]: ["read"] }, CODE_PAIRED_SUBJECT)
+      .pipe(
+        Stream.runForEach((event) =>
+          broker.respond("desktop", {
+            connectionId: event.connectionId,
+            invocationId: event.invocationId,
+            result: threads[`${String(event.args[0])}:${String(event.args[1])}`] ?? null,
+          }),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      );
     return broker;
   }),
-).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+).pipe(Layer.provide(layerDependencies()));
 
 it.effect("reads how a parent on another machine settled, past ancestors that aged out", () =>
   Effect.gen(function* () {

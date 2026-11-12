@@ -443,6 +443,12 @@ it.effect.each([
     "capability_denied",
   ],
   [
+    "gateway_reads",
+    { ...supervised, linkedEnvironments: false },
+    { environmentId: EnvironmentId.make("gateway-only") },
+    "capability_denied",
+  ],
+  [
     "gateway_writes_threads",
     supervised,
     { environmentId: box, threadId: fullAccessThreadId },

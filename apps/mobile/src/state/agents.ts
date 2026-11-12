@@ -1,16 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   agentColorFor,
-  agentIconKey,
   selectScheduledWakeThreadKeys,
-  type AgentIconKey,
   type AgentScheduledWake,
 } from "@t3tools/client-runtime/state/agents";
 import {
-  mergeAgentLibraries,
-  type McpGatewayProfile,
-  type ThreadProfileSnapshot,
-} from "@t3tools/contracts";
+  createAgentProfilesAtom,
+  createEnvironmentAgentsAtom,
+  resolveAgentIconId,
+  type AgentIconId,
+  type EnvironmentAgents,
+} from "@t3tools/client-runtime/state/agentIdentity";
+import type { EnvironmentId, McpGatewayProfile, ThreadProfileSnapshot } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useMemo } from "react";
@@ -18,15 +19,21 @@ import { useMemo } from "react";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 
 /** Every connected environment's agents, merged into one library as web does. */
-export const agentProfilesAtom = Atom.make(
-  (get) =>
-    mergeAgentLibraries(
-      [...get(environmentServerConfigsAtom).values()].map((config) => config.settings),
-    ).mcpGatewayProfiles,
-).pipe(Atom.keepAlive);
+export const agentProfilesAtom = createAgentProfilesAtom(() => environmentServerConfigsAtom);
 
 export function useAgentProfiles(): ReadonlyArray<McpGatewayProfile> {
   return useAtomValue(agentProfilesAtom);
+}
+
+const environmentAgentsAtom = createEnvironmentAgentsAtom((environmentId) =>
+  serverEnvironment.configValueAtom(environmentId),
+);
+
+/** The agents `@` mentions can name and resolve on one environment: its own library only. */
+export function useEnvironmentAgents(
+  environmentId: EnvironmentId | null | undefined,
+): EnvironmentAgents {
+  return useAtomValue(environmentAgentsAtom(environmentId ?? null));
 }
 
 /** Keys of threads a scheduled task will wake later, so the board reads them as Waiting. */
@@ -48,7 +55,7 @@ export function useScheduledWakeThreadKeys(): ReadonlySet<string> {
 export interface AgentAppearance {
   readonly profileId: string;
   readonly name: string;
-  readonly icon: AgentIconKey;
+  readonly icon: AgentIconId;
   /** Null for an agent that no longer exists in any connected library. */
   readonly color: string | null;
 }
@@ -60,7 +67,7 @@ export function agentAppearance(
   return {
     profileId: profile.profileId,
     name: profile.name,
-    icon: agentIconKey(profile.icon),
+    icon: resolveAgentIconId(profile),
     color: agentColorFor(profile, profiles),
   };
 }

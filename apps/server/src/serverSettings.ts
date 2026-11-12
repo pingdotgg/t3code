@@ -1,5 +1,16 @@
+import { legacyAgentIcon } from "@t3tools/shared/agentIcons";
 import {
+  agentNameKey,
+  agentSkillDigest,
+  agentSkillDigestOf,
+  AgentLibraryConflictError,
+  isAgentSkillStub,
   mergeAgentLibraries,
+  toAgentSkillStub,
+  withoutAgentSkillTransportFields,
+  type AgentLibraryMutationResult,
+  type AgentLibraryOperation,
+  type AgentSkill,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
   ProjectId,
@@ -142,7 +153,55 @@ const normalizeServerSettings = (
     ),
   );
 
+// Every settings reload decodes fresh objects, so entries are checked by body: comparing strings
+// is far cheaper than rehashing them, and a body can change without a new revision.
+const skillDigestCache = new Map<string, { readonly skill: AgentSkill; readonly digest: string }>();
+const sameSkillBody = (a: AgentSkill, b: AgentSkill) =>
+  a === b ||
+  (a.content === b.content &&
+    (a.resources?.length ?? 0) === (b.resources?.length ?? 0) &&
+    (a.resources ?? []).every((file, index) => {
+      const other = b.resources![index]!;
+      return (
+        file.path === other.path &&
+        file.contentBase64 === other.contentBase64 &&
+        file.executable === other.executable
+      );
+    }));
+function cachedSkillDigest(skill: AgentSkill) {
+  const cached = skillDigestCache.get(skill.skillId);
+  if (cached !== undefined && sameSkillBody(cached.skill, skill)) return cached.digest;
+  const digest = agentSkillDigest(skill);
+  skillDigestCache.set(skill.skillId, { skill, digest });
+  return digest;
+}
+function skillStubsForClient(skills: ReadonlyArray<AgentSkill>) {
+  const live = new Set(skills.map((skill) => skill.skillId));
+  for (const skillId of skillDigestCache.keys())
+    if (!live.has(skillId)) skillDigestCache.delete(skillId);
+  return skills.map((skill) => toAgentSkillStub(skill, cachedSkillDigest(skill)));
+}
+
 export function redactServerSettingsForClient(
+  settings: ServerSettings,
+  client: { readonly secretReferences: boolean; readonly agentSkillBodiesOnDemand?: boolean },
+): ServerSettings {
+  const shaped = redactSecretsForClient(settings, client);
+  return client.agentSkillBodiesOnDemand === true
+    ? {
+        ...shaped,
+        agentSkills: skillStubsForClient(shaped.agentSkills),
+      }
+    : shaped;
+}
+
+/** Full skills for `server.getAgentSkills`; ids that no longer exist are left out. */
+export function selectAgentSkills(settings: ServerSettings, skillIds: ReadonlyArray<string>) {
+  const wanted = new Set(skillIds);
+  return settings.agentSkills.filter((skill) => wanted.has(skill.skillId));
+}
+
+function redactSecretsForClient(
   settings: ServerSettings,
   client: { readonly secretReferences: boolean },
 ): ServerSettings {
@@ -275,6 +334,11 @@ export class ServerSettingsService extends Context.Service<
       patch?: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** Per-item agent and skill edits checked against the revision each writer saw. */
+    readonly mutateAgentLibrary: (
+      operations: ReadonlyArray<AgentLibraryOperation>,
+    ) => Effect.Effect<AgentLibraryMutationResult, ServerSettingsError | AgentLibraryConflictError>;
+
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
@@ -331,7 +395,12 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     updateSettings: (patch, replicateProfiles = false) =>
       updateTestSettings((currentSettings) =>
         Effect.gen(function* () {
-          yield* validateMcpGatewayProfileNames(patch, "<memory>");
+          yield* validateMcpGatewayProfileNames(
+            currentSettings,
+            patch,
+            "<memory>",
+            replicateProfiles,
+          );
           const now = DateTime.formatIso(yield* DateTime.now);
           return applyServerSettingsPatch(
             currentSettings,
@@ -339,6 +408,29 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
           );
         }),
       ),
+    mutateAgentLibrary: Effect.fn("serverSettings.makeTest.mutateAgentLibrary")(function* (
+      operations: ReadonlyArray<AgentLibraryOperation>,
+    ) {
+      let touched: AgentLibraryTouched = emptyTouched;
+      const settings = yield* writeSemaphore.withPermits(1)(
+        Ref.get(currentSettingsRef).pipe(
+          Effect.flatMap((current) =>
+            DateTime.now.pipe(
+              Effect.flatMap((now) =>
+                applyAgentLibraryOperations(current, operations, DateTime.formatIso(now)),
+              ),
+              Effect.map((applied) => {
+                touched = applied.touched;
+                return applyServerSettingsPatch(current, applied.patch);
+              }),
+            ),
+          ),
+          Effect.flatMap(normalizeServerSettings),
+          Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+        ),
+      );
+      return agentLibraryMutationResult(settings, touched);
+    }),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
         Effect.gen(function* () {
@@ -516,25 +608,83 @@ function selectionSupportsTextGeneration(
 }
 
 function validateMcpGatewayProfileNames(
+  current: ServerSettings,
   patch: ServerSettingsPatch,
   settingsPath: string,
+  replicateProfiles: boolean,
 ): Effect.Effect<void, ServerSettingsError> {
   if (patch.mcpGatewayProfiles === undefined) return Effect.void;
+  const fail = (message: string) =>
+    Effect.fail(
+      new ServerSettingsError({ settingsPath, operation: "normalize", cause: new Error(message) }),
+    );
   const names = new Set<string>();
+  const keys = new Map<string, number>();
   for (const profile of patch.mcpGatewayProfiles) {
-    if (names.has(profile.name)) {
-      return Effect.fail(
-        new ServerSettingsError({
-          settingsPath,
-          operation: "normalize",
-          cause: new Error(`Duplicate MCP gateway profile name: ${profile.name}`),
-        }),
-      );
-    }
+    if (names.has(profile.name)) return fail(`Duplicate MCP gateway profile name: ${profile.name}`);
     names.add(profile.name);
+    const key = agentNameKey(profile.name);
+    keys.set(key, (keys.get(key) ?? 0) + 1);
+  }
+  // Replication renames clashes deterministically; stored clashes stay editable until renamed.
+  if (replicateProfiles) return Effect.void;
+  for (const profile of patch.mcpGatewayProfiles) {
+    const existing = current.mcpGatewayProfiles.find(
+      (stored) => stored.profileId === profile.profileId,
+    );
+    if (existing?.name === profile.name) continue;
+    if ((keys.get(agentNameKey(profile.name)) ?? 0) > 1)
+      return fail(`An agent named "${profile.name}" already exists (names ignore case).`);
   }
   return Effect.void;
 }
+
+/** Later than every stored library timestamp, so a write always wins its own merge. */
+function agentLibraryMutationTime(current: ServerSettings, now: string) {
+  return DateTime.formatIso(
+    DateTime.makeUnsafe(
+      Math.max(
+        Date.parse(now),
+        ...current.mcpGatewayProfiles.map((profile) => (Date.parse(profile.updatedAt) || 0) + 1),
+        ...current.agentSkills.map((skill) => (Date.parse(skill.updatedAt) || 0) + 1),
+        ...Object.values(current.agentSkillDeletedAt).map((at) => (Date.parse(at) || 0) + 1),
+        ...Object.values(current.mcpGatewayProfileDeletedAt).map((at) => (Date.parse(at) || 0) + 1),
+      ),
+    ),
+  );
+}
+
+/** A stub only names a stored body; one this server does not hold is unresolvable. */
+function resolveSkillCandidate(
+  candidate: AgentSkill,
+  existing: AgentSkill | undefined,
+): AgentSkill | undefined {
+  if (!isAgentSkillStub(candidate)) return withoutAgentSkillTransportFields(candidate);
+  if (existing === undefined || agentSkillDigestOf(existing) !== candidate.digest) return undefined;
+  const { resources: _resources, ...metadata } = withoutAgentSkillTransportFields(candidate);
+  return {
+    ...metadata,
+    content: existing.content,
+    ...(existing.resources === undefined ? {} : { resources: existing.resources }),
+  };
+}
+
+const withoutServerOwnedFields = <
+  T extends { revision: number; createdAt: string; updatedAt: string },
+>({
+  revision: _revision,
+  createdAt: _createdAt,
+  updatedAt: _updatedAt,
+  ...content
+}: T) => content;
+
+// Older builds render only the legacy literal, so every writer of an iconId also gets its nearest one.
+const withLegacyAgentIcon = <T extends Pick<McpGatewayProfile, "icon" | "iconId">>(
+  profile: T,
+): T =>
+  profile.iconId !== undefined && profile.icon === undefined
+    ? { ...profile, icon: legacyAgentIcon(profile.iconId) }
+    : profile;
 
 function withServerOwnedMcpGatewayProfiles(
   current: ServerSettings,
@@ -549,30 +699,25 @@ function withServerOwnedMcpGatewayProfiles(
     patch.agentSkillDeletedAt === undefined
   )
     return patch;
+  const storedSkill = (skillId: string) =>
+    current.agentSkills.find((skill) => skill.skillId === skillId);
   if (replicateProfiles)
     return {
       ...patch,
       ...mergeAgentLibraries([
         current,
         {
-          agentSkills: patch.agentSkills ?? [],
+          agentSkills: (patch.agentSkills ?? []).flatMap((candidate) => {
+            const resolved = resolveSkillCandidate(candidate, storedSkill(candidate.skillId));
+            return resolved === undefined ? [] : [resolved];
+          }),
           agentSkillDeletedAt: patch.agentSkillDeletedAt ?? {},
           mcpGatewayProfiles: patch.mcpGatewayProfiles ?? [],
           mcpGatewayProfileDeletedAt: patch.mcpGatewayProfileDeletedAt ?? {},
         },
       ]),
     };
-  const mutationTime = DateTime.formatIso(
-    DateTime.makeUnsafe(
-      Math.max(
-        Date.parse(now),
-        ...current.mcpGatewayProfiles.map((profile) => (Date.parse(profile.updatedAt) || 0) + 1),
-        ...current.agentSkills.map((skill) => (Date.parse(skill.updatedAt) || 0) + 1),
-        ...Object.values(current.agentSkillDeletedAt).map((at) => (Date.parse(at) || 0) + 1),
-        ...Object.values(current.mcpGatewayProfileDeletedAt).map((at) => (Date.parse(at) || 0) + 1),
-      ),
-    ),
-  );
+  const mutationTime = agentLibraryMutationTime(current, now);
   const skillDeleted = { ...current.agentSkillDeletedAt };
   if (patch.agentSkills !== undefined) {
     for (const skill of current.agentSkills) {
@@ -580,30 +725,33 @@ function withServerOwnedMcpGatewayProfiles(
         skillDeleted[skill.skillId] = mutationTime;
     }
   }
-  const skills = patch.agentSkills?.map((candidate) => {
-    const existing = current.agentSkills.find((skill) => skill.skillId === candidate.skillId);
-    const {
-      revision: _revision,
-      createdAt: _created,
-      updatedAt: _updated,
-      ...rawContent
-    } = candidate;
+  const skills = patch.agentSkills?.flatMap((raw): AgentSkill[] => {
+    const existing = storedSkill(raw.skillId);
+    // A client that saw an older revision echoes it back; it is not an edit.
+    if (existing && raw.revision < existing.revision) return [existing];
+    const candidate = isAgentSkillStub(raw)
+      ? existing && {
+          ...withoutAgentSkillTransportFields(raw),
+          content: existing.content,
+        }
+      : withoutAgentSkillTransportFields(raw);
+    if (candidate === undefined) return [];
+    const rawContent = withoutServerOwnedFields(candidate);
     const content = {
       ...rawContent,
       ...(candidate.resources === undefined && existing?.resources !== undefined
         ? { resources: existing.resources }
         : {}),
     };
-    if (existing) {
-      const { revision: _r, createdAt: _c, updatedAt: _u, ...previous } = existing;
-      if (Equal.equals(content, previous)) return existing;
-    }
-    return {
-      ...content,
-      revision: (existing?.revision ?? 0) + 1,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: mutationTime,
-    };
+    if (existing && Equal.equals(content, withoutServerOwnedFields(existing))) return [existing];
+    return [
+      {
+        ...content,
+        revision: (existing?.revision ?? 0) + 1,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: mutationTime,
+      },
+    ];
   });
   const deleted = { ...current.mcpGatewayProfileDeletedAt };
   for (const profile of current.mcpGatewayProfiles) {
@@ -618,23 +766,22 @@ function withServerOwnedMcpGatewayProfiles(
       const existing = current.mcpGatewayProfiles.find(
         (profile) => profile.profileId === candidate.profileId,
       );
-      const {
-        revision: _candidateRevision,
-        createdAt: _candidateCreatedAt,
-        updatedAt: _candidateUpdatedAt,
-        ...candidateContent
-      } = candidate;
+      // Clients that predate icons and tags strip them; clearing them takes a per-item edit.
+      const content = withLegacyAgentIcon({
+        ...withoutServerOwnedFields(candidate),
+        ...(candidate.iconId === undefined && existing?.iconId !== undefined
+          ? { iconId: existing.iconId }
+          : {}),
+        ...(candidate.tags === undefined && existing?.tags !== undefined
+          ? { tags: existing.tags }
+          : {}),
+      });
       if (existing !== undefined) {
-        const {
-          revision: _existingRevision,
-          createdAt: _existingCreatedAt,
-          updatedAt: _existingUpdatedAt,
-          ...existingContent
-        } = existing;
-        if (Equal.equals(candidateContent, existingContent)) return existing;
+        if (candidate.revision < existing.revision) return existing;
+        if (Equal.equals(content, withoutServerOwnedFields(existing))) return existing;
       }
       return {
-        ...candidateContent,
+        ...content,
         revision: (existing?.revision ?? 0) + 1,
         createdAt: existing?.createdAt ?? now,
         updatedAt: mutationTime,
@@ -646,6 +793,209 @@ function withServerOwnedMcpGatewayProfiles(
     mcpGatewayProfiles: profiles,
     mcpGatewayProfileDeletedAt: deleted,
     ...(skills === undefined ? {} : { agentSkills: skills, agentSkillDeletedAt: skillDeleted }),
+  };
+}
+
+interface AgentLibraryTouched {
+  readonly profileIds: ReadonlySet<string>;
+  readonly skillIds: ReadonlySet<string>;
+}
+const emptyTouched: AgentLibraryTouched = { profileIds: new Set(), skillIds: new Set() };
+
+function checkBaseRevision(
+  itemKind: "agent" | "skill",
+  itemId: string,
+  itemName: string | undefined,
+  existing: { readonly revision: number } | undefined,
+  baseRevision: number | null,
+): AgentLibraryConflictError | undefined {
+  if (baseRevision === null) {
+    return existing === undefined
+      ? undefined
+      : new AgentLibraryConflictError({
+          itemKind,
+          itemId,
+          ...(itemName === undefined ? {} : { itemName }),
+          reason: "exists",
+          expectedRevision: null,
+          actualRevision: existing.revision,
+        });
+  }
+  if (existing?.revision === baseRevision) return undefined;
+  return new AgentLibraryConflictError({
+    itemKind,
+    itemId,
+    ...(itemName === undefined ? {} : { itemName }),
+    reason: existing === undefined ? "missing" : "revision",
+    expectedRevision: baseRevision,
+    actualRevision: existing?.revision ?? null,
+  });
+}
+
+/** Applies every operation or none; deleting a skill also unassigns it from agents. */
+function applyAgentLibraryOperations(
+  current: ServerSettings,
+  operations: ReadonlyArray<AgentLibraryOperation>,
+  now: string,
+): Effect.Effect<
+  { readonly patch: ServerSettingsPatch; readonly touched: AgentLibraryTouched },
+  AgentLibraryConflictError
+> {
+  const mutationTime = agentLibraryMutationTime(current, now);
+  const profiles = new Map(
+    current.mcpGatewayProfiles.map((profile) => [profile.profileId, profile]),
+  );
+  const skills = new Map(current.agentSkills.map((skill) => [skill.skillId, skill]));
+  const profileDeletedAt = { ...current.mcpGatewayProfileDeletedAt };
+  const skillDeletedAt = { ...current.agentSkillDeletedAt };
+  const profileIds = new Set<string>();
+  const skillIds = new Set<string>();
+  const bump = <T extends { revision: number; createdAt: string; updatedAt: string }>(
+    existing: T | undefined,
+    content: Omit<T, "revision" | "createdAt" | "updatedAt">,
+  ) =>
+    ({
+      ...content,
+      revision: (existing?.revision ?? 0) + 1,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: mutationTime,
+    }) as T;
+  for (const operation of operations) {
+    switch (operation.type) {
+      case "skill.upsert": {
+        const id = operation.skill.skillId;
+        const existing = skills.get(id);
+        const conflict = checkBaseRevision(
+          "skill",
+          id,
+          operation.skill.name,
+          existing,
+          operation.baseRevision,
+        );
+        if (conflict) return Effect.fail(conflict);
+        const raw = withoutAgentSkillTransportFields(operation.skill);
+        if (isAgentSkillStub(operation.skill) && existing === undefined)
+          return Effect.fail(
+            new AgentLibraryConflictError({
+              itemKind: "skill",
+              itemId: id,
+              itemName: raw.name,
+              reason: "missing",
+            }),
+          );
+        const { resources: rawResources, ...rawContent } = withoutServerOwnedFields(raw);
+        const resources = isAgentSkillStub(operation.skill)
+          ? existing?.resources
+          : (rawResources ?? existing?.resources);
+        const content = {
+          ...rawContent,
+          content: isAgentSkillStub(operation.skill) ? existing!.content : raw.content,
+          ...(resources === undefined ? {} : { resources }),
+        };
+        skillIds.add(id);
+        if (existing && Equal.equals(content, withoutServerOwnedFields(existing))) break;
+        skills.set(id, bump<AgentSkill>(existing, content));
+        break;
+      }
+      case "skill.delete": {
+        const existing = skills.get(operation.skillId);
+        const conflict = checkBaseRevision(
+          "skill",
+          operation.skillId,
+          existing?.name,
+          existing,
+          operation.baseRevision,
+        );
+        if (conflict) return Effect.fail(conflict);
+        skills.delete(operation.skillId);
+        skillDeletedAt[operation.skillId] = mutationTime;
+        skillIds.add(operation.skillId);
+        for (const profile of profiles.values()) {
+          if (!profile.skillIds?.includes(operation.skillId)) continue;
+          profiles.set(
+            profile.profileId,
+            bump<McpGatewayProfile>(profile, {
+              ...withoutServerOwnedFields(profile),
+              skillIds: profile.skillIds.filter((skillId) => skillId !== operation.skillId),
+            }),
+          );
+          profileIds.add(profile.profileId);
+        }
+        break;
+      }
+      case "profile.upsert": {
+        const id = operation.profile.profileId;
+        const existing = profiles.get(id);
+        const conflict = checkBaseRevision(
+          "agent",
+          id,
+          operation.profile.name,
+          existing,
+          operation.baseRevision,
+        );
+        if (conflict) return Effect.fail(conflict);
+        const key = agentNameKey(operation.profile.name);
+        if (
+          existing?.name !== operation.profile.name &&
+          [...profiles.values()].some(
+            (profile) => profile.profileId !== id && agentNameKey(profile.name) === key,
+          )
+        )
+          return Effect.fail(
+            new AgentLibraryConflictError({
+              itemKind: "agent",
+              itemId: id,
+              itemName: operation.profile.name,
+              reason: "name",
+            }),
+          );
+        const content = withLegacyAgentIcon(withoutServerOwnedFields(operation.profile));
+        profileIds.add(id);
+        if (existing && Equal.equals(content, withoutServerOwnedFields(existing))) break;
+        profiles.set(id, bump<McpGatewayProfile>(existing, content));
+        break;
+      }
+      case "profile.delete": {
+        const existing = profiles.get(operation.profileId);
+        const conflict = checkBaseRevision(
+          "agent",
+          operation.profileId,
+          existing?.name,
+          existing,
+          operation.baseRevision,
+        );
+        if (conflict) return Effect.fail(conflict);
+        profiles.delete(operation.profileId);
+        profileDeletedAt[operation.profileId] = mutationTime;
+        profileIds.add(operation.profileId);
+        break;
+      }
+    }
+  }
+  return Effect.succeed({
+    patch: {
+      mcpGatewayProfiles: [...profiles.values()],
+      mcpGatewayProfileDeletedAt: profileDeletedAt,
+      agentSkills: [...skills.values()],
+      agentSkillDeletedAt: skillDeletedAt,
+    },
+    touched: { profileIds, skillIds },
+  });
+}
+
+function agentLibraryMutationResult(
+  settings: ServerSettings,
+  touched: AgentLibraryTouched,
+): AgentLibraryMutationResult {
+  const pick = (record: Readonly<Record<string, string>>, ids: ReadonlySet<string>) =>
+    Object.fromEntries(Object.entries(record).filter(([id]) => ids.has(id)));
+  return {
+    mcpGatewayProfiles: settings.mcpGatewayProfiles.filter((profile) =>
+      touched.profileIds.has(profile.profileId),
+    ),
+    agentSkills: settings.agentSkills.filter((skill) => touched.skillIds.has(skill.skillId)),
+    mcpGatewayProfileDeletedAt: pick(settings.mcpGatewayProfileDeletedAt, touched.profileIds),
+    agentSkillDeletedAt: pick(settings.agentSkillDeletedAt, touched.skillIds),
   };
 }
 
@@ -1328,10 +1678,10 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const updateAndPersistSettings = (
+  const updateAndPersistSettings = <E = never>(
     patch: ServerSettingsPatch,
-    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError | E>,
+  ): Effect.Effect<ServerSettings, ServerSettingsError | E> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const { settings: current, parseFailure } = yield* reloadSettings;
@@ -1516,7 +1866,7 @@ const make = Effect.gen(function* () {
       updateAndPersistSettings(patch, (current) =>
         Effect.gen(function* () {
           yield* ensureSecretProviderWritesAllowed(patch, settingsPath);
-          yield* validateMcpGatewayProfileNames(patch, settingsPath);
+          yield* validateMcpGatewayProfileNames(current, patch, settingsPath, replicateProfiles);
           const now = DateTime.formatIso(yield* DateTime.now);
           return applyServerSettingsPatch(
             current,
@@ -1524,6 +1874,20 @@ const make = Effect.gen(function* () {
           );
         }),
       ),
+    mutateAgentLibrary: Effect.fn("serverSettings.mutateAgentLibrary")(function* (
+      operations: ReadonlyArray<AgentLibraryOperation>,
+    ) {
+      let touched: AgentLibraryTouched = emptyTouched;
+      const settings = yield* updateAndPersistSettings<AgentLibraryConflictError>({}, (current) =>
+        Effect.gen(function* () {
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const applied = yield* applyAgentLibraryOperations(current, operations, now);
+          touched = applied.touched;
+          return applyServerSettingsPatch(current, applied.patch);
+        }),
+      );
+      return agentLibraryMutationResult(settings, touched);
+    }),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings(patch, (current) =>
         Effect.gen(function* () {

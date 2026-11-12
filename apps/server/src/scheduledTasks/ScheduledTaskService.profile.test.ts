@@ -123,6 +123,24 @@ it.effect(
           .upsert({ ...input, schedule: { type: "cron", expression: "0 7 * *", timezone: "UTC" } })
           .pipe(Effect.flip);
         assert.include(invalid.message, "must have five fields");
+
+        // An agent's task stores at most its chat's modes, and runs no broader when the
+        // profile is later widened.
+        const agentTask = yield* service.upsert({
+          ...input,
+          title: "Supervised review",
+          runtimeMode: "approval-required",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* service.runNow({ id: agentTask.task.id });
+        assert.equal(launches.length, 2);
+        assert.deepEqual(launches[1]?.profileSelection, {
+          profileId: "reviewer",
+          revision: 3,
+          overrideFields: ["runtimeMode"],
+        });
+        assert.equal(launches[1]?.runtimeMode, "approval-required");
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
     }).pipe(Effect.provide(memoryDatabase)),
 );

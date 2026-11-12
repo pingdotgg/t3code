@@ -14,15 +14,13 @@ import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { useAuth, useUser } from "@clerk/expo";
-import { useNavigation, useNavigationState } from "@react-navigation/native";
+import { useNavigationState } from "@react-navigation/native";
 import { use, type ComponentProps } from "react";
 import { Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
@@ -65,10 +63,6 @@ function useSettingsListPlacement() {
   return { sidebar, selected };
 }
 
-function SettingsListContent() {
-  return hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />;
-}
-
 export function SettingsListScreen(props: {
   readonly sidebar: boolean;
   readonly selected: string | null;
@@ -107,28 +101,11 @@ interface SettingsListSection {
   readonly rows: readonly SettingsListRow[];
 }
 
-function ConfiguredSettingsRouteScreen() {
-  const navigation = useNavigation();
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const { user } = useUser();
+function SettingsListContent() {
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const accountLabel = !isLoaded
-    ? "Checking"
-    : !isSignedIn
-      ? "Sign in"
-      : (user?.primaryEmailAddress?.emailAddress ?? "Signed in");
-
   return (
     <SettingsList
       connections={[
-        {
-          id: "account",
-          icon: "person.crop.circle",
-          label: "T3 Account",
-          value: accountLabel,
-          disabled: !isLoaded,
-          onPress: () => navigation.navigate("SettingsAuth"),
-        },
         environmentsRow(Object.keys(savedConnectionsById).length),
         {
           id: "SettingsNotifications",
@@ -139,11 +116,6 @@ function ConfiguredSettingsRouteScreen() {
       ]}
     />
   );
-}
-
-function LocalSettingsRouteScreen() {
-  const { savedConnectionsById } = useSavedRemoteConnections();
-  return <SettingsList connections={[environmentsRow(Object.keys(savedConnectionsById).length)]} />;
 }
 
 function environmentsRow(count: number): SettingsListRow {
@@ -274,7 +246,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
     {
       rows: [
         serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", "Maintenance"),
-        page("SettingsLabs", "sparkles", "Labs"),
+        page("SettingsLabs", "flask", "Labs"),
         page("SettingsAbout", "info.circle", "About"),
         page("SettingsArchive", "archivebox", "Archive"),
       ],

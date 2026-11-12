@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  matchComposerAgentItems,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
   type ComposerThreadCandidate,
@@ -24,6 +25,7 @@ function shell(
     latestUserMessageAt: null,
     opens: null,
     archivedAt: null,
+    parentThreadId: null,
     lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
     ...overrides,
   };
@@ -116,5 +118,37 @@ describe("matchComposerEnvironmentItems", () => {
         query: "",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("matchComposerAgentItems", () => {
+  const agents = [
+    { profileId: "prof-reviewer", name: "Doug", runtimeMode: "auto", description: "Reviews PRs" },
+    { profileId: "prof-writer", name: "doug", runtimeMode: "auto", modelLabel: "Sonnet 5.5" },
+    { profileId: "prof-dougal", name: "Dougal", runtimeMode: "read-only" },
+    {
+      profileId: "prof-mini",
+      name: "Mini Doug",
+      runtimeMode: "auto",
+      environmentIds: ["env-mini"],
+    },
+    { profileId: "prof-ana", name: "Ana", runtimeMode: "auto" },
+  ] as const;
+
+  it("matches names ignoring case and tells apart agents named alike", () => {
+    const items = matchComposerAgentItems({
+      agents,
+      environmentId,
+      query: " DOUG ",
+      machineLabel: (id) => (id === "env-mini" ? "Mac mini" : undefined),
+    });
+    expect(items.map((item) => [item.agent.profileId, item.description])).toEqual([
+      ["prof-reviewer", "Agent · Reviews PRs"],
+      ["prof-writer", "Agent · Sonnet 5.5"],
+      ["prof-dougal", "Agent · read-only"],
+      ["prof-mini", "Agent · runs on Mac mini"],
+    ]);
+    expect(items[1]).toMatchObject({ id: "agent:prof-writer", type: "agent", label: "doug" });
+    expect(matchComposerAgentItems({ agents, environmentId, query: "" })).toEqual([]);
   });
 });

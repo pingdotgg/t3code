@@ -42,7 +42,6 @@ import {
   getMcpGatewayLaunchConfig,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
-  installRelayTelemetryEnabled,
   getSystemLocale,
   getPreferredSystemLanguages,
   getWindowFullscreenState,
@@ -106,7 +105,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(ensureMcpGatewayBridgeToken);
   yield* ipc.handleSync(getMcpGatewayLaunchConfig);
   yield* ipc.handle(McpGatewayIpc.configureManagedMcpGateway);
-  yield* installRelayTelemetryEnabled();
   yield* ipc.handleSync(getSystemLocale);
   yield* ipc.handleSync(getPreferredSystemLanguages);
   yield* ipc.handleSync(getWindowFullscreenState);

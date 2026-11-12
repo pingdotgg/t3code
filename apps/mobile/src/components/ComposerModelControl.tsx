@@ -7,7 +7,7 @@ import type { ModelOption } from "../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../lib/providerOptions";
 import { AppText as Text } from "./ui/AppText";
 import { ComposerInlineControl } from "./ComposerToolbar";
-import { ProviderIcon, ProviderInstanceIcon } from "./ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon, providerInstanceNameLabel } from "./ProviderIcon";
 import { AgentAvatar } from "./AgentAvatar";
 import type { AgentAppearance } from "../state/agents";
 
@@ -43,6 +43,17 @@ export function ComposerModelControl(props: {
   const modelLabel = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
   const agent = props.agent ?? null;
   const label = agent ? `${agent.name} · ${modelLabel}` : modelLabel;
+  // An agent's avatar stands in for the provider icon, so its name is not repeated beside it.
+  const providerNameLabel =
+    badge && !agent
+      ? providerInstanceNameLabel({
+          provider: props.modelOption?.providerDriver,
+          iconUrl: props.modelOption?.providerIconUrl,
+          displayName: badge.displayName,
+          showBadge: badge.showBadge,
+        })
+      : null;
+  const shortLabel = props.modelOption?.shortName ?? label;
   return (
     <ComposerInlineControl
       accessibilityLabel={[
@@ -78,10 +89,24 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={props.modelOption?.shortName ?? label}
+      label={providerNameLabel ?? shortLabel}
+      labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
       iconOnly={props.iconOnly}
+      suffixWidth={providerNameLabel ? 96 : undefined}
       suffix={
-        summary ? (
+        providerNameLabel ? (
+          <Text
+            className={
+              props.size === "large"
+                ? "text-sm text-foreground-muted"
+                : "text-xs text-foreground-muted"
+            }
+            numberOfLines={1}
+          >
+            {shortLabel}
+            {summary ? ` · ${summary}` : ""}
+          </Text>
+        ) : summary ? (
           <Text
             className={
               props.size === "large"

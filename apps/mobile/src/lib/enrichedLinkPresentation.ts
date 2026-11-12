@@ -13,27 +13,54 @@ import type {
   SelectableMarkdownSkill,
 } from "../native/SelectableMarkdownText.types";
 import {
+  agentChipState,
+  type EnvironmentAgents,
+} from "@t3tools/client-runtime/state/agentIdentity";
+import {
   formatComposerContextHref,
   parseComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
 import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
+const AGENT_STATE_SUFFIX: Record<ReturnType<typeof agentChipState>["status"], string> = {
+  unknown: "",
+  unsupported: " · unavailable",
+  available: "",
+  missing: " · unavailable",
+  "read-only": " · read-only",
+  elsewhere: " · other machine",
+};
+
+/**
+ * With `agents`, the environment's own library, an agent chip shows the agent's current name
+ * and whether it still exists there.
+ */
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
+  agents?: EnvironmentAgents,
 ): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
   const reference = parseComposerContextHref(href);
   if (!reference) return undefined;
   const record = records?.find((candidate) => candidate.contextId === reference.contextId);
+  const agent =
+    record?.kind === "agent" && "profileId" in record && agents
+      ? agentChipState(record, agents, undefined)
+      : undefined;
   const presentation =
-    records && !record
+    (records && !record) || agent?.status === "missing" || agent?.status === "unsupported"
       ? UNAVAILABLE_CONTEXT_CHIP_PRESENTATION
       : contextChipPresentation(reference.kind, record);
   const size = composerChipSizeSuffix(record);
+  const label = agent
+    ? `${agent.name}${AGENT_STATE_SUFFIX[agent.status]}`
+    : record && size
+      ? `${record.label} · ${size}`
+      : undefined;
   return {
     ...(presentation.accent ? { accent: presentation.accent } : {}),
     icon: contextChipIcon(presentation, contextRecordFileName(record)),
-    ...(record && size ? { label: `${record.label} · ${size}` } : {}),
+    ...(label ? { label } : {}),
   };
 }
 
@@ -92,7 +119,7 @@ export function enrichedLinkVariantPattern(url: string) {
 }
 
 export const ENRICHED_INLINE_FILE_LINK_REGEX =
-  /^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s`]+|(?:[A-Za-z0-9._-]+[\\/])+[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}|[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+)?)$/;
+  /^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s`]+|(?:[A-Za-z0-9._-]+[\\/])+[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+(?::\d+|-\d+)?)?|[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+|-\d+)?)$/;
 
 export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdownSkill>) {
   const names = [...new Set(skills?.map((skill) => skill.name) ?? [])].filter(Boolean);

@@ -1,5 +1,7 @@
+import * as NodeModule from "node:module";
+
 import { assert, describe, it } from "@effect/vitest";
-import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
+import { computeReleaseNotes } from "electron-updater/out/providers/GitHubProvider.js";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -16,11 +18,61 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
-import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+
+type ReleaseFeed = Parameters<typeof computeReleaseNotes>[2];
+type RunningVersion = Parameters<typeof computeReleaseNotes>[0];
+
+// electron-updater's own dependencies, which apps/desktop does not declare.
+const requireFromUpdater = NodeModule.createRequire(
+  NodeModule.createRequire(import.meta.url).resolve("electron-updater"),
+);
+const { parseXml } = requireFromUpdater("builder-util-runtime") as {
+  parseXml: (xml: string) => ReleaseFeed;
+};
+const semver = requireFromUpdater("semver") as { parse: (version: string) => RunningVersion };
+
+const releaseTitle = (version: string) =>
+  version.includes("-nightly.")
+    ? `T3 Code Nightly ${version} (0123456789ab)`
+    : `T3 Code v${version}`;
+
+const releaseFeed = (...versions: ReadonlyArray<string>) =>
+  parseXml(
+    `<feed xmlns="http://www.w3.org/2005/Atom">${versions
+      .map(
+        (version) =>
+          `<entry><link rel="alternate" type="text/html" href="https://github.com/pingdotgg/t3code/releases/tag/v${version}"/><title>${releaseTitle(version)}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
+      )
+      .join("")}</feed>`,
+  );
+
+/** The update info electron-updater's GitHub provider reports when /releases/latest names `version`. */
+const stableUpdateInfo = (
+  feed: ReleaseFeed,
+  version: string,
+  runningVersion: string,
+  fullChangelog: boolean,
+) => {
+  const latestRelease =
+    feed
+      .getElements("entry")
+      .find((entry) => entry.element("link").attribute("href").endsWith(`/tag/v${version}`)) ??
+    feed.element("entry");
+  return {
+    version,
+    releaseName: latestRelease.elementValueOrEmpty("title"),
+    releaseNotes: computeReleaseNotes(
+      semver.parse(runningVersion),
+      fullChangelog,
+      feed,
+      latestRelease,
+    ),
+  };
+};
 
 describe("DesktopUpdates", () => {
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
@@ -105,6 +157,51 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "available");
         assert.equal(state.availableVersion, "1.2.5");
         assert.isNull(state.downloadedVersion);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect.each([
+    {
+      name: "shows no notes for a Stable release missing from the releases feed",
+      runningVersion: "1.2.3",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.5-nightly.20261101.1"],
+      expected: [],
+    },
+    {
+      name: "shows a Stable release's own notes from the releases feed",
+      runningVersion: "1.2.3",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.4", "1.2.4-nightly.20261030.1"],
+      expected: [{ version: "1.2.4", items: ["1.2.4 change"], totalItems: 1 }],
+    },
+    {
+      name: "shows a Stable release's notes when switching down from a newer Nightly",
+      runningVersion: "1.2.5-nightly.20261027.1",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.4"],
+      expected: [{ version: "1.2.4", items: ["1.2.4 change"], totalItems: 1 }],
+    },
+  ])("$name", ({ runningVersion, feedVersions, expected }) => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        harness.emit(
+          "update-available",
+          stableUpdateInfo(
+            releaseFeed(...feedVersions),
+            "1.2.4",
+            runningVersion,
+            harness.fullChangelog(),
+          ),
+        );
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.availableVersion, "1.2.4");
+        assert.deepEqual(state.releaseNotes, expected);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -390,30 +487,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("marks the backend stop for an install as an update restart", () => {
-    let markersAtStop: ReadonlyArray<string> = [];
-    const harness = makeHarness({
-      stopBackend: Effect.sync(() => {
-        markersAtStop = [...harness.updateRestartMarkers];
-      }),
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        assert.isTrue((yield* updates.install).accepted);
-        assert.deepEqual(markersAtStop, [
-          environment.path.join(environment.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE),
-        ]);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   it.effect.each([
     { env: {}, isForceRunAfter: true },
     { env: { T3CODE_SUPERVISED_RELAUNCH: "true" }, isForceRunAfter: false },
@@ -496,31 +569,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("drops the update restart marker when an install is interrupted", () =>
-    Effect.gen(function* () {
-      const stopping = yield* Deferred.make<void>();
-      const harness = makeHarness({
-        stopBackend: Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-          harness.emit("update-downloaded", { version: "1.2.4" });
-          yield* flushCallbacks;
-
-          const installFiber = yield* updates.install.pipe(Effect.forkScoped);
-          yield* Deferred.await(stopping);
-          assert.equal(harness.updateRestartMarkers.size, 1);
-
-          yield* Fiber.interrupt(installFiber);
-          assert.equal(harness.updateRestartMarkers.size, 0);
-        }),
-      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-    }),
-  );
-
   it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
     const harness = makeHarness({
       quitAndInstall: Effect.fail(
@@ -545,7 +593,6 @@ describe("DesktopUpdates", () => {
         assert.isTrue(result.accepted);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
-        assert.equal(harness.updateRestartMarkers.size, 0);
         assert.equal(harness.installRecords.size, 0);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

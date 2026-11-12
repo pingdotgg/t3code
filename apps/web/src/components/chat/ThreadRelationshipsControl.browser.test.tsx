@@ -5,6 +5,8 @@ import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
+
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   commandSucceeds: false,
@@ -64,6 +66,7 @@ const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("fork");
 
 function setup() {
+  localStorage.removeItem("t3code:thread-details:lineage-collapsed");
   state.commandSucceeds = false;
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
@@ -159,6 +162,40 @@ it.each([
   if (action === "disconnect") {
     await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
   }
+});
+
+it("collapses Lineage for every thread on the device and keeps its count and actions", async () => {
+  setup();
+  const panel = (id: ThreadId) => (
+    <ToastProvider timeout={0}>
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={id}
+        showLineage
+        showSideChats
+      />
+    </ToastProvider>
+  );
+  await using screen = await render(panel(threadId));
+  const toggle = screen.getByRole("button", { name: "Lineage · 1" });
+  await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect.element(screen.getByText("Source", { exact: true })).toBeVisible();
+
+  await toggle.click();
+  await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect.element(screen.getByText("Source", { exact: true })).not.toBeInTheDocument();
+  await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
+
+  const anotherThreadId = ThreadId.make("another-fork");
+  const projection = state.projection as { thread: Record<string, unknown> };
+  state.projection = { ...projection, thread: { ...projection.thread, id: anotherThreadId } };
+  await screen.rerender(panel(anotherThreadId));
+  await expect
+    .element(screen.getByRole("button", { name: "Lineage · 1" }))
+    .toHaveAttribute("aria-expanded", "false");
+
+  await screen.getByRole("button", { name: "Lineage · 1" }).click();
+  await expect.element(screen.getByText("Source", { exact: true })).toBeVisible();
 });
 
 it("opens an idle child from Lineage when its shell has not been loaded", async () => {
@@ -296,18 +333,20 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
         remoteChild: {
           environmentId: remoteEnvId,
           threadId: remoteThreadId,
-          label: "Remote VM",
+          label: "Remote VM with a long machine name in the office",
         },
       },
     ],
   };
   await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={threadId}
-      showLineage
-      showSideChats={false}
-    />,
+    <div style={{ width: 320 }}>
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats={false}
+      />
+    </div>,
     { router: "/environment/fork" },
   );
 
@@ -317,12 +356,16 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
     .not.toBeInTheDocument();
   await screen.getByRole("button", { name: /Previous subagents/ }).click();
   const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  // A long environment label must not squeeze the title out of the row.
+  expect(
+    page.getByText(longTitle, { exact: true }).element().getBoundingClientRect().width,
+  ).toBeGreaterThan(0);
   await userEvent.hover(row);
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
   expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Runs on Remote VM. Connect to it to open the thread there.",
+    "Runs on Remote VM with a long machine name in the office. Connect to it to open the thread there.",
   );
 
   await row.click({ force: true });

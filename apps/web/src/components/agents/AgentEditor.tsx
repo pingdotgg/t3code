@@ -11,11 +11,22 @@ import {
 import { SelectButton } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { agentModelOptions, presetProviderLabel } from "./agentModelCatalog";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { AgentSkill, McpGatewayProfile, ServerProvider } from "@t3tools/contracts";
 import { MCP_GATEWAY_RUNTIME_MODE_LABELS } from "@t3tools/contracts";
-import { agentColors, agentIconLabels } from "./agents.logic";
-import { AgentIcon } from "./AgentIcon";
+import {
+  agentColors,
+  agentHasAdvancedSettings,
+  defaultAgentColor,
+  soleOption,
+} from "./agents.logic";
+import {
+  agentIconFieldsToSave,
+  normalizeAgentTags,
+  resolveAgentIconId,
+  type AgentIconId,
+} from "@t3tools/client-runtime/state/agentIdentity";
+import { AgentIconPicker } from "./AgentIconPicker";
+import { AgentTagsField } from "./AgentTagsField";
 import { AGENT_PRESET_SETUP_NOTE } from "./AgentPresetPicker";
 import { useRef, useState, type CSSProperties } from "react";
 import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
@@ -62,12 +73,20 @@ export function AgentEditor({
   const presetSkills = skillsAvailable && preset ? preset.skills : [];
   const presetSkillIds = presetSkills.map(
     (skill, index) =>
-      findIdenticalSkill(skills, skill)?.skillId ?? `${PRESET_SKILL_PREFIX}${index}`,
+      findIdenticalSkill(skills, skill)?.skillId ??
+      (skill.choice && skill.choice.kind !== "new"
+        ? skill.choice.skillId
+        : `${PRESET_SKILL_PREFIX}${index}`),
+  );
+  const updatedSkillIds = new Set(
+    presetSkills.flatMap((skill) =>
+      skill.choice?.kind === "update" ? [skill.choice.skillId] : [],
+    ),
   );
   const skillOptions = [
     ...skills.map((skill) => ({
       id: skill.skillId,
-      name: skill.name,
+      name: updatedSkillIds.has(skill.skillId) ? `${skill.name} (updated)` : skill.name,
       description: skill.description,
     })),
     ...presetSkills.flatMap((skill, index) =>
@@ -90,19 +109,13 @@ export function AgentEditor({
     profile?.systemPrompt ?? preset?.systemPrompt ?? "",
   );
   const [color, setColor] = useState(
-    profile?.color ??
-      preset?.color ??
-      agentColors[
-        Math.max(
-          0,
-          profile
-            ? profiles.findIndex((item) => item.profileId === profile.profileId)
-            : profiles.length,
-        ) % agentColors.length
-      ]!,
+    profile?.color ?? preset?.color ?? defaultAgentColor(profile, profiles),
   );
-  const [icon, setIcon] = useState<NonNullable<McpGatewayProfile["icon"]>>(
-    profile?.icon ?? preset?.icon ?? "orb",
+  const [pickedIcon, setPickedIcon] = useState<AgentIconId | null>(null);
+  const iconId = pickedIcon ?? resolveAgentIconId(profile ?? preset);
+  const [tags, setTags] = useState<ReadonlyArray<string>>(profile?.tags ?? preset?.tags ?? []);
+  const [advancedOpen, setAdvancedOpen] = useState(
+    () => profile !== null && agentHasAdvancedSettings(profile, profiles),
   );
   const [description, setDescription] = useState(profile?.description ?? preset?.description ?? "");
   const [name, setName] = useState(profile?.name ?? preset?.name ?? "");
@@ -132,11 +145,14 @@ export function AgentEditor({
       availableProviders.filter((p) => p.enabled).map((p) => p.displayName?.trim() || p.driver),
     ),
   ];
-  const models = agentModelOptions(providers, environmentIds, providerLabel);
+  // With a single choice there is nothing to pick, so it is preselected.
+  const provider = providerLabel || (soleOption(providerLabels) ?? "");
+  const models = agentModelOptions(providers, environmentIds, provider);
+  const model = modelLabel || (soleOption(models)?.slug ?? "");
   const selectedModel =
-    models.find((model) => model.slug === modelLabel) ??
-    (models.filter((model) => model.name === modelLabel).length === 1
-      ? models.find((model) => model.name === modelLabel)
+    models.find((item) => item.slug === model) ??
+    (models.filter((item) => item.name === model).length === 1
+      ? models.find((item) => item.name === model)
       : undefined);
   return (
     <Dialog
@@ -151,8 +167,7 @@ export function AgentEditor({
             {profile ? "Edit agent" : preset ? `Create agent from ${preset.name}` : "Create agent"}
           </DialogTitle>
           <DialogDescription className="mt-2">
-            Name a specialist. Choose its model and machines. It starts working when you give it a
-            task.
+            Name a specialist and choose its model. It starts working when you give it a task.
           </DialogDescription>
           {preset && (
             <div className="agent-preset-setup" role="note">
@@ -173,14 +188,20 @@ export function AgentEditor({
             className="agent-form"
             onSubmit={async (event) => {
               event.preventDefault();
+              const nameKey = name.trim().toLocaleLowerCase();
               if (
-                profiles.some((p) => p.profileId !== profile?.profileId && p.name === name.trim())
+                profiles.some(
+                  (p) =>
+                    p.profileId !== profile?.profileId &&
+                    p.name.trim().toLocaleLowerCase() === nameKey,
+                )
               ) {
                 setError("An agent with this name already exists.");
                 return;
               }
               setSaving(true);
               setError("");
+              const normalizedTags = normalizeAgentTags(tags);
               // oxlint-disable-next-line react/purity -- captures the save time inside the submit handler (oxc#27309)
               const now = new Date().toISOString();
               try {
@@ -193,10 +214,11 @@ export function AgentEditor({
                     skillIds: skillIds.filter((id) => !id.startsWith(PRESET_SKILL_PREFIX)),
                     ...(includeUserSkills ? {} : { includeUserSkills: false }),
                     color,
-                    icon,
+                    ...agentIconFieldsToSave(profile ?? preset, pickedIcon),
+                    ...(normalizedTags.length ? { tags: normalizedTags } : {}),
                     revision: profile?.revision ?? 1,
-                    providerLabel,
-                    modelLabel: selectedModel?.slug ?? modelLabel,
+                    providerLabel: provider,
+                    modelLabel: selectedModel?.slug ?? model,
                     ...(thinking.trim() ? { reasoningEffort: thinking.trim() } : {}),
                     runtimeMode,
                     interactionMode,
@@ -205,9 +227,10 @@ export function AgentEditor({
                     updatedAt: now,
                   },
                   presetSkills.filter(
-                    (_, index) =>
-                      presetSkillIds[index]!.startsWith(PRESET_SKILL_PREFIX) &&
-                      skillIds.includes(presetSkillIds[index]!),
+                    (skill, index) =>
+                      skillIds.includes(presetSkillIds[index]!) &&
+                      (presetSkillIds[index]!.startsWith(PRESET_SKILL_PREFIX) ||
+                        skill.choice?.kind === "update"),
                   ),
                 );
                 if (saved) onClose();
@@ -218,173 +241,34 @@ export function AgentEditor({
               setSaving(false);
             }}
           >
-            <label>
-              Name
-              <input
-                autoFocus
-                required
-                maxLength={200}
-                placeholder="Write, Review, Research…"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <label>
-              Specialization
-              <input
-                maxLength={280}
-                placeholder="Reviews code for correctness, security, and maintainability"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-              />
-              <span className="text-xs text-muted-foreground">
-                A short description shown on the board and in MCP.
-              </span>
-            </label>
-            <fieldset
-              className="agent-appearance"
-              style={{ "--agent-color": color } as CSSProperties}
-            >
-              <legend>Appearance</legend>
-              <div className="agent-appearance-preview">
-                <AgentIcon icon={icon} />
-                <strong>{name || "Your agent"}</strong>
-              </div>
+            <div className="agent-name-row" style={{ "--agent-color": color } as CSSProperties}>
+              <AgentIconPicker value={iconId} onChange={setPickedIcon} />
               <label>
-                Color
+                Name
                 <input
-                  type="color"
-                  value={color}
-                  onChange={(event) => setColor(event.target.value)}
+                  autoFocus
+                  required
+                  maxLength={200}
+                  placeholder="Write, Review, Research…"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                 />
               </label>
-              <div className="agent-color-options">
-                {agentColors.map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-label={`Use color ${value}`}
-                    aria-pressed={color === value}
-                    style={{ background: value }}
-                    onClick={() => setColor(value)}
-                  />
-                ))}
-              </div>
-              <div className="agent-icon-options" role="group" aria-label="Icon">
-                {Object.entries(agentIconLabels).map(([value, label]) => (
-                  <Tooltip key={value}>
-                    <TooltipTrigger
-                      render={<button type="button" />}
-                      aria-label={label}
-                      aria-pressed={icon === value}
-                      onClick={() => setIcon(value as NonNullable<McpGatewayProfile["icon"]>)}
-                    >
-                      <AgentIcon icon={value as McpGatewayProfile["icon"]} />
-                    </TooltipTrigger>
-                    <TooltipPopup>{label}</TooltipPopup>
-                  </Tooltip>
-                ))}
-              </div>
-            </fieldset>
-            <label>
-              System prompt
-              <textarea
-                rows={6}
-                maxLength={32000}
-                value={systemPrompt}
-                onChange={(event) => setSystemPrompt(event.target.value)}
-                placeholder="Describe this agent’s role, workflow, and expected output…"
-              />
-              <span className="text-xs text-muted-foreground">
-                Agent configuration and skill changes apply to new chats. Existing chats keep their
-                starting configuration.
-              </span>
-            </label>
-            <fieldset>
-              <legend>Skills</legend>
-              {skillOptions.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Add reusable skills from the Agents board.
-                </p>
-              )}
-              {skillOptions.length > 0 && (
-                <Combobox
-                  multiple
-                  items={skillOptions.map((skill) => skill.id)}
-                  value={[...skillIds]}
-                  onValueChange={setSkillIds}
-                  itemToStringLabel={(id) =>
-                    skillOptions.find((skill) => skill.id === id)?.name ?? id
-                  }
-                >
-                  <ComboboxTrigger
-                    ref={skillsTriggerRef}
-                    aria-label="Select skills"
-                    render={<SelectButton className="w-full" />}
-                  >
-                    {skillIds.length === 0
-                      ? "Select skills…"
-                      : skillIds.length === 1
-                        ? (skillOptions.find((skill) => skill.id === skillIds[0])?.name ??
-                          "1 skill selected")
-                        : `${skillIds.length} skills selected`}
-                  </ComboboxTrigger>
-                  <ComboboxPopup anchor={skillsTriggerRef} className="w-(--anchor-width)">
-                    <ComboboxSearchInput placeholder="Search skills…" aria-label="Search skills" />
-                    <ComboboxEmpty>No skills found.</ComboboxEmpty>
-                    <ComboboxList>
-                      {(id: string) => {
-                        const skill = skillOptions.find((item) => item.id === id);
-                        return (
-                          <ComboboxItem key={id} value={id}>
-                            <div className="flex items-start gap-2">
-                              <CheckIcon
-                                aria-hidden
-                                className={`mt-0.5 size-4 shrink-0 ${skillIds.includes(id) ? "" : "invisible"}`}
-                              />
-                              <div className="min-w-0">
-                                <div className="break-words">{skill?.name ?? id}</div>
-                                {skill?.description && (
-                                  <div className="text-xs text-muted-foreground line-clamp-2">
-                                    {skill.description}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </ComboboxItem>
-                        );
-                      }}
-                    </ComboboxList>
-                  </ComboboxPopup>
-                </Combobox>
-              )}
-              <div className="mt-3 flex items-center gap-2 text-sm">
-                <Switch
-                  id="agent-include-user-skills"
-                  checked={includeUserSkills}
-                  onCheckedChange={(checked) => setIncludeUserSkills(Boolean(checked))}
-                />
-                <label htmlFor="agent-include-user-skills">Include my global skills</label>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                When off, the agent sees only its assigned skills plus built-in, project, and plugin
-                skills. On Codex, $skill won’t work for global skills. Supported on Claude and
-                Codex.
-              </p>
-            </fieldset>
+            </div>
+            <AgentTagsField tags={tags} onChange={setTags} />
             <div className="agent-form-grid">
               <label>
                 Provider
                 <select
                   required
-                  value={providerLabel}
+                  value={provider}
                   onChange={(e) => {
                     setProviderLabel(e.target.value);
                     setModelLabel("");
                   }}
                 >
                   <option value="">Select provider</option>
-                  {[...new Set([...providerLabels, ...(providerLabel ? [providerLabel] : [])])].map(
+                  {[...new Set([...providerLabels, ...(provider ? [provider] : [])])].map(
                     (label) => (
                       <option key={label}>{label}</option>
                     ),
@@ -395,95 +279,229 @@ export function AgentEditor({
                 Model
                 <select
                   required
-                  value={selectedModel?.slug ?? modelLabel}
+                  value={selectedModel?.slug ?? model}
                   onChange={(e) => setModelLabel(e.target.value)}
                 >
                   <option value="">Select model</option>
-                  {modelLabel && !selectedModel && (
-                    <option value={modelLabel} disabled>
-                      {modelLabel}: unavailable; select a model
+                  {model && !selectedModel && (
+                    <option value={model} disabled>
+                      {model}: unavailable; select a model
                     </option>
                   )}
-                  {models.map((model) => (
-                    <option key={model.slug} value={model.slug}>
-                      {model.name} ({model.slug})
+                  {models.map((option) => (
+                    <option key={option.slug} value={option.slug}>
+                      {option.name} ({option.slug})
                     </option>
                   ))}
-                </select>
-              </label>
-              <label>
-                Thinking
-                <input
-                  placeholder="Provider default"
-                  list="agent-thinking"
-                  value={thinking}
-                  onChange={(e) => setThinking(e.target.value)}
-                />
-                <datalist id="agent-thinking">
-                  {["minimal", "low", "medium", "high", "xhigh", "max"].map((value) => (
-                    <option key={value}>{value}</option>
-                  ))}
-                </datalist>
-              </label>
-              <label>
-                Permission mode
-                <select
-                  value={runtimeMode}
-                  onChange={(e) =>
-                    setRuntimeMode(e.target.value as McpGatewayProfile["runtimeMode"])
-                  }
-                >
-                  {Object.entries(MCP_GATEWAY_RUNTIME_MODE_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Interaction
-                <select
-                  value={interactionMode}
-                  onChange={(e) =>
-                    setInteractionMode(e.target.value as McpGatewayProfile["interactionMode"])
-                  }
-                >
-                  <option value="default">Default</option>
-                  <option value="plan">Plan</option>
                 </select>
               </label>
             </div>
-            {preset && modelLabel === preset.model.model && !selectedModel && (
+            {preset && model === preset.model.model && !selectedModel && (
               <p role="alert" className="text-sm text-warning">
-                {providerLabels.includes(providerLabel)
-                  ? `${modelLabel} isn’t available from ${providerLabel}.`
-                  : `${providerLabel} isn’t installed on a connected machine.`}{" "}
+                {providerLabels.includes(provider)
+                  ? `${model} isn’t available from ${provider}.`
+                  : `${provider} isn’t installed on a connected machine.`}{" "}
                 Choose an available provider and model to save this agent.
               </p>
             )}
-            <fieldset>
-              <legend>
-                Machines <span className="text-muted-foreground">· none selected means any</span>
-              </legend>
-              <div className="agent-machines">
-                {machines.map((machine) => (
-                  <label key={machine.environmentId}>
+            <details
+              className="agent-advanced"
+              open={advancedOpen}
+              onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+            >
+              <summary>Advanced</summary>
+              <div className="agent-advanced-body">
+                <label>
+                  Specialization
+                  <input
+                    maxLength={280}
+                    placeholder="Reviews code for correctness, security, and maintainability"
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    A short description shown on the board and in MCP.
+                  </span>
+                </label>
+                <fieldset className="agent-appearance">
+                  <legend>Color</legend>
+                  <div className="agent-color-options">
                     <input
-                      type="checkbox"
-                      checked={environmentIds.includes(machine.environmentId)}
-                      onChange={(e) =>
-                        setEnvironmentIds(
-                          e.target.checked
-                            ? [...environmentIds, machine.environmentId]
-                            : environmentIds.filter((id) => id !== machine.environmentId),
-                        )
-                      }
+                      type="color"
+                      aria-label="Custom color"
+                      value={color}
+                      onChange={(event) => setColor(event.target.value)}
                     />
-                    {machine.label}
+                    {agentColors.map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-label={`Use color ${value}`}
+                        aria-pressed={color === value}
+                        style={{ background: value }}
+                        onClick={() => setColor(value)}
+                      />
+                    ))}
+                  </div>
+                </fieldset>
+                <label>
+                  System prompt
+                  <textarea
+                    rows={6}
+                    maxLength={32000}
+                    value={systemPrompt}
+                    onChange={(event) => setSystemPrompt(event.target.value)}
+                    placeholder="Describe this agent’s role, workflow, and expected output…"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Agent configuration and skill changes apply to new chats. Existing chats keep
+                    their starting configuration.
+                  </span>
+                </label>
+                <fieldset>
+                  <legend>Skills</legend>
+                  {skillOptions.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Add reusable skills from the Agents board.
+                    </p>
+                  )}
+                  {skillOptions.length > 0 && (
+                    <Combobox
+                      multiple
+                      items={skillOptions.map((skill) => skill.id)}
+                      value={[...skillIds]}
+                      onValueChange={setSkillIds}
+                      itemToStringLabel={(id) =>
+                        skillOptions.find((skill) => skill.id === id)?.name ?? id
+                      }
+                    >
+                      <ComboboxTrigger
+                        ref={skillsTriggerRef}
+                        aria-label="Select skills"
+                        render={<SelectButton className="w-full" />}
+                      >
+                        {skillIds.length === 0
+                          ? "Select skills…"
+                          : skillIds.length === 1
+                            ? (skillOptions.find((skill) => skill.id === skillIds[0])?.name ??
+                              "1 skill selected")
+                            : `${skillIds.length} skills selected`}
+                      </ComboboxTrigger>
+                      <ComboboxPopup anchor={skillsTriggerRef} className="w-(--anchor-width)">
+                        <ComboboxSearchInput
+                          placeholder="Search skills…"
+                          aria-label="Search skills"
+                        />
+                        <ComboboxEmpty>No skills found.</ComboboxEmpty>
+                        <ComboboxList>
+                          {(id: string) => {
+                            const skill = skillOptions.find((item) => item.id === id);
+                            return (
+                              <ComboboxItem key={id} value={id}>
+                                <div className="flex items-start gap-2">
+                                  <CheckIcon
+                                    aria-hidden
+                                    className={`mt-0.5 size-4 shrink-0 ${skillIds.includes(id) ? "" : "invisible"}`}
+                                  />
+                                  <div className="min-w-0">
+                                    <div className="break-words">{skill?.name ?? id}</div>
+                                    {skill?.description && (
+                                      <div className="text-xs text-muted-foreground line-clamp-2">
+                                        {skill.description}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </ComboboxItem>
+                            );
+                          }}
+                        </ComboboxList>
+                      </ComboboxPopup>
+                    </Combobox>
+                  )}
+                  <div className="mt-3 flex items-center gap-2 text-sm">
+                    <Switch
+                      id="agent-include-user-skills"
+                      checked={includeUserSkills}
+                      onCheckedChange={(checked) => setIncludeUserSkills(Boolean(checked))}
+                    />
+                    <label htmlFor="agent-include-user-skills">Include my global skills</label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    When off, the agent sees only its assigned skills plus built-in, project, and
+                    plugin skills. On Codex, $skill won’t work for global skills. Supported on
+                    Claude and Codex.
+                  </p>
+                </fieldset>
+                <div className="agent-form-grid">
+                  <label>
+                    Thinking
+                    <input
+                      placeholder="Provider default"
+                      list="agent-thinking"
+                      value={thinking}
+                      onChange={(e) => setThinking(e.target.value)}
+                    />
+                    <datalist id="agent-thinking">
+                      {["minimal", "low", "medium", "high", "xhigh", "max"].map((value) => (
+                        <option key={value}>{value}</option>
+                      ))}
+                    </datalist>
                   </label>
-                ))}
+                  <label>
+                    Permission mode
+                    <select
+                      value={runtimeMode}
+                      onChange={(e) =>
+                        setRuntimeMode(e.target.value as McpGatewayProfile["runtimeMode"])
+                      }
+                    >
+                      {Object.entries(MCP_GATEWAY_RUNTIME_MODE_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Interaction
+                    <select
+                      value={interactionMode}
+                      onChange={(e) =>
+                        setInteractionMode(e.target.value as McpGatewayProfile["interactionMode"])
+                      }
+                    >
+                      <option value="default">Default</option>
+                      <option value="plan">Plan</option>
+                    </select>
+                  </label>
+                </div>
+                <fieldset>
+                  <legend>
+                    Machines{" "}
+                    <span className="text-muted-foreground">· none selected means any</span>
+                  </legend>
+                  <div className="agent-machines">
+                    {machines.map((machine) => (
+                      <label key={machine.environmentId}>
+                        <input
+                          type="checkbox"
+                          checked={environmentIds.includes(machine.environmentId)}
+                          onChange={(e) =>
+                            setEnvironmentIds(
+                              e.target.checked
+                                ? [...environmentIds, machine.environmentId]
+                                : environmentIds.filter((id) => id !== machine.environmentId),
+                            )
+                          }
+                        />
+                        {machine.label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
               </div>
-            </fieldset>
+            </details>
             {error && (
               <p role="alert" className="text-sm text-destructive">
                 {error}
@@ -500,7 +518,7 @@ export function AgentEditor({
               </button>
               <button
                 className="agent-primary"
-                disabled={saving || !name.trim() || !providerLabel || !selectedModel}
+                disabled={saving || !name.trim() || !provider || !selectedModel}
               >
                 {saving ? "Saving…" : profile ? "Save agent" : "Create agent"}
               </button>

@@ -2,8 +2,6 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
-  RelayConnectionRegistration,
-  RelayConnectionTarget,
   BearerConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import {
@@ -40,7 +38,8 @@ export class LegacyConnectionMigrationError extends Schema.TaggedError<LegacyCon
   },
 ) {}
 
-function isRelayManaged(connection: typeof LegacySavedRemoteConnection.Type): boolean {
+// T3 Connect connections had no direct route, so they become a one-time "pair again" notice.
+function isConnectOnly(connection: typeof LegacySavedRemoteConnection.Type): boolean {
   return connection.relayManaged === true || connection.authenticationMethod === "dpop";
 }
 
@@ -48,16 +47,14 @@ function migrateConnection(
   document: ConnectionCatalogDocument,
   connection: typeof LegacySavedRemoteConnection.Type,
 ): ConnectionCatalogDocument {
-  if (isRelayManaged(connection)) {
-    return registerConnectionInCatalog(
-      document,
-      new RelayConnectionRegistration({
-        target: new RelayConnectionTarget({
-          environmentId: connection.environmentId,
-          label: connection.environmentLabel,
-        }),
-      }),
-    );
+  if (isConnectOnly(connection)) {
+    return {
+      ...document,
+      connectOnlyEnvironments: [
+        ...(document.connectOnlyEnvironments ?? []),
+        { environmentId: connection.environmentId, label: connection.environmentLabel },
+      ],
+    };
   }
 
   if (connection.bearerToken === null || connection.bearerToken.trim() === "") {

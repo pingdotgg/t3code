@@ -2,7 +2,6 @@ import { resolveEnvironmentLabel } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
-  hasRelayRoute,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/composerThreadItems";
@@ -15,7 +14,6 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly displayUrl: string | null;
-  readonly relayManaged: boolean;
 }
 
 export function projectEnvironmentPresentation(
@@ -27,7 +25,6 @@ export function projectEnvironmentPresentation(
     environmentId,
     label: resolveEnvironmentLabel(presentation.serverConfig, presentation.entry.target.label),
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
-    relayManaged: hasRelayRoute(presentation.entry),
   };
 }
 

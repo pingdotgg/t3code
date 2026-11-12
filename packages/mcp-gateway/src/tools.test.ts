@@ -2289,6 +2289,32 @@ describe("agent profile tools", () => {
     expect(createThread).not.toHaveBeenCalled();
   });
 
+  it("sets and clears an agent's icon and role tags", async () => {
+    const port = profilesPort();
+    const context = { port, grants: { local: ["create"] } as const };
+    await callGatewayTool(context, "t3_create_agent", {
+      ...input,
+      iconId: "rocket",
+      tags: ["Dev", "Ops"],
+    });
+    expect(await port.listProfiles!("local")).toMatchObject([
+      { iconId: "rocket", tags: ["Dev", "Ops"] },
+    ]);
+    await callGatewayTool(context, "t3_update_agent", {
+      environmentId: "local",
+      profileId: "write",
+      patch: { tags: [] },
+    });
+    expect(await port.listProfiles!("local")).toMatchObject([{ iconId: "rocket", tags: [] }]);
+    await expect(
+      callGatewayTool(context, "t3_update_agent", {
+        environmentId: "local",
+        profileId: "write",
+        patch: { iconId: "not-an-icon" },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
   it("rejects unauthorized or malformed edits before writing", async () => {
     const port = profilesPort();
     await expect(

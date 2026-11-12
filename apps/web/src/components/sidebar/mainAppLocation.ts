@@ -1,6 +1,5 @@
 import { useLocation, useNavigate, type AnyRouter } from "@tanstack/react-router";
 
-import { GUEST_PAGE_PATH } from "../../guestPage";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
 
 /** Settings and Usage open as modals over the last main-app view. */
@@ -73,7 +72,7 @@ export function isSidebarUtilityPage(pathname: string) {
 // Pages the root route always renders without the app shell, so they are never
 // a page to return to. Other paths seen before auth or on a prompt-link landing
 // are still recorded; they are real app URLs, so returning to one is harmless.
-const SHELL_LESS_PATHS = new Set(["/pair", "/connect", "/connect-agent", GUEST_PAGE_PATH]);
+const SHELL_LESS_PATHS = new Set(["/pair", "/connect-agent"]);
 
 let mainAppHref: string | null = null;
 let appModalReturnHref: string | null = null;

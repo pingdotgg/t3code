@@ -392,6 +392,63 @@ describe("finite environment subscription lifecycle", () => {
         }),
       ),
   );
+  it.effect.each([
+    { completedTtlMs: undefined, subscriptions: 2 },
+    { completedTtlMs: 60_000, subscriptions: 1 },
+  ])(
+    "reopening a completed subscription subscribes $subscriptions time(s) with completedTtlMs $completedTtlMs",
+    ({ completedTtlMs, subscriptions }) =>
+      Effect.gen(function* () {
+        let subscribed = 0;
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          followStream: (_environmentId: EnvironmentId, source: Stream.Stream<unknown>) => source,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        );
+        const family = createEnvironmentSubscriptionAtomFamily(runtime, {
+          label: "test.completed-subscription",
+          subscribe: () =>
+            Stream.suspend(() => {
+              subscribed += 1;
+              return Stream.make({ complete: false }, { complete: true });
+            }),
+          completeWhen: (value) => value.complete,
+          idleTtlMs: 0,
+          ...(completedTtlMs === undefined ? {} : { completedTtlMs }),
+        });
+        const atom = family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined });
+        // Flushed after each close: idle removals have run by the time a user reopens a row.
+        const scheduled: Array<() => void> = [];
+        const registry = AtomRegistry.make({
+          scheduleTask: (task) => {
+            scheduled.push(task);
+            return () => undefined;
+          },
+        });
+        const open = Effect.gen(function* () {
+          const settled = yield* Deferred.make<boolean>();
+          const unsubscribe = registry.subscribe(
+            atom,
+            (result) => {
+              if (AsyncResult.isSuccess(result) && !result.waiting) {
+                Deferred.doneUnsafe(settled, Exit.succeed(result.value.complete));
+              }
+            },
+            { immediate: true },
+          );
+          const complete = yield* Deferred.await(settled);
+          unsubscribe();
+          for (const task of scheduled.splice(0)) task();
+          return complete;
+        });
+
+        expect(yield* open).toBe(true);
+        expect(yield* open).toBe(true);
+        expect(subscribed).toBe(subscriptions);
+        registry.dispose();
+      }),
+  );
 });
 
 describe("environment query lifecycle", () => {

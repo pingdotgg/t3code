@@ -677,10 +677,21 @@ it.effect("bounds large ARIA trees without dropping every server locator", () =>
         { length: 2_000 },
         (_, index) => `- button "删除 ${index}" [ref=t3-snapshot-e${index}]`,
       ).join("\n");
-      yield* serveSnapshots("mcp-large-server-refs", { ...snapshotResult, accessibilityTree });
+      const visibleText = Array.from({ length: 700 }, (_, index) => `Row ${index} value`).join(
+        "\n",
+      );
+      yield* serveSnapshots("mcp-large-server-refs", {
+        ...snapshotResult,
+        visibleText,
+        accessibilityTree,
+      });
       const result = yield* callSnapshot({ includeImage: false });
       expect(result.isError).toBe(false);
-      const metadata = result.structuredContent as { accessibilityTree: string };
+      const metadata = result.structuredContent as {
+        accessibilityTree: string;
+        visibleText: string;
+      };
+      expect(metadata.visibleText.slice(0, 1_000)).toBe(visibleText.slice(0, 1_000));
       expect(metadata.accessibilityTree).toContain("[ref=t3-snapshot-e0]");
       expect(metadata.accessibilityTree.length).toBeLessThan(accessibilityTree.length);
       const body = result.content[1];
@@ -1414,7 +1425,11 @@ it.effect("hides tools for links and refuses another environment while the beta 
       expect(yield* listed()).toEqual(["where"]);
       expect(yield* ranIn(elsewhere)).toMatchObject({
         isError: true,
-        content: [{ text: expect.stringContaining("Linked environments is off on this machine") }],
+        content: [
+          {
+            text: expect.stringContaining("This machine is not taking part in the device network"),
+          },
+        ],
       });
       expect((yield* ranIn(environmentId)).structuredContent).toEqual({ ranIn: "here" });
 

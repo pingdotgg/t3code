@@ -320,6 +320,16 @@ export default defineConfig({
         rules: { "t3code/prefer-effect-fn": "off" },
       },
       {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "apps/desktop/src/**"],
+        // Users still pick their own project and agent icons, and stored `sparkles` must render.
+        excludeFiles: [
+          "apps/web/src/projectIconOptions.ts",
+          "apps/web/src/components/agents/AgentIcon.tsx",
+          "apps/mobile/src/components/AgentAvatar.tsx",
+        ],
+        rules: { "t3code/no-sparkles-icon": "error" },
+      },
+      {
         files: ["apps/web/**/*.test.{ts,tsx}"],
         rules: { "t3code/require-disposable-render": "error" },
       },

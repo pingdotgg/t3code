@@ -56,6 +56,7 @@ import {
   CloudSpeechModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
@@ -77,6 +78,7 @@ import {
   TailnetDeviceClientCredential,
   TailnetDeviceClientCredentialRequest,
   TailnetDevicesSyncPayload,
+  TailnetJoinRequest,
   TailnetDevicesUnauthorizedError,
   TailnetGrant,
   TailnetGrantResult,
@@ -90,15 +92,6 @@ import {
   PullRequestOperationError,
   PullRequestUnavailableError,
 } from "./pullRequest.ts";
-import {
-  RelayCloudEnvironmentHealthRequest,
-  RelayCloudMintCredentialRequest,
-  RelayEnvironmentConfigRequest,
-  RelayEnvironmentHealthResponse,
-  RelayEnvironmentLinkProof,
-  RelayEnvironmentMintResponse,
-  RelayLinkProofRequest,
-} from "./relay.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -124,6 +117,8 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_audio",
   "speech_unavailable",
   "speech_busy",
+  /** Pair again named an app this server no longer lists; pair it as a new app. */
+  "unknown_app",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -352,20 +347,6 @@ export class EnvironmentHttpConflictError extends Schema.TaggedError<Environment
   }
 }
 
-export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedError<EnvironmentCloudEndpointUnavailableError>()(
-  "EnvironmentCloudEndpointUnavailableError",
-  {
-    message: Schema.String,
-    endpointRuntimeStatus: Schema.Unknown,
-  },
-  { httpApiStatus: 503 },
-) {
-  [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(EnvironmentCloudEndpointUnavailableError)(this, {
-      status: 503,
-    });
-  }
-}
 const EnvironmentSessionCreationErrors = [
   EnvironmentAuthInvalidError,
   EnvironmentInternalError,
@@ -429,128 +410,6 @@ export class EnvironmentAuthenticatedAuth extends HttpApiMiddleware.Service<
 >()("EnvironmentAuthenticatedAuth", {
   error: EnvironmentAuthenticationErrors,
 }) {}
-
-const EnvironmentHttpCloudErrors = [
-  EnvironmentHttpBadRequestError,
-  EnvironmentHttpUnauthorizedError,
-  EnvironmentHttpForbiddenError,
-  EnvironmentHttpConflictError,
-  EnvironmentHttpInternalServerError,
-  EnvironmentScopeRequiredError,
-] as const;
-
-export const EnvironmentCloudRelayConfigResult = Schema.Struct({
-  ok: Schema.Boolean,
-  endpointRuntimeStatus: Schema.Unknown,
-});
-export type EnvironmentCloudRelayConfigResult = typeof EnvironmentCloudRelayConfigResult.Type;
-
-export const EnvironmentConnectReachabilityCause = Schema.Literals([
-  "not_linked",
-  "connector_not_running",
-  "connector_not_ready",
-  "edge_unreachable",
-  "no_connector",
-  "origin_unreachable",
-  "dns_failed",
-  "timeout",
-  "unexpected_response",
-]);
-export type EnvironmentConnectReachabilityCause = typeof EnvironmentConnectReachabilityCause.Type;
-
-/** Whether other devices can reach this environment through its T3 Connect tunnel. */
-export const EnvironmentConnectReachability = Schema.Union([
-  Schema.Struct({
-    status: Schema.Literal("reachable"),
-    checkedAt: Schema.String,
-    /** Null when cloudflared did not report a count. */
-    readyConnections: Schema.NullOr(Schema.Int),
-    protocol: Schema.NullOr(Schema.String),
-  }),
-  Schema.Struct({
-    status: Schema.Literal("unreachable"),
-    checkedAt: Schema.String,
-    cause: EnvironmentConnectReachabilityCause,
-    reason: Schema.String,
-    hint: Schema.NullOr(Schema.String),
-    fix: Schema.String,
-  }),
-]);
-export type EnvironmentConnectReachability = typeof EnvironmentConnectReachability.Type;
-
-/** "Tunnel connected · 4 connections · QUIC" for a healthy check. */
-export function formatConnectReachable(
-  result: Extract<EnvironmentConnectReachability, { status: "reachable" }>,
-): string {
-  const count = result.readyConnections;
-  return [
-    "Tunnel connected",
-    ...(count === null ? [] : [`${count} connection${count === 1 ? "" : "s"}`]),
-    ...(result.protocol ? [result.protocol.toUpperCase()] : []),
-  ].join(" · ");
-}
-
-/**
- * Sections of docs/user/t3-connect-troubleshooting.md. Each is the GitHub anchor of a
- * heading there; the test fails when a heading is renamed without updating this list.
- */
-export const T3_CONNECT_TROUBLESHOOTING_SECTIONS = [
-  "the-hosts-tunnel-is-offline",
-  "port-7844-is-blocked-on-the-host",
-  "the-tunnel-works-but-t3-code-does-not-answer",
-  "the-t3-connect-address-does-not-resolve-or-answer",
-  "this-device-cant-reach-t3-connect",
-  "sign-in-account-or-link-problems",
-  "the-clock-is-off",
-  "the-host-runs-an-older-t3-code",
-  "t3-connect-returned-an-error",
-] as const;
-export type T3ConnectTroubleshootingSection = (typeof T3_CONNECT_TROUBLESHOOTING_SECTIONS)[number];
-
-/** Clients, the CLI, and server logs link here as "More info". */
-export function t3ConnectTroubleshootingUrl(section: T3ConnectTroubleshootingSection): string {
-  return `https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
-}
-
-const REACHABILITY_SECTION = {
-  not_linked: "sign-in-account-or-link-problems",
-  connector_not_running: "the-hosts-tunnel-is-offline",
-  connector_not_ready: "the-hosts-tunnel-is-offline",
-  no_connector: "the-hosts-tunnel-is-offline",
-  edge_unreachable: "port-7844-is-blocked-on-the-host",
-  origin_unreachable: "the-tunnel-works-but-t3-code-does-not-answer",
-  unexpected_response: "the-tunnel-works-but-t3-code-does-not-answer",
-  dns_failed: "the-t3-connect-address-does-not-resolve-or-answer",
-  timeout: "the-t3-connect-address-does-not-resolve-or-answer",
-} satisfies Record<EnvironmentConnectReachabilityCause, T3ConnectTroubleshootingSection>;
-
-export function connectReachabilityHelpUrl(cause: EnvironmentConnectReachabilityCause): string {
-  return t3ConnectTroubleshootingUrl(REACHABILITY_SECTION[cause]);
-}
-
-export const EnvironmentCloudLinkStateResult = Schema.Struct({
-  linked: Schema.Boolean,
-  cloudUserId: Schema.NullOr(Schema.String),
-  relayUrl: Schema.NullOr(Schema.String),
-  relayIssuer: Schema.NullOr(Schema.String),
-  managedTunnelActive: Schema.optional(Schema.Boolean),
-  publishAgentActivity: Schema.Boolean,
-  holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
-  linkRevoked: Schema.optional(Schema.Boolean),
-  /** The latest check the server ran on its own, absent until one finishes. */
-  reachability: Schema.optional(EnvironmentConnectReachability),
-  /** The tunnel's public hostname, once cloudflared has connected. Older servers omit it. */
-  tunnelHostname: Schema.optional(Schema.String),
-  /** Whether this is the desktop app's own session, which may link from where it is. */
-  linkableHere: Schema.optional(Schema.Boolean),
-});
-export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
-
-export const EnvironmentCloudPreferencesRequest = Schema.Struct({
-  publishAgentActivity: Schema.Boolean,
-  holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
-});
-export type EnvironmentCloudPreferencesRequest = typeof EnvironmentCloudPreferencesRequest.Type;
 
 export const AuthPairingLinkRevokeResult = Schema.Struct({
   revoked: Schema.Boolean,
@@ -901,6 +760,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("linkModels", "/api/voice/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("updateAcceleration", "/api/voice/acceleration", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechAccelerationRequest,
@@ -935,67 +802,6 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
-class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
-  .add(
-    HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
-      headers: OptionalBearerHeaders,
-      payload: RelayLinkProofRequest,
-      success: RelayEnvironmentLinkProof,
-      error: EnvironmentHttpCloudErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("relayConfig", "/api/connect/relay-config", {
-      headers: OptionalBearerHeaders,
-      payload: RelayEnvironmentConfigRequest,
-      success: EnvironmentCloudRelayConfigResult,
-      error: [...EnvironmentHttpCloudErrors, EnvironmentCloudEndpointUnavailableError],
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.get("linkState", "/api/connect/link-state", {
-      headers: OptionalBearerHeaders,
-      success: EnvironmentCloudLinkStateResult,
-      error: EnvironmentHttpCloudErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("checkReachability", "/api/connect/reachability", {
-      headers: OptionalBearerHeaders,
-      success: EnvironmentConnectReachability,
-      error: EnvironmentHttpCloudErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("unlink", "/api/connect/unlink", {
-      headers: OptionalBearerHeaders,
-      success: EnvironmentCloudRelayConfigResult,
-      error: EnvironmentHttpCloudErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("preferences", "/api/connect/preferences", {
-      headers: OptionalBearerHeaders,
-      payload: EnvironmentCloudPreferencesRequest,
-      success: EnvironmentCloudLinkStateResult,
-      error: EnvironmentHttpCloudErrors,
-    }).middleware(EnvironmentAuthenticatedAuth),
-  )
-  .add(
-    HttpApiEndpoint.post("health", "/api/t3-connect/health", {
-      payload: RelayCloudEnvironmentHealthRequest,
-      success: RelayEnvironmentHealthResponse,
-      error: EnvironmentHttpCloudErrors,
-    }),
-  )
-  .add(
-    HttpApiEndpoint.post("t3MintCredential", "/api/t3-connect/mint-credential", {
-      payload: RelayCloudMintCredentialRequest,
-      success: RelayEnvironmentMintResponse,
-      error: EnvironmentHttpCloudErrors,
-    }),
-  ) {}
-
 // Path tokens and optional body signatures authenticate webhooks; read raw bytes to verify signatures.
 const WebhookParams = Schema.Struct({
   hookId: TrimmedNonEmptyString,
@@ -1017,14 +823,20 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
 /**
- * Linking one owner's tailnet devices. `request`, `confirm` and `grant` carry
- * no credential: each side proves the other through Tailscale before trusting
- * it. `sync` needs a session this environment issued to the calling device.
+ * The owner's network of machines. `request`, `join`, `confirm` and `grant` carry no
+ * credential: each side proves the other through Tailscale and its own roster before trusting
+ * it. `sync` and `clientCredential` need a member session this environment issued.
  */
 class EnvironmentTailnetDevicesHttpApi extends HttpApiGroup.make("tailnetDevices")
   .add(
     HttpApiEndpoint.post("request", "/api/tailnet-devices/request", {
       payload: TailnetLinkRequest,
+      success: TailnetLinkResult,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("join", "/api/tailnet-devices/join", {
+      payload: TailnetJoinRequest,
       success: TailnetLinkResult,
     }),
   )
@@ -1063,6 +875,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
-  .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi)
   .add(EnvironmentTailnetDevicesHttpApi) {}

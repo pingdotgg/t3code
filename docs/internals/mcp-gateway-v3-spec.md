@@ -1,12 +1,12 @@
 # T3 MCP Gateway v3 Product Specification
 
 Status: implementation specification
-Scope: production MCP orchestration over the existing T3 runtime and T3 Connect access paths
+Scope: production MCP orchestration over the existing T3 runtime and its direct, Tailscale and SSH access paths
 Repository: `jayleaton/t3code` fork only
 
 ## 1. Decision and non-goals
 
-T3 MCP Gateway v3 is a capability-limited MCP facade over an existing T3 server. It is not a second remote execution system, a cloud scheduler, or a replacement for T3 Connect. A voice agent talks MCP; the gateway resolves one or more already-connected T3 environments; the T3 server remains the owner of provider sessions, projects, threads, terminals, files, git state, and execution.
+T3 MCP Gateway v3 is a capability-limited MCP facade over an existing T3 server. It is not a second remote execution system, a cloud scheduler, or a remote-access method. A voice agent talks MCP; the gateway resolves one or more already-connected T3 environments; the T3 server remains the owner of provider sessions, projects, threads, terminals, files, git state, and execution.
 
 The gateway is optional. When MCP is disabled, the ordinary T3 client/server path and Gateway Runtime Port remain unchanged: stock T3 has no MCP listener, no MCP session, and no MCP credentials. The first release is production-only; no mock transport, development-only protocol, or compatibility promise for arbitrary third-party runtimes is required.
 
@@ -21,7 +21,7 @@ The existing code provides:
 - Web Settings: enable/disable state, a minimum-16-character bridge token, and the current per-environment `read`, `create`, and `send` grant matrix. The v3 Settings UX for that matrix is defined in §9.4; it remains a sidecar setting and does not alter stock T3 when MCP is off.
 - Loopback bridge default `ws://127.0.0.1:47631`, challenge/proof authentication, one configured client, request timeouts, and replacement handling.
 - Existing T3 connection/runtime boundaries described in `docs/internals/remote.md`, `docs/internals/connection-runtime.md`, and `docs/internals/environment-auth.md`.
-- T3 Connect as the managed tunnel/access method. Tailscale and SSH remain endpoint/launch helpers, not new environment types.
+- Tailscale and SSH remain endpoint/launch helpers, not new environment types.
 
 The v3 work must preserve environment identity, scoped authorization, reconnect behavior, and the rule that projects and threads remain environment-local. A repository identity may correlate related clones but must never route a command.
 
@@ -53,7 +53,7 @@ Optional t3-mcp-gateway sidecar
         v
 T3 client runtime / Gateway Runtime Port
   - environment registry and connection supervisors
-  - relay/direct/Tailscale/SSH endpoint resolution
+  - direct/Tailscale/SSH endpoint resolution
         | existing HTTP/WebSocket session
         v
 T3 server on the selected environment
@@ -66,7 +66,7 @@ The bridge is a transport boundary, not a policy bypass. Every request carries a
 
 ### 4.1 Connection and environment model
 
-An environment is the existing stable `environmentId` owned by one running T3 server. The gateway may address environments reachable through direct, bearer-paired, relay-tunneled, Tailscale, or desktop-managed SSH connections. T3 Connect continues to broker relay credentials and tunnel reachability; application traffic terminates at the T3 server.
+An environment is the existing stable `environmentId` owned by one running T3 server. The gateway may address environments reachable through direct, bearer-paired, Tailscale, or desktop-managed SSH connections. Application traffic terminates at the T3 server.
 
 Gateway discovery returns endpoint-independent environment metadata, connection phase, health, capabilities, and last-seen timestamps. It must not expose pairing/bootstrap secrets, bridge tokens, provider credentials, or signed asset URLs longer than needed for an authorized transfer.
 
@@ -228,7 +228,7 @@ A profile is selected by `profileId`; the server snapshots the resolved profile 
 
 ### 9.2 Settings UX: grants and readable profile selections
 
-The Settings screen keeps MCP as an optional sidecar over T3 Connect. MCP has one prominent enable/disable control. When disabled, Settings must not create an MCP listener, session, or credential, and the ordinary T3 path remains unchanged.
+The Settings screen keeps MCP as an optional sidecar over the ordinary T3 connection. MCP has one prominent enable/disable control. When disabled, Settings must not create an MCP listener, session, or credential, and the ordinary T3 path remains unchanged.
 
 Grant editing is a machine-first matrix using the existing environment rows and `read`, `create`, and `send` capabilities:
 
@@ -259,6 +259,8 @@ For a thread created without a profile, the provider/global chain applies. Provi
 ### 9.4 Capability enforcement
 
 MCP grants are coarse host/environment capabilities (`read`, `create`, `send`, and new explicit lifecycle/approval/artifact/review/admin scopes). The T3 server's OAuth-style environment scopes remain authoritative. Effective permission is the intersection of MCP grant, server session scope, profile permission, and thread state.
+
+A call a server relays through a connected app runs only on an app whose own grant covers that call's scopes ([portScopes](../../packages/client-runtime/src/gateway/portScopes.ts)), and that app checks them again; grants of different apps never combine. A relayed call runs there as the app's user, so the calling server refuses work above the calling chat's modes before relaying it.
 
 Never infer `full-access` from a missing approval plan. `read-only` cannot create, send, mutate lifecycle, approve, or write git. A profile may reduce capabilities granted by the host but may not elevate them. Profile and permission changes emit audit events.
 
@@ -319,7 +321,7 @@ Phase 1: extend the existing bridge/runtime port with stable lifecycle, event, a
 
 Phase 2: add Settings UI for named profiles, provider/global defaults, permissions, webhook/subscription status, and event cursor/health. Keep MCP disabled by default and preserve the stock T3 path when disabled.
 
-Phase 3: enable production fork PR workflows and real multi-machine acceptance testing through T3 Connect. Draft PRs and approval gates remain default.
+Phase 3: enable production fork PR workflows and real multi-machine acceptance testing over Tailscale. Draft PRs and approval gates remain default.
 
 Every contract change is additive where possible, schema-versioned, tested against an older v1 MCP client, and documented in the package export. No migration may invalidate existing threads or mutate their resolved configuration.
 
@@ -327,7 +329,7 @@ Every contract change is additive where possible, schema-versioned, tested again
 
 The release is accepted only when all of these pass against production builds and real connected environments:
 
-1. From a voice-capable MCP client, discover a second machine through an existing T3 Connect environment and create a thread using named profile `Andy`.
+1. From a voice-capable MCP client, discover a second machine through an existing paired environment and create a thread using named profile `Andy`.
 2. Verify the thread snapshots the selected human-readable provider/model, medium reasoning, full-access policy, and selected profile revision; change the profile and verify the running thread is unchanged.
 3. Receive start, progress/milestone, waiting-input or waiting-approval, and completion events without polling.
 4. Drop the connection, reconnect with the last acknowledged sequence, replay missing events in order, and verify duplicate event IDs are safely ignored.
@@ -337,11 +339,11 @@ The release is accepted only when all of these pass against production builds an
 8. Approve one pending action, reject another, and verify destructive confirmation is separately required.
 9. Create a draft PR on `jayleaton/t3code`, return URL/checks/unresolved count, apply a review fix, push it, and verify comments remain unresolved until refreshed against the pushed commit.
 10. Exercise disconnected, degraded, webhook retry, cursor-expired, unauthorized, stale-plan, stale-comment, and artifact-failed paths with typed errors.
-11. Disable MCP and verify no MCP socket/session/credential is created and ordinary T3 local/remote/relay operation remains unaffected.
+11. Disable MCP and verify no MCP socket/session/credential is created and ordinary T3 local/remote operation remains unaffected.
 12. Run focused package tests, schema/type checks, and production packaging checks for the changed surfaces; do not claim voice-agent acceptance from mocks alone.
 13. In Settings, verify `Select all` selects and clears only the visible machine rows, mixed state is indeterminate, new machines are not implicitly granted, individual rows use the compact dropdown, and Save/Cancel behavior is explicit.
 14. Create/edit named profile `Andy`, verify the provider catalog and provider-filtered model dropdown contain display labels, and inspect persisted/profile-agent text to confirm it contains no provider instance ID or model ID.
 
 ## 16. Implementation handoff
 
-The implementation task must begin from this specification and the approved sidecar commit. It must not add application code to this product-spec change, reopen the sidecar-over-T3-Connect decision, merge a PR, or contact the upstream `pingdotgg` repository. Any capability that cannot be demonstrated on a real connected machine must remain explicitly marked incomplete rather than represented as a simulated success.
+The implementation task must begin from this specification and the approved sidecar commit. It must not add application code to this product-spec change, reopen the sidecar decision, merge a PR, or contact the upstream `pingdotgg` repository. Any capability that cannot be demonstrated on a real connected machine must remain explicitly marked incomplete rather than represented as a simulated success.

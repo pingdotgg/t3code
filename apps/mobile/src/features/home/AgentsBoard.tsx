@@ -32,6 +32,7 @@ import {
 } from "@t3tools/client-runtime/state/child-status-counts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveGatewayProfileModelSelection } from "@t3tools/client-runtime/gateway";
+import { normalizeAgentTags } from "@t3tools/client-runtime/state/agentIdentity";
 import { AgentAvatar } from "../../components/AgentAvatar";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
@@ -652,12 +653,19 @@ export function AgentsBoard(props: {
                   profiles={profiles}
                   selectedProfileId={profileId}
                   activityByProfile={activityByProfile}
+                  unavailableReason={unavailableReason}
                   onSelect={selectAgent}
+                  onStartChat={startChat}
                 />
                 {selectedProfile ? (
                   <AgentHero
                     agent={agentAppearance(selectedProfile, profiles)}
                     profile={selectedProfile}
+                    machineLabels={environments.flatMap((environment) =>
+                      selectedProfile.environmentIds?.includes(environment.environmentId)
+                        ? [environment.label]
+                        : [],
+                    )}
                     activity={activityByProfile.get(selectedProfile.profileId) ?? NO_ACTIVITY}
                     unavailableReason={unavailableReason(selectedProfile)}
                     onStartChat={() => startChat(selectedProfile.profileId)}
@@ -776,18 +784,24 @@ function SectionLabel(props: { readonly title: string; readonly count?: number }
   );
 }
 
-/** Filter chips: All, then every agent with a dot when it has work in flight. */
+/**
+ * Filter tiles: All, then every agent as its icon over its name, with a dot
+ * when it has work in flight. Tap filters to the agent's page; long press
+ * offers its actions.
+ */
 function AgentStrip(props: {
   readonly profiles: ReadonlyArray<McpGatewayProfile>;
   readonly selectedProfileId: string | null;
   readonly activityByProfile: ReadonlyMap<string, AgentActivity>;
+  readonly unavailableReason: (profile: McpGatewayProfile) => string | null;
   readonly onSelect: (profileId: string | null) => void;
+  readonly onStartChat: (profileId: string) => void;
 }) {
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+      contentContainerStyle={{ paddingHorizontal: 12, gap: 4 }}
     >
       <Pressable
         accessibilityRole="button"
@@ -795,47 +809,79 @@ function AgentStrip(props: {
         accessibilityState={{ selected: props.selectedProfileId === null }}
         onPress={() => props.onSelect(null)}
         className={cn(
-          "flex-row items-center gap-2 rounded-full border px-3.5 py-2",
-          props.selectedProfileId === null
-            ? "border-primary bg-secondary"
-            : "border-border-subtle bg-card",
+          "w-[72px] items-center gap-1.5 rounded-[16px] border px-1 py-2",
+          props.selectedProfileId === null ? "border-primary bg-secondary" : "border-transparent",
         )}
       >
-        <SymbolView
-          name="square.grid.2x2"
-          size={14}
-          tintColorClassName="accent-icon"
-          type="monochrome"
-        />
-        <Text className="text-sm font-t3-medium text-foreground">All</Text>
+        <View className="h-9 w-9 items-center justify-center rounded-full bg-card">
+          <SymbolView
+            name="square.grid.2x2"
+            size={16}
+            tintColorClassName="accent-icon"
+            type="monochrome"
+          />
+        </View>
+        <Text className="text-xs font-t3-medium text-foreground" numberOfLines={1}>
+          All
+        </Text>
       </Pressable>
       {props.profiles.map((profile) => {
         const agent = agentAppearance(profile, props.profiles);
         const activity = props.activityByProfile.get(profile.profileId);
         const selected = props.selectedProfileId === profile.profileId;
+        const reason = props.unavailableReason(profile);
         return (
-          <Pressable
+          <Menu
             key={profile.profileId}
-            accessibilityRole="button"
-            accessibilityLabel={`${profile.name}${activity ? `, ${agentActivityLabel(activity)}` : ""}`}
-            accessibilityState={{ selected }}
-            onPress={() => props.onSelect(profile.profileId)}
-            className={cn(
-              "flex-row items-center gap-2 rounded-full border py-1.5 pe-3.5 ps-1.5",
-              selected ? "border-primary bg-secondary" : "border-border-subtle bg-card",
-            )}
+            shouldOpenOnLongPress
+            title={[profile.name, agentModelLabel(profile)].filter(Boolean).join(" · ")}
+            accessibilityLabel={`Actions for ${profile.name}`}
+            actions={[
+              { id: "show", title: "Show chats", image: "line.3.horizontal.decrease" },
+              {
+                id: "new-chat",
+                title: "New chat",
+                image: "square.and.pencil",
+                ...(reason ? { subtitle: reason, attributes: { disabled: true } } : {}),
+              },
+            ]}
+            onPressAction={({ nativeEvent }) => {
+              if (nativeEvent.event === "show") props.onSelect(profile.profileId);
+              else if (nativeEvent.event === "new-chat") props.onStartChat(profile.profileId);
+            }}
           >
-            <AgentAvatar icon={agent.icon} color={agent.color} size={24} />
-            <Text className="text-sm font-t3-medium text-foreground">{profile.name}</Text>
-            {activity && (activity.working > 0 || activity.attention > 0) ? (
-              <View
-                className={cn(
-                  "h-2 w-2 rounded-full",
-                  activity.attention > 0 ? "bg-warning-foreground" : "bg-primary",
-                )}
-              />
-            ) : null}
-          </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${profile.name}${activity ? `, ${agentActivityLabel(activity)}` : ""}`}
+              accessibilityHint="Shows this agent's details and chats. Long press for actions."
+              accessibilityState={{ selected }}
+              onPress={() => props.onSelect(profile.profileId)}
+              className={cn(
+                "w-[72px] items-center gap-1.5 rounded-[16px] border px-1 py-2",
+                selected ? "border-primary bg-secondary" : "border-transparent",
+              )}
+            >
+              <View>
+                <AgentAvatar
+                  icon={agent.icon}
+                  iconId={profile.iconId}
+                  color={agent.color}
+                  size={36}
+                />
+                {activity && (activity.working > 0 || activity.attention > 0) ? (
+                  <View
+                    className={cn(
+                      "absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-background",
+                      activity.attention > 0 ? "bg-warning-foreground" : "bg-primary",
+                    )}
+                  />
+                ) : null}
+              </View>
+              <Text className="text-xs font-t3-medium text-foreground" numberOfLines={1}>
+                {profile.name}
+              </Text>
+            </Pressable>
+          </Menu>
         );
       })}
     </ScrollView>
@@ -893,14 +939,23 @@ function NewChatButton(props: {
 function AgentHero(props: {
   readonly agent: AgentAppearance;
   readonly profile: McpGatewayProfile;
+  /** Labels of the machines the agent is limited to; empty means any. */
+  readonly machineLabels: readonly string[];
   readonly activity: AgentActivity;
   readonly unavailableReason: string | null;
   readonly onStartChat: () => void;
 }) {
+  const tags = normalizeAgentTags(props.profile.tags ?? []);
+  const skills = props.profile.skillIds?.length ?? 0;
   return (
     <View className="mx-4 mt-4 gap-4 rounded-[22px] border border-border-subtle bg-card p-4">
       <View className="flex-row items-center gap-3">
-        <AgentAvatar icon={props.agent.icon} color={props.agent.color} size={52} />
+        <AgentAvatar
+          icon={props.agent.icon}
+          iconId={props.profile.iconId}
+          color={props.agent.color}
+          size={52}
+        />
         <View className="min-w-0 flex-1 gap-0.5">
           <Text className="text-xl font-t3-bold text-foreground" numberOfLines={1}>
             {props.profile.name}
@@ -913,7 +968,29 @@ function AgentHero(props: {
           {props.profile.description}
         </Text>
       ) : null}
-      <Text className="text-sm text-foreground-muted">{agentActivityLabel(props.activity)}</Text>
+      {tags.length > 0 ? (
+        <View
+          className="flex-row flex-wrap gap-1.5"
+          accessibilityLabel={`Roles: ${tags.join(", ")}`}
+        >
+          {tags.map((tag) => (
+            <View key={tag} className="rounded-full bg-secondary px-2.5 py-1">
+              <Text className="text-xs font-t3-medium text-foreground-secondary">{tag}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <Text className="text-sm text-foreground-muted">
+        {[
+          agentActivityLabel(props.activity),
+          skills === 0 ? null : `${skills} ${skills === 1 ? "skill" : "skills"}`,
+          props.profile.environmentIds?.length
+            ? props.machineLabels.join(", ") || "Unavailable machine"
+            : "Any machine",
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+      </Text>
       <View className="gap-2">
         <NewChatButton
           name={props.profile.name}
@@ -960,7 +1037,12 @@ function AgentDirectory(props: {
                 onPress={() => props.onSelect(profile.profileId)}
                 className="min-w-0 flex-1 flex-row items-center gap-3 active:opacity-60"
               >
-                <AgentAvatar icon={agent.icon} color={agent.color} size={40} />
+                <AgentAvatar
+                  icon={agent.icon}
+                  iconId={profile.iconId}
+                  color={agent.color}
+                  size={40}
+                />
                 <View className="min-w-0 flex-1 gap-0.5">
                   <Text className="text-base font-t3-bold text-foreground" numberOfLines={1}>
                     {profile.name}

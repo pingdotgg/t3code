@@ -1,4 +1,3 @@
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -18,7 +17,6 @@ import type {
 import { ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
-  authorizesThroughConnect,
   connectionRoutes,
   routeEntry,
   routeHttpBaseUrl,
@@ -48,12 +46,10 @@ export type RouteCheck = "answered" | "silent" | "unchecked";
 export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
-// Preferred direct routes share one head start, so a relay connection does not
-// wait the full probe timeout for a LAN the device has already left. A route
-// that misses it connects over relay, then upgrades with a second reconnect.
+// Preferred routes share one head start, so a later route does not wait the
+// full probe timeout for a LAN the device has already left. A route that misses
+// it connects later, then upgrades with a second reconnect.
 const ROUTE_CHECK_HEAD_START_MS = 500;
-// How long a route authorized through T3 Connect keeps its turn over a later route that answered.
-const CONNECT_AUTHORIZATION_GRACE_MS = 5_000;
 
 export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
@@ -109,50 +105,6 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     return result;
   });
   const silent: Array<{ readonly route: ConnectionRoute; readonly index: number }> = [];
-  const preempted: Array<{ readonly route: ConnectionRoute; readonly check: RouteCheck }> = [];
-  const answers = (position: number) =>
-    Fiber.join(checks[position]!).pipe(
-      Effect.filterOrElse(
-        (check) => check === "answered",
-        () => Effect.never,
-      ),
-    );
-  // A route needing a T3 Connect credential can stall on Connect for longer than the setup
-  // budget. A route the head start skipped takes its turn as soon as it answers; a later route
-  // that needs no Connect credential waits out a grace, so a healthy Connect route keeps its place.
-  const overtaken = (index: number) => {
-    const later = routes.flatMap((route, position) =>
-      position > index && !authorizesThroughConnect(route) ? [answers(position)] : [],
-    );
-    const waits = [
-      ...silent.map(({ index: position }) => answers(position)),
-      ...(later.length === 0
-        ? []
-        : [
-            Effect.sleep(CONNECT_AUTHORIZATION_GRACE_MS).pipe(
-              Effect.andThen(Effect.raceAll(later)),
-            ),
-          ]),
-    ];
-    return waits.length === 0 ? undefined : Effect.raceAll(waits);
-  };
-  const attemptUnlessOvertaken = Effect.fnUntraced(function* (
-    route: ConnectionRoute,
-    check: RouteCheck,
-    overtakenBy: Effect.Effect<unknown>,
-  ) {
-    const running = yield* Effect.forkChild(attempt(route, check));
-    const finished = yield* Effect.raceFirst(
-      Fiber.await(running).pipe(Effect.as(true)),
-      overtakenBy.pipe(Effect.as(false)),
-    );
-    if (!finished) yield* Fiber.interrupt(running);
-    // An attempt that finished just as it was overtaken still counts, so its session is kept.
-    const exit = yield* Fiber.await(running);
-    if (Exit.isSuccess(exit)) return Option.some(exit.value);
-    if (Cause.hasInterruptsOnly(exit.cause)) return Option.none();
-    return yield* Effect.failCause(exit.cause);
-  });
   for (const [index, route] of routes.entries()) {
     const check =
       checks.length === 0
@@ -165,18 +117,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       silent.push({ route, index });
       continue;
     }
-    const overtakenBy = authorizesThroughConnect(route) ? overtaken(index) : undefined;
-    const result =
-      overtakenBy === undefined
-        ? Option.some(yield* attempt(route, check))
-        : yield* attemptUnlessOvertaken(route, check, overtakenBy);
-    if (Option.isNone(result)) {
-      preempted.push({ route, check });
-      continue;
-    }
-    if (result.value._tag === "Success") return result.value.success;
+    const result = yield* attempt(route, check);
+    if (result._tag === "Success") return result.success;
     // An incompatible server is the same server on every route.
-    if (result.value.failure.reason === "unsupported") return yield* result.value.failure;
+    if (result.failure.reason === "unsupported") return yield* result.failure;
   }
   // A slow route that answered after the head start goes before one that is
   // still dead, which can hold an attempt open far longer than its probe.
@@ -187,7 +131,6 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     ...silent.flatMap((entry, position) =>
       late[position] === "silent" ? [] : [{ ...entry, check: late[position]! }],
     ),
-    ...preempted,
     ...silent.flatMap((entry, position) =>
       late[position] === "silent" ? [{ ...entry, check: "silent" as const }] : [],
     ),
@@ -199,8 +142,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   }
   // A route that already missed its reachability check timing out again says nothing new, while
   // a route that answered and refused names what the user must fix. A refusal from an unchecked
-  // route, such as T3 Connect asking for sign-in, must not stop retries of a direct route that
-  // needs no sign-in and only lost packets.
+  // route must not stop retries of another route that only lost packets.
   return yield* (
     transient ??
       answeredBlocked ??
@@ -280,20 +222,6 @@ export const make = Effect.gen(function* () {
         const session = yield* sessions.connect(prepared);
         yield* reportProgress({ stage: "synchronizing", prepared });
         yield* session.ready;
-        // The server closes a socket when its session expires, unless the same key renewed it.
-        if (prepared.httpAuthorization?._tag === "Dpop") {
-          yield* remote
-            .renewDpopBeforeExpiry({
-              expectedEnvironmentId: prepared.environmentId,
-              expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
-            })
-            .pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not renew the connection's credential.", { error }),
-              ),
-              Effect.forkScoped,
-            );
-        }
         return { prepared, session } satisfies EnvironmentConnectionLease;
       }),
     );

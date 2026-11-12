@@ -15,7 +15,6 @@ import type {
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import {
-  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
@@ -32,12 +31,12 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
-  parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   removeWebhookFilterDraft,
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -117,7 +116,10 @@ const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
   fresh_session: "One thread, fresh session",
 };
 
-function describeSchedule(task: Pick<ScheduledTask, "schedule">): string {
+function describeSchedule(
+  task: Pick<ScheduledTask, "schedule"> & Partial<Pick<ScheduledTask, "nextRunAt">>,
+  timeZone?: string,
+): string {
   if (task.schedule.type === "cron") {
     return `Cron ${task.schedule.expression} (${task.schedule.timezone})`;
   }
@@ -128,7 +130,8 @@ function describeSchedule(task: Pick<ScheduledTask, "schedule">): string {
   }
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
+  const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
+  return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone === undefined ? "" : ` ${zone}`}`;
 }
 
 function formatTime(value: string): string {
@@ -687,6 +690,7 @@ function TaskForm({
     draft.task !== null &&
     tasks.data !== null &&
     !tasks.data.tasks.some((task) => task.id === draft.task?.id);
+  const runAtZone = scheduleTimeZoneLabel(tasks.data?.timeZone);
   const environmentUnavailable = !availableTargets.some(
     (target) => target.environmentId === environmentId,
   );
@@ -718,16 +722,6 @@ function TaskForm({
         ? { ...draft.schedule, signature: liveTask.schedule.signature }
         : draft.schedule,
     );
-    if (
-      draft.schedule.mode === "webhook" &&
-      parseMaxDeliveryAge(draft.schedule.maxDeliveryAgeMinutes) === undefined
-    ) {
-      Dialog.alert(
-        "Invalid age limit",
-        `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
-      );
-      return;
-    }
     if (draft.schedule.mode === "once" && !offersOnce) {
       Dialog.alert(
         "Once is not available here",
@@ -1067,7 +1061,9 @@ function TaskForm({
             <>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}`}
+                accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}${
+                  runAtZone ? ` ${runAtZone}` : ""
+                }`}
                 onPress={() => setTimePickerOpen((open) => !open)}
                 className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
               >
@@ -1079,6 +1075,7 @@ function TaskForm({
                   className="min-w-0 flex-1 text-right text-foreground-muted"
                 >
                   {formatTime(draft.schedule.timeOfDay)}
+                  {runAtZone ? ` ${runAtZone}` : ""}
                 </Text>
                 <SymbolView
                   name="chevron.right"
@@ -1203,17 +1200,6 @@ function TaskForm({
                 }
                 signatureConfigured={draft.schedule.signature !== null}
                 disabled={!canOperate || saving || environmentUnavailable}
-              />
-              <FormField
-                label="Skip requests older than (minutes)"
-                value={draft.schedule.maxDeliveryAgeMinutes}
-                placeholder="Run every request"
-                keyboardType="number-pad"
-                disabled={saving}
-                borderTop
-                onChange={(maxDeliveryAgeMinutes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
-                }
               />
               <WebhookFilterRows
                 filters={draft.schedule.filters}
@@ -1504,7 +1490,7 @@ function EnvironmentTasks({
                 {task.title}
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-                {describeSchedule(task)}
+                {describeSchedule(task, tasks.data?.timeZone)}
                 {!task.enabled
                   ? " · Paused"
                   : task.nextRunAt

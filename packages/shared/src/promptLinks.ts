@@ -1,4 +1,4 @@
-import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
+import { DEFAULT_HOSTED_APP_URL } from "./hostedApp.ts";
 
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
 

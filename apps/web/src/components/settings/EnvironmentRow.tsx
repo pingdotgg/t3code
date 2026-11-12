@@ -37,7 +37,6 @@ export function environmentTransportLabel(
       ? connectionRouteLabel(routes[0]!)
       : `via ${connectionRouteLabel(active)}`;
   }
-  if (environment.relayManaged) return "T3 Connect";
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";
   if (
     entry.target._tag === "SshConnectionTarget" &&

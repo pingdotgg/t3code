@@ -12,7 +12,6 @@ import * as NetService from "@t3tools/shared/Net";
 
 import * as EnvironmentAuthPolicy from "../auth/EnvironmentAuthPolicy.ts";
 import * as ManagedLimits from "./managedLimits.ts";
-import * as ManagedPolicy from "./ManagedPolicy.ts";
 
 const policy = (limits?: ManagedPolicyDocument["limits"]) => ({
   document: {
@@ -113,20 +112,6 @@ it.effect("allows the clients the policy lists", () =>
     authPolicy: "remote-reachable",
     host: "0.0.0.0",
     tailscaleServeEnabled: true,
-  }),
-);
-
-it.effect("tells clients Connect is off when the policy leaves out remote clients", () =>
-  Effect.gen(function* () {
-    const managed = yield* ManagedPolicy.fromDocument("/test/policy.json", {
-      ...desktopAndLocal.document,
-    });
-    assert.deepEqual(managed.summary?.limits, {
-      clients: ["desktop", "local-browser"],
-      connect: false,
-    });
-    assert.isTrue(ManagedLimits.allowsConnect(policy({ clients: ["remote"] })));
-    assert.isFalse(ManagedLimits.allowsConnect(policy({ connect: false })));
   }),
 );
 

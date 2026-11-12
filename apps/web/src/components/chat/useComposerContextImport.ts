@@ -337,7 +337,9 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "environment"
+              : existing?.kind === "thread" ||
+                  existing?.kind === "environment" ||
+                  existing?.kind === "agent"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -404,9 +406,10 @@ export function useComposerContextImport(input: {
           rewritten.set(record.contextId, record.contextId);
           break;
         }
-        case "environment": {
-          // A machine means the same machine from any thread, so a pasted one is kept,
-          // but not in an answer to an agent's question, which carries no machines.
+        case "environment":
+        case "agent": {
+          // A machine or agent means the same one from any thread, so a pasted one is kept,
+          // but not in an answer to an agent's question, which carries neither.
           if (questionAttachmentTarget !== null) break;
           addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
             appendReference: false,

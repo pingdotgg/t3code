@@ -1,5 +1,4 @@
 import {
-  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   ScheduledTaskWebhookFilter,
   type ScheduledTaskWebhookFilterOp,
@@ -8,15 +7,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 export const DEFAULT_WEBHOOK_PROMPT = "Handle this webhook:\n{{body}}";
-
-/** Blank means "no limit"; undefined means the input is not a valid limit, which blocks saving. */
-export function parseMaxDeliveryAge(value: string): number | null | undefined {
-  if (value.trim() === "") return null;
-  const minutes = Number(value.trim());
-  return Number.isInteger(minutes) && minutes > 0 && minutes <= MAX_WEBHOOK_DELIVERY_AGE_MINUTES
-    ? minutes
-    : undefined;
-}
 
 /**
  * One editable filter row. `in` takes a comma-separated list, which is

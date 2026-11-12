@@ -1,5 +1,5 @@
 import * as RemoteThreads from "../../agents/remoteThreads.ts";
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { type EnvironmentId, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
@@ -7,11 +7,33 @@ import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as TailnetDevices from "../../../peer/TailnetDevices.ts";
+import { callerLinkOrigin } from "../../linkOrigin.ts";
 import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+
+/**
+ * Revoking cuts a machine off everywhere, so it comes from the user or a chat on this machine:
+ * never through a link or an outside client, which may be acting from the machine it would cut.
+ */
+const assertMayRevoke = Effect.fn("mcp.assertMayRevoke")(function* (environmentId: EnvironmentId) {
+  const caller = yield* readCaller();
+  if (environmentId === caller.scope.environmentId) {
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "This machine cannot revoke itself.",
+    });
+  }
+  if (caller.scope.client !== undefined || callerLinkOrigin(caller) !== undefined) {
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message:
+        "Only the user, or a chat on this machine, can revoke a machine. Ask them to revoke it in Settings, Connections.",
+    });
+  }
+});
 
 export const layer = McpToolAccess.toLayer(
   OrchestratorToolkit,
@@ -241,19 +263,25 @@ export const layer = McpToolAccess.toLayer(
       // an environment setting too.
       t3_environment_device_access: McpToolAccess.writesEnvironment(({ environmentId, access }) =>
         Effect.gen(function* () {
+          if (access === "revoked") yield* assertMayRevoke(environmentId);
+          const caller = yield* McpInvocationContext.McpInvocationContext;
           const devices = yield* TailnetDevices.TailnetDevices;
-          const entry = yield* devices.setAccess(environmentId, access).pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code:
-                    error.reason === "unknown_device" || error.reason === "self"
-                      ? "invalid_request"
-                      : "orchestration_error",
-                  message: error.message,
-                }),
-            ),
-          );
+          const entry = yield* devices
+            .setAccess(environmentId, access, "agent", caller.client?.peerEnvironmentId)
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code:
+                      error.reason === "unknown_device" || error.reason === "self"
+                        ? "invalid_request"
+                        : error.reason === "forbidden"
+                          ? "capability_denied"
+                          : "orchestration_error",
+                    message: error.message,
+                  }),
+              ),
+            );
           return { environmentId: entry.environmentId, access: entry.access };
         }),
       ),

@@ -37,6 +37,12 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("requires no retired relay scope for any RPC", () => {
+    expect(
+      Object.values(RPC_REQUIRED_SCOPES).filter((scope) => scope.startsWith("relay:")),
+    ).toEqual([]);
+  });
+
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
     for (const method of [
       WS_METHODS.scheduledTasksListWebhookDeliveries,
@@ -68,6 +74,15 @@ describe("RPC authorization scopes", () => {
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
+  });
+
+  it("lets config readers fetch skill bodies but only settings writers edit the library", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverGetAgentSkills)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverMutateAgentLibrary)).toBe(
+      AuthSettingsWriteScope,
+    );
   });
 
   it("lets thread readers observe and refresh checkout branches", () => {
@@ -439,10 +454,14 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
     yield* client[WS_METHODS.assetsCreateUrl]({
       resource: { _tag: "attachment", attachmentId: "image" },
     });
+    yield* client[WS_METHODS.assetsCreateUrl]({
+      resource: { _tag: "native-app-icon", app: { _tag: "app-id", appId: "com.apple.calculator" } },
+    });
     for (const resource of [
       { _tag: "workspace-file", threadId: ThreadId.make("thread"), path: "file.txt" },
       { _tag: "media-file", threadId: ThreadId.make("thread"), path: "/repo/image.png" },
       { _tag: "draft-workspace-file", cwd: "/repo", path: "file.txt" },
+      { _tag: "native-app-icon", app: { _tag: "app-path", path: "/private/Secret.app" } },
     ] as const) {
       expect(
         yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
@@ -451,7 +470,7 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
         requiredPermission: AuthFilesystemReadScope,
       });
     }
-    expect(handled).toBe(1);
+    expect(handled).toBe(2);
   }).pipe(Effect.scoped),
 );
 

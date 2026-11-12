@@ -1,5 +1,4 @@
 import {
-  DESKTOP_UPDATE_RESTART_MARKER_FILE,
   DesktopUpdateChannelSchema,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
@@ -36,7 +35,10 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
-import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
+import {
+  normalizeDesktopUpdateReleaseNotes,
+  releaseNotesOfOfferedVersion,
+} from "./releaseNotes.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -72,6 +74,7 @@ const UpdateInfo = Schema.Struct({
   version: Schema.String,
   // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
+  releaseName: Schema.optional(Schema.NullOr(Schema.String)),
   releaseDate: Schema.optional(Schema.String),
 });
 
@@ -648,32 +651,15 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
-  const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
-  const updateRestartMarkerPath = environment.path.join(
-    updateRestartMarkerDir,
-    DESKTOP_UPDATE_RESTART_MARKER_FILE,
-  );
-  const writeUpdateRestartMarker = fileSystem
-    .makeDirectory(updateRestartMarkerDir, { recursive: true })
-    .pipe(
-      Effect.andThen(fileSystem.writeFileString(updateRestartMarkerPath, "")),
-      Effect.catch((error) =>
-        logUpdaterWarning("Could not write the update restart marker.", { errorTag: error._tag }),
-      ),
-    );
-
-  // Failed or interrupted installs leave no replacement backend; later quits must release the tunnel.
-  const removeUpdateRestartMarker = fileSystem
-    .remove(updateRestartMarkerPath, { force: true })
-    .pipe(Effect.ignore);
-
-  const installRecordPath = environment.path.join(
-    updateRestartMarkerDir,
-    DESKTOP_UPDATE_INSTALL_RECORD_FILE,
-  );
+  const runtimeDir = environment.path.join(environment.baseDir, "runtime");
+  const installRecordPath = environment.path.join(runtimeDir, DESKTOP_UPDATE_INSTALL_RECORD_FILE);
   const writeInstallRecord = (targetVersion: string) =>
     encodeInstallRecord({ fromVersion: environment.appVersion, targetVersion }).pipe(
-      Effect.flatMap((text) => fileSystem.writeFileString(installRecordPath, text)),
+      Effect.flatMap((text) =>
+        fileSystem
+          .makeDirectory(runtimeDir, { recursive: true })
+          .pipe(Effect.andThen(fileSystem.writeFileString(installRecordPath, text))),
+      ),
       Effect.catch((error) =>
         logUpdaterWarning("Could not record the update install.", { errorTag: error._tag }),
       ),
@@ -716,7 +702,6 @@ export const make = Effect.gen(function* () {
       finishUpdateAction("install"),
       Ref.set(desktopState.quitting, false),
       Ref.set(installRunningBackendsRef, []),
-      removeUpdateRestartMarker,
       removeInstallRecord,
     ],
     { discard: true },
@@ -733,7 +718,6 @@ export const make = Effect.gen(function* () {
     if (!ownsRecovery) return;
 
     yield* Ref.set(desktopState.quitting, false);
-    yield* removeUpdateRestartMarker;
     yield* removeInstallRecord;
     yield* Effect.gen(function* () {
       const runningInstances = yield* Ref.getAndSet(installRunningBackendsRef, []);
@@ -808,7 +792,6 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(installRunningBackendsRef, []);
 
         return yield* Effect.gen(function* () {
-          yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
           // Stop pooled backends before quitAndInstall can outrun their scope finalizers.
@@ -942,7 +925,7 @@ export const make = Effect.gen(function* () {
 
           const checkedAt = yield* currentIsoTimestamp;
           const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
-            info.releaseNotes,
+            releaseNotesOfOfferedVersion(info),
             info.version,
             state.channel,
             info.releaseDate,

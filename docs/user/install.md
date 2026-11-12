@@ -50,7 +50,7 @@ To try T3 Code once without installing it, run `npx t3@latest` instead (needs
 Node.js for `npx`). It offers to install the `t3` command first. If you say no,
 it asks again at the next minor release, and `npx t3 install` installs it later.
 `npx t3` always runs the version npm picked, even when a `t3` is installed. On
-the nightly train, run your installed `t3` (for example `t3 connect`), not
+the nightly train, run your installed `t3` (for example `t3 up`), not
 `npx t3`, which runs the latest stable release.
 
 ### Intel Macs
@@ -164,7 +164,7 @@ Install T3 Code from the
 [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
 [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
 The phone connects to a server on another machine. Follow
-[remote access](./remote-access.md) to link it through T3 Connect or a pairing URL.
+[remote access](./remote-access.md) to pair it with a pairing URL or QR code.
 
 Store links and QR codes are also available in **Settings → About → Mobile app**
 on web and desktop. The store apps work with both stable and Nightly servers. Test builds are optional:
@@ -214,7 +214,9 @@ on the environment's machine. An unlisted version is unverified.
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
 (Homebrew, mise, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or
-the CLI's own update command when T3 Code cannot tell. T3 Code runs `mise upgrade`
+the CLI's own update command when T3 Code cannot tell. Claude, Codex, and
+OpenCode installs T3 Code cannot identify stay manual: update them through the
+installer you used. T3 Code runs `mise upgrade`
 only for a tool your mise config requests as `latest` when the provider's binary
 path is a mise shim or under the tool's `installs/<tool>/latest` link; update a
 pinned version, or a path into one version's directory, through mise yourself.

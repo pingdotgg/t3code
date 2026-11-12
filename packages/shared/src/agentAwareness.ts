@@ -1,7 +1,6 @@
 import {
   isListedThread,
   type EnvironmentId,
-  isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
   type Project,
   type RuntimeRequestId,
@@ -9,7 +8,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { backgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
+import {
+  backgroundWorkHoldsCompletion,
+  monitorHoldsWakeCompletion,
+} from "./orchestrationV2PendingBackgroundWork.ts";
 
 export type AgentAwarenessPhase =
   | "starting"
@@ -24,25 +26,6 @@ export interface SubagentRequestAwareness {
   readonly requestId: RuntimeRequestId;
   /** The child's own update time, which moves whenever its request changes. */
   readonly updatedAt: DateTime.Utc;
-}
-
-/** Provider-native subagents ask on their parent; the coordinator answers child questions. */
-export function subagentAwaitsApproval(
-  thread: Pick<
-    OrchestrationV2ThreadShell,
-    "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest"
-  >,
-): boolean {
-  const kind = thread.pendingRuntimeRequest?.kind;
-  return (
-    kind !== undefined &&
-    kind !== "auth_refresh" &&
-    kind !== "user_input" &&
-    thread.lineage.relationshipToParent === "subagent" &&
-    !isProviderNativeSubagentThread(thread) &&
-    // The activity run stays set when a follow-up is queued behind a blocked run.
-    thread.activityRunStatus != null
-  );
 }
 
 export interface AgentAwarenessState {
@@ -73,6 +56,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "activityRunStatus"
     | "id"
     | "lineage"
+    | "latestRunBackgroundWake"
     | "latestRunStopRequested"
     | "modelSelection"
     | "pendingBackgroundTasks"
@@ -99,9 +83,12 @@ export function projectThreadAwarenessV2(
   }
   if (phase === "completed" && thread.latestRunStopRequested === true) return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
+  const runStatus = thread.activityRunStatus ?? thread.status;
   if (
     thread.settledOverride === "settled" &&
-    (phase === "completed" || phase === "failed") &&
+    (phase === "completed" ||
+      phase === "failed" ||
+      (phase === "running" && runStatus === "completed")) &&
     !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
   ) {
     return null;
@@ -154,7 +141,8 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
-      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
+        monitorHoldsWakeCompletion(thread)
         ? "running"
         : "completed";
     case "failed":

@@ -32,7 +32,8 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     row.projectedItem?.item.id,
   );
   const text = liveText ?? row.message.text;
-  const messageText = text || (row.message.streaming ? "" : "(empty response)");
+  const messageText =
+    text || (row.message.streaming || row.suppressEmptyResponse ? "" : "(empty response)");
 
   return (
     <>
@@ -48,6 +49,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
           >
             <ChatMarkdown
               text={messageText}
+              renderInsights
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
@@ -254,9 +256,6 @@ export function HtmlRenderTimelineRow({
   const { onAppFullscreenChange } = ctx;
   const onFullscreenChange = (fullscreen: boolean) => onAppFullscreenChange(row.id, fullscreen);
 
-  if (ctx.renderHtmlRender) {
-    return <div className="min-w-0 px-1">{ctx.renderHtmlRender(row)}</div>;
-  }
   return (
     <div className="min-w-0 px-1">
       <HtmlRenderFrame

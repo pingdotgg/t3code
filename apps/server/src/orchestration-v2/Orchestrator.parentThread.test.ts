@@ -20,8 +20,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as McpGatewayBroker from "../mcp/McpGatewayBroker.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -37,6 +35,7 @@ import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentP
 import * as RemoteParentSettlement from "./RemoteParentSettlement.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { CODE_PAIRED_SUBJECT, layerDependencies } from "../mcp/McpGatewayBroker.testkit.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -1089,7 +1088,7 @@ const relayLayer = (input: {
     McpGatewayBroker.McpGatewayBroker,
     Effect.gen(function* () {
       const broker = yield* McpGatewayBroker.make;
-      yield* broker.connect("desktop", { [pc]: ["read"] }).pipe(
+      yield* broker.connect("desktop", { [pc]: ["read"] }, CODE_PAIRED_SUBJECT).pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             const threadId = String(event.args[1]);
@@ -1109,7 +1108,7 @@ const relayLayer = (input: {
       );
       return broker;
     }),
-  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+  ).pipe(Layer.provide(layerDependencies()));
 
 const withRemoteParents = (relay: ReturnType<typeof relayLayer>) =>
   RemoteParentSettlement.layer.pipe(Layer.provideMerge(testLayer), Layer.provideMerge(relay));

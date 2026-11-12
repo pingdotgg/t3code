@@ -1,17 +1,11 @@
-import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
-import { managedCapabilityDenial } from "@t3tools/contracts";
 
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
-import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
-import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
-import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
-import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { useSettingsScope } from "./SettingsScopeContext";
 
 /** Features still settling in. */
 export function LabsSettingsPanel() {
@@ -19,9 +13,6 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
-        {/* Clerk is only mounted when this build has T3 Connect. */}
-        {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
-        <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
@@ -69,98 +60,6 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
-        />
-      }
-    />
-  );
-}
-
-/** Signed out of T3 Connect, the row offers to sign in instead of its switch. */
-function GuestLinksRowWithSignIn() {
-  const { isSignedIn } = useAuth();
-  const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  // `isSignedIn` is undefined until Clerk loads.
-  if (isSignedIn !== false) return <GuestLinksRow />;
-  return (
-    <SettingsRow
-      {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links."
-      control={
-        <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-          Sign in
-        </Button>
-      }
-    />
-  );
-}
-
-function GuestLinksRow() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const scope = useOptionalSettingsScope();
-  const primaryPolicy = usePrimaryManagedPolicy();
-  // Guests arrive through T3 Connect, so a policy that turns Connect off turns this off too.
-  const connectDenial = firstManagedDenial(
-    scope
-      ? scope.connectedEnvironments.map((environment) => environment.serverConfig?.managedPolicy)
-      : [primaryPolicy],
-    (policy) => managedCapabilityDenial(policy, "connect"),
-  );
-  return (
-    <SettingsRow
-      serverScoped
-      {...searchableSetting("guest-links")}
-      settingKeys={["guestSharingEnabled"]}
-      // Turning guest links off still works without T3 Connect.
-      managed={settings.guestSharingEnabled ? undefined : connectDenial}
-      description={
-        <>
-          Share a thread with a guest who watches it live in a browser and sends messages you
-          approve. Needs T3 Connect: sign in and link this machine in{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            Environments
-          </Link>
-          . Turning it off stops every guest link.
-        </>
-      }
-      control={
-        <ScopedSwitch
-          settingKeys={["guestSharingEnabled"]}
-          checked={settings.guestSharingEnabled}
-          onCheckedChange={(checked) => updateSettings({ guestSharingEnabled: Boolean(checked) })}
-          aria-label="Guest links"
-        />
-      }
-    />
-  );
-}
-
-function LinkedEnvironmentsRow() {
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  return (
-    <SettingsRow
-      serverScoped
-      {...searchableSetting("linked-environments-beta")}
-      settingKeys={["linkedEnvironmentsEnabled"]}
-      description={
-        <>
-          Let agents here work on your other machines, and theirs here. Turn it on for each machine,
-          then link them in{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
-          </Link>
-          . While off, nothing new starts over a link; running tasks finish.
-        </>
-      }
-      control={
-        <ScopedSwitch
-          settingKeys={["linkedEnvironmentsEnabled"]}
-          checked={settings.linkedEnvironmentsEnabled}
-          onCheckedChange={(checked) =>
-            updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
-          }
-          aria-label="Linked environments"
         />
       }
     />

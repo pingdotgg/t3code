@@ -4,6 +4,7 @@ import { compactJson } from "@t3tools/shared/compactJson";
 import * as DateTime from "effect/DateTime";
 import { z } from "zod";
 
+import { profileFields } from "./profileInput.ts";
 import { skillFields } from "./skillInput.ts";
 import { GatewayError, GATEWAY_THREAD_EXECUTION_STATES } from "./port.ts";
 import {
@@ -65,32 +66,6 @@ const pr = {
 const webhook = { environmentId, webhookId: z.string().trim().min(1) };
 const executionState = z.enum(GATEWAY_THREAD_EXECUTION_STATES);
 
-const profileFields = {
-  name: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(280).optional(),
-  providerLabel: z.string().trim().min(1),
-  modelLabel: z.string().trim().min(1),
-  color: z
-    .string()
-    .regex(/^#[0-9a-fA-F]{6}$/)
-    .optional(),
-  icon: z
-    .enum(["orb", "bot", "code", "pen", "search", "shield", "sparkles", "terminal"])
-    .optional(),
-  skillIds: z.array(z.string().trim().min(1)).optional(),
-  systemPrompt: z.string().max(32_000).optional(),
-  reasoningEffort: z.string().trim().min(1).optional(),
-  runtimeMode: z.enum([
-    "approval-required",
-    "auto-accept-edits",
-    "auto",
-    "full-access",
-    "read-only",
-  ]),
-  interactionMode: z.enum(["default", "plan"]),
-  environmentIds: z.array(z.string().trim().min(1)).optional(),
-};
-
 const createThreadFields = {
   environmentId,
   projectId: z.string().trim().min(1),
@@ -141,11 +116,11 @@ export const TOOL_SPECS = {
     { environmentId },
   ],
   t3_create_skill: [
-    "Create a reusable skill in the shared T3 Agents library. Supply a name, when-to-use description, and full SKILL.md Markdown content. Optional resources contain relative path, contentBase64, and executable fields; include scripts, references and binary assets without inlining them. Limits: 256 files, 1 MiB per file, 2 MiB per skill. Requires create or admin access. Assign the returned skillId to agents with t3_update_agent. Changes sync across connected machines and apply to newly created threads. Existing threads keep their starting skills.",
+    "Create a reusable skill in the shared T3 Agents library. Supply a name, when-to-use description, and full SKILL.md Markdown content. Optional resources contain relative path, contentBase64, and executable fields; include scripts, references and binary assets without inlining them. Limits: 256 files, 1 MiB per file, 2 MiB per skill. Requires create or admin access and a full-access/default calling chat, since every machine shares the library. Assign the returned skillId to agents with t3_update_agent. Changes sync across connected machines and apply to newly created threads. Existing threads keep their starting skills.",
     { environmentId, ...skillFields },
   ],
   t3_update_skill: [
-    "Update a shared skill bundle by skillId. Omit resources to preserve files; supply resources to replace all files (an empty array removes them). New threads for assigned agents receive the change. Existing threads keep their starting skills. Requires create or admin access.",
+    "Update a shared skill bundle by skillId. Omit resources to preserve files; supply resources to replace all files (an empty array removes them). New threads for assigned agents receive the change. Existing threads keep their starting skills. Requires create or admin access and a full-access/default calling chat, since every machine shares the library.",
     {
       environmentId,
       skillId: z.string().trim().min(1),
@@ -153,7 +128,7 @@ export const TOOL_SPECS = {
     },
   ],
   t3_delete_skill: [
-    "Delete a shared skill from the library. New threads will no longer include it. Existing threads keep their starting skills. Requires create or admin access.",
+    "Delete a shared skill from the library. New threads will no longer include it. Existing threads keep their starting skills. Requires create or admin access and a full-access/default calling chat, since every machine shares the library.",
     { environmentId, skillId: z.string().trim().min(1) },
   ],
   t3_list_agents: [
@@ -178,11 +153,11 @@ export const TOOL_SPECS = {
     },
   ],
   t3_create_agent: [
-    "Create an agent in the shared Agents library without starting a session. Requires create or admin access. Shares to connected machines with the same grant.",
+    "Create an agent in the shared Agents library without starting a session. Requires create or admin access and a full-access/default calling chat, since every machine shares the library. Shares to connected machines with the same grant.",
     { environmentId, ...profileFields },
   ],
   t3_update_agent: [
-    "Update an agent by profileId. Updated configuration and assigned skillIds apply to newly created threads. Existing threads keep their starting configuration and skill contents.",
+    "Update an agent by profileId. Updated configuration and assigned skillIds apply to newly created threads. Existing threads keep their starting configuration and skill contents. Requires create or admin access and a full-access/default calling chat, since every machine shares the library.",
     {
       environmentId,
       profileId: z.string().trim().min(1),
@@ -190,7 +165,7 @@ export const TOOL_SPECS = {
     },
   ],
   t3_delete_agent: [
-    "Remove an agent from the shared Agents library, retaining its chats.",
+    "Remove an agent from the shared Agents library, retaining its chats. Requires create or admin access and a full-access/default calling chat, since every machine shares the library.",
     { environmentId, profileId: z.string().trim().min(1) },
   ],
   t3_handoff_thread: [
