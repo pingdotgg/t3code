@@ -353,7 +353,7 @@ describe("Android delivery routing", () => {
         // An unread result must not hold `active`, or native dismissal never sees a new run.
         expect(h.sent[0]?.data).toMatchObject({
           active: String(phase === "woke"),
-          activity_expires_at: String(phase === "woke" ? 24 * 60 * 60_000 : 15 * 60_000),
+          activity_expires_at: String(24 * 60 * 60_000),
           activity_working_count: "0",
           activity_attention_count: phase === "woke" ? "1" : "0",
         });

@@ -119,6 +119,33 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "completed", unread, completedAt: NOW, retained: true });
   });
 
+  it.each([
+    { kind: "user_input", createdAt: "2026-05-22T11:59:00.000Z", phase: null },
+    { kind: "user_input", createdAt: "2026-05-22T12:01:00.000Z", phase: "waiting_for_input" },
+    { kind: "command", createdAt: "2026-05-22T11:59:00.000Z", phase: "waiting_for_approval" },
+  ] as const)(
+    "matches the inbox for a $kind request created $createdAt during a snooze",
+    ({ kind, createdAt, phase }) => {
+      const state = projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        now: Date.parse("2026-05-22T12:02:00.000Z"),
+        thread: {
+          ...v2Thread({
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("request-snoozed"),
+              kind,
+              createdAt: DateTime.makeUnsafe(createdAt),
+            },
+          }),
+          snoozedAt: updatedAt,
+          snoozedUntil: DateTime.makeUnsafe("2026-05-22T14:00:00.000Z"),
+        },
+      });
+      expect(state?.phase ?? null).toBe(phase);
+    },
+  );
+
   it("does not announce completion after a manual stop", () => {
     const input = {
       environmentId: "env-1" as EnvironmentId,

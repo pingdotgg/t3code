@@ -474,6 +474,8 @@ export const make = Effect.gen(function* () {
 
   // Confirm through the same worker so tombstones cannot race live updates; recovery clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
+  // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
+  const heldCompletions = new Set<ThreadId>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
     ThreadId,
@@ -493,6 +495,7 @@ export const make = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
+    heldCompletions.clear();
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
@@ -643,9 +646,14 @@ export const make = Effect.gen(function* () {
         (!hasLivePublishedState(publishedStateByThread, threadId) &&
           Option.isSome(thread) &&
           !terminalWorkSinceStart(thread.value, startedAt)));
-    if (publishedStateByThread.get(threadId) === publishIdentity) {
+    if (
+      publishedStateByThread.get(threadId) === publishIdentity &&
+      // A held completion settled after an earlier clear still has to alert.
+      !(snapshot.state === null && heldCompletions.has(threadId))
+    ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
+      heldCompletions.delete(threadId);
       yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
         threadId,
@@ -660,6 +668,7 @@ export const make = Effect.gen(function* () {
     const requiresConfirmation =
       snapshot.state === null || (snapshot.state?.phase === "completed" && !replay);
     if (requiresConfirmation) {
+      if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
       const nowMs = (yield* DateTime.now).epochMilliseconds;
       const deadline = publishConfirmDeadlines.get(threadId);
       if (deadline === undefined) {
@@ -684,8 +693,43 @@ export const make = Effect.gen(function* () {
         statePhase: snapshot.state?.phase ?? null,
         shell: describeThreadShellForAwareness(thread),
       });
+      // Settled during the hold, not resumed: alert the current completion, then clear the card
+      // on a new window. Only settlement may hide it; queued or silent runs also project to null.
+      const unsettled =
+        snapshot.state === null &&
+        heldCompletions.has(threadId) &&
+        Option.isSome(thread) &&
+        thread.value.settledOverride === "settled"
+          ? resolveAgentAwarenessRelayPublishSnapshot({
+              environmentId,
+              thread: Option.some({ ...thread.value, settledOverride: null }),
+              project,
+              now: nowMs,
+              pendingSubagentRequest: null,
+            })
+          : null;
+      if (unsettled?.state?.phase === "completed") {
+        const completion = unsettled.state;
+        yield* publishState({
+          projectId: unsettled.projectId,
+          state: completion,
+          reason: unsettled.reason,
+        }).pipe(withRelayClientTracing);
+        publishedCompletions.set(threadId, {
+          phase: completion.phase,
+          completedAt: completion.completedAt,
+        });
+        heldCompletions.delete(threadId);
+        publishConfirmDeadlines.set(threadId, nowMs + 5_000);
+        yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
+        );
+        yield* schedulePublishConfirm(threadId);
+        return;
+      }
     } else {
       publishConfirmDeadlines.delete(threadId);
+      heldCompletions.delete(threadId);
     }
 
     if (snapshot.reason === "thread-not-found") {
@@ -725,6 +769,7 @@ export const make = Effect.gen(function* () {
       childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
     }
     publishConfirmDeadlines.delete(threadId);
+    heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
       new Map(publishedStates).set(threadId, publishIdentity),
     );

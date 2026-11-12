@@ -123,8 +123,14 @@ export function projectThreadAwarenessV2(
         (thread.latestRunCompletedAt != null &&
           DateTime.toEpochMillis(thread.latestRunCompletedAt) >
             DateTime.toEpochMillis(thread.snoozedAt)));
-    if (thread.pendingRuntimeRequest == null && subagentRequest === null && !failedAfterSnooze)
-      return null;
+    // Like the inbox, snoozing an existing question defers it; new questions and approvals wake.
+    const request = thread.pendingRuntimeRequest;
+    const requestWakes =
+      request != null &&
+      (request.kind !== "user_input" ||
+        thread.snoozedAt == null ||
+        DateTime.toEpochMillis(request.createdAt) > DateTime.toEpochMillis(thread.snoozedAt));
+    if (!requestWakes && subagentRequest === null && !failedAfterSnooze) return null;
   }
   const snoozeWakeAt = thread.snoozedUntil;
   const woke =

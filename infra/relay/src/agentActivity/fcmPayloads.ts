@@ -6,7 +6,10 @@ import {
   activityPhasePriority,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
-import { agentActivityExpiresAt } from "./agentActivityPayloads.ts";
+import {
+  agentActivityExpiresAt,
+  RETAINED_AGENT_ACTIVITY_ROW_TTL_MS,
+} from "./agentActivityPayloads.ts";
 
 export function androidActivityData(
   aggregate: RelayAgentActivityAggregateState | null,
@@ -58,7 +61,11 @@ export function androidActivityData(
       row.phase === "completed" || row.phase === "failed"
         ? row.unread === false
           ? 0
-          : Date.parse(row.updatedAt) + TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS
+          : Date.parse(row.updatedAt) +
+            // Match the relay's retention so a kept unread result does not time out first.
+            ("retained" in row && row.retained === true
+              ? RETAINED_AGENT_ACTIVITY_ROW_TTL_MS
+              : TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS)
         : agentActivityExpiresAt(row),
     ),
   );
