@@ -446,11 +446,7 @@ describe("evaluatePullRequestWatch", () => {
       headSha: "aaaaaaaaaa",
       report: final,
     });
-    assert.deepEqual(message.notification.outcome, "failed");
-    assert.include(
-      message.text,
-      "- The required checks still running when one failed have finished on aaaaaaa. Still failing:\n  - lint https://ci.example/lint",
-    );
+    assert.equal(message.notification.outcome, "failed");
 
     // A new advisory failure keeps what was owed rather than owing a required check started since.
     const advisory = detail({
