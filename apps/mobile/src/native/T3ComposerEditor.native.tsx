@@ -1,4 +1,3 @@
-import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
@@ -29,6 +28,7 @@ import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/cont
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useNativePaste } from "../lib/useNativePaste";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { usePastedTextAttachmentThreshold } from "../lib/usePastedTextAttachmentThreshold";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
@@ -313,6 +313,7 @@ export function ComposerEditor({
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   const regularFontFamily = FONT_FAMILIES.regular;
+  const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   return (
     <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
       <NativeView
@@ -346,7 +347,7 @@ export function ComposerEditor({
         spellCheck={props.spellCheck ?? true}
         enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}
         submitEnabled={onSubmit !== undefined}
-        textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
+        textPasteThresholdBytes={onPasteText ? pastedTextAttachmentThreshold : 0}
         maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
         style={{ flex: 1, minHeight: 0 }}
         onComposerChange={(event) => {
