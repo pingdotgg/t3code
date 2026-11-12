@@ -83,10 +83,11 @@ const createTab = DesktopIpc.makeIpcMethod({
     tabId,
     zoomFactor,
     colorScheme,
+    audioMuted,
     serverTab,
   }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.createTab(tabId, { zoomFactor, colorScheme, serverTab });
+    yield* manager.createTab(tabId, { zoomFactor, colorScheme, audioMuted, serverTab });
   }),
 });
 
