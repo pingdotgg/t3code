@@ -4,7 +4,6 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
-  type ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -53,6 +52,7 @@ import {
   claudeUsageResponseToLimits,
   recordClaudeUsageResponse,
 } from "./claudeUsageLimits.ts";
+import { type ClaudeAccountUsage, withClaudeAccountUsage } from "./claudeResetCredits.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -525,10 +525,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
-  resolveResetCredits?: (
+  resolveAccountUsage?: (
     version: string,
     overageIncluded: string | undefined,
-  ) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  ) => Effect.Effect<ClaudeAccountUsage | undefined>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -725,12 +725,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
         }).limits;
-  const resetCredits =
-    resolveResetCredits &&
+  const accountUsage =
+    resolveAccountUsage &&
     capabilities.subscriptionType &&
     !usageLimits.unavailable &&
     parsedVersion
-      ? yield* resolveResetCredits(
+      ? yield* resolveAccountUsage(
           parsedVersion,
           scopedLimitNames ? (yield* Ref.get(scopedLimitNames)).overageIncluded : undefined,
         )
@@ -754,7 +754,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
-      usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+      usageLimits: withClaudeAccountUsage(usageLimits, accountUsage),
     },
   });
 });

@@ -252,7 +252,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version, overageIncluded) =>
-                ClaudeResetCredits.readClaudeResetCredits(
+                ClaudeResetCredits.readClaudeAccountUsage(
                   configDir,
                   version,
                   overageIncluded,

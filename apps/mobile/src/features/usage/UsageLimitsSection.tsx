@@ -18,6 +18,8 @@ import {
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  sharedUsage,
+  usageShareSummary,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -50,11 +52,16 @@ function useBarColor(driver: Driver): string | null {
 
 function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
+  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly color: string | null;
   readonly now: number;
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
+  const shared = sharedUsage(window, props.windows)?.percent ?? 0;
+  const shareSummary = usageShareSummary(window.share, props.windows);
+  const fill = remaining <= 10 ? "bg-red-500" : remaining <= 30 ? "bg-amber-500" : "bg-foreground";
+  const fillColor = remaining > 30 && props.color ? { backgroundColor: props.color } : null;
   const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
@@ -69,19 +76,16 @@ function WindowRow(props: {
       style={barWidth > 0 ? { width: barWidth } : undefined}
     >
       <View
-        className={
-          remaining <= 10
-            ? "h-full rounded-full bg-red-500"
-            : remaining <= 30
-              ? "h-full rounded-full bg-amber-500"
-              : "h-full rounded-full bg-foreground"
-        }
-        style={[
-          { flex: remaining },
-          remaining > 30 && props.color ? { backgroundColor: props.color } : null,
-        ]}
+        className={`h-full ${shared > 0 ? "rounded-l-full" : "rounded-full"} ${window.share ? "opacity-40" : ""} ${fill}`}
+        style={[{ flex: remaining }, fillColor]}
       />
-      <View style={{ flex: 100 - remaining }} />
+      {shared > 0 ? (
+        <View
+          className={`h-full opacity-40 ${remaining > 0 ? "rounded-r-full" : "rounded-full"} ${fill}`}
+          style={[{ flex: shared }, fillColor]}
+        />
+      ) : null}
+      <View style={{ flex: 100 - remaining - shared }} />
     </View>
   );
   return (
@@ -92,6 +96,9 @@ function WindowRow(props: {
           {remaining}% left
         </Text>
       </View>
+      {shareSummary ? (
+        <Text className="text-xs text-foreground-tertiary">{shareSummary}</Text>
+      ) : null}
       <View
         className="h-3 justify-center"
         onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
@@ -203,7 +210,13 @@ export function AccountLimits(props: {
       ) : (
         <View className="gap-3">
           {limits.windows.map((window) => (
-            <WindowRow key={window.id} window={window} color={color} now={now} />
+            <WindowRow
+              key={window.id}
+              window={window}
+              windows={limits.windows}
+              color={color}
+              now={now}
+            />
           ))}
         </View>
       )}

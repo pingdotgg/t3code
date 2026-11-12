@@ -16,6 +16,7 @@ import {
   type LimitAccount,
   type LimitPoolWindow,
   resetCreditsForWindow,
+  usageShareSummary,
 } from "@t3tools/shared/usageLimits";
 import { Fragment, type ReactNode, useId, useState } from "react";
 import { Linking, Pressable, View } from "react-native";
@@ -456,6 +457,7 @@ export function UsageLimitsSection({
               {windows.map((window) => {
                 const details =
                   pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+                const share = window.members.find((member) => member.window.share)?.window.share;
                 return (
                   <PoolWindowCard
                     key={`${window.kind}:${window.id}`}
@@ -466,7 +468,9 @@ export function UsageLimitsSection({
                       selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
                     }
                     label={details?.label}
-                    description={details?.description}
+                    description={
+                      details?.description ?? usageShareSummary(share, windows) ?? undefined
+                    }
                     wide={wide}
                   />
                 );
