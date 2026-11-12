@@ -963,7 +963,7 @@ export function ProviderInstanceCard({
         <ProviderAuthEmail email={authEmail} />
         {authLabel ? <span>· {authLabel}</span> : null}
         {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+          <span className="min-w-48 flex-1 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
         ) : null}
       </>
     ) : (
@@ -971,7 +971,7 @@ export function ProviderInstanceCard({
         {statusDotNode}
         <span>{summary.headline}</span>
         {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+          <span className="min-w-48 flex-1 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
         ) : null}
       </>
     );
