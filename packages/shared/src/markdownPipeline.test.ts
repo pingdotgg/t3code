@@ -15,7 +15,7 @@ import {
 it.each([
   ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
   ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
-] as const)("preserves trailing underscores and tildes in bare URLs (%s)", (_, plugins) => {
+] as const)("preserves bare URL boundaries (%s)", (_, plugins) => {
   const processor = unified().use(remarkParse).use(plugins);
   const shape = (node: Root | RootContent): string => {
     if (node.type === "text") return node.value;
@@ -91,6 +91,65 @@ it.each([
     ["https://x.com/a\\_", link("https://x.com/a\\_")],
     ["https://x.com/a&#95;", `${link("https://x.com/a&#95")};`],
     [
+      "可以看了：**http://localhost:18780**（已重启）。",
+      `可以看了：**${link("http://localhost:18780")}**（已重启）。`,
+    ],
+    ["打开 http://localhost:18780，然后刷新", `打开 ${link("http://localhost:18780")}，然后刷新`],
+    ["URL：https://example.com/a。下一句", `URL：${link("https://example.com/a")}。下一句`],
+    ["（预览：http://localhost:18780）", `（预览：${link("http://localhost:18780")}）`],
+    [
+      "能打开 http://localhost:3000？见 http://localhost:3001；「www.example.com」",
+      `能打开 ${link("http://localhost:3000")}？见 ${link("http://localhost:3001")}；「${link("www.example.com")}」`,
+    ],
+    [
+      "**预览：http://localhost:18780**（已重启）",
+      `**预览：${link("http://localhost:18780")}**（已重启）`,
+    ],
+    [
+      "__http://localhost:18780__，*http://localhost:3000*，~~http://localhost:3001~~。",
+      `**${link("http://localhost:18780")}**，*${link("http://localhost:3000")}*，~~${link("http://localhost:3001")}~~。`,
+    ],
+    [
+      "foo**http://localhost:18780**（bar）***http://localhost:3000***。",
+      `foo**${link("http://localhost:18780")}**（bar）***${link("http://localhost:3000")}***。`,
+    ],
+    [
+      "地址：http://localhost:3000，备用：http://localhost:3001。",
+      `地址：${link("http://localhost:3000")}，备用：${link("http://localhost:3001")}。`,
+    ],
+    [
+      "http://a.com。http://b.com，www.c.com、person@example.com。",
+      `${link("http://a.com")}。${link("http://b.com")}，${link("www.c.com")}、[person@example.com](mailto:person@example.com)。`,
+    ],
+    ["访问：www.example.com，然后", `访问：${link("www.example.com")}，然后`],
+    [
+      "**http://localhost:18780**（重启）。 https://example.com/a。结束",
+      `**${link("http://localhost:18780")}**（重启）。 ${link("https://example.com/a")}。结束`,
+    ],
+    ["# **http://localhost:3000**，刷新", `**${link("http://localhost:3000")}**，刷新`],
+    [
+      "| a |\n| - |\n| **http://localhost:3000**，刷新 |",
+      `a**${link("http://localhost:3000")}**，刷新`,
+    ],
+    ["www.example.com/preview。下一句", `${link("www.example.com/preview")}。下一句`],
+    ["https://example.com/a_。下一句", `${link("https://example.com/a_")}。下一句`],
+    ["https://example.com/a.，下一句", `${link("https://example.com/a")}.，下一句`],
+    [
+      "https://example.com/search?q=hello，world",
+      `${link("https://example.com/search?q=hello")}，world`,
+    ],
+    ["https://example.com/日本語，続き", link("https://example.com/日本語，続き")],
+    [
+      "https://zh.wikipedia.org/wiki/北京（城市）",
+      link("https://zh.wikipedia.org/wiki/北京（城市）"),
+    ],
+    ["https://example.com/日本語", link("https://example.com/日本語")],
+    ["https://example.com/a%EF%BC%8Cb", link("https://example.com/a%EF%BC%8Cb")],
+    ["<https://example.com/日本語，続き>", link("https://example.com/日本語，続き")],
+    ["[記事](https://example.com/a，b)", "[記事](https://example.com/a，b)"],
+    ["[http://example.com/a，b](http://example.com/a，b)", link("http://example.com/a，b")],
+    ["`https://example.com/a。次`", "`https://example.com/a。次`"],
+    [
       "https://x.com/a_ https://x.com/b_",
       `${link("https://x.com/a_")} ${link("https://x.com/b_")}`,
     ],
@@ -118,6 +177,75 @@ it.each([
       ],
     });
   }
+});
+
+it("ends bare URLs at CJK punctuation with source positions", () => {
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const parse = (markdown: string) => processor.runSync(processor.parse(markdown), markdown);
+  const at = (line: number, column: number, offset: number) => ({ line, column, offset });
+  const url = "http://localhost:18780";
+  expect(parse(`第一行\n可以看了：**${url}**（已重启）。`)).toMatchObject({
+    children: [
+      {
+        children: [
+          { type: "text", value: "第一行\n可以看了：", position: { end: at(2, 6, 9) } },
+          {
+            type: "strong",
+            position: { start: at(2, 6, 9), end: at(2, 32, 35) },
+            children: [
+              {
+                type: "link",
+                url,
+                position: { start: at(2, 8, 11), end: at(2, 30, 33) },
+                children: [{ type: "text", value: url, position: { end: at(2, 30, 33) } }],
+              },
+            ],
+          },
+          {
+            type: "text",
+            value: "（已重启）。",
+            position: { start: at(2, 32, 35), end: at(2, 38, 41) },
+          },
+        ],
+      },
+    ],
+  });
+  // A list item's continuation line parses the same on its own.
+  expect(parse(`- 第一行\n  **${url}**（已重启）`)).toMatchObject({
+    children: [
+      {
+        children: [
+          {
+            children: [
+              {
+                children: [
+                  { type: "text", value: "第一行\n" },
+                  { type: "strong", children: [{ type: "link", url }] },
+                  { type: "text", value: "（已重启）" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  // A quote's continuation line does not, so the URL ends and the asterisks stay as text.
+  expect(parse(`> 第一行\n> **${url}**（已重启）`)).toMatchObject({
+    children: [
+      {
+        children: [
+          {
+            children: [
+              { type: "text", value: "第一行\n**" },
+              { type: "link", url, position: { end: at(2, 27, 32) } },
+              { type: "text", value: "**（已重启）", position: { start: at(2, 27, 32) } },
+            ],
+          },
+        ],
+      },
+    ],
+  });
 });
 
 const insightRule = "─".repeat(20);
