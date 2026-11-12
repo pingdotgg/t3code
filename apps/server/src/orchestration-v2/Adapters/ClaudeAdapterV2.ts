@@ -10899,6 +10899,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               );
               return;
             }
+            // Claude answers a steer it has not read yet as the next native turn, which echoes
+            // the steer. A result without echoes cannot prove that turn will come.
+            if (
+              !interrupted &&
+              context.pendingSteers.size > 0 &&
+              claudeEchoedPromptUuids(message).length > 0 &&
+              terminalStatusFromResult(message) === "completed"
+            ) {
+              context.steeredSegmentUsage.push(message.usage);
+              context.steeredLedgerUsage = addClaudeLedgerUsage(
+                context.steeredLedgerUsage,
+                resultLedgerUsage.get(message),
+              );
+              return;
+            }
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.delete(context.providerTurnId);
