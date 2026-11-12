@@ -164,7 +164,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           appRunOrdinal: 1,
           ref: CheckpointRef.make("checkpoint-ref:captured-1"),
           status: "ready" as const,
-          files: [],
+          files: [{ path: "src/b.ts", kind: "modified" as const, additions: 1, deletions: 0 }],
           capturedAt: now,
         };
 
@@ -337,8 +337,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           );
           if (refLookupFails && capturedEvent?.type === "checkpoint.captured") {
             assert.equal(capturedEvent.payload.status, "ready");
-            assert.deepEqual(capturedEvent.payload.files, []);
           }
+          // The run only answered, so the checkout's changes belong to someone else.
+          assert.deepEqual(capturedEvent?.payload.files, []);
           assert.isUndefined(
             runUpdated.payload.delegatedCompletion,
             "checkpoint capture must omit delegatedCompletion so ProjectionStore can keep a newer cohort",
@@ -862,10 +863,17 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         appRunOrdinal: 1,
         ref: CheckpointRef.make("checkpoint-ref:cancelled-captured-1"),
         status: "ready" as const,
-        files: [],
+        files: [{ path: "src/b.ts", kind: "modified" as const, additions: 1, deletions: 0 }],
         capturedAt: cancelledAt,
       };
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('cancelled-command', ${cancelledThreadId}, ${cancelledRunId}, ${cancelledRootNodeId},
+          NULL, NULL, NULL, 1, 'command_execution', 'completed', ${DateTime.formatIso(now)}, '{}')`;
       const commits = yield* Ref.make(0);
+      const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
       const layerCapture = CheckpointCaptureService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -879,6 +887,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
               commitCommand: (input) =>
                 Effect.forEach(input.events, (event) => projectionStore.apply(event)).pipe(
                   Effect.andThen(Ref.update(commits, (count) => count + 1)),
+                  Effect.andThen(Ref.set(committed, input.events)),
                   Effect.as({ committed: true } as never),
                   Effect.orDie,
                 ),
@@ -908,6 +917,10 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       });
       assert.equal(projected.run?.status, "cancelled");
       assert.equal(projected.run?.checkpointId, captured.id);
+      const capturedEvent = (yield* Ref.get(committed)).find(
+        (event) => event.type === "checkpoint.captured",
+      );
+      assert.deepEqual(capturedEvent?.payload.files, captured.files);
       const completedAt = projected.run?.completedAt;
       assert.equal(
         completedAt ? DateTime.formatIso(completedAt) : completedAt,

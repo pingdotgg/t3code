@@ -65,8 +65,15 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
-        yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const {
+        run,
+        rootNode,
+        scope,
+        providerThread,
+        preservedCheckpointOrdinals,
+        sideChat,
+        runCanWriteFiles,
+      } = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
 
@@ -118,7 +125,7 @@ export const layer: Layer.Layer<
       const baselineCheckpoint = isPreserved(baselineOrdinalWithinScope)
         ? null
         : yield* materializeBaseline(baselineOrdinalWithinScope);
-      const checkpoint = yield* checkpoints.capture({
+      const capturedCheckpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
         nodeId: rootNode.id,
@@ -127,6 +134,10 @@ export const layer: Layer.Layer<
         capturedAt,
         forceMissing: sideChat,
       });
+      // The ref still snapshots the whole checkout so rewind restores it.
+      const checkpoint = runCanWriteFiles
+        ? capturedCheckpoint
+        : { ...capturedCheckpoint, files: [] };
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
