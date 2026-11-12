@@ -6,8 +6,12 @@ import { ChildProcessSpawner } from "effect/process";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
+import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
 
 const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>();
+const mockedGetJson = vi.fn<AzureDevOpsRest.AzureDevOpsRest["Service"]["getJson"]>(
+  () => Effect.succeedNone,
+);
 
 const layer = it.layer(
   AzureDevOpsPullRequestCli.layer.pipe(
@@ -16,6 +20,7 @@ const layer = it.layer(
         execute: mockedExecute,
       }),
     ),
+    Layer.provide(Layer.mock(AzureDevOpsRest.AzureDevOpsRest)({ getJson: mockedGetJson })),
   ),
 );
 
@@ -107,6 +112,8 @@ function changeEntries(count: number): ReadonlyArray<Record<string, unknown>> {
 
 afterEach(() => {
   mockedExecute.mockReset();
+  mockedGetJson.mockReset();
+  mockedGetJson.mockImplementation(() => Effect.succeedNone);
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
@@ -863,6 +870,79 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       expect(mockedExecute.mock.calls.at(-1)?.[0].args).toContain("path=%2Fdocs%2FC%23%2Fa%26b.md");
+    }),
+  );
+
+  it.effect(
+    "reads a file over REST when the repository gave its API URL, without starting az",
+    () =>
+      Effect.gen(function* () {
+        mockedGetJson.mockReturnValueOnce(Effect.succeedSome(json({ content: "x" })));
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        const item = yield* cli.readItemContent({
+          cwd: "/w",
+          location: {
+            project: "platform",
+            repository: "web",
+            apiUrl: "https://dev.azure.com/acme/p1/_apis/git/repositories/r1",
+          },
+          path: "docs/C#/a&b.md",
+          commit: "a".repeat(40),
+        });
+
+        assert.strictEqual(item.contents, "x");
+        expect(mockedExecute).not.toHaveBeenCalled();
+        expect(mockedGetJson.mock.calls[0]?.[0].url).toBe(
+          "https://dev.azure.com/acme/p1/_apis/git/repositories/r1/items" +
+            "?path=%2Fdocs%2FC%23%2Fa%26b.md&versionDescriptor.versionType=commit" +
+            `&versionDescriptor.version=${"a".repeat(40)}` +
+            "&includeContent=true&includeContentMetadata=true&$format=json",
+        );
+      }),
+  );
+
+  it.effect("reads through az when REST cannot answer", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ value: [] }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const threads = yield* cli.listThreads({
+        cwd: "/w",
+        location: {
+          project: "platform",
+          repository: "web",
+          apiUrl: "https://dev.azure.com/acme/p1/_apis/git/repositories/r1",
+        },
+        number: 42,
+      });
+
+      assert.deepStrictEqual(threads, []);
+      expect(mockedGetJson.mock.calls[0]?.[0].url).toBe(
+        "https://dev.azure.com/acme/p1/_apis/git/repositories/r1/pullRequests/42/threads",
+      );
+      expect(mockedExecute.mock.calls[0]?.[0].args).toContain("pullRequestThreads");
+    }),
+  );
+
+  it.effect("reads through az when the REST answer does not decode", () =>
+    Effect.gen(function* () {
+      mockedGetJson.mockReturnValueOnce(Effect.succeedSome("not-json"));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ value: [] }))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      const threads = yield* cli.listThreads({
+        cwd: "/w",
+        location: {
+          project: "platform",
+          repository: "web",
+          apiUrl: "https://dev.azure.com/acme/p1/_apis/git/repositories/r1",
+        },
+        number: 42,
+      });
+
+      assert.deepStrictEqual(threads, []);
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
     }),
   );
 

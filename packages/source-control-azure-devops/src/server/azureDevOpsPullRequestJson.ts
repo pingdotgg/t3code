@@ -53,6 +53,7 @@ const RawPullRequestSchema = Schema.Struct({
     Schema.NullOr(
       Schema.Struct({
         name: Schema.optional(Schema.NullOr(Schema.String)),
+        url: Schema.optional(Schema.NullOr(Schema.String)),
         webUrl: Schema.optional(Schema.NullOr(Schema.String)),
         project: Schema.optional(
           Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
@@ -106,6 +107,8 @@ const RawViewerSchema = Schema.Struct({
 export interface AzureDevOpsRepositoryLocation {
   readonly project: string;
   readonly repository: string;
+  /** The repository's REST URL, `…/_apis/git/repositories/{id}`, when Azure gave one. */
+  readonly apiUrl?: string;
 }
 
 export interface AzureDevOpsPullRequest {
@@ -167,7 +170,36 @@ function toLocation(
   const project = trimmed(raw.repository?.project?.name);
   const repository = trimmed(raw.repository?.name);
   if (project === null || repository === null) return null;
-  return { project, repository };
+  const apiUrl = repositoryApiUrl(trimmed(raw.repository?.url));
+  return apiUrl === null ? { project, repository } : { project, repository, apiUrl };
+}
+
+/**
+ * True for an Azure DevOps Services URL: `https://dev.azure.com` or `https://{org}.visualstudio.com`
+ * on the default port, without credentials. Only these hosts are sent an Entra token.
+ */
+export function isAzureDevOpsServicesUrl(url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  return (
+    url.protocol === "https:" &&
+    url.port === "" &&
+    url.username === "" &&
+    url.password === "" &&
+    (host === "dev.azure.com" || /^[a-z0-9][a-z0-9-]*\.visualstudio\.com$/u.test(host))
+  );
+}
+
+/** The repository's REST URL, kept only when it is a plain Azure DevOps Services API URL. */
+function repositoryApiUrl(value: string | null): string | null {
+  if (value === null) return null;
+  const url = URL.parse(value);
+  return url !== null &&
+    isAzureDevOpsServicesUrl(url) &&
+    url.search === "" &&
+    url.hash === "" &&
+    /^\/[^?#]+\/_apis\/git\/repositories\/[^/]+$/u.test(url.pathname)
+    ? url.href
+    : null;
 }
 
 function toAutoMergeMethod(

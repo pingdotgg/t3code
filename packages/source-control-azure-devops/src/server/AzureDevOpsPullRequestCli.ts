@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -12,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsRest from "./AzureDevOpsRest.ts";
 import {
   decodeItemContentJson,
   decodeIterationChangesJson,
@@ -276,6 +278,7 @@ function isReviewerName(value: string): boolean {
 /** @public */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const rest = yield* AzureDevOpsRest.AzureDevOpsRest;
 
   // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
@@ -298,29 +301,33 @@ export const make = Effect.gen(function* () {
     readonly resource: string;
     readonly routeParameters: ReadonlyArray<string>;
     readonly queryParameters?: ReadonlyArray<string>;
-    readonly maxOutputBytes?: number;
+    /** The same resource's REST URL, read first when present. */
+    readonly restUrl?: string | undefined;
+    readonly maxOutputBytes: number;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
-    executeJson({
-      cwd: input.cwd,
-      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      args: [
-        "devops",
-        "invoke",
-        ...detectArgs,
-        "--area",
-        "git",
-        "--resource",
-        input.resource,
-        "--api-version",
-        REST_API_VERSION,
-        "--route-parameters",
-        ...input.routeParameters,
-        ...(input.queryParameters === undefined
-          ? []
-          : ["--query-parameters", ...input.queryParameters]),
-      ],
-    }).pipe(
+  }): Effect.Effect<A, AzureDevOpsPullRequestCliError> => {
+    const viaCli = Effect.suspend(() =>
+      executeJson({
+        cwd: input.cwd,
+        maxOutputBytes: input.maxOutputBytes,
+        args: [
+          "devops",
+          "invoke",
+          ...detectArgs,
+          "--area",
+          "git",
+          "--resource",
+          input.resource,
+          "--api-version",
+          REST_API_VERSION,
+          "--route-parameters",
+          ...input.routeParameters,
+          ...(input.queryParameters === undefined
+            ? []
+            : ["--query-parameters", ...input.queryParameters]),
+        ],
+      }),
+    ).pipe(
       Effect.flatMap((result) => {
         const decoded = input.decode(result.stdout.trim());
         return Result.isSuccess(decoded)
@@ -335,6 +342,30 @@ export const make = Effect.gen(function* () {
             );
       }),
     );
+    if (input.restUrl === undefined) return viaCli;
+    // A REST answer that does not decode is read again through az, which keeps its own errors.
+    return rest
+      .getJson({ cwd: input.cwd, url: input.restUrl, maxOutputBytes: input.maxOutputBytes })
+      .pipe(
+        Effect.flatMap((body) => {
+          if (Option.isNone(body)) return viaCli;
+          const decoded = input.decode(body.value.trim());
+          return Result.isSuccess(decoded) ? Effect.succeed(decoded.success) : viaCli;
+        }),
+      );
+  };
+
+  /** A resource under the repository's REST URL; query values are encoded here. */
+  const restUrl = (
+    location: AzureDevOpsRepositoryLocation,
+    path: string,
+    query: ReadonlyArray<readonly [string, string]> = [],
+  ) =>
+    location.apiUrl === undefined
+      ? undefined
+      : `${location.apiUrl}/${path}${query.length === 0 ? "" : "?"}${query
+          .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+          .join("&")}`;
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
@@ -551,6 +582,7 @@ export const make = Effect.gen(function* () {
         operation: "listThreads",
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
+        restUrl: restUrl(input.location, `pullRequests/${input.number}/threads`),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
       });
@@ -562,6 +594,7 @@ export const make = Effect.gen(function* () {
         operation: "listIterations",
         resource: "pullRequestIterations",
         routeParameters: pullRequestRoute(input),
+        restUrl: restUrl(input.location, `pullRequests/${input.number}/iterations`),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeIterationsJson,
       });
@@ -576,6 +609,14 @@ export const make = Effect.gen(function* () {
             resource: "pullRequestIterationChanges",
             routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
             queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
+            restUrl: restUrl(
+              input.location,
+              `pullRequests/${input.number}/iterations/${input.iterationId}/changes`,
+              [
+                ["$top", String(CHANGE_ENTRIES_PER_PAGE)],
+                ["$skip", String(skip)],
+              ],
+            ),
             maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
             decode: decodeIterationChangesJson,
           });
@@ -613,6 +654,14 @@ export const make = Effect.gen(function* () {
           // `az devops invoke` requires JSON; otherwise Azure returns raw file bytes.
           "$format=json",
         ],
+        restUrl: restUrl(input.location, "items", [
+          ["path", toItemPath(input.path)],
+          ["versionDescriptor.versionType", "commit"],
+          ["versionDescriptor.version", input.commit],
+          ["includeContent", "true"],
+          ["includeContentMetadata", "true"],
+          ["$format", "json"],
+        ]),
         maxOutputBytes: ITEM_CONTENT_MAX_OUTPUT_BYTES,
         decode: decodeItemContentJson,
       });
