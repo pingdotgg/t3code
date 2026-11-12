@@ -29,6 +29,8 @@ function setup() {
     isEnvironmentUnavailable: false,
     isPreparingWorktree: false,
     hasSendableContent: false,
+    compactBeforeSendTokens: 436_000,
+    onToggleKeepFullHistory: vi.fn(),
     onPreviousPendingQuestion: vi.fn(),
     onInterrupt: vi.fn(),
     onResume: vi.fn(),
@@ -83,6 +85,8 @@ it.each([false, true])(
     expect(props.onInterrupt).not.toHaveBeenCalled();
     for (const phase of ["recording", "preparing", "transcribing", "post-processing"] as const) {
       await screen.rerender(controls(phase));
+      expect(screen.container.querySelector('[aria-label^="Compact 436k"]')).toBeNull();
+      expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
       await act(() =>
         (
           screen.getByRole("button", { name: "Cancel voice input" }).element() as HTMLButtonElement
@@ -169,8 +173,22 @@ it.each([false, true])(
     });
     expect(props.onResume).not.toHaveBeenCalled();
     expect(props.onSubmitMessage).not.toHaveBeenCalled();
+    expect(screen.container.querySelectorAll("[data-composer-send-pill]")).toHaveLength(1);
+    const compactToggle = screen.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Compact 436k tokens of history before sending"]',
+    );
+    if (draft) {
+      expect(compactToggle).toHaveAttribute("aria-pressed", "true");
+      expect(compactToggle?.closest("[data-composer-send-pill]")).toContainElement(
+        screen.getByRole("button", { name: "Stopped", exact: true }).element(),
+      );
+      await act(() => compactToggle?.click());
+      expect(props.onToggleKeepFullHistory).toHaveBeenCalledOnce();
+    } else {
+      expect(compactToggle).toBeNull();
+    }
     const action = screen
-      .getByRole("button", { name: draft ? "Submit message" : "Resume thread" })
+      .getByRole("button", { name: draft ? "Compact and send" : "Resume thread" })
       .element() as HTMLButtonElement;
     await act(() => action.click());
     expect(draft ? props.onSubmitMessage : props.onResume).toHaveBeenCalledTimes(1);
