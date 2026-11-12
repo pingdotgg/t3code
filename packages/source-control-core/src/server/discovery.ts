@@ -1,4 +1,3 @@
-import * as NodeOS from "node:os";
 import * as NodeUtil from "node:util";
 import {
   VcsProcessExitError,
@@ -43,6 +42,8 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "cli";
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
+  /** Added to the environment of every discovery command. */
+  readonly env?: NodeJS.ProcessEnv;
   readonly authArgs: ReadonlyArray<string>;
   /** Asked once when `authArgs` reports signed out; its answer counts only when it finds a sign-in. */
   readonly authRetryArgs?: ReadonlyArray<string>;
@@ -233,6 +234,7 @@ function probeCli(input: {
       command: input.spec.executable,
       args: input.spec.versionArgs,
       cwd: input.cwd,
+      ...(input.spec.env !== undefined ? { env: input.spec.env } : {}),
       timeoutMs: probeTimeoutMs(input.spec),
       maxOutputBytes: 8_000,
       appendTruncationMarker: true,
@@ -314,6 +316,7 @@ export function probeSourceControlProvider(input: {
         command: spec.executable,
         args,
         cwd: input.cwd,
+        ...(spec.env !== undefined ? { env: spec.env } : {}),
         allowNonZeroExit: true,
         timeoutMs: probeTimeoutMs(spec),
         maxOutputBytes: 8_000,
@@ -426,9 +429,7 @@ function refineWithSpec(input: {
       command: spec.executable,
       args,
       cwd: input.cwd,
-      // The host is named in the args; inside the repository a CLI may first try to reach its remote.
-      spawnCwd: NodeOS.tmpdir(),
-      ...(env !== undefined ? { env } : {}),
+      ...(spec.env !== undefined || env !== undefined ? { env: { ...spec.env, ...env } } : {}),
       allowNonZeroExit: true,
       timeoutMs: probeTimeoutMs(spec),
       maxOutputBytes: 8_000,

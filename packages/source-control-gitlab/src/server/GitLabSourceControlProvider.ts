@@ -159,6 +159,8 @@ export const discovery = {
   label: "GitLab",
   executable: "glab",
   versionArgs: ["--version"],
+  // glab first sends usage data to the current host, which waits on a host that is offline.
+  env: { GLAB_SEND_TELEMETRY: "false" },
   // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com; older
   // glab lists every host and rejects --all. --all waits on every host, so ask it only after
   // the current host reports signed out.
