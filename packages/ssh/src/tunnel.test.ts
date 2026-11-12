@@ -136,7 +136,7 @@ serve(40);
 // Runs the remote half of an SSH command (`sh -l -s -- <key>`) as a local shell
 // whose HOME is the given directory. Every launch after the first starts once
 // a server is running (or after 10s), which lines up the race deterministically.
-const localRemoteShellLayer = (home: string) =>
+const localRemoteShellLayer = (home: string, env: Record<string, string> = {}) =>
   Layer.effect(
     ChildProcessSpawner.ChildProcessSpawner,
     Effect.gen(function* () {
@@ -154,7 +154,7 @@ const localRemoteShellLayer = (home: string) =>
             ["-c", `${gate}exec sh -s -- "$1"`, "sh", ...commandArgs(command).slice(-1)],
             {
               ...command.options,
-              env: { ...command.options.env, HOME: home },
+              env: { ...command.options.env, ...env, HOME: home },
               // Like an SSH session ending, the shell's exit leaves its nohup'd server running.
               detached: false,
             },
@@ -860,6 +860,33 @@ describe("ssh tunnel scripts", () => {
           Effect.scoped,
         );
       }),
+  );
+
+  it.live("reports a remote node outside the engine range without calling it missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-" });
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      // The Volta shim directory wins discovery. This node exists but fails the engine check.
+      yield* fs.makeDirectory(`${home}/.volta/bin`, { recursive: true });
+      yield* fs.writeFileString(
+        `${home}/.volta/bin/node`,
+        "#!/bin/sh\necho 'Remote node 18.20.8 does not satisfy required range >=24.' >&2\nexit 1\n",
+      );
+      yield* fs.chmod(`${home}/.volta/bin/node`, 0o755);
+
+      const failure = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+        nodeScriptPath: `${home}/never-started.mjs`,
+        nodeEngineRange: ">=24",
+      }).pipe(
+        Effect.provide(localRemoteShellLayer(home, { NVM_DIR: `${home}/.nvm` })),
+        Effect.flip,
+      );
+
+      assert.isTrue(isSshCommandError(failure));
+      assert.include(failure.message, "Remote node 18.20.8 does not satisfy required range >=24.");
+      assert.notInclude(failure.message, "missing node on PATH");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.live("concurrent launches on one remote home record the server that owns it", () =>
