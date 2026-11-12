@@ -23,6 +23,7 @@ export const GitStackStatusResult = Schema.Struct({
     Schema.Struct({
       branch: Schema.String,
       parent: Schema.String,
+      parentHead: Schema.optional(Schema.String),
       headSha: Schema.String,
       needsRestack: Schema.Boolean,
       hasChanges: Schema.Boolean,

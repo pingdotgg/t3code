@@ -387,6 +387,7 @@ export const make = Effect.gen(function* () {
         layers.push({
           branch: name,
           parent,
+          ...(active ? { parentHead: active.layers[index]!.parentHead } : {}),
           headSha: yield* head(cwd, name),
           current: name === branch,
           needsRestack:
