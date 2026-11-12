@@ -45,8 +45,8 @@ export function ProviderSubagentBar(props: {
               acpRegistryIconUrl={props.provider.acpRegistryIconUrl}
               showBadge={props.showInstanceBadge}
               className="size-4 shrink-0"
+              size="compact"
               iconClassName="size-4"
-              badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
             />
           ) : null}
           <span className="min-w-0 truncate font-medium text-foreground">{props.modelLabel}</span>

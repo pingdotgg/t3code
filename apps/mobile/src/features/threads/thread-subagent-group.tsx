@@ -88,6 +88,7 @@ function SubagentAvatar(props: {
           displayName={resolveProviderInstanceDisplayName(provider)}
           accentColor={provider.accentColor}
           showBadge
+          badgePlacement="corner"
         />
       ) : driver === undefined ? (
         <SymbolView name="robot" size={13} tintColorClassName="accent-icon-muted" />
