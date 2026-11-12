@@ -141,6 +141,7 @@ describe("readOpenCodeUsage", () => {
         );
       }
       let statements = 0;
+      let bodyReads = 0;
       const originalAll = NodeSqlite.StatementSync.prototype.all;
       yield* Effect.acquireRelease(
         Effect.sync(() =>
@@ -149,6 +150,7 @@ describe("readOpenCodeUsage", () => {
             ...params
           ) {
             statements++;
+            if (this.sourceSQL.includes("data ->")) bodyReads++;
             return originalAll.apply(this, params);
           }),
         ),
@@ -161,6 +163,15 @@ describe("readOpenCodeUsage", () => {
         ["opencode:a", "opencode:b", "opencode:c"],
       );
       assert.isBelow(statements, 10);
+
+      bodyReads = 0;
+      const repeated = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(
+        repeated.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:a", "opencode:b", "opencode:c"],
+      );
+      // An unchanged database must not have its message bodies read and parsed again.
+      assert.strictEqual(bodyReads, 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
