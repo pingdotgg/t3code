@@ -326,6 +326,7 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-asset",
+    ["expo-localization", { supportedLocales: ["en", "zh-Hans"] }],
     [
       "expo-font",
       {
