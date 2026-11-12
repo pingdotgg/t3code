@@ -1,7 +1,7 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect } from "react";
 
-import { focusTerminalOnThreadEnter } from "../../lib/terminalFocus";
+import { restoreFocusOnThreadEnter } from "../../lib/terminalFocus";
 
 /** Restores thread focus, landing the caret a frame after composer entry. */
 export function useFocusComposerOnThreadOpen(
@@ -15,7 +15,7 @@ export function useFocusComposerOnThreadOpen(
   useEffect(() => {
     if (!threadRef || !enabled || !root) return;
     let frame: number | undefined;
-    const leave = focusTerminalOnThreadEnter(threadRef, {
+    const leave = restoreFocusOnThreadEnter(threadRef, {
       root,
       focusComposer: () => {
         frame = window.requestAnimationFrame(() => {

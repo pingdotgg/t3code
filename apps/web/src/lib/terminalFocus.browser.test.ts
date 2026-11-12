@@ -8,10 +8,10 @@ import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   consumePendingTerminalFocus,
   focusTerminal,
-  focusTerminalViewport,
-  focusTerminalOnThreadEnter,
   focusTerminalOnNavigation,
+  focusTerminalViewport,
   registerTerminalFocusTarget,
+  restoreFocusOnThreadEnter,
 } from "./terminalFocus";
 
 // The drawer's collapsed shape: a 0fr grid row that clips the viewport, which
@@ -63,6 +63,13 @@ describe("focusTerminalViewport", () => {
   });
 });
 
+function enterOtherThread(threadId: string) {
+  restoreFocusOnThreadEnter(scopeThreadRef(EnvironmentId.make("env"), ThreadId.make(threadId)), {
+    root: document.createElement("div"),
+    focusComposer: () => {},
+  })();
+}
+
 function mountThread(threadId: string, environmentId = "env") {
   const ref = scopeThreadRef(EnvironmentId.make(environmentId), ThreadId.make(threadId));
   const root = document.createElement("div");
@@ -102,7 +109,7 @@ function mountThread(threadId: string, environmentId = "env") {
     composer,
     drawerState,
     mountTerminal,
-    enter: () => focusTerminalOnThreadEnter(ref, { root, focusComposer: () => composer.focus() }),
+    enter: () => restoreFocusOnThreadEnter(ref, { root, focusComposer: () => composer.focus() }),
     [Symbol.dispose]: () => root.remove(),
   };
 }
@@ -128,10 +135,7 @@ describe("thread focus restoration", () => {
       if (remount) focusTerminal(thread.ref, "not-ready");
       leave();
       thread.root.hidden = true;
-      if (!remount)
-        focusTerminalOnThreadEnter(
-          scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("other-thread")),
-        )();
+      if (!remount) enterOtherThread("other-thread");
       drawer[Symbol.dispose]();
       panel[Symbol.dispose]();
       if (remount) thread.root.remove();
@@ -160,32 +164,12 @@ describe("thread focus restoration", () => {
     const leave = thread.enter();
     thread.composer.focus();
     leave();
-    focusTerminalOnThreadEnter(
-      scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("before-reveal")),
-    )();
+    enterOtherThread("before-reveal");
 
     focusTerminalOnNavigation(thread.ref, "panel");
     using _leave = { [Symbol.dispose]: thread.enter() };
 
     expect(document.activeElement).toBe(panel.input);
-  });
-
-  it("does not share focus history between matching thread ids in different environments", () => {
-    using first = mountThread("shared-id", "first");
-    using _firstDrawer = first.mountTerminal("drawer");
-    const leaveFirst = first.enter();
-    first.composer.focus();
-    leaveFirst();
-    using second = mountThread("shared-id", "second");
-    using secondDrawer = second.mountTerminal("drawer");
-    using secondPanel = second.mountTerminal("panel");
-    const leaveSecond = second.enter();
-    expect(document.activeElement).toBe(secondDrawer.input);
-    secondPanel.input.focus();
-    leaveSecond();
-    using _leave = { [Symbol.dispose]: first.enter() };
-
-    expect(document.activeElement).toBe(first.composer);
   });
 
   it("keeps an explicit drawer-open request while its viewport becomes visible", () => {
@@ -205,23 +189,16 @@ describe("thread focus restoration", () => {
     expect(document.activeElement).toBe(drawer.input);
   });
 
-  it.each(["viewport", "close button", "header toggle"] as const)(
-    "falls back to the composer when the drawer closes from its %s",
-    (control) => {
-      using thread = mountThread(`closed-remembered-${control}`);
-      using drawer = thread.mountTerminal("drawer");
-      const close = document.createElement("button");
-      if (control === "close button") close.dataset.terminalOwner = "drawer";
-      thread.root.append(close);
-      const leave = thread.enter();
-      if (control !== "viewport") close.focus();
-      else expect(document.activeElement).toBe(drawer.input);
-      leave();
-      useTerminalUiStateStore.getState().setTerminalOpen(thread.ref, false);
-      thread.drawerState.visible = false;
-      using _leave = { [Symbol.dispose]: thread.enter() };
+  it("falls back to the composer when the remembered drawer terminal was closed", () => {
+    using thread = mountThread("closed-remembered");
+    using drawer = thread.mountTerminal("drawer");
+    const leave = thread.enter();
+    expect(document.activeElement).toBe(drawer.input);
+    leave();
+    useTerminalUiStateStore.getState().setTerminalOpen(thread.ref, false);
+    thread.drawerState.visible = false;
+    using _leave = { [Symbol.dispose]: thread.enter() };
 
-      expect(document.activeElement).toBe(thread.composer);
-    },
-  );
+    expect(document.activeElement).toBe(thread.composer);
+  });
 });

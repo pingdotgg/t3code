@@ -127,25 +127,23 @@ export function focusTerminalOnNavigation(threadRef: ScopedThreadRef, terminalId
 }
 
 /** Restores composer or terminal focus; explicit terminal navigation takes precedence. */
-export function focusTerminalOnThreadEnter(
+export function restoreFocusOnThreadEnter(
   threadRef: ScopedThreadRef,
-  content?: { readonly root: HTMLElement; readonly focusComposer: () => void },
+  content: { readonly root: HTMLElement; readonly focusComposer: () => void },
 ): () => void {
   const threadKey = scopedThreadKey(threadRef);
   const requestedByHandler =
     navigationRequestThreadKey === threadKey ||
-    (content !== undefined &&
-      lastEnteredThreadByRoot.get(content.root) === threadKey &&
+    (lastEnteredThreadByRoot.get(content.root) === threadKey &&
       pendingFocus?.threadKey === threadKey);
   if (!requestedByHandler) pendingFocus = null;
-  if (content) lastEnteredThreadByRoot.set(content.root, threadKey);
+  lastEnteredThreadByRoot.set(content.root, threadKey);
   navigationRequestThreadKey = null;
   enteredThreadKey = threadKey;
   const previous = lastThreadFocus.get(threadKey);
   const remember = () => {
-    if (!content) return;
-    const element = document.activeElement;
-    if (!(element instanceof HTMLElement)) return;
+    const element = content.root.ownerDocument.activeElement;
+    if (!element) return;
     const terminal = Array.from(focusTargets).find((target) => target.element?.contains(element));
     if (terminal) {
       if (scopedThreadKey(terminal.threadRef) === threadKey)
@@ -157,7 +155,7 @@ export function focusTerminalOnThreadEnter(
       lastThreadFocus.set(threadKey, "composer");
     }
   };
-  content?.root.ownerDocument.addEventListener("focusin", remember);
+  content.root.ownerDocument.addEventListener("focusin", remember);
   if (!requestedByHandler) {
     const drawer = selectThreadTerminalUiState(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
@@ -168,7 +166,7 @@ export function focusTerminalOnThreadEnter(
       ? panel.surfaces.find((surface) => surface.id === panel.activeSurfaceId)
       : null;
     if (previous === "composer") {
-      content?.focusComposer();
+      content.focusComposer();
     } else if (
       previous &&
       ((drawer.terminalOpen &&
@@ -181,11 +179,11 @@ export function focusTerminalOnThreadEnter(
       focusTerminal(threadRef, previous.terminalId);
     } else if (drawer.terminalOpen && drawer.activeTerminalId) {
       focusTerminal(threadRef, drawer.activeTerminalId);
-    } else content?.focusComposer();
+    } else content.focusComposer();
   }
   if (requestedByHandler) remember();
   return () => {
-    content?.root.ownerDocument.removeEventListener("focusin", remember);
+    content.root.ownerDocument.removeEventListener("focusin", remember);
     // A handler navigating elsewhere marks its target before this cleanup runs.
     if (enteredThreadKey === threadKey) enteredThreadKey = null;
   };
