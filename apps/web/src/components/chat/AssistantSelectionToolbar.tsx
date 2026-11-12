@@ -112,15 +112,16 @@ export function AssistantSelectionToolbar({
         return;
       }
       const rects = captured.range.getClientRects();
-      const pointerOnText =
-        pointer !== null &&
-        Array.from(rects).some(
-          (line) =>
-            pointer.x >= line.left - 8 &&
-            pointer.x <= line.right + 8 &&
-            pointer.y >= line.top - 8 &&
-            pointer.y <= line.bottom + 8,
-        );
+      const pointerLine =
+        pointer === null
+          ? undefined
+          : Array.from(rects).find(
+              (line) =>
+                pointer.x >= line.left - 8 &&
+                pointer.x <= line.right + 8 &&
+                pointer.y >= line.top - 8 &&
+                pointer.y <= line.bottom + 8,
+            );
       setSelection({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
@@ -132,7 +133,11 @@ export function AssistantSelectionToolbar({
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
           selectionRect: rects.item(rects.length - 1) ?? rect,
-          pointer: pointerOnText ? pointer : null,
+          // Below the released line, so a click beside the release point misses Cite.
+          pointer:
+            pointer && pointerLine
+              ? { x: pointer.x, y: Math.max(pointer.y, pointerLine.bottom) + 4 }
+              : null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),
       });

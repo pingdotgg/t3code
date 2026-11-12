@@ -1,3 +1,5 @@
+/// <reference lib="dom" />
+
 import { expect } from "e2e";
 
 import { test, WEB } from "./t3.ts";
