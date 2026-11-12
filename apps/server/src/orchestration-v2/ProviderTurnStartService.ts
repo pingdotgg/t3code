@@ -219,6 +219,7 @@ export const layer: Layer.Layer<
         readonly branch: string;
       }) {
         const { cwd, worktreePath, branch } = input;
+        yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
         yield* gitWorkflow.pruneWorktrees({ cwd });
         const localBranchNames = yield* gitWorkflow.listLocalBranchNames(cwd);
         if (localBranchNames.includes(branch)) {
@@ -651,8 +652,9 @@ export const layer: Layer.Layer<
       }
       const { worktreePath, branch } = projection.thread;
       if (worktreePath !== null && branch !== null) {
+        // A failed removal can leave the folder behind without its checkout.
         const exists = yield* fileSystem
-          .exists(worktreePath)
+          .exists(path.join(worktreePath, ".git"))
           .pipe(Effect.orElseSucceed(() => true));
         if (!exists && (yield* isManagedWorktreePath(worktreePath))) {
           const project = yield* projects.getById(projection.thread.projectId).pipe(
