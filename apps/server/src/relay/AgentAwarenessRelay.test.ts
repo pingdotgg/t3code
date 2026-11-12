@@ -368,12 +368,27 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications[2]?.state?.threadTitle, "Renamed thread");
       assert.equal(publications[2]?.state?.updatedAt, publications[1]?.state?.updatedAt);
 
+      // The child's next request is a new wait in the same phase, so it gets a new alert time.
+      yield* setShell(
+        waitingChild({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-2"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:02:00.000Z"),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 4);
+      assert.equal(publications[3]?.state?.phase, "waiting_for_approval");
+      assert.notEqual(publications[3]?.state?.updatedAt, publications[2]?.state?.updatedAt);
+
       yield* setShell(waitingChild({ pendingRuntimeRequest: null }));
       yield* relay.publishThread(CHILD_THREAD_ID);
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
-      assert.equal(publications.length, 4);
-      assert.equal(publications[3]?.state?.phase, "completed");
+      assert.equal(publications.length, 5);
+      assert.equal(publications[4]?.state?.phase, "completed");
     }),
   );
 
