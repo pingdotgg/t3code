@@ -317,9 +317,7 @@ export function mergeLearnedRoutes(input: {
       target: new BearerConnectionTarget({
         environmentId: entry.target.environmentId,
         label: entry.target.label,
-        ...(entry.target.reportedLabel === undefined
-          ? {}
-          : { reportedLabel: entry.target.reportedLabel }),
+        ...(followsServerLabel(entry.target) ? { followsServerLabel: true } : {}),
         connectionId,
       }),
       profile: Option.some(
@@ -346,41 +344,34 @@ export function mergeLearnedRoutes(input: {
   return signature(saved) === signature(next) ? null : next;
 }
 
-function withLabel(target: ConnectionTarget, label: string, reportedLabel: string | undefined) {
-  const { reportedLabel: _previous, ...rest } = target;
-  const fields = { ...rest, label, ...(reportedLabel === undefined ? {} : { reportedLabel }) };
-  switch (fields._tag) {
+function withLabel(target: ConnectionTarget, label: string): ConnectionTarget {
+  switch (target._tag) {
     case "PrimaryConnectionTarget":
-      return new PrimaryConnectionTarget(fields);
+      return new PrimaryConnectionTarget({ ...target, label });
     case "BearerConnectionTarget":
-      return new BearerConnectionTarget(fields);
+      return new BearerConnectionTarget({ ...target, label });
     case "RelayConnectionTarget":
-      return new RelayConnectionTarget(fields);
+      return new RelayConnectionTarget({ ...target, label });
     case "SshConnectionTarget":
-      return new SshConnectionTarget(fields);
+      return new SshConnectionTarget({ ...target, label });
   }
 }
 
-/**
- * Routes carrying the label the server now reports; null when nothing changes. A label the user chose
- * is kept, with the server's label beside it in `reportedLabel` so a later report can tell them apart.
- */
+/** Users cannot rename a T3 Connect route; other routes follow only labels saved from the server. */
+function followsServerLabel(target: ConnectionTarget): boolean {
+  return target._tag === "RelayConnectionTarget" || target.followsServerLabel === true;
+}
+
+/** Routes carrying the label the server now reports, keeping names the user chose; null when unchanged. */
 export function routesWithReportedLabel(
   routes: ReadonlyArray<ConnectionRoute>,
   reportedLabel: string,
 ): ReadonlyArray<ConnectionRoute> | null {
   let changed = false;
   const next = routes.map((route) => {
-    const { label, reportedLabel: previous } = route.target;
-    if ((previous ?? label) === reportedLabel) return route;
+    if (!followsServerLabel(route.target) || route.target.label === reportedLabel) return route;
     changed = true;
-    const chosen = previous !== undefined && label !== previous;
-    return {
-      ...route,
-      target: chosen
-        ? withLabel(route.target, label, reportedLabel)
-        : withLabel(route.target, reportedLabel, undefined),
-    };
+    return { ...route, target: withLabel(route.target, reportedLabel) };
   });
   return changed ? next : null;
 }

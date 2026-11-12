@@ -5,8 +5,8 @@ import * as Schema from "effect/Schema";
 const ConnectionTargetBase = {
   environmentId: EnvironmentId,
   label: Schema.String,
-  /** The server's own label when it was last seen; a `label` that differs is one the user chose. */
-  reportedLabel: Schema.optional(Schema.String),
+  /** Set when `label` came from the server, so it follows the server's renames. A user's name never has it. */
+  followsServerLabel: Schema.optional(Schema.Boolean),
 };
 
 export class PrimaryConnectionTarget extends Schema.TaggedClass<PrimaryConnectionTarget>()(

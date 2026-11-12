@@ -2323,7 +2323,7 @@ describe("EnvironmentRegistry routes", () => {
   it.effect("a saved environment takes the label its server reports on connect", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(
-        [LAN_TARGET],
+        [new BearerConnectionTarget({ ...LAN_TARGET, followsServerLabel: true })],
         [LAN_PROFILE],
         [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
         { reportedLabel: "Renamed host" },

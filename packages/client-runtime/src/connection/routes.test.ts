@@ -142,28 +142,25 @@ describe("connection routes", () => {
 });
 
 describe("reported labels", () => {
-  it("follows the server's label unless the user chose another", () => {
-    const route = direct("lan", "http://192.168.1.5:3773/");
-    const renamed = {
-      ...route,
+  it("follows the server's label only where the server gave it", () => {
+    const named = direct("named", "http://192.168.1.5:3773/");
+    const paired = {
+      ...named,
       target: new BearerConnectionTarget({
         environmentId: ENVIRONMENT_ID,
-        label: "Mine",
-        reportedLabel: "Desk",
-        connectionId: "renamed",
+        label: "Desk",
+        followsServerLabel: true,
+        connectionId: "paired",
       }),
     };
-    expect(routesWithReportedLabel([route], "Desk")).toBeNull();
-    expect(routesWithReportedLabel([renamed], "Desk")).toBeNull();
-    expect(
-      routesWithReportedLabel([route, renamed], "Laptop")?.map(({ target }) => [
-        target.label,
-        target.reportedLabel,
-      ]),
-    ).toEqual([
-      ["Laptop", undefined],
-      ["Mine", "Laptop"],
-    ]);
+    const relay = {
+      target: new RelayConnectionTarget({ environmentId: ENVIRONMENT_ID, label: "Desk" }),
+      profile: Option.none(),
+    };
+    expect(routesWithReportedLabel([named, paired, relay], "Desk")).toBeNull();
+    const renamed = routesWithReportedLabel([named, paired, relay], "Laptop");
+    expect(renamed?.map(({ target }) => target.label)).toEqual(["Desk", "Laptop", "Laptop"]);
+    expect(renamed?.[1]?.target.followsServerLabel).toBe(true);
   });
 });
 

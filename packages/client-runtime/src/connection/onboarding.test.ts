@@ -300,6 +300,7 @@ describe("connection onboarding", () => {
           environmentId,
           connectionId: PAIRED_PROFILE.connectionId,
           label: PAIRED_PROFILE.label,
+          followsServerLabel: true,
         }),
       );
     }).pipe(Effect.provide(layerPairingOnboarding())),
