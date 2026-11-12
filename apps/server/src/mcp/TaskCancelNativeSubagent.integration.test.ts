@@ -33,6 +33,7 @@ import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -791,6 +792,7 @@ const delegatedClaudeHarness = Effect.fn("delegatedClaudeHarness")(function* (na
   const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry({ name }, layerAdapters, {
     runEffectWorker: false,
+    runContinuationWorker: true,
   });
   const layerOrchestration = Layer.merge(
     layerOrchestrator,
@@ -896,56 +898,256 @@ const delegatedClaudeHarness = Effect.fn("delegatedClaudeHarness")(function* (na
 // A delegated Claude child ends its turn while a background native subagent it
 // started keeps running.
 
-it.effect("a parent's queued update to a running Claude child becomes the task result", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { turns, layerTest, startDelegatedChild } =
-        yield* delegatedClaudeHarness("queued-update-to-child");
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const { parentThreadId, task, child, scope } = yield* startDelegatedChild;
-
-        const sent = yield* service.sendToThread(scope, {
-          threadId: task.childThreadId!,
-          message: "Also check the docs",
-        });
-        yield* worker.drain();
-        assert.equal(sent.delivery, "queued");
-
-        const updateRunning = yield* watch(
-          (event) =>
-            event.type === "provider-turn.updated" &&
-            event.payload.status === "running" &&
-            event.payload.runAttemptId !== child.turn.attemptId,
+it.effect.each([
+  "initial",
+  "receipt",
+  "withdraw",
+  "unconfirmed",
+  "other-owner",
+  "other-parent",
+  "no-task",
+] as const)(
+  "a parent's Claude follow-up shares completion only after a matching boundary receipt: %s",
+  (settlement) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { turns, layerTest, startDelegatedChild } = yield* delegatedClaudeHarness(
+          `boundary-child-${settlement}`,
         );
-        yield* finishChildTurn(child, "initial findings");
-        yield* orchestrator.resumeQueuedRuns;
-        yield* worker.drain();
-        yield* Fiber.join(updateRunning);
-
-        const update = turns.find(
-          (entry) =>
-            entry.turn.threadId === task.childThreadId && entry.turn.runId !== child.turn.runId,
-        );
-        assert.isDefined(update);
-        const midway = yield* service.taskStatus(scope, task.id);
-        assert.equal(midway.workState, "working");
-        assert.isNull(midway.summary);
-        const parentMidway = yield* orchestrator.getThreadProjection(parentThreadId);
-        assert.isNull(parentMidway.subagents.find((entry) => entry.id === task.id)?.result);
-
-        yield* finishChildTurn(update!, "findings including docs");
-        const done = yield* service.taskStatus(scope, task.id);
-        assert.equal(done.workState, "result_available");
-        assert.equal(done.status, "completed");
-        assert.equal(done.summary, "findings including docs");
-        const parentDone = yield* orchestrator.getThreadProjection(parentThreadId);
-        assert.equal(parentDone.subagents.length, 1);
-      }).pipe(Effect.provide(layerTest));
-    }),
-  ),
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const sink = yield* EventSink.EventSinkV2;
+          const { parentThreadId, task, child, scope } = yield* startDelegatedChild;
+          let active = child;
+          if (settlement !== "initial") {
+            yield* finishChildTurn(child, "initial findings");
+            yield* orchestrator.recoverDelegatedTasks;
+            yield* service.taskStatus(scope, task.id);
+            const running = yield* watch(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.status === "running" &&
+                event.threadId === task.childThreadId,
+            );
+            yield* service.sendToThread(scope, {
+              threadId: task.childThreadId!,
+              message: "Review again",
+              mode: "auto",
+            });
+            yield* worker.drain();
+            yield* Fiber.join(running);
+            active = turns.at(-1)!;
+          }
+          const sent = yield* service.sendToThread(scope, {
+            threadId: task.childThreadId!,
+            message: "Also check the docs",
+            mode: "steer",
+          });
+          assert.equal(sent.delivery, "queued");
+          const before = yield* orchestrator.getThreadProjection(task.childThreadId!);
+          const queued = before.runs.find((run) => run.id === sent.runId)!;
+          const run = before.runs.find((run) => run.id === active.turn.runId)!;
+          const providerTurn = before.providerTurns.find(
+            (turn) => turn.runAttemptId === active.turn.attemptId,
+          )!;
+          if (settlement !== "initial") assert.isDefined(queued.delegatedTaskId);
+          if (
+            settlement === "other-owner" ||
+            settlement === "other-parent" ||
+            settlement === "no-task"
+          ) {
+            const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+            const followup = parent.subagents.find((row) => row.id === queued.delegatedTaskId)!;
+            const now = yield* DateTime.now;
+            yield* sink.write({
+              commandId: CommandId.make("command:runtime-reconcile:owner"),
+              events: [
+                {
+                  id: EventId.make("event:owner"),
+                  threadId: parentThreadId,
+                  occurredAt: now,
+                  type: "subagent.updated",
+                  payload: {
+                    ...followup,
+                    ...(settlement === "other-owner"
+                      ? { runId: RunId.make("other-owner") }
+                      : settlement === "other-parent"
+                        ? { threadId: ThreadId.make("other-parent") }
+                        : {}),
+                  },
+                },
+                ...(settlement !== "no-task"
+                  ? []
+                  : [
+                      {
+                        id: EventId.make("event:no-task"),
+                        threadId: task.childThreadId!,
+                        occurredAt: now,
+                        type: "run.updated" as const,
+                        payload: { ...run, delegatedTaskId: undefined },
+                      },
+                    ]),
+              ],
+            });
+          }
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const offers = yield* requests.claimAgentMessages!({
+            threadId: task.childThreadId!,
+            runId: run.id,
+            providerTurnId: providerTurn.id,
+          });
+          const boundaryId = offers[0]?.id ?? "refused-followup";
+          let promotion = 0;
+          const promote = (step: "offer" | "receipt" | "withdraw") =>
+            orchestrator.dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make(`boundary:${step}:${promotion++}`),
+              threadId: task.childThreadId!,
+              queuedRunId: queued.id,
+              targetRunId: run.id,
+              boundaryOffer:
+                step === "offer"
+                  ? { id: boundaryId, step, providerTurnId: providerTurn.id }
+                  : { id: boundaryId, step },
+            });
+          if (
+            settlement === "other-owner" ||
+            settlement === "other-parent" ||
+            settlement === "no-task"
+          ) {
+            assert.lengthOf(offers, 0);
+            yield* Effect.flip(promote("offer"));
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(task.childThreadId!)).runs.find(
+                (row) => row.id === queued.id,
+              )?.status,
+              "queued",
+            );
+            return;
+          }
+          assert.lengthOf(offers, 1);
+          if (settlement === "withdraw") yield* promote("withdraw");
+          const joined = settlement === "receipt" || settlement === "initial";
+          if (joined) {
+            yield* promote("receipt");
+            yield* promote("receipt");
+            const received = yield* orchestrator.getThreadProjection(task.childThreadId!);
+            assert.equal(
+              received.messages.find((message) => message.id === sent.messageId)?.runId,
+              run.id,
+            );
+            const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+            if (queued.delegatedTaskId !== undefined) {
+              const delivered = parent.subagents.find((row) => row.id === queued.delegatedTaskId)!;
+              const tracked = yield* service.taskStatus(scope, delivered.id);
+              assert.equal(tracked.workState, "result_available");
+              assert.include(tracked.summary!, "Delivered into running run");
+              assert.equal(delivered.status, "completed");
+              assert.equal(delivered.completionDelivery?.state, "disposed");
+              assert.include(delivered.result!, "Delivered into running run");
+              assert.equal(
+                parent.nodes.find((node) => node.id === delivered.id)?.status,
+                "completed",
+              );
+              assert.equal(
+                parent.turnItems.find(
+                  (item) => item.type === "subagent" && item.subagentId === delivered.id,
+                )?.status,
+                "completed",
+              );
+            }
+            yield* finishChildTurn(active, "findings including docs");
+            yield* orchestrator.recoverDelegatedTasks;
+            yield* orchestrator.recoverDelegatedTasks;
+            const done = yield* orchestrator.getThreadProjection(parentThreadId);
+            assert.lengthOf(
+              done.contextTransfers.filter(
+                (transfer) =>
+                  transfer.type === "subagent_result" && transfer.sourcePoint.runId === run.id,
+              ),
+              1,
+            );
+            const waited = yield* service.waitForThread(scope, {
+              threadId: task.childThreadId!,
+              runId: sent.runId,
+              timeoutMs: 0,
+            });
+            assert.equal(waited.runId, run.id);
+            assert.equal(waited.status, "completed");
+            const activeTaskId = run.delegatedTaskId ?? task.id;
+            assert.equal(
+              done.subagents.find((row) => row.id === activeTaskId)?.result,
+              "findings including docs",
+            );
+            assert.lengthOf(
+              done.subagents.filter((row) => row.result === "findings including docs"),
+              1,
+            );
+            assert.isFalse(
+              done.subagents.some((row) => row.status === "running" || row.status === "pending"),
+            );
+            assert.lengthOf(
+              done.runs
+                .flatMap((row) => row.delegatedCompletion?.delivery?.taskIds ?? [])
+                .filter((id) => id === activeTaskId),
+              1,
+            );
+            assert.isFalse(
+              done.runs.some(
+                (row) =>
+                  row.delegatedCompletion?.delivery?.taskIds.includes(queued.delegatedTaskId!) ===
+                  true,
+              ),
+            );
+            assert.lengthOf(
+              turns.filter((entry) => entry.turn.threadId === task.childThreadId),
+              settlement === "initial" ? 1 : 2,
+            );
+          } else {
+            const stillQueued = (yield* orchestrator.getThreadProjection(
+              task.childThreadId!,
+            )).runs.find((row) => row.id === queued.id)!;
+            assert.equal(stillQueued.delegatedTaskId, queued.delegatedTaskId);
+            assert.equal(stillQueued.boundaryOffer !== undefined, settlement === "unconfirmed");
+            const updateRunning = yield* watch(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.payload.status === "running" &&
+                event.payload.runAttemptId !== active.turn.attemptId &&
+                event.threadId === task.childThreadId,
+            );
+            yield* finishChildTurn(active, "review findings");
+            if (settlement === "unconfirmed") {
+              assert.equal(
+                (yield* orchestrator.getThreadProjection(task.childThreadId!)).runs.find(
+                  (row) => row.id === queued.id,
+                )?.status,
+                "queued",
+              );
+              yield* orchestrator.dispatch({
+                type: "queued-run.start",
+                commandId: CommandId.make("user-retry-unconfirmed"),
+                threadId: task.childThreadId!,
+                runId: queued.id,
+                requestedBy: "user",
+              });
+            } else yield* orchestrator.resumeQueuedRuns;
+            yield* worker.drain();
+            yield* Fiber.join(updateRunning);
+            yield* finishChildTurn(turns.at(-1)!, "separate follow-up result");
+            yield* orchestrator.recoverDelegatedTasks;
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (row) => row.id === queued.delegatedTaskId,
+              )?.result,
+              "separate follow-up result",
+            );
+          }
+        }).pipe(Effect.provide(layerTest));
+      }),
+    ),
 );
 
 const finishChildTurn = Effect.fn("finishChildTurn")(function* (

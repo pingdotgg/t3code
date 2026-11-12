@@ -17,6 +17,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import type * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+import { canJoinDelegatedBoundary } from "./DelegatedBoundaryJoin.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 
@@ -301,9 +302,15 @@ export const layer = Layer.effectDiscard(
       function* (input) {
         const unhanded: Array<ProviderContinuationRequests.AgentMessageOfferRef> = [];
         return yield* Effect.gen(function* () {
-          const { runs } = yield* threads.getThreadRecords(input.threadId, ["runs"], {
-            runStatuses: ["queued"],
+          const { runs, thread } = yield* threads.getThreadRecords(input.threadId, ["runs"], {
+            runStatuses: ["queued", "running"],
           });
+          const parent =
+            !runs.some((run) => run.status === "queued" && run.delegatedTaskId !== undefined) ||
+            thread.lineage.parentThreadId === null
+              ? undefined
+              : yield* threads.getThreadRecords(thread.lineage.parentThreadId, ["subagents"]);
+          const target = runs.find((run) => run.id === input.runId);
           if (runs.length === 0) return [];
           const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
             messageIds: runs.map((run) => run.userMessageId),
@@ -316,7 +323,7 @@ export const layer = Layer.effectDiscard(
               run.boundaryOffer !== undefined ||
               run.queueHeld === true ||
               run.freshContext === true ||
-              run.delegatedTaskId !== undefined ||
+              !canJoinDelegatedBoundary(run, target, message, thread, parent?.subagents ?? []) ||
               isNativeMaintenanceCommand(message) ||
               parseGoalCommand(message) !== null
             )

@@ -178,6 +178,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
+import { canJoinDelegatedBoundary } from "./DelegatedBoundaryJoin.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -10601,6 +10602,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const boundaryTaskOwner = Effect.fn("Orchestrator.boundaryTaskOwner")(function* (
+    projection: Parameters<typeof dispatchSteerIntoRun>[0]["projection"],
+    command: Extract<OrchestrationV2Command, { readonly type: "queued-message.promote-to-steer" }>,
+    queuedRun: OrchestrationV2Run,
+    targetRunId: RunId,
+    message: OrchestrationV2ConversationMessage,
+  ) {
+    if (queuedRun.delegatedTaskId === undefined) return true;
+    const parentThreadId = projection.thread.lineage.parentThreadId;
+    if (parentThreadId === null) return false;
+    const parent = yield* projectionStore
+      .getThreadRecords(parentThreadId, ["subagents"])
+      .pipe(mapDispatchError(command));
+    return canJoinDelegatedBoundary(
+      queuedRun,
+      projection.runs.find((run) => run.id === targetRunId),
+      message,
+      projection.thread,
+      parent.subagents,
+    );
+  });
+
   const dispatchQueuedMessagePromoteToSteer = Effect.fn(
     "Orchestrator.dispatchQueuedMessagePromoteToSteer",
   )(function* (
@@ -10693,15 +10716,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const receipt = command.boundaryOffer?.step === "receipt" ? queuedRun.boundaryOffer : undefined;
     if (command.boundaryOffer?.step === "offer") {
       // Stop wins: a held queue or a stopped turn keeps the update queued.
-      // A run that owns a delegated task keeps its turn: the task settles
-      // with its own run, which joining would cancel.
+      // A follow-up can share completion only with the same parent task owner.
       if (
         queuedRun.boundaryOffer !== undefined ||
         queuedMessage.atToolBoundary !== true ||
         isNativeMaintenanceCommand(queuedMessage) ||
         parseGoalCommand(queuedMessage) !== null ||
         queuedRun.freshContext === true ||
-        queuedRun.delegatedTaskId !== undefined ||
+        !(yield* boundaryTaskOwner(
+          projection,
+          command,
+          queuedRun,
+          command.targetRunId,
+          queuedMessage,
+        )) ||
         queuedRun.queueHeld === true ||
         (yield* stopReachedRun(command, command.threadId, command.targetRunId))
       ) {
@@ -10936,11 +10964,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Option.isSome(session) &&
         session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools === true
       ) {
-        // The same refusals as the boundary join: Stop wins, and a run that
-        // owns a delegated task keeps its own turn.
+        // Stop wins, and unrelated task owners keep their own turns.
         if (
           (queuedRun.queueHeld === true && queuedRun.boundaryOffer === undefined) ||
-          queuedRun.delegatedTaskId !== undefined ||
+          !(yield* boundaryTaskOwner(
+            projection,
+            command,
+            queuedRun,
+            command.targetRunId,
+            queuedMessage,
+          )) ||
           (yield* stopReachedRun(command, command.threadId, targetRun.id))
         ) {
           return yield* new OrchestratorDispatchError({
@@ -11008,6 +11041,64 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     const targetRunId = receipt?.targetRunId ?? command.targetRunId;
     const targetRun = projection.runs.find((run) => run.id === targetRunId);
+    let joinedRun = queuedRun;
+    if (receipt !== undefined && queuedRun.delegatedTaskId !== undefined) {
+      const parentThreadId = projection.thread.lineage.parentThreadId;
+      if (parentThreadId !== null) {
+        const parent = yield* projectionStore
+          .getThreadRecords(parentThreadId, ["subagents", "nodes", "turnItems"], {
+            turnItemTypes: ["subagent"],
+          })
+          .pipe(mapDispatchError(command));
+        const task = parent.subagents.find((task) => task.id === queuedRun.delegatedTaskId);
+        if (task !== undefined) {
+          const summary = `Delivered into running run ${targetRunId}; its task reports the result.`;
+          const scope = {
+            threadId: parentThreadId,
+            ...(task.runId === null ? {} : { runId: task.runId }),
+            nodeId: task.id,
+            occurredAt: now,
+          };
+          yield* emitEvent({
+            ...scope,
+            type: "subagent.updated",
+            payload: {
+              ...task,
+              status: "completed",
+              result: summary,
+              completedAt: now,
+              updatedAt: now,
+              completionDelivery: { state: "disposed", observedByRunId: null },
+            },
+          });
+          const node = parent.nodes.find((node) => node.id === task.id);
+          if (node !== undefined)
+            yield* emitEvent({
+              ...scope,
+              type: "node.updated",
+              payload: { ...node, status: "completed", completedAt: now },
+            });
+          const item = parent.turnItems.find(
+            (item) => item.type === "subagent" && item.subagentId === task.id,
+          );
+          if (item?.type === "subagent")
+            yield* emitEvent({
+              ...scope,
+              type: "turn-item.updated",
+              payload: {
+                ...item,
+                status: "completed",
+                result: summary,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
+          // The cancelled queue row must not settle this task again during recovery.
+          const { delegatedTaskId: _taskId, ...unbound } = queuedRun;
+          joinedRun = unbound;
+        }
+      }
+    }
     yield* emitEvent({
       type: "run.updated",
       threadId: command.threadId,
@@ -11016,7 +11107,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: queuedRun.providerInstanceId,
       occurredAt: now,
       payload: {
-        ...queuedRun,
+        ...joinedRun,
         status: "cancelled",
         queuePosition: null,
         completedAt: now,
@@ -15183,8 +15274,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? withSubagentParentLock(command.threadId, dispatch)
           : dispatch,
       );
-    // Answering a message-mode question can also start a follow-up.
-    return yield* command.type === "runtime-request.respond"
+    // Answers can start follow-ups; a boundary receipt can settle their parent task.
+    return yield* command.type === "runtime-request.respond" ||
+    command.type === "queued-message.promote-to-steer"
       ? withSubagentParentLock(command.threadId, dispatch)
       : dispatch;
   });

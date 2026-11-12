@@ -955,13 +955,21 @@ const make = Effect.gen(function* () {
     // so a cut run is not the answer while its continuation is pending.
     // Runs per matching event and is already covered by the waitForThread span.
     const outcome = Effect.fnUntraced(function* (runs: ReadonlyArray<OrchestrationV2Run>) {
-      const current = runs.find((candidate) => candidate.id === selectedRun.id);
-      if (current === undefined) {
+      const selected = runs.find((candidate) => candidate.id === selectedRun.id);
+      if (selected === undefined) {
         return yield* new ThreadManagementRunNotFoundError({
           threadId: input.threadId,
           runId: selectedRun.id,
         });
       }
+      // A boundary receipt moves the message into its receiving run before cancelling the queue row.
+      const takenBy =
+        selected.status === "cancelled" && selected.startedAt === null
+          ? (yield* getProjectThreadRecords(input, ["messages"], {
+              messageIds: [selected.userMessageId],
+            })).messages[0]?.runId
+          : undefined;
+      const current = runs.find((candidate) => candidate.id === takenBy) ?? selected;
       const run = latestRestartContinuation(runs, current);
       const pending =
         isTerminalRunStatus(run.status) && (yield* orchestrator.restartContinuationPending(run));
@@ -1036,6 +1044,7 @@ const make = Effect.gen(function* () {
             untilDelegatedWorkSettled ||
             stored.event.type !== "run.updated" ||
             stored.event.payload.id === selectedRun.id ||
+            isTerminalRunStatus(stored.event.payload.status) ||
             stored.event.payload.restartContinuationOfRunId !== undefined,
         ),
       ),
