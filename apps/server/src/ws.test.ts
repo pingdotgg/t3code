@@ -1666,25 +1666,20 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
   ),
 );
 
-it.effect("a usage-limits refresh reads the limit sources without probing providers", () =>
+it.effect("a usage-limits refresh delegates to the usage limit sources service", () =>
   Effect.gen(function* () {
     const responses = yield* Queue.unbounded<unknown>();
-    let providerProbes = 0;
-    let limitRefreshes = 0;
+    let limitsRefreshes = 0;
     const services = Layer.mergeAll(
       layerUnusedConfigRpcServices,
       Layer.mock(ProviderRegistry.ProviderRegistry)({
         getProviders: Effect.succeed([]),
-        refresh: () =>
-          Effect.sync((): ReadonlyArray<ServerProvider> => {
-            providerProbes += 1;
-            return [];
-          }),
+        refresh: () => Effect.succeed([]),
       }),
       Layer.mock(UsageLimitSources.UsageLimitSources)({
         current: Effect.succeed([]),
-        refresh: Effect.sync(() => {
-          limitRefreshes += 1;
+        refreshUsageLimits: Effect.sync(() => {
+          limitsRefreshes += 1;
         }),
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
@@ -1737,8 +1732,7 @@ it.effect("a usage-limits refresh reads the limit sources without probing provid
       readonly providers: ReadonlyArray<ServerProvider>;
     };
     assert.deepEqual(refreshed.providers, []);
-    assert.equal(limitRefreshes, 1, "the limit sources should be read again");
-    assert.equal(providerProbes, 0, "a limits refresh should not probe providers");
+    assert.equal(limitsRefreshes, 1, "the limits-only refresh should be one service call");
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

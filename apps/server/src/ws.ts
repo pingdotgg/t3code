@@ -2445,9 +2445,7 @@ export const layerWsRpc = (
               return { providers: [] };
             }
             if (input.usageLimitsOnly === true) {
-              // The Limits view only reads the limit sources. A provider probe would re-check
-              // every instance's install, auth, models, and skills for an answer it ignores.
-              yield* usageLimitSources.refresh;
+              yield* usageLimitSources.refreshUsageLimits;
               return { providers: [] };
             }
             if (input.refreshModels) {

@@ -2,13 +2,16 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import { SecretProviderId, ServerConfigStreamEvent, UsageLimitSourceId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 
@@ -81,6 +84,9 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        refresh: () => Effect.succeed([]),
+      }),
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make(() => Effect.die("Unexpected network request")),
@@ -133,6 +139,9 @@ it.effect("reads a management key from its secret provider", () => {
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        refresh: () => Effect.succeed([]),
+      }),
       Layer.succeed(SecretResolver.SecretResolver, {
         label: (provider) => Effect.succeed(provider),
         read: (references) =>
@@ -157,3 +166,48 @@ it.effect("reads a management key from its secret provider", () => {
     Effect.scoped,
   );
 });
+
+it.effect("refreshUsageLimits returns without waiting for the provider probe", () =>
+  Effect.gen(function* () {
+    const probeStarted = yield* Deferred.make<void>();
+    // The probe is held open until after the assertions, so the refresh cannot have awaited it.
+    const probeGate = yield* Deferred.make<void>();
+    const returned = yield* Deferred.make<void>();
+    let probes = 0;
+    const sources = yield* UsageLimitSources.make.pipe(
+      Effect.provide([
+        ServerSettings.layerTest({ usageLimitSources: {} }),
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          shouldRunScopeWork: () => Effect.succeed(false),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          refresh: () =>
+            Effect.gen(function* () {
+              probes += 1;
+              yield* Deferred.succeed(probeStarted, undefined);
+              yield* Deferred.await(probeGate);
+              return [];
+            }),
+        }),
+        Layer.succeed(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
+          read: (references) => Effect.succeed(references.map(() => undefined)),
+          invalidate: () => Effect.void,
+        }),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Unexpected network request")),
+        ),
+        NodeCrypto.layer,
+      ]),
+    );
+    yield* sources.refreshUsageLimits.pipe(
+      Effect.tap(() => Deferred.succeed(returned, undefined)),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(probeStarted);
+    expect(Option.isSome(yield* Deferred.poll(returned))).toBe(true);
+    yield* Deferred.succeed(probeGate, undefined);
+    expect(probes).toBe(1);
+  }).pipe(Effect.scoped),
+);
