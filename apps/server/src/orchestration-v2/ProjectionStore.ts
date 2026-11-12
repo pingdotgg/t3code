@@ -5812,10 +5812,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => [...new Set(rows.map((row) => ThreadId.make(row.child_thread_id)))]),
         Effect.mapError(controlReadError(threadId)),
       );
-    const hasPendingDelegatedCompletion: ProjectionStoreV2Shape["hasPendingDelegatedCompletion"] = (
-      childThreadId,
-    ) =>
-      sql`SELECT 1 FROM orchestration_v2_projection_subagents AS task
+    const hasPendingDelegatedCompletion: ProjectionStoreV2Shape["hasPendingDelegatedCompletion"] =
+      Effect.fn("ProjectionStore.hasPendingDelegatedCompletion")((childThreadId) =>
+        sql`SELECT 1 FROM orchestration_v2_projection_subagents AS task
         LEFT JOIN orchestration_v2_projection_runs AS owner ON owner.run_id = task.run_id
         WHERE task.child_thread_id = ${childThreadId} AND task.origin = 'app_owned'
           AND (json_extract(task.payload_json, '$.result') IS NULL
@@ -5823,8 +5822,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND json_extract(owner.payload_json, '$.delegatedCompletion.disposition') = 'open'
               AND json_type(owner.payload_json, '$.delegatedCompletion.delivery') = 'object'))
         LIMIT 1`.pipe(
-        Effect.map((rows) => rows.length > 0),
-        Effect.mapError(controlReadError(childThreadId)),
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(controlReadError(childThreadId)),
+        ),
       );
     const getNextTurnItemOrdinal: ProjectionStoreV2Shape["getNextTurnItemOrdinal"] = (threadId) =>
       sql<{ ordinal: number | null }>`SELECT MAX(ordinal) AS ordinal

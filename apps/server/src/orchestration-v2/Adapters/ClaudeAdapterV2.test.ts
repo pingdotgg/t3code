@@ -11042,10 +11042,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ],
         );
 
-        // Once the task leaves the roster, a reused id starts unmarked.
+        // Once the task ends, a reused id starts unmarked.
         yield* Queue.offer(
           harness.sdkMessages,
-          roster(["dev-server"], "00000000-0000-4000-8000-000000000303"),
+          claudeSdkFrame({ ...wakeNotification, uuid: "00000000-0000-4000-8000-000000000303" }),
         );
         yield* nextRoster((tasks) => tasks.length === 1);
         yield* Queue.offer(
@@ -13881,6 +13881,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const failed = harness.continuationRequests[0]!;
         assert.isDefined(failed.clearIfCurrent);
         yield* failed.clearIfCurrent!();
+        yield* harness.until(
+          () =>
+            !(
+              providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+                .pendingBackgroundTasks ?? []
+            ).some((task) => task.taskId === WAKE_TASK_ID),
+        );
 
         yield* harness.offerAndWait(
           claudeSdkFrame({
@@ -14604,13 +14611,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each(["none", "before", "after"] as const)(
+  it.effect.each(["none", "before", "after", "sibling"] as const)(
     "keeps an exited background command on the roster until its wake run starts (empty level %s notification)",
     (emptyLevel) =>
       Effect.scoped(
         Effect.gen(function* () {
           const harness = yield* makeWakeHarness;
           const now = yield* DateTime.now;
+          const secondTaskId = "second-owed-wake";
+          const taskIds = emptyLevel === "sibling" ? [WAKE_TASK_ID, secondTaskId] : [WAKE_TASK_ID];
           const wakeAttemptId = RunAttemptId.make("attempt-claude-wake-roster-2");
           const emptyRoster = claudeSdkFrame({
             type: "system",
@@ -14631,17 +14640,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
           yield* harness.offerAndWait(wakeTaskStarted);
+          if (emptyLevel === "sibling")
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                ...wakeTaskStarted,
+                task_id: secondTaskId,
+                tool_use_id: "toolu_second_owed_wake",
+                uuid: "00000000-0000-4000-8000-000000000205",
+              }),
+            );
           const awaitBackgroundTasks = harness.runtime.awaitBackgroundTasks;
           assert.isDefined(awaitBackgroundTasks);
           yield* awaitBackgroundTasks!({
             providerThread: harness.providerThread,
-            taskIds: [WAKE_TASK_ID],
+            taskIds,
             awaited: true,
           });
           yield* Queue.offer(harness.sdkMessages, turnOneResult);
           yield* harness.awaitTerminal(1);
           const afterFirstTurn = harness.events.length;
-          if (emptyLevel === "before") yield* harness.offerAndWait(emptyRoster);
+          if (emptyLevel === "before" || emptyLevel === "sibling")
+            yield* harness.offerAndWait(emptyRoster);
           yield* harness.offerAndWait(wakeNotification);
           if (emptyLevel === "after") yield* harness.offerAndWait(emptyRoster);
           // Query replacement reads the internal roster, which the exit already cleared.
@@ -14688,12 +14707,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           assert.deepEqual(
             rosters.filter((roster) => roster.beforeWake).map((roster) => roster.taskIds),
-            rosters.filter((roster) => roster.beforeWake).map(() => [[WAKE_TASK_ID, true]]),
+            rosters
+              .filter((roster) => roster.beforeWake)
+              .map(() => taskIds.map((id) => [id, true])),
           );
           assert.isTrue(
             rosters.filter((roster) => roster.beforeWake).every((roster) => roster.pendingWork),
           );
-          assert.deepEqual(rosters.at(-1)?.taskIds, []);
+          assert.deepEqual(
+            rosters.at(-1)?.taskIds,
+            emptyLevel === "sibling" ? [[secondTaskId, true]] : [],
+          );
+          if (emptyLevel === "sibling") {
+            assert.isTrue(rosters.at(-1)?.pendingWork);
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                ...wakeNotification,
+                task_id: secondTaskId,
+                tool_use_id: "toolu_second_owed_wake",
+                uuid: "00000000-0000-4000-8000-000000000206",
+              }),
+            );
+            yield* harness.offerAndWait(
+              claudeSdkFrame({ ...wakeTurnInit, uuid: "00000000-0000-4000-8000-000000000207" }),
+            );
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-claude-owed-sibling-3"),
+                text: "Second command completed.",
+                attachments: [],
+                providerTurnOrdinal: 3,
+                messageCreatedBy: "agent",
+                messageCreationSource: "provider",
+              }),
+            );
+            yield* harness.offerAndWait(
+              makeAssistantTextFrame({
+                uuid: "00000000-0000-4000-8000-000000000208",
+                text: "Second command finished.",
+              }),
+            );
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000209",
+                result: "Second command finished.",
+                origin: { kind: "task-notification" },
+              }),
+            );
+            yield* harness.awaitTerminal(3);
+            assert.deepEqual(
+              providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+                .pendingBackgroundTasks,
+              [],
+            );
+          }
         }).pipe(
           Effect.provide(
             Layer.mergeAll(

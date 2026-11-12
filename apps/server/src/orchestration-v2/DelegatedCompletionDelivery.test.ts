@@ -2432,6 +2432,123 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect("checkpoint completion settles its own delivery and releases a pending sibling", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:checkpoint-own-delivery");
+        const originRunId = RunId.make("run:checkpoint-own-delivery:origin");
+        const firstId = NodeId.make("node:checkpoint-own-delivery:first");
+        const siblingId = NodeId.make("node:checkpoint-own-delivery:sibling");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make("project:checkpoint-own-delivery"),
+          runId: originRunId,
+          rootNodeId: NodeId.make("node:checkpoint-own-delivery:root"),
+          taskId: firstId,
+          deliveryState: "claimed",
+          deliveryTaskIds: [firstId],
+          parentRunStatus: "completed",
+          now,
+        });
+        const original = yield* orchestrator.getThreadProjection(threadId);
+        const first = original.subagents.find((task) => task.id === firstId)!;
+        const delivery = original.runs.find((run) => run.id === originRunId)!.delegatedCompletion!
+          .delivery!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: reconcileCommandId("checkpoint-own-delivery-wake"),
+          threadId,
+          messageId: delivery.messageId,
+          text: "First result",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          delegatedCompletion: {
+            parentRunId: originRunId,
+            generation: delivery.generation,
+            taskIds: delivery.taskIds,
+          },
+        });
+        const started = yield* orchestrator.getThreadProjection(threadId);
+        const run = started.runs.find(
+          (candidate) => candidate.userMessageId === delivery.messageId,
+        )!;
+        const scopeId = started.nodes.find(
+          (node) => node.id === run.rootNodeId,
+        )!.checkpointScopeId!;
+        yield* outbox.cancelUnsettled({
+          threadId,
+          effectTypes: ["provider-turn.start"],
+          reason: "The delivery turn already completed.",
+        });
+        const commandId = reconcileCommandId("checkpoint-own-delivery-finished");
+        yield* sink.writeWithEffects({
+          commandId,
+          events: [
+            {
+              id: EventId.make("event:checkpoint-own-delivery:sibling"),
+              type: "subagent.updated",
+              threadId,
+              runId: originRunId,
+              nodeId: siblingId,
+              occurredAt: now,
+              payload: {
+                ...first,
+                id: siblingId,
+                completionDelivery: { state: "pending", observedByRunId: null },
+              },
+            },
+            {
+              id: EventId.make("event:checkpoint-own-delivery:finished"),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: {
+                ...run,
+                status: "completed",
+                startedAt: now,
+                completedAt: now,
+                checkpointId: CheckpointId.make("checkpoint:own-delivery"),
+              },
+            },
+          ],
+          effects: [
+            {
+              id: "effect:checkpoint-own-delivery",
+              commandId,
+              threadId,
+              request: { type: "checkpoint.capture", runId: run.id, scopeId },
+            },
+          ],
+        });
+        yield* worker.drain();
+        const completed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          completed.subagents.find((task) => task.id === firstId)?.completionDelivery?.state,
+          "delivered",
+        );
+        assert.equal(
+          completed.subagents.find((task) => task.id === siblingId)?.completionDelivery?.state,
+          "claimed",
+        );
+        assert.deepEqual(
+          completed.runs.find((candidate) => candidate.id === originRunId)?.delegatedCompletion
+            ?.delivery?.taskIds,
+          [siblingId],
+        );
+        let wake = yield* requests.take;
+        while (wake.threadId !== threadId) wake = yield* requests.take;
+        assert.equal(wake.delegatedCompletion?.generation, delivery.generation + 1);
+      }),
+    );
+
     it.effect.each(["live", "checkpoint-retry", "checkpoint-offer-retry"] as const)(
       "delivers the run a background command's wake starts after the original result (%s)",
       (delivery) =>
@@ -3752,7 +3869,9 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.isTrue(yield* orchestrator.delegatedTaskResultPending(recut.childThreadId));
       assert.isTrue(yield* orchestrator.delegatedTaskResultPending(resumed.childThreadId));
       assert.isFalse(yield* orchestrator.delegatedTaskResultPending(stopped.childThreadId));
-      yield* orchestrator.recoverDelegatedTask(recut.childThreadId, recut.childRunId);
+      yield* orchestrator.recoverDelegatedTask(recut.childThreadId, {
+        sourceRunId: recut.childRunId,
+      });
       const replayed = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(replayed.subagents.find((row) => row.id === recut.taskId)?.status, "running");
       yield* eventSink.write({
