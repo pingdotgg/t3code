@@ -1526,7 +1526,12 @@ export function createServerEnvironmentAtoms<R, E>(
         );
         if (Option.isSome(previous)) return read;
         return request(WS_METHODS.serverGetUsageSummary, { ...input, provisional: true }).pipe(
-          Effect.filterOrElse(settled, (saved) => emit(saved).pipe(Effect.andThen(read))),
+          Effect.matchEffect({
+            // The saved answer only speeds things up; without it the plain read still answers.
+            onFailure: () => read,
+            onSuccess: (saved) =>
+              settled(saved) ? Effect.succeed(saved) : emit(saved).pipe(Effect.andThen(read)),
+          }),
         );
       },
     }),

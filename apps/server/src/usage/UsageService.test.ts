@@ -2495,6 +2495,23 @@ describe("UsageService", () => {
           });
           assert.strictEqual(totalOutputTokens(unseen), 11);
           yield* restarted.awaitPersisted;
+
+          // A saved scan with an entry this server cannot read covers nothing.
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              files: Record<string, Record<string, unknown>>;
+            };
+            const [entry] = Object.values(document.files);
+            document.files[NodePath.join(NodePath.dirname(transcript), "broken.jsonl")] = {
+              ...entry,
+              r: "broken",
+            };
+            await NodeFSP.writeFile(cachePath, JSON.stringify(document));
+          });
+          const reloaded = yield* UsageService.make;
+          assert.isUndefined(claude(yield* reloaded.readSummary(provisional))?.refreshing);
         }).pipe(
           Effect.scoped,
           Effect.provide(layerService({ prefix: "usage-service-provisional", home, settings })),

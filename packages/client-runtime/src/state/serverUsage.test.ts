@@ -322,3 +322,22 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
     }),
   ),
 );
+
+it.effect("reads usage in full when the saved answer cannot be read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness((_request, input) =>
+        input.provisional === true
+          ? Effect.fail(
+              new UsageReadError({ reason: "scanFailed", detail: "saved scan unreadable" }),
+            )
+          : Effect.void,
+      );
+      const summary = harness.summary();
+      const unmount = harness.registry.mount(summary);
+      yield* settledSummary(harness.registry, summary);
+      expect(harness.inputs().map(({ provisional }) => provisional)).toEqual([true, undefined]);
+      unmount();
+    }),
+  ),
+);

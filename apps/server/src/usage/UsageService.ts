@@ -413,15 +413,17 @@ export const make = Effect.gen(function* () {
         cacheDirty = document !== null;
       }
       if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
-        fileCache.set(path, entry);
-      }
+      const decoded = decodeScanCache(document, transcriptFormats);
+      for (const [path, entry] of decoded) fileCache.set(path, entry);
+      const saved = (document as { readonly files?: unknown }).files;
+      const complete =
+        typeof saved === "object" && saved !== null && Object.keys(saved).length === decoded.size;
       const sources = decodeCachedSources(document);
       if (Option.isSome(sources)) {
         for (const [key, source] of Object.entries(sources.value.sources))
           sourceCache.set(key, source);
-        // Coverage describes the saved files; an older version's files may parse differently.
-        if (current && fileCache.size > 0) {
+        // Coverage describes the saved files, so it needs every one, in this version's format.
+        if (current && complete && fileCache.size > 0) {
           for (const [key, since] of Object.entries(sources.value.coveredSince ?? {}))
             coveredSince.set(key, since);
         }
@@ -794,9 +796,11 @@ export const make = Effect.gen(function* () {
         Effect.provideContext(readerContext),
       );
       // A window no complete scan has read would show partial totals, so every directory must cover it.
+      // Saved files are keyed by path, so two providers reading one directory keep only one parse.
       const fromMemory =
         provisional &&
         resolved.dirs.length > 0 &&
+        new Set(resolved.dirs.map((source) => source.dir)).size === resolved.dirs.length &&
         resolved.dirs.every(
           (source) => (coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs,
         );
