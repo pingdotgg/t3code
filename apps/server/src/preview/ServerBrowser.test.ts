@@ -2876,6 +2876,8 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => desktopDetaches.off("release", recordRelease)),
       );
+      const evicted = desktopConnections[2]!.context.page;
+      evicted.beforeUnload = "listen";
       const fresh = yield* open("agent-new");
       expect(fresh.tabId).toBeDefined();
       expect(yield* Queue.take(releases)).toBe(opened[2]);
@@ -2884,6 +2886,7 @@ it.live("a full server takes back the slot of the longest idle agent tab nobody 
         Stream.runHead,
       );
       expect(releasedDesktopTabs).toEqual([opened[2]]);
+      expect(evicted.unloadEvents).toEqual(["beforeunload", "pagehide", "visibilitychange"]);
       const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
       expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
         [...opened.filter((tabId) => tabId !== opened[2]), fresh.tabId!].toSorted(),

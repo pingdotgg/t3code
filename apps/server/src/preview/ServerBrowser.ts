@@ -799,8 +799,15 @@ const make = Effect.gen(function* () {
     const end = tab.desktop && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
-    if (tab.desktop) void tab.desktop.close().catch(constVoid);
-    else {
+    // The desktop removes its webview once the session closes, so the page unloads first.
+    const unloaded =
+      tab.desktop && closeSession && tab.dialog === null && !tab.page.isClosed()
+        ? unloadDesktopPage(tab.page)
+        : Promise.resolve();
+    if (tab.desktop) {
+      const desktop = tab.desktop;
+      void unloaded.then(() => desktop.close()).catch(constVoid);
+    } else {
       const page = tab.page;
       // `runBeforeUnload` returns before the page closes, so closing an isolated context
       // must wait for it. A pending dialog would block `beforeunload` from running at all.
@@ -820,7 +827,9 @@ const make = Effect.gen(function* () {
     void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
     reportLiveTabs();
     if (closeSession) {
-      runFork(manager.close({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore));
+      void unloaded.then(() =>
+        runFork(manager.close({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore)),
+      );
     }
   };
 
@@ -2911,6 +2920,15 @@ const make = Effect.gen(function* () {
   });
 
   yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
+  // A client or cleanup closing a desktop tab must let its page unload before the desktop drops it.
+  yield* manager.beforeClose(({ threadId, tabId }) =>
+    Effect.promise(async () => {
+      const tab = tabs.get(tabKey(threadId, tabId));
+      if (!tab?.desktop || tab.closing || tab.dialog !== null) return;
+      tab.closing = true;
+      await unloadDesktopPage(tab.page);
+    }),
+  );
   if (
     !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
     (yield* PreviewBrowserHost.sandboxBlocked)

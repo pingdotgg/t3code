@@ -60,6 +60,10 @@ export class PreviewManager extends Context.Service<
       input: PreviewAdjustInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
+    /** Runs `hook` for each closing tab before its `closed` event publishes, for this scope. */
+    readonly beforeClose: (
+      hook: (tab: { readonly threadId: string; readonly tabId: string }) => Effect.Effect<void>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
@@ -97,6 +101,16 @@ const sessionsForThread = (
   }
   return out;
 };
+
+const closeTargets = (
+  state: ManagerState,
+  input: PreviewCloseInput,
+): ReadonlyArray<PreviewSessionState> =>
+  input.tabId
+    ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
+        (entry): entry is PreviewSessionState => entry !== undefined,
+      )
+    : sessionsForThread(state, input.threadId);
 
 const normalizeUrl = (rawUrl: string): Effect.Effect<string, PreviewInvalidUrlError> =>
   Effect.try({
@@ -391,17 +405,28 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  const beforeCloseHooks = new Set<
+    (tab: { readonly threadId: string; readonly tabId: string }) => Effect.Effect<void>
+  >();
+  const beforeClose: PreviewManager["Service"]["beforeClose"] = (hook) =>
+    Effect.acquireRelease(
+      Effect.sync(() => beforeCloseHooks.add(hook)),
+      () => Effect.sync(() => beforeCloseHooks.delete(hook)),
+    ).pipe(Effect.asVoid);
+
   const close: PreviewManager["Service"]["close"] = Effect.fn("PreviewManager.close")(
     function* (input) {
+      // Outside the lock: a hook may wait seconds for a page to unload.
+      yield* Effect.forEach(
+        closeTargets(yield* SynchronizedRef.get(stateRef), input),
+        (tab) => Effect.forEach(beforeCloseHooks, (hook) => hook(tab), { discard: true }),
+        { concurrency: "unbounded", discard: true },
+      );
       const createdAt = yield* currentIsoTimestamp;
       yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
         const eventsToEmit: PreviewEvent[] = [];
         const sessions = new Map(state.sessions);
-        const targets = input.tabId
-          ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
-              (entry): entry is PreviewSessionState => entry !== undefined,
-            )
-          : sessionsForThread(state, input.threadId);
+        const targets = closeTargets(state, input);
         let revision = state.revision;
         for (const target of targets) {
           revision += 1;
@@ -482,6 +507,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     resize,
     adjust,
     close,
+    beforeClose,
     list,
     events,
     subscribeEvents: PubSub.subscribe(eventsPubSub),
