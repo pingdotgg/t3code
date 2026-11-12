@@ -104,3 +104,19 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
     description: "Change managed tunnel connectivity.",
   },
 ];
+
+/** Shown instead of the granted scopes while they are unknown, so every surface says the same thing. */
+export function sessionPermissionsUnavailableMessage(input: {
+  readonly connected: boolean;
+  /** The check errored; the client retries it while connected. */
+  readonly failed: boolean;
+  /** The environment answered that this session is not signed in; retrying will not change that. */
+  readonly rejected: boolean;
+}): string {
+  if (!input.connected) return "Connect to this environment to view this session’s permissions.";
+  if (input.rejected)
+    return "This environment did not accept your session. Reconnect to try again.";
+  return input.failed
+    ? "Could not verify your permissions. Retrying automatically."
+    : "Checking permissions…";
+}

@@ -148,7 +148,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       });
 
       expect(filterOfCall(0)).toBe(
-        '(title ~ "page" OR description ~ "page") AND updated_on <= 2026-07-02T00:00:00+00:00',
+        '(title ~ "page" OR description ~ "page") AND updated_on < 2026-07-02T00:00:00.001Z',
       );
     }),
   );

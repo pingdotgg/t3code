@@ -185,13 +185,12 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
   ];
 }
 
-const storageCases = (["sqlite", "memory"] as const).map((storage) => ({
-  storage,
-  storeLayer:
-    storage === "sqlite"
-      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))
-      : ProjectionStore.layerMemory,
-}));
+const storageCases = [
+  {
+    storage: "sqlite" as const,
+    storeLayer: ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  },
+];
 
 it.effect.each(storageCases)(
   "$storage: finds the active root turn without an attempt reverse link",

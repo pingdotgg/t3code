@@ -19,6 +19,9 @@ class T3TerminalModule : Module() {
         view.writeOutput(data, reset)
       }
 
+      // The Android input field already clears after every change.
+      AsyncFunction("resetInput") { _: T3TerminalView -> }
+
       Prop("terminalKey") { view: T3TerminalView, terminalKey: String ->
         view.terminalKey = terminalKey
       }
@@ -66,7 +69,15 @@ class T3TerminalModule : Module() {
       Prop("captureRequest") { view: T3TerminalView, request: Double ->
         view.captureRequest = request
       }
+
+      Prop("sharedGrid") { view: T3TerminalView, sharedGrid: List<Int> ->
+        view.sharedGrid = sharedGrid
+      }
       Events("onInput", "onResize", "onCapture")
+
+      OnViewDidUpdateProps { view: T3TerminalView ->
+        view.applyPendingBuffer()
+      }
 
       OnViewDestroys { view: T3TerminalView ->
         view.cleanup()
