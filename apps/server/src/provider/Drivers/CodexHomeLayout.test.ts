@@ -331,6 +331,40 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
+      "keeps the provider usable after Codex atomically rewrites a linked runtime file",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          const rewrittenEntries = ["cloud-config-bundle-cache.json", ".codex-global-state.json"];
+          for (const entryName of rewrittenEntries) {
+            yield* writeTextFile(path.join(sharedHome, entryName), '{"owner":"shared"}\n');
+          }
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+          yield* materializeCodexShadowHome(layout);
+
+          // Codex saves these with write-temp-then-rename, replacing the link with a regular file.
+          for (const entryName of rewrittenEntries) {
+            const temporaryPath = path.join(shadowHome, `.${entryName}.tmp`);
+            yield* fileSystem.writeFileString(temporaryPath, '{"owner":"shadow"}\n');
+            yield* fileSystem.rename(temporaryPath, path.join(shadowHome, entryName));
+          }
+
+          const result = yield* materializeCodexShadowHome(layout).pipe(Effect.result);
+
+          expect(result._tag).toBe("Success");
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "rejects shared entries that already exist in the shadow home as real files",
       () =>
         Effect.gen(function* () {
