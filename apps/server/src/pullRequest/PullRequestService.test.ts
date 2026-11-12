@@ -1891,6 +1891,71 @@ it.effect("stops new reads after a rate limit while leaving manual actions avail
   }),
 );
 
+it.effect(
+  "opening a pull request during a rate-limit pause still reads its detail and activity",
+  () =>
+    Effect.gen(function* () {
+      let detailReads = 0;
+      let activityReads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: ({ number }) =>
+              Effect.suspend(() => {
+                detailReads += 1;
+                return number === 1
+                  ? Effect.fail(
+                      new PullRequestProviderError({
+                        provider: SourceControlProviderKind.make("github"),
+                        operation: "getChangeRequest",
+                        reason: "rate-limited",
+                        detail: "GitHub API rate limit exceeded.",
+                      }),
+                    )
+                  : Effect.succeed({ ...hostedChangeRequest("Body"), number });
+              }),
+            getChangeRequestActivity: () =>
+              Effect.sync(() => {
+                activityReads += 1;
+                return {
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                };
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 2 };
+
+      yield* Effect.result(service.detail({ ...reference, number: 1 }));
+      const background = yield* Effect.result(service.detail(reference));
+      const opened = yield* Effect.result(
+        service
+          .detail(reference)
+          .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true)),
+      );
+      const timeline = yield* Effect.result(
+        service
+          .activity(reference)
+          .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true)),
+      );
+
+      expect(background).toMatchObject({ _tag: "Failure" });
+      expect({ opened, timeline }).toMatchObject({
+        opened: { _tag: "Success", success: { number: 2 } },
+        timeline: { _tag: "Success", success: { commentCount: 0 } },
+      });
+      assert.strictEqual(detailReads, 2);
+      assert.strictEqual(activityReads, 1);
+    }),
+);
+
 it.effect("refuses a repository that does not belong to the requested project", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -2603,6 +2668,40 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
     for (let index = 0; index < 2048; index++)
       yield* service.refreshAfterTurn(`project-${index}` as ProjectId);
     assert.strictEqual((yield* service.summary(ref))?.title, "new");
+  }),
+);
+
+it.effect("a finished turn leaves another project's cached listing in place", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            reads.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+    const webListing = { state: "open" as const, projectId: "p1" as ProjectId };
+    const everyListing = { state: "open" as const };
+
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    reads.length = 0;
+    yield* service.refreshAfterTurn("p2" as ProjectId);
+    yield* service.list(webListing);
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, []);
+
+    yield* service.refreshAfterTurn("p2" as ProjectId, { pushed: true });
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/web"]);
   }),
 );
 
@@ -4208,35 +4307,6 @@ it.effect("keeps viewed files itself for a host that keeps none of its own", () 
   }),
 );
 
-it.effect("reports a file pushed to since it was cleared as changed", () =>
-  Effect.gen(function* () {
-    const revisions = new Map([
-      ["src/a.ts", "blob-a"],
-      ["src/b.ts", "blob-b"],
-    ]);
-    const service = yield* environmentViewedService(revisions, []);
-
-    yield* service.setFilesViewed({
-      ...GITLAB_REFERENCE,
-      files: [
-        { path: "src/a.ts", viewed: true },
-        { path: "src/b.ts", viewed: true },
-      ],
-    });
-    revisions.set("src/a.ts", "blob-a-again");
-    yield* service.invalidate({ reference: GITLAB_REFERENCE });
-    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
-
-    assert.deepStrictEqual(
-      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
-      [
-        { path: "src/a.ts", state: "dismissed" },
-        { path: "src/b.ts", state: "viewed" },
-      ],
-    );
-  }),
-);
-
 it.effect("keeps a deleted file cleared, which the head has no version of at all", () =>
   Effect.gen(function* () {
     const service = yield* environmentViewedService(new Map(), []);
@@ -4282,6 +4352,26 @@ it.effect("leaves a mark alone when the host could not say what the head has of 
         { path: "src/past-the-cut.ts", state: "viewed" },
       ],
     );
+  }),
+);
+
+it.effect("reports a file pushed to after the diff the reader ticked was drawn as changed", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "shown-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.filesViewed(GITLAB_REFERENCE);
+    yield* TestClock.adjust("61 seconds");
+    revisions.set("src/a.ts", "pushed-a");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: "shown-a" }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
   }),
 );
 

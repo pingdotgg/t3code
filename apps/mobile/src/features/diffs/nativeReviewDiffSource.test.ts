@@ -39,13 +39,6 @@ it("evicts source text by aggregate size and returns an over-budget response unc
   expect(fetch).toHaveBeenCalledTimes(5);
 });
 
-it("lets later viewport requests retry a failed source fetch", async () => {
-  const fetch = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValueOnce(SOURCE);
-  const load = createNativeReviewDiffSourceLoader(fetch);
-  await expect(load("retry.ts")).rejects.toThrow("Offline");
-  expect(await load("retry.ts")).toBe(SOURCE);
-});
-
 const failureKeys = [
   ["string", () => "retry.ts"],
   ["number", () => 1],
