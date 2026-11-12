@@ -652,10 +652,7 @@ export function createDeviceStreamClient(
     isCurrent = () => !stopped,
   ): Promise<boolean> => {
     const epoch = decoderEpoch;
-    const full: VideoDecoderConfig = {
-      ...config,
-      optimizeForLatency: true,
-    };
+    const full: VideoDecoderConfig = { ...config, optimizeForLatency: true };
     if (iosPreferSoftware) full.hardwareAcceleration = "prefer-software";
     const support = await VideoDecoder.isConfigSupported(full).catch(() => ({ supported: false }));
     if (!isCurrent() || epoch !== decoderEpoch) return false;
