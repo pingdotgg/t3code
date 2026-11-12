@@ -69,6 +69,71 @@ export const ThreadSpecialistMcpServers = Schema.Record(
 );
 export type ThreadSpecialistMcpServers = typeof ThreadSpecialistMcpServers.Type;
 
+/** MCP server shape on thread shells and other client wire records (secrets omitted). */
+export const ThreadSpecialistMcpHttpServerWire = Schema.Struct({
+  type: Schema.Literal("http"),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+});
+export type ThreadSpecialistMcpHttpServerWire = typeof ThreadSpecialistMcpHttpServerWire.Type;
+
+export const ThreadSpecialistMcpStdioServerWire = Schema.Struct({
+  type: Schema.Literal("stdio"),
+  command: TrimmedNonEmptyString.check(Schema.isMaxLength(1_024)),
+  args: Schema.optional(Schema.Array(Schema.String.check(Schema.isMaxLength(1_024)))),
+});
+export type ThreadSpecialistMcpStdioServerWire = typeof ThreadSpecialistMcpStdioServerWire.Type;
+
+export const ThreadSpecialistMcpServerWire = Schema.Union([
+  ThreadSpecialistMcpHttpServerWire,
+  ThreadSpecialistMcpStdioServerWire,
+]);
+export type ThreadSpecialistMcpServerWire = typeof ThreadSpecialistMcpServerWire.Type;
+
+export const ThreadSpecialistMcpServersWire = Schema.Record(
+  ThreadSpecialistMcpServerName,
+  ThreadSpecialistMcpServerWire,
+).check(
+  Schema.makeFilter((value) => (Object.keys(value).length <= 16 ? true : "At most 16 servers.")),
+);
+export type ThreadSpecialistMcpServersWire = typeof ThreadSpecialistMcpServersWire.Type;
+
+export const ThreadSpecialistWire = Schema.Struct({
+  key: ThreadSpecialistKey,
+  label: ThreadSpecialistLabel,
+  instructions: Schema.optional(ThreadSpecialistInstructions),
+  skills: Schema.optional(ThreadSpecialistSkillNames),
+  mcpServers: Schema.optional(ThreadSpecialistMcpServersWire),
+});
+export type ThreadSpecialistWire = typeof ThreadSpecialistWire.Type;
+
+/** Redacts role MCP headers/env before a specialist is sent to clients. */
+export const threadSpecialistForWire = (specialist: ThreadSpecialist): ThreadSpecialistWire => {
+  const mcpServers =
+    specialist.mcpServers === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(specialist.mcpServers).map(([name, server]) => [
+            name,
+            server.type === "http"
+              ? ({ type: "http", url: server.url } as const)
+              : ({
+                  type: "stdio",
+                  command: server.command,
+                  ...(server.args === undefined ? {} : { args: server.args }),
+                } as const),
+          ]),
+        );
+  return {
+    key: specialist.key,
+    label: specialist.label,
+    ...(specialist.instructions === undefined ? {} : { instructions: specialist.instructions }),
+    ...(specialist.skills === undefined ? {} : { skills: specialist.skills }),
+    ...(mcpServers === undefined
+      ? {}
+      : { mcpServers: mcpServers as ThreadSpecialistMcpServersWire }),
+  };
+};
+
 export const ThreadSpecialist = Schema.Struct({
   key: ThreadSpecialistKey,
   label: ThreadSpecialistLabel,

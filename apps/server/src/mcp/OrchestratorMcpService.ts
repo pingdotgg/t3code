@@ -119,6 +119,7 @@ import type {
 } from "../orchestration-v2/ProjectionStore.ts";
 import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { rejectSpecialistStdioMcpBelowFullAccess } from "./specialistRoleMcpAccess.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -738,6 +739,7 @@ function stableCommandId(input: {
   readonly requestKey: string;
   readonly operation: string;
   readonly index?: number;
+  readonly threadId?: ThreadId;
 }): CommandId {
   return CommandId.make(
     [
@@ -746,6 +748,7 @@ function stableCommandId(input: {
       stablePart(input.scope.requestNamespace),
       stablePart(input.operation),
       stablePart(input.requestKey),
+      ...(input.threadId === undefined ? [] : [stablePart(input.threadId)]),
       ...(input.index === undefined ? [] : [String(input.index)]),
     ].join(":"),
   );
@@ -770,7 +773,8 @@ function stableThreadId(input: {
 function stableMessageId(input: {
   readonly scope: McpInvocationScope;
   readonly requestKey: string;
-  readonly index: number;
+  readonly index?: number;
+  readonly threadId?: ThreadId;
 }): MessageId {
   return MessageId.make(
     [
@@ -778,7 +782,8 @@ function stableMessageId(input: {
       "mcp",
       stablePart(input.scope.requestNamespace),
       stablePart(input.requestKey),
-      String(input.index),
+      ...(input.threadId === undefined ? [] : [stablePart(input.threadId)]),
+      ...(input.index === undefined ? [] : [String(input.index)]),
     ].join(":"),
   );
 }
@@ -3052,6 +3057,7 @@ const make = Effect.gen(function* () {
             ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
             ...(prior === undefined ? {} : { prior }),
           });
+          yield* rejectSpecialistStdioMcpBelowFullAccess(limits, specialist.mcpServers);
           const needsRebind = !specialistBindingsEqual(prior, specialist);
           const prompt = input.prompt;
           if (needsRebind || prompt !== undefined || existing.archivedAt !== null) {
@@ -3158,6 +3164,7 @@ const make = Effect.gen(function* () {
           ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
         });
         const { scope, parent } = yield* loadThreadCaller(callerScope, "find_or_open_specialist");
+        yield* rejectSpecialistStdioMcpBelowFullAccess(limits, specialist.mcpServers);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
@@ -3326,7 +3333,7 @@ const make = Effect.gen(function* () {
     ),
     retireSpecialist: Effect.fn("OrchestratorMcpService.retireSpecialist")(
       function* (callerScope, input) {
-        const { parent: listParent } = yield* loadCaller(callerScope, ["runs"]);
+        const { parent: listParent, limits } = yield* loadCaller(callerScope, ["runs"]);
         const projectId = yield* resolveProjectTarget(
           listParent,
           input.projectId,
@@ -3380,6 +3387,16 @@ const make = Effect.gen(function* () {
         }
         const target = yield* loadTargetThread(existing.id);
         yield* assertLiveCallerForOtherThread(callerScope, listParent, target);
+        const parentProjection =
+          listParent === undefined ? null : yield* loadThreadRecords(listParent.thread.id, []);
+        yield* resolveRuntimeMode(
+          parentProjection?.thread.runtimeMode ?? limits.runtimeMode,
+          target.thread.runtimeMode,
+        );
+        yield* resolveInteractionMode(
+          parentProjection?.thread.interactionMode ?? limits.interactionMode,
+          target.thread.interactionMode,
+        );
         const stopCommandId = stableCommandId({
           scope: callerScope,
           requestKey: key,
@@ -3529,7 +3546,12 @@ const make = Effect.gen(function* () {
         requestKey: key,
         operation: "exec-dispatch",
       });
-      yield* threadManagement
+      const messageId = stableMessageId({
+        scope,
+        requestKey: key,
+        index: 0,
+      });
+      const dispatched = yield* threadManagement
         .dispatch({
           type: "message.dispatch",
           createdBy: "agent",
@@ -3537,11 +3559,7 @@ const make = Effect.gen(function* () {
           commandId: dispatchCommandId,
           threadId,
           senderThreadId: scope.thread.threadId,
-          messageId: stableMessageId({
-            scope,
-            requestKey: key,
-            index: 0,
-          }),
+          messageId,
           text: input.task,
           attachments: [],
           modelSelection: resolvedModelSelection,
@@ -3557,8 +3575,22 @@ const make = Effect.gen(function* () {
                 ),
           ),
         );
-      const started = yield* loadThreadRecords(threadId, ["runs"]);
-      const startedRun = started.runs.at(-1);
+      const startedRunStored = dispatched.storedEvents.find(
+        (stored) =>
+          stored.commandId === dispatchCommandId &&
+          stored.event.type === "run.created" &&
+          stored.event.threadId === threadId,
+      );
+      let startedRun =
+        startedRunStored?.event.type === "run.created" ? startedRunStored.event.payload : undefined;
+      if (startedRun === undefined) {
+        const started = yield* loadThreadRecords(threadId, ["runs", "messages"]);
+        const message = started.messages.find((candidate) => candidate.id === messageId);
+        startedRun =
+          message?.runId == null
+            ? undefined
+            : started.runs.find((candidate) => candidate.id === message.runId);
+      }
       if (startedRun === undefined) {
         return yield* failure(
           "orchestration_error",
@@ -3576,6 +3608,7 @@ const make = Effect.gen(function* () {
           ),
         })
         .pipe(Effect.mapError(threadManagementFailure));
+      const started = yield* loadThreadRecords(threadId, []);
       const status = waited.run === null ? "idle" : runOutcome(waited.run);
       const link = formatThreadLink(
         { environmentId: scope.environmentId, threadId },
@@ -3986,11 +4019,15 @@ const make = Effect.gen(function* () {
             yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
             const messageId =
               index === undefined
-                ? stableOperationMessageId({ scope, requestKey: key, operation })
+                ? stableOperationMessageId({
+                    scope,
+                    requestKey: `${key}:${threadId}`,
+                    operation,
+                  })
                 : stableMessageId({
                     scope,
                     requestKey: `${key}:${operation}`,
-                    index,
+                    threadId,
                   });
             const result = yield* threadManagement
               .sendToThread({
@@ -3999,7 +4036,7 @@ const make = Effect.gen(function* () {
                   scope,
                   requestKey: key,
                   operation,
-                  ...(index === undefined ? {} : { index }),
+                  threadId,
                 }),
                 threadId,
                 ...(sender === undefined ? {} : { senderThreadId: sender.thread.id }),

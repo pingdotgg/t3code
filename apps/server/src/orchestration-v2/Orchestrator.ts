@@ -70,6 +70,7 @@ import {
   resolveProviderInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
+  ProjectId,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
@@ -1339,6 +1340,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
+  // Specialist key uniqueness is project-wide; serialize binds across threads in a project.
+  const specialistBind = yield* KeyedLock.make<ProjectId>();
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -15271,6 +15274,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
+    // Specialist binds check the project snapshot for key conflicts. Hold the project lock
+    // outside the thread lock so two seats cannot claim the same key concurrently.
+    if (command.type === "thread.specialist.set" && command.specialist !== null) {
+      const thread = yield* findThread(command.threadId);
+      if (thread !== null) {
+        return yield* specialistBind.withLock(thread.projectId, dispatch);
+      }
+    }
     // A parent's lock comes before its side chats' locks, so a delete cascade and a side chat
     // fork or command never interleave. A fork from a side chat or onto an existing thread would
     // invert that order; dispatch rejects both, so they skip the source lock.

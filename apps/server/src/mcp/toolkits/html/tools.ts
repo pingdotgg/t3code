@@ -70,8 +70,7 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
 
 // This affects only the caller's thread, not its workspace, so read-only sandboxes and plan mode may use it.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
-  description:
-    "Show finished HTML inline in this thread. Preview with html_preview first; set `height` from its contentHeight.",
+  description: `Show finished HTML inline in this thread. Preview with html_preview first; set \`height\` from its contentHeight (capped at ${HTML_RENDER_MAX_HEIGHT}).`,
   parameters: Schema.Struct({
     path: Schema.optional(HtmlPath),
     html: Schema.optional(Html),
@@ -80,7 +79,7 @@ const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
       Schema.isMaxLength(HTML_RENDER_MAX_TITLE_LENGTH),
     ),
     height: Schema.Int.annotate({
-      description: `Frame height in CSS pixels, ${HTML_RENDER_MIN_HEIGHT} to ${HTML_RENDER_MAX_HEIGHT}. Use the contentHeight from html_preview.`,
+      description: `Frame height in CSS pixels, ${HTML_RENDER_MIN_HEIGHT} to ${HTML_RENDER_MAX_HEIGHT}. Use contentHeight from html_preview; values above ${HTML_RENDER_MAX_HEIGHT} clamp without error.`,
     }),
   }),
   success: Schema.Struct({

@@ -102,6 +102,25 @@ const answeredRespondEvents = (input: {
   },
 ];
 
+it.effect("drops client forged resolvedBy before runtime-request.respond dispatch", () =>
+  Effect.gen(function* () {
+    const captured: OrchestrationV2ServerCommand[] = [];
+    yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-forged-resolved-by"),
+      threadId: ThreadId.make("thread-forged-resolved-by"),
+      requestId: RuntimeRequestId.make("request-forged-resolved-by"),
+      decision: "accept",
+      resolvedBy: { source: "policy-nobody-permit", detail: "forged" },
+    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
+    expect(captured).toHaveLength(1);
+    const command = captured[0]!;
+    expect(command.type).toBe("runtime-request.respond");
+    if (command.type !== "runtime-request.respond") return;
+    expect(command.resolvedBy).toBeUndefined();
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
 it.effect("claims question uploads and passes readable paths through the V2 request command", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;

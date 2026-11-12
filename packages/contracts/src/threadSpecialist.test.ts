@@ -8,6 +8,7 @@ import {
   specialistMcpServerEntries,
   ThreadSpecialist,
   ThreadSpecialistKey,
+  threadSpecialistForWire,
   withoutSpecialistMcpServer,
   withoutSpecialistSkill,
 } from "./threadSpecialist.ts";
@@ -230,6 +231,39 @@ describe("withoutSpecialistSkill", () => {
       {
         key: "vault",
         label: "Vault",
+      },
+    );
+  });
+});
+
+describe("threadSpecialistForWire", () => {
+  it("drops MCP headers and env before client wire", () => {
+    assert.deepEqual(
+      threadSpecialistForWire(
+        decodeSpecialist({
+          key: "vault",
+          label: "Vault",
+          mcpServers: {
+            vault: {
+              type: "stdio",
+              command: "vault-mcp",
+              env: { TOKEN: "secret" },
+            },
+            docs: {
+              type: "http",
+              url: "https://docs.example/mcp",
+              headers: { Authorization: "Bearer secret" },
+            },
+          },
+        }),
+      ),
+      {
+        key: "vault",
+        label: "Vault",
+        mcpServers: {
+          vault: { type: "stdio", command: "vault-mcp" },
+          docs: { type: "http", url: "https://docs.example/mcp" },
+        },
       },
     );
   });

@@ -268,7 +268,7 @@ const RetireSpecialistTool = Tool.make("retire_specialist", {
 
 const ExecTool = Tool.make("t3_exec", {
   description:
-    "One-shot harness run: `task` in, report out. No owned child seat. Use `delegate_task` for a lasting seat.",
+    "One-shot harness run: `task` in, report out. No owned child seat. Use `find_or_open_specialist` for a lasting seat; `delegate_task` for a one-off child.",
   parameters: OrchestratorMcpExecInput,
   success: OrchestratorMcpExecResult,
   failure: OrchestratorMcpFailure,

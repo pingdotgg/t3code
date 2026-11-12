@@ -272,6 +272,12 @@ function ProjectDetail({
     group.memberProjects.find(
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
+  const agentTeamProject =
+    group.memberProjects.find(
+      (member) =>
+        environmentById.get(member.environmentId)?.serverConfig?.settings.agentTeamsEnabled ===
+        true,
+    ) ?? null;
   const threads = useThreadShells();
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
     reportFailure: false,
@@ -651,12 +657,11 @@ function ProjectDetail({
           ) : null}
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
-        {environmentById.get(filePickerProject.environmentId)?.serverConfig?.settings
-          .agentTeamsEnabled === true ? (
+        {agentTeamProject === null ? null : (
           <ProjectAgentTeamSettings
-            projectRef={scopeProjectRef(filePickerProject.environmentId, filePickerProject.id)}
+            projectRef={scopeProjectRef(agentTeamProject.environmentId, agentTeamProject.id)}
           />
-        ) : null}
+        )}
         <ProjectActionsSettings />
         {checkoutChoices}
         <SettingsSection title="Danger">

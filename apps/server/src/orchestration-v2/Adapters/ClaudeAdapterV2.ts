@@ -3226,6 +3226,7 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+    readonly specialistRoleLoadout?: string;
   },
 ): string {
   return JSON.stringify({
@@ -3236,6 +3237,9 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    ...(mcpOverrides.specialistRoleLoadout === undefined
+      ? {}
+      : { specialistRoleLoadout: mcpOverrides.specialistRoleLoadout }),
   });
 }
 
@@ -11703,7 +11707,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
             ...(specialist === undefined ? {} : { specialist }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, {
+            ...mcpOverrides,
+            ...(specialistRoleLoadout === undefined ? {} : { specialistRoleLoadout }),
+          });
           const compiledSelection = compileClaudeModelSelection(
             turnInput.modelSelection,
             modelCatalog,

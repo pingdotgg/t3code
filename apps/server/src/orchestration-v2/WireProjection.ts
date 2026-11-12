@@ -11,6 +11,7 @@ import type {
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { threadSpecialistForWire } from "@t3tools/contracts";
 import {
   dedupeSubagentBodies,
   dedupeTurnItemBodies,
@@ -304,6 +305,13 @@ export function projectThreadProjectionForWire(
   };
   return {
     ...projection,
+    thread:
+      projection.thread.specialist === undefined
+        ? projection.thread
+        : {
+            ...projection.thread,
+            specialist: threadSpecialistForWire(projection.thread.specialist),
+          },
     checkpoints: projection.checkpoints.map(capCheckpointFiles),
     contextHandoffs: projection.contextHandoffs.map(projectContextHandoffForWire),
     turnItems: projection.turnItems.map(project),

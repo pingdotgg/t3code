@@ -624,7 +624,8 @@ export function useThreadComposerState(input: {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
-    const modelSelection = draft.modelSelection ?? thread.modelSelection;
+    const modelSelection =
+      draft.modelSelection ?? thread.nextTurnModelSelection ?? thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
     const modelUnavailable =
       selectedEnvironmentRuntime?.connectionState === "connected" &&
@@ -803,8 +804,12 @@ export function useThreadComposerState(input: {
 
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
     const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
-    const contextHandoffOnFresh =
-      freshContext && getComposerDraftSnapshot(threadKey).contextHandoffOnFresh === true;
+    const freshSessionRollback = freshContext
+      ? {
+          withRecap: getComposerDraftSnapshot(threadKey).contextHandoffOnFresh === true,
+        }
+      : undefined;
+    const contextHandoffOnFresh = freshSessionRollback?.withRecap === true;
     const metadata = makeQueuedMessageMetadata();
     // A fresh session drops the context a compaction would summarize. Only a send the notice
     // announced compacts, since the notice's minute clock can trail the exact deadline.
@@ -852,8 +857,11 @@ export function useThreadComposerState(input: {
           attachments: [],
         });
         appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
-        if (freshContext) {
-          setFreshSessionPending(threadKey, true, { withRecap: contextHandoffOnFresh });
+        if (
+          freshSessionRollback !== undefined &&
+          getComposerDraftSnapshot(threadKey).freshContext !== true
+        ) {
+          setFreshSessionPending(threadKey, true, { withRecap: freshSessionRollback.withRecap });
         }
         setThreadComposerError(
           threadKey,

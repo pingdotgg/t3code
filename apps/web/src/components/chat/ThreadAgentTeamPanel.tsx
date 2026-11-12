@@ -23,10 +23,12 @@ import { useId, useState } from "react";
 
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { cn, randomUUID } from "../../lib/utils";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQuietThreadProjection, useThreadShell } from "../../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { threadEnvironment } from "../../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { waitForAtomValue } from "../../state/waitForAtomValue";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -297,6 +299,17 @@ function ThreadAgentTeamPanelInner(props: {
       if (stopped._tag === "Failure" && !isAtomCommandInterrupted(stopped)) {
         setBusy(false);
         reportFailure("Could not stop specialist", squashAtomCommandFailure(stopped));
+        return;
+      }
+      const settled = await waitForAtomValue({
+        registry: appAtomRegistry,
+        atom: environmentThreadShells.threadShellAtom(threadRef),
+        predicate: (shell) => shell !== null && threadRuntimeCanArchive(shell.runtime),
+        timeoutMs: 8_000,
+      });
+      if (!settled) {
+        setBusy(false);
+        reportFailure("Could not archive specialist", "Stop is still settling; try Archive again.");
         return;
       }
     }

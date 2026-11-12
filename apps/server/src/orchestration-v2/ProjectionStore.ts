@@ -1,5 +1,9 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { openOwnedWorkCount, pendingGuestMessageCount } from "@t3tools/contracts";
+import {
+  openOwnedWorkCount,
+  pendingGuestMessageCount,
+  threadSpecialistForWire,
+} from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1729,7 +1733,7 @@ export function threadShellFromProjection(
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
     ...(projection.thread.specialist === undefined
       ? {}
-      : { specialist: projection.thread.specialist }),
+      : { specialist: threadSpecialistForWire(projection.thread.specialist) }),
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -2021,7 +2025,7 @@ function shellFromState(input: {
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
     ...(input.state.thread.specialist === undefined
       ? {}
-      : { specialist: input.state.thread.specialist }),
+      : { specialist: threadSpecialistForWire(input.state.thread.specialist) }),
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,

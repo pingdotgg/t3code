@@ -79,6 +79,36 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
     });
   return { ...context, request, item };
 });
+
+const readWorkReview = Effect.fn("mcp.readWorkReview")(function* (input: {
+  threadId?: ThreadId | undefined;
+  requestId: RuntimeRequestId;
+}) {
+  const context = yield* readThread(input.threadId, ["runtimeRequests", "turnItems"]);
+  const request = context.projection.runtimeRequests.find(
+    (candidate) => candidate.id === input.requestId && candidate.kind === "work_review",
+  );
+  if (request === undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "The work review was not found.",
+    });
+  if (request.status !== "pending")
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message:
+        request.status === "resolved"
+          ? "The work review was already resolved."
+          : `The work review is no longer pending (${request.status}).`,
+    });
+  if (request.responseCapability.type !== "orchestration")
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "Only orchestration work reviews can be resolved through this tool.",
+    });
+  return { ...context, request };
+});
+
 /** A field the chosen action needs. `null` counts as given, as in `beforeRunId: null`. */
 const required = <A>(value: A | undefined, name: string) =>
   value === undefined
@@ -569,6 +599,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           case "accept":
           case "reject": {
             const requestId = yield* required(input.requestId, "requestId");
+            yield* readWorkReview({ threadId: input.threadId, requestId });
             // Orchestration work reviews resolve without a live provider session, so decline
             // feedback is not supported on this path; `note` is only used when requesting.
             return yield* dispatch(input.threadId, (common) => ({

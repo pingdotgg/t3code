@@ -3933,7 +3933,28 @@ describe("OrchestratorMcpService provider resolution", () => {
           dispatch: (command) =>
             Effect.gen(function* () {
               yield* Ref.update(dispatched, (commands) => [...commands, command]);
-              return { sequence: 1, storedEvents: [] } as never;
+              if (command.type !== "message.dispatch") {
+                return { sequence: 1, storedEvents: [] } as never;
+              }
+              return {
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: command.commandId,
+                    event: {
+                      type: "run.created",
+                      threadId: command.threadId,
+                      payload: {
+                        id: execRunId,
+                        status: "completed",
+                        userMessageId: command.messageId,
+                        restartCancelledBackgroundWork: [],
+                      },
+                    },
+                  },
+                ],
+              } as never;
             }),
           waitForThread: () =>
             Effect.succeed({

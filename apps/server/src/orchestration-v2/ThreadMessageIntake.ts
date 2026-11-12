@@ -87,7 +87,11 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   incoming: OrchestrationV2Command,
 ) {
   const command =
-    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+    incoming.type === "message.dispatch"
+      ? yield* withGuestAttachments(incoming)
+      : incoming.type === "runtime-request.respond" && incoming.resolvedBy !== undefined
+        ? (({ resolvedBy: _resolvedBy, ...rest }) => rest)(incoming)
+        : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;

@@ -47,7 +47,7 @@ import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { OwnedWorkClosureReason, OwnedWorkItem } from "./ownedWork.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
-import { ThreadSpecialist } from "./threadSpecialist.ts";
+import { ThreadSpecialist, ThreadSpecialistWire } from "./threadSpecialist.ts";
 import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -2241,7 +2241,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
   /** Absent when the thread is not a durable specialist. */
-  specialist: Schema.optional(ThreadSpecialist),
+  specialist: Schema.optional(ThreadSpecialistWire),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   opens: Schema.optional(LenientThreadOpens),
   titleRegeneration: Schema.optional(

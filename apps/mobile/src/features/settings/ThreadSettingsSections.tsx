@@ -305,7 +305,8 @@ function AgentTeamsSection() {
   const { environments } = useEnvironments();
   const supported = environments.filter(
     (environment) =>
-      environment.connection.phase === "connected" && environment.serverConfig != null,
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.teamTemplates === true,
   );
   const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {

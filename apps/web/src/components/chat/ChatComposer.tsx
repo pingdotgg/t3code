@@ -874,13 +874,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptInjectionState: getComposerPromptInjectionState(prompt),
     candidateInstanceIds: [
       composerDraft.activeProvider ?? null,
-      activeThread?.runtime?.providerInstanceId,
       activeThreadModelSelection?.instanceId,
+      activeThread?.runtime?.providerInstanceId,
       activeProjectDefaultModelSelection?.instanceId,
     ],
     lockedProvider,
     lockedInstanceId:
-      activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
+      activeThreadModelSelection?.instanceId ?? activeThread?.runtime?.providerInstanceId,
   });
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;

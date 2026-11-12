@@ -1309,17 +1309,18 @@ export default function ChatView(props: ChatViewProps) {
     settings,
     activeProject?.id ?? null,
   );
-  const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
+  const activeThreadModelInstanceId =
+    activeThread?.nextTurnModelSelection?.instanceId ?? activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,
     candidateInstanceIds: [
       selectedProviderByThreadId,
-      activeRuntime?.providerInstanceId,
       activeThreadModelInstanceId,
+      activeRuntime?.providerInstanceId,
       activeProjectDefaultModelSelection?.instanceId,
     ],
     lockedProvider,
-    lockedInstanceId: activeRuntime?.providerInstanceId ?? activeThreadModelInstanceId,
+    lockedInstanceId: activeThreadModelInstanceId ?? activeRuntime?.providerInstanceId,
   });
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
