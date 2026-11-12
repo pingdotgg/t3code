@@ -2081,6 +2081,8 @@ describe("CursorAdapterV2", () => {
             "cwd-only": { "command": "node", "args": ["server.mjs"], "cwd": "\${workspaceFolder}" },
             "unset-env": { "command": "node", "env": { "CONFIG": "\${env:T3_MCP_UNSET}" } },
             "wrapped": { "command": "proto", "args": ["run", "node", "--", "\${workspaceFolder}/server.mjs"] },
+            "env-file": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "envFile": ".env.mcp" },
+            "tool-filter": { "command": "node", "args": ["\${workspaceFolder}/server.mjs"], "enabledTools": ["read_file"] },
             "off": { "command": "node", "args": ["\${workspaceFolder}/off.mjs"] },
             "typed": { "type": "\${env:MCP_TYPE}", "command": "node", "args": ["server.mjs"] },
             "plugin-docs-search": { "command": "node", "args": ["\${workspaceFolder}/search.mjs"] },
@@ -2231,19 +2233,7 @@ describe("CursorAdapterV2", () => {
             startupTimeoutSec: 120,
             cwd: projectRoot,
           },
-          "argument-only": {
-            command: "node",
-            args: ["server.mjs", "--workspace", projectRoot],
-            cwd: projectRoot,
-          },
-          "env-only": {
-            command: "node",
-            args: ["server.mjs"],
-            env: { PROJECT_ROOT: projectRoot },
-            cwd: projectRoot,
-          },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
-          "unset-env": { command: "node", env: { CONFIG: "" }, cwd: projectRoot },
           wrapped: {
             command: "proto",
             args: ["run", "node", "--", `${projectRoot}/server.mjs`],

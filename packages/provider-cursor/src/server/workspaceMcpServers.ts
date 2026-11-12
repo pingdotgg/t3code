@@ -14,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const PLACEHOLDER_PATTERN = /\$\{(?:env:([A-Za-z_][A-Za-z0-9_]*)|([^:}]+)(?::-([^}]*))?)\}/g;
 const WORKSPACE_VARIABLE_PATTERN =
   /\$\{(?:workspaceFolder|workspaceFolderBasename|userHome|pathSeparator|\/)\}/;
+const WORKSPACE_PATH_PATTERN = /^\$\{(?:workspaceFolder|userHome)\}[\\/]/;
 
 const StringRecord = Schema.Record(Schema.String, Schema.String);
 const CursorMcpFile = Schema.Struct({
@@ -51,12 +52,19 @@ function expand<A>(value: A, resolve: (text: string) => string): A {
   return value;
 }
 
-function someString(value: unknown, test: (text: string) => boolean): boolean {
-  if (typeof value === "string") return test(value);
-  if (typeof value === "object" && value !== null) {
-    return Object.values(value).some((item) => someString(item, test));
-  }
-  return false;
+// Only servers whose literal copy cannot start: the SDK also starts the file-defined copy and
+// loses its handle when it keeps the inline one, and inline configs drop envFile and enabledTools.
+function needsWorkspaceExpansion(server: unknown): boolean {
+  if (typeof server !== "object" || server === null) return false;
+  if ("envFile" in server || "enabledTools" in server) return false;
+  const { command, cwd, args } = server as Record<string, unknown>;
+  return (
+    [command, cwd].some(
+      (text) => typeof text === "string" && WORKSPACE_VARIABLE_PATTERN.test(text),
+    ) ||
+    (Array.isArray(args) &&
+      args.some((arg) => typeof arg === "string" && WORKSPACE_PATH_PATTERN.test(arg)))
+  );
 }
 
 /** Cursor's project slug, as `~/.cursor/projects/<slug>` names it. */
@@ -150,18 +158,10 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       if (
         "command" in server &&
         !name.startsWith("plugin-") &&
-        someString(
-          rawServers[name],
-          (text) =>
-            WORKSPACE_VARIABLE_PATTERN.test(text) ||
-            Array.from(text.matchAll(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g)).some(
-              ([, name]) => name !== undefined && environment[name] === undefined,
-            ),
-        )
+        needsWorkspaceExpansion(rawServers[name])
       ) {
         disabled ??= yield* loadDisabled;
         if (disabled.has(name)) continue;
-        // The SDK starts file clients before deduplication, so a literal copy may also run.
         servers[name] = { ...server, cwd: server.cwd ?? projectRoot } as McpServerConfig;
       }
     }
