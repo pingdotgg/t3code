@@ -149,13 +149,14 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
             // OpenCode 2 imports auth.json once, so a replaced Go key only exists here.
             yield* readStoredCredential(databasePath, "opencode-go"),
           ];
-    const credentials = [
-      ...new Map(
-        [...storedCredentials, goKey ? { token: goKey } : undefined]
-          .filter((credential): credential is StoredCredential => credential !== undefined)
-          .map((credential) => [credential.token, credential]),
-      ).values(),
-    ];
+    // The first source of a token wins, so a duplicate auth.json key keeps its workspace.
+    const credentials = [storedCredentials, goKey ? [{ token: goKey }] : []]
+      .flat()
+      .filter(
+        (credential, index, all): credential is StoredCredential =>
+          credential !== undefined &&
+          all.findIndex((other) => other?.token === credential.token) === index,
+      );
     let credential = credentials[0];
     if (!credential) return unsupported;
 
