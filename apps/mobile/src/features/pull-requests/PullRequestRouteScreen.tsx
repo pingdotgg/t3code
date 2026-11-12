@@ -52,6 +52,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import {
+  pullRequestConversationThreads,
   type PullRequestDetail,
   type PullRequestListEntry,
   type PullRequestSummary,
@@ -176,7 +177,8 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
     ? result.data?.comments.find((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url))
     : null;
   const targetThread = anchor
-    ? result.data?.reviewThreads.find((thread) =>
+    ? result.data &&
+      pullRequestConversationThreads(result.data).find((thread) =>
         thread.comments.some((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url)),
       )
     : null;
@@ -356,7 +358,7 @@ function usePullRequestToolbarHeight(bottomInset: number) {
 }
 
 export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
-  const returnToList = useAndroidWorkspaceBack("pullRequests");
+  const returnToList = useAndroidWorkspaceBack();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
