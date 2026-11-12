@@ -8,8 +8,10 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import {
   providerAuth,
@@ -245,4 +247,64 @@ it.effect.each(["darwin", "linux"] as const)(
       Effect.provideService(HostProcess.Architecture, "arm64"),
     );
   },
+);
+
+// Spawns a real login shell and `jj`, so it runs on wall-clock time; the fixture shell is POSIX sh.
+it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "rescans with tools the login shell gained after the server started",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-discovery-login-shell-" });
+      const home = path.join(root, "home");
+      const fakebin = path.join(home, "fakebin");
+      const loginShell = path.join(root, "loginsh");
+      yield* fs.makeDirectory(fakebin, { recursive: true });
+      // Stands in for `$SHELL -ilc <capture>` and sources only the fixture
+      // profile, so the host's own shell init cannot change the result.
+      yield* fs.writeFileString(
+        loginShell,
+        `#!/bin/sh\nexport HOME=${home}\n. "$HOME/.profile"\nshift\nexec /bin/sh -c "$1"\n`,
+        { mode: 0o755 },
+      );
+      const env = yield* HostProcess.Environment;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const saved = { PATH: env.PATH, SHELL: env.SHELL };
+          env.SHELL = loginShell;
+          return saved;
+        }),
+        (saved) =>
+          Effect.sync(() => {
+            env.PATH = saved.PATH;
+            if (saved.SHELL === undefined) delete env.SHELL;
+            else env.SHELL = saved.SHELL;
+          }),
+      );
+
+      // The user installs a tool after launch; their login shell now finds it.
+      yield* fs.writeFileString(path.join(fakebin, "jj"), "#!/bin/sh\necho 'jj 0.99.0-test'\n", {
+        mode: 0o755,
+      });
+      yield* fs.writeFileString(path.join(home, ".profile"), 'export PATH="$HOME/fakebin:$PATH"\n');
+
+      const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const jj = (yield* discovery.discover).versionControlSystems.find(
+        (item) => item.kind === "jj",
+      );
+
+      assert.deepStrictEqual(
+        { status: jj?.status, version: jj?.version },
+        { status: "available", version: Option.some("jj 0.99.0-test") },
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        SourceControlDiscovery.layer.pipe(
+          Layer.provide(VcsProcess.layer),
+          Layer.provideMerge(layerDiscovery()),
+        ),
+      ),
+    ),
 );
