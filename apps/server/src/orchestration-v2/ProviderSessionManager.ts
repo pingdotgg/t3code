@@ -941,6 +941,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            Effect.exit(flushInstructionInvalidations(input.entry)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
@@ -1944,18 +1945,13 @@ export const layerWithOptions = (
             // Completion can restore its cached receipt after an idle invalidation was persisted.
             // Retry outside the cleanup lock so release can stop a competing runtime writer.
             if (entry !== undefined) {
-              yield* Effect.forEach(
-                [...entry.instructionInvalidations.values()],
-                (offered) =>
-                  persistInstructionInvalidation(entry, offered).pipe(
-                    Effect.catch((cause) =>
-                      Effect.logWarning(
-                        "orchestration-v2.provider-session.instruction-invalidation-failed",
-                        { providerSessionId, providerThreadId: offered.id, cause },
-                      ),
-                    ),
+              yield* flushInstructionInvalidations(entry).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    "orchestration-v2.provider-session.instruction-invalidation-failed",
+                    { providerSessionId, cause },
                   ),
-                { discard: true },
+                ),
               );
             }
           }).pipe(Effect.orDie);
@@ -2295,6 +2291,11 @@ export const layerWithOptions = (
         );
       });
 
+      const flushInstructionInvalidations = (entry: LiveSessionEntry) =>
+        Effect.forEach([...entry.instructionInvalidations.values()], (offered) =>
+          Effect.exit(persistInstructionInvalidation(entry, offered)),
+        ).pipe(Effect.flatMap(Exit.asVoidAll));
+
       const makeRetryStallWatch = (entry: LiveSessionEntry) => {
         const runningRetries = new Map<ProviderTurnId, ProviderRetryItem>();
         const stalledRetries = new Map<ProviderTurnId, ProviderRetryItem>();
@@ -2557,7 +2558,11 @@ export const layerWithOptions = (
                     event.type === "provider_thread.updated" &&
                     event.providerThread.nativeMetadata?.acpInstructions !== undefined
                   ) {
-                    yield* Effect.sync(() => {
+                    const recorded = yield* Effect.gen(function* () {
+                      const current = (yield* Ref.get(sessions)).get(
+                        sessionKey(entry.runtime.providerSessionId),
+                      );
+                      if (current?.runtime !== entry.runtime) return false;
                       if (event.providerThread.nativeMetadata?.acpInstructions === null) {
                         entry.instructionInvalidations.set(
                           event.providerThread.id,
@@ -2566,7 +2571,9 @@ export const layerWithOptions = (
                       } else {
                         entry.instructionInvalidations.delete(event.providerThread.id);
                       }
+                      return true;
                     }).pipe(entry.requestEventPermit.withPermits(1));
+                    if (!recorded) return;
                     yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
                       Effect.catch((cause) =>
                         Effect.logWarning(

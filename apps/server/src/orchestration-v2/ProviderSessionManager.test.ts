@@ -3780,6 +3780,8 @@ it.effect.each([
   "detached-close",
   "failed-close",
   "failed-event",
+  "release-after-failed-event",
+  "retry-after-failed-release",
   "newer-run",
   "newer-session",
 ] as const)(
@@ -3843,11 +3845,13 @@ it.effect.each([
         const subscription = yield* runtime.subscribeEvents!;
         const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(queue);
-        if (owner === "failed-event") {
-          yield* Ref.set(
-            beforeUnchangedWrite,
-            Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 1 })),
-          );
+        const failedWrite = Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 1 }));
+        if (
+          owner === "failed-event" ||
+          owner === "release-after-failed-event" ||
+          owner === "retry-after-failed-release"
+        ) {
+          yield* Ref.set(beforeUnchangedWrite, failedWrite);
         }
         yield* Queue.offer(queue!, {
           type: "provider_thread.updated",
@@ -3917,6 +3921,34 @@ it.effect.each([
               }
               if (owner === "released-completion")
                 yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+              if (
+                owner === "release-after-failed-event" ||
+                owner === "retry-after-failed-release"
+              ) {
+                const release = manager.release({ providerSessionId, reason: "manual_shutdown" });
+                if (owner === "retry-after-failed-release") {
+                  yield* Ref.set(beforeUnchangedWrite, failedWrite);
+                  assert.isTrue(Exit.isFailure(yield* Effect.exit(release)));
+                  assert.isFalse(yield* manager.isLive(providerSessionId));
+                  assert.equal((yield* Ref.get(state)).closeCount, 1);
+                  const invalidation = yield* eventSink
+                    .stream({
+                      threadId,
+                      afterSequence: yield* eventSink.latestSequence({ threadId }),
+                      eventType: "provider-thread.updated",
+                    })
+                    .pipe(Stream.runHead, Effect.forkScoped);
+                  yield* TestClock.adjust("1 second");
+                  yield* Fiber.join(invalidation);
+                } else {
+                  yield* release;
+                }
+                // The subscriber is still open, so it cannot have retried the write.
+                assert.isNull(
+                  (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]))
+                    .providerThreads[0]?.nativeMetadata?.acpInstructions,
+                );
+              }
               if (owner === "queued-completion" || owner === "released-completion")
                 yield* restoreCompletion;
               if (owner === "detached-close") {
@@ -3961,7 +3993,9 @@ it.effect.each([
             owner === "repeated-close" ||
             owner === "contended-close" ||
             owner === "failed-close" ||
-            owner === "failed-event"
+            owner === "failed-event" ||
+            owner === "release-after-failed-event" ||
+            owner === "retry-after-failed-release"
             ? {
                 ...before,
                 nativeMetadata: {
