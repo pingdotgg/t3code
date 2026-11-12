@@ -1,4 +1,5 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { isFiledAsSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
@@ -76,6 +77,10 @@ it("dragging working threads to Settled files them, and dragging back cancels it
   };
   const filed = applySidebarThreadDrop(thread, "settled", now);
   expect(filed).toMatchObject({ settleWhenIdleAt: now, settledOverride: null, settledAt: null });
+  expect(isFiledAsSettled(filed)).toBe(true);
+  for (const pendingSubagentRequest of ["approval", "user_input"] as const) {
+    expect(isFiledAsSettled({ ...filed, pendingSubagentRequest })).toBe(false);
+  }
   expect(applySidebarThreadDrop(filed, "active", now)).toMatchObject({
     settleWhenIdleAt: null,
     settledOverride: "active",

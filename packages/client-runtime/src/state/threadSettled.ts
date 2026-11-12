@@ -351,11 +351,18 @@ export function pickSnoozePreset(input: {
 /** Settled threads and threads filed to settle once their work ends share the settled shelf. */
 export function isFiledAsSettled(
   thread:
-    | { readonly settledOverride?: string | null; readonly settleWhenIdleAt?: string | null }
+    | {
+        readonly settledOverride?: string | null;
+        readonly settleWhenIdleAt?: string | null;
+        readonly pendingSubagentRequest?: PendingSubagentRequest | null;
+      }
     | null
     | undefined,
 ): boolean {
-  return thread?.settledOverride === "settled" || thread?.settleWhenIdleAt != null;
+  return (
+    thread?.pendingSubagentRequest == null &&
+    (thread?.settledOverride === "settled" || thread?.settleWhenIdleAt != null)
+  );
 }
 
 export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
