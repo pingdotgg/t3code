@@ -215,8 +215,7 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
       await expect.element(save).toBeDisabled();
       const picker = dialog.getByRole("combobox", { name: "OpenRouter model" });
       await expect.element(picker).toBeVisible();
-      await picker.click();
-      await userEvent.keyboard("listen");
+      await picker.fill("listen");
       await expect.element(page.getByRole("option", { name: /Other: Listen 2/ })).toBeVisible();
       await page.getByRole("option", { name: /Other: Listen 2/ }).click();
       await expect.element(save).toBeEnabled();
@@ -232,8 +231,7 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
       await screen.getByRole("button", { name: "Manage OpenRouter" }).click();
       const current = dialog.getByRole("combobox", { name: "OpenRouter model" });
       await expect.element(current).toHaveValue("Other: Listen 2");
-      await userEvent.clear(current);
-      await userEvent.type(current, "acme");
+      await current.fill("acme");
       await page.getByRole("option", { name: /Acme: Transcribe 1/ }).click();
       await dialog.getByRole("button", { name: "Save" }).click();
       await expect.element(dialog).not.toBeInTheDocument();
