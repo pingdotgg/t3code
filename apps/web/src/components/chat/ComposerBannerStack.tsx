@@ -181,6 +181,7 @@ export function NoticeText({
             render={
               <Button
                 ref={detailsRef}
+                data-notice-details=""
                 size="icon-xs"
                 variant="ghost-muted"
                 aria-label={detailsLabel}
@@ -226,12 +227,15 @@ function NoticeCard({
       data-chat-composer-collapsed-controls="true"
     >
       <ComposerBanner.Row layout="wrap-actions">
-        <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-          <ComposerBanner.Content className="min-h-7 max-w-full grow-999 whitespace-nowrap sm:min-h-6">
+        {/* Narrow cards stack: title and dismiss, then the description in full, then the buttons. */}
+        <ComposerBanner.Icon className="h-lh @min-[480px]:h-7 @min-[480px]:sm:h-6">
+          {item.icon}
+        </ComposerBanner.Icon>
+        <span className="flex min-w-0 flex-col items-start gap-2 @min-[480px]:flex-row @min-[480px]:flex-wrap @min-[480px]:items-center @min-[480px]:gap-x-2 @min-[480px]:gap-y-1.5">
+          <ComposerBanner.Content className="w-full max-w-full flex-col items-start gap-0.5 @max-[480px]:**:data-notice-details:hidden @min-[480px]:min-h-7 @min-[480px]:w-auto @min-[480px]:grow-999 @min-[480px]:flex-row @min-[480px]:items-center @min-[480px]:gap-2 @min-[480px]:whitespace-nowrap @min-[480px]:sm:min-h-6">
             {item.description ? (
               <>
-                <span className="min-w-0 truncate text-foreground">{item.title}</span>
+                <span className="min-w-0 text-foreground @min-[480px]:truncate">{item.title}</span>
                 <NoticeText
                   detailsLabel={
                     typeof item.title === "string"
@@ -240,7 +244,7 @@ function NoticeCard({
                   }
                   details={item.descriptionDetails}
                   detailsHeading={<span className="block text-foreground">{item.title}</span>}
-                  className="w-0 min-w-0 grow truncate font-medium text-muted-foreground @max-[400px]:sr-only"
+                  className="min-w-0 font-medium text-muted-foreground @min-[480px]:w-0 @min-[480px]:grow @min-[480px]:truncate"
                 >
                   {item.description}
                 </NoticeText>
@@ -252,7 +256,7 @@ function NoticeCard({
                     ? `Show full title: ${item.title}`
                     : "Show title details"
                 }
-                className="min-w-0 truncate text-foreground"
+                className="min-w-0 text-foreground @min-[480px]:truncate"
               >
                 {item.title}
               </NoticeText>
@@ -263,7 +267,7 @@ function NoticeCard({
           ) : null}
         </span>
         {overflow || item.onDismiss ? (
-          <ComposerBanner.Actions>
+          <ComposerBanner.Actions className="h-lh flex-nowrap @min-[480px]:h-auto">
             {overflow}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss

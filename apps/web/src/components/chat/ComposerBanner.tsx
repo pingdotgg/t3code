@@ -156,7 +156,6 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
       className={cn(
         "col-start-1 row-start-1 flex w-(--composer-banner-icon-column) min-w-0 flex-none items-center justify-center text-(--surface-tint) [&>svg]:size-3",
         "group-data-[composer-banner-layout=approval]/banner-row:pt-0.5 group-data-[composer-banner-layout=approval]/banner-row:text-warning-foreground group-data-[composer-banner-layout=approval]/banner-row:[&>svg]:size-[13px]",
-        "group-data-[composer-banner-layout=wrap-actions]/banner-row:h-7 sm:group-data-[composer-banner-layout=wrap-actions]/banner-row:h-6",
         className,
       )}
       {...props}
