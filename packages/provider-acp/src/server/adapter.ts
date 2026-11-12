@@ -7258,7 +7258,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* runtime.setMode(policyMode);
           if (flavor.runtimeModeForSessionMode === undefined) return;
           const actualMode = (yield* runtime.getModeState)?.currentModeId;
-          if (actualMode === policyMode) return;
+          const expectedMode = runtime.resolveModeId?.(policyMode) ?? policyMode;
+          if (actualMode === expectedMode) return;
           const actualRuntimeMode =
             flavor.runtimeModeForSessionMode(actualMode ?? "") ?? "approval-required";
           latestRuntimePolicy = {
@@ -7268,7 +7269,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : actualRuntimeMode,
           };
           return yield* EffectAcpErrors.AcpRequestError.internalError(
-            `The agent reports permission mode "${actualMode ?? "unknown"}" instead of requested "${policyMode}" (${runtimePolicy.runtimeMode}). The turn was not started.`,
+            `The agent reports permission mode "${actualMode ?? "unknown"}" instead of requested "${expectedMode}" (${runtimePolicy.runtimeMode}). The turn was not started.`,
           );
         });
 
@@ -8149,10 +8150,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredPolicy = yield* Ref.get(activeRuntimePolicy);
-              const permissionMode =
+              const requestedPermissionMode =
                 flavor.runtimeModeForSessionMode !== undefined
                   ? flavor.sessionModeForPolicy?.(turnInput.runtimePolicy)
                   : undefined;
+              const permissionMode =
+                requestedPermissionMode === undefined
+                  ? undefined
+                  : (runtime.resolveModeId?.(requestedPermissionMode) ?? requestedPermissionMode);
               const modeState =
                 permissionMode === undefined ? undefined : yield* runtime.getModeState;
               const expectedMode =
