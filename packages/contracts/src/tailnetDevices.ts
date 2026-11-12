@@ -80,6 +80,7 @@ export const hasLeftNetwork = (member: NetworkMember) =>
  * The one order every machine and client merges members by; positive when `a` wins. A
  * revocation ranks by its own stamp, any other write by the latest revocation it names in
  * `restores`, so a write made without knowing a revocation never outranks it, however late.
+ * Equal stamps (seeds two machines wrote for one member at zero) go to the narrower level.
  */
 export const compareNetworkMembers = (a: NetworkMember, b: NetworkMember): number => {
   const epoch = (entry: NetworkMember) =>
@@ -95,7 +96,12 @@ export const compareNetworkMembers = (a: NetworkMember, b: NetworkMember): numbe
         ? 1
         : compareTailnetHlc(epochA, epochB);
   const kind = (entry: NetworkMember) => (entry.access === "revoked" ? 0 : 1);
-  return byEpoch || kind(a) - kind(b) || compareTailnetHlc(a.updatedAt, b.updatedAt);
+  return (
+    byEpoch ||
+    kind(a) - kind(b) ||
+    compareTailnetHlc(a.updatedAt, b.updatedAt) ||
+    ACCESS_RANK.indexOf(b.access) - ACCESS_RANK.indexOf(a.access)
+  );
 };
 
 /** Apps are only ever narrowed, so the narrower entry wins whatever its stamp. */

@@ -234,6 +234,76 @@ describe("deviceNetworkView", () => {
     );
   });
 
+  it("shows networks the update split as one once their rosters list each other", () => {
+    // Before the repair: each lists only its own side, so a machine shows in one group only.
+    const split = [
+      host(studio, { devices: [device(laptop)] }),
+      host(laptop, { devices: [device(studio)] }),
+      host(box, { devices: [device(vps)] }),
+      host(vps, { devices: [device(box)] }),
+    ];
+    const before = view(split);
+    expect(before.map((group) => group.hosts.map((candidate) => candidate.environmentId))).toEqual([
+      [laptop, studio],
+      [box, vps],
+    ]);
+    for (const machine of [studio, laptop, box, vps]) {
+      const listing = before.filter((group) =>
+        group.machines.some(
+          (candidate) => candidate.entry.environmentId === machine && candidate.kind === "member",
+        ),
+      );
+      expect(listing).toHaveLength(1);
+    }
+    // A host of the other network, found from this one: adding it merges them.
+    const finding = view([
+      host(studio, { devices: [device(laptop), found(box)] }),
+      ...split.slice(1),
+    ]);
+    const boxRow = finding[0]?.machines.find((candidate) => candidate.entry.environmentId === box);
+    expect(boxRow?.inOtherNetwork).toBe(true);
+    expect(finding[0]?.machines.find((m) => m.entry.environmentId === laptop)?.inOtherNetwork).toBe(
+      false,
+    );
+
+    // After the repair every roster lists everyone.
+    const everyone = [studio, laptop, box, vps];
+    const merged = everyone.map((id) =>
+      host(id, { devices: everyone.filter((other) => other !== id).map((other) => device(other)) }),
+    );
+    expect(view(merged).map((group) => group.hosts.length)).toEqual([4]);
+  });
+
+  it("names a member by its machine, never its bare environment id", () => {
+    const [group] = view([
+      host(studio, {
+        devices: [device(laptop, { label: "MacBook Pro", member: member(laptop) })],
+      }),
+    ]);
+    expect(group?.machines.find((m) => m.entry.environmentId === laptop)?.entry.label).toBe(
+      "MacBook Pro",
+    );
+  });
+
+  it("shows old revoked installs under the live machine of their name", () => {
+    const named = (id: EnvironmentId, label: string, overrides: Partial<TailnetDevice> = {}) =>
+      device(id, { label, nodeId: null, member: { ...member(id), label }, ...overrides });
+    const [group] = view([
+      host(box, {
+        devices: [
+          named(studio, "Studio-01", { nodeId: "n-studio" }),
+          named(studioOld, "Studio-01", {
+            status: "revoked",
+            member: { ...revokedBy(studioOld, box), label: "Studio-01" },
+          }),
+        ],
+      }),
+    ]);
+    const studioRow = group?.machines.find((m) => m.entry.environmentId === studio);
+    expect(group?.machines.map((m) => m.entry.environmentId)).toEqual([box, studio]);
+    expect(studioRow?.others.map((other) => other.environmentId)).toEqual([studioOld]);
+  });
+
   it("takes the newest roster entry when hosts disagree", () => {
     const fresh = host(laptop, {
       devices: [
@@ -340,6 +410,7 @@ describe("machineControls", () => {
       revoke: true,
       restore: false,
       add: false,
+      forgotten: false,
       linkHere: false,
       promote: false,
       readd: false,
@@ -365,8 +436,22 @@ describe("machineControls", () => {
       limitHosts: [],
       forgetHosts: [studio, box],
     });
-    expect(controls(vps)).toMatchObject({ add: true, linkHere: true, forgetHosts: [studio] });
+    expect(controls(vps)).toMatchObject({
+      add: true,
+      forgotten: false,
+      linkHere: true,
+      forgetHosts: [studio],
+    });
     expect(controls(studioOld)).toMatchObject({ add: false, promote: true });
+    // Forgotten here and found again: adding it is its restore.
+    const [group] = view([
+      host(studio, { devices: [device(box), found(vps, { access: "revoked" })] }),
+    ]);
+    const forgotten = group?.machines.find((row) => row.entry.environmentId === vps);
+    expect(group && forgotten ? machineControls(forgotten, group) : null).toMatchObject({
+      add: true,
+      forgotten: true,
+    });
   });
 
   it("offers only re-adding for a member the server left unbound after the update", () => {
@@ -384,6 +469,7 @@ describe("machineControls", () => {
       revoke: false,
       restore: false,
       add: false,
+      forgotten: false,
       linkHere: false,
       promote: false,
       readd: true,
@@ -747,6 +833,9 @@ describe("canManageNetwork", () => {
     const joined = device(studio);
     expect(canManageNetwork({ selfMember: null, devices: [found(box)] })).toBe(true);
     expect(canManageNetwork({ selfMember: null, devices: [joined] })).toBe(false);
+    // Old revoked installs alone are no network.
+    const tombstone = device(studioOld, { member: member(studioOld, "revoked") });
+    expect(canManageNetwork({ selfMember: null, devices: [tombstone] })).toBe(true);
     expect(canManageNetwork({ selfMember: member(laptop), devices: [joined] })).toBe(true);
     expect(canManageNetwork({ selfMember: member(laptop, "auto"), devices: [joined] })).toBe(false);
     expect(canManageNetwork({ selfMember: member(laptop, "revoked"), devices: [] })).toBe(false);

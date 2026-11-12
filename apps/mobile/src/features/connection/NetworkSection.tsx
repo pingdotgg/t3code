@@ -26,6 +26,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type AuthMcpClientAccess,
@@ -442,6 +443,9 @@ function MachineRow(props: {
       : null;
   const setAccess = useAtomCommand(tailnetDevices.setAccess, { reportFailure: false });
   const admit = useAtomCommand(tailnetDevices.admit, { reportFailure: false });
+  const allowJoin = useAtomCommand(deviceNetwork.allowJoin, { reportFailure: false });
+  // This app manages the machine too, so adding it from here is the owner's consent on both.
+  const consentsHere = useEnvironmentScope(entry.environmentId, AuthAccessWriteScope);
   const setLimit = useAtomCommand(deviceNetwork.setLimit, { reportFailure: false });
   const forget = useAtomCommand(deviceNetwork.forget, { reportFailure: false });
   const openMember = useAtomCommand(networkMembers.open, { reportFailure: false });
@@ -484,13 +488,22 @@ function MachineRow(props: {
     const via = readd ? controls.readdVia : authority;
     if (via === null) return;
     run(
-      admit({
-        environmentId: via,
-        input: { environmentId: entry.environmentId, access: level, scope },
-      }),
+      // A refused consent still lets the add say why the machine did not join.
+      (consentsHere
+        ? allowJoin({ environmentId: entry.environmentId, input: {} })
+        : Promise.resolve()
+      ).then(() =>
+        admit({
+          environmentId: via,
+          input: { environmentId: entry.environmentId, access: level, scope },
+        }),
+      ),
       `Could not add ${entry.label}`,
     );
   };
+  const consentNote = consentsHere
+    ? `This app also manages ${entry.label}, so adding it here is its agreement too.`
+    : `First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose Allow joining.`;
   const forgetEntry = (target: MachineEntry, hosts: ReadonlyArray<EnvironmentId>) => {
     const [first, ...rest] = hosts;
     if (first === undefined) return;
@@ -554,7 +567,9 @@ function MachineRow(props: {
           : machine.kind === "member"
             ? accessLabel(access)
             : machine.kind === "found"
-              ? "Add"
+              ? controls.forgotten
+                ? "Restore"
+                : "Add"
               : "Linked"
       }
       canExpand={canExpand}
@@ -595,15 +610,29 @@ function MachineRow(props: {
           ) : null}
           {controls.readd ? (
             <ListActionRow
-              label="Add again"
-              description={`First open ${ALLOW_JOINING_PATH} for ${entry.label} and choose Allow joining.`}
+              label={machine.inOtherNetwork ? "Merge networks" : "Add again"}
+              description={
+                machine.inOtherNetwork
+                  ? `${entry.label} is in another of your networks; adding it makes them one. ${consentNote}`
+                  : consentNote
+              }
               onPress={() => setPanel({ kind: "add", scope: "network", readd: true })}
             />
           ) : null}
           {controls.add || controls.promote ? (
             <ListActionRow
-              label="Add to network"
-              description="No machine in the network gives it more than the access you pick. A machine's own limit for it stays until you clear it."
+              label={
+                machine.inOtherNetwork
+                  ? "Merge networks"
+                  : controls.forgotten
+                    ? "Restore"
+                    : "Add to network"
+              }
+              description={
+                machine.inOtherNetwork
+                  ? `${entry.label} is in another of your networks; adding it makes them one, each machine and app keeping the access it has now. ${consentNote}`
+                  : `No machine in the network gives it more than the access you pick. A machine's own limit for it stays until you clear it. ${consentNote}`
+              }
               onPress={() => setPanel({ kind: "add", scope: "network" })}
             />
           ) : null}
