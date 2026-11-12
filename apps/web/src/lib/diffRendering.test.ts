@@ -298,7 +298,7 @@ describe("diff file reconciliation", () => {
     const previous = retainLoadedReviewFiles(new Map(), [loaded]);
     const pending = retainedReviewFile({
       loaded: null,
-      previous: previous.get("app.ts"),
+      previous: previous.get(buildFileDiffIdentityKey(loaded)),
       placeholder,
       sameFamily: true,
       pending: true,
@@ -326,8 +326,11 @@ describe("diff file reconciliation", () => {
       pending: false,
     });
     expect(failed.hunks).toEqual([]);
-    const retained = retainLoadedReviewFiles(new Map([["app.ts", loaded]]), [failed]);
-    expect(retained.has("app.ts")).toBe(false);
+    const retained = retainLoadedReviewFiles(
+      new Map([[buildFileDiffIdentityKey(loaded), loaded]]),
+      [failed],
+    );
+    expect(retained.has(buildFileDiffIdentityKey(loaded))).toBe(false);
 
     const switched = retainedReviewFile({
       loaded: null,
@@ -386,6 +389,8 @@ describe("diff file reconciliation", () => {
 
     expect(buildFileDiffIdentityKey(deleted)).not.toBe(buildFileDiffIdentityKey(added));
     expect(new Set(parsed.files.map(buildFileDiffIdentityKey)).size).toBe(parsed.files.length);
+    const retained = retainLoadedReviewFiles(new Map(), parsed.files);
+    expect([...retained.values()]).toEqual([deleted, added]);
   });
 
   it("keeps identities stable and versions local to the changed file", () => {

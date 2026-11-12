@@ -103,7 +103,7 @@ import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
-import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
+import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -246,7 +246,7 @@ function diffModel(
           ? parsed.files.map(
               (file, index) =>
                 [
-                  buildFileDiffRenderKey(file),
+                  buildFileDiffIdentityKey(file),
                   getDiffLineStat([parsed.sourceFiles[index] ?? file]),
                 ] as const,
             )
@@ -431,6 +431,7 @@ function PullRequestCodeTab({
   } | null>(null);
   const [draft, setDraft] = useState<DraftAnchor | null>(null);
   const [threadPending, setThreadPending] = useState(false);
+  const renderedFiles = useRef(new Map<string, FileDiffMetadata>());
   const [orphansOpen, setOrphansOpen] = useState(false);
   // Scope slices before reset to prevent using a previous pull request's data or cursor.
   const [sliceState, setSliceState] = useState<{
@@ -694,13 +695,35 @@ function PullRequestCodeTab({
       })
     : loadedFiles;
   const hiddenTestFileCount = loadedFiles.length - files.length;
+  // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
+  const foldsAsViewed = (path: string) =>
+    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const contentVersions = new Map(
     loadedFiles.map((file) => [buildFileDiffIdentityKey(file), fileContentVersion(file)]),
   );
-  const isCurrentFile = (fileKey: string, version: number, anchorScopeKey: string) =>
-    anchorScopeKey === scopeKey &&
-    contentVersions.get(fileKey) === version &&
-    !isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+  const isCurrentFileRendered = (fileKey: string) => {
+    const rendered = renderedFiles.current.get(fileKey);
+    return (
+      !diffQuery.isPending &&
+      sliceState.refreshing === null &&
+      rendered !== undefined &&
+      contentVersions.get(fileKey) === fileContentVersion(rendered)
+    );
+  };
+  const isCurrentFile = (fileKey: string, version: number, anchorScopeKey: string) => {
+    const file = loadedFiles.find((candidate) => buildFileDiffIdentityKey(candidate) === fileKey);
+    return (
+      anchorScopeKey === scopeKey &&
+      contentVersions.get(fileKey) === version &&
+      file !== undefined &&
+      !isFileDiffCollapsed(
+        fileKey,
+        effectiveFoldOverride,
+        foldChoices,
+        foldsAsViewed(resolveFileDiffPath(file)),
+      )
+    );
+  };
   // Stable viewer identities preserve scroll, but line coordinates belong to one file version.
   if (draft !== null && !isCurrentFile(draft.fileKey, draft.contentVersion, draft.scopeKey)) {
     setDraft(null);
@@ -853,9 +876,6 @@ function PullRequestCodeTab({
       </div>
     );
 
-  // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
-  const foldsAsViewed = (path: string) =>
-    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
       const contentVersion = fileContentVersion(fileDiff);
@@ -953,7 +973,13 @@ function PullRequestCodeTab({
     if (item === undefined) return;
     // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
     setFoldChoices((current) => withFileDiffFold(current, item.id, false));
-    if (range) setSelectedLines({ id: item.id, range });
+    if (range)
+      setSelectedLines({
+        id: item.id,
+        range,
+        contentVersion: fileContentVersion(item.fileDiff),
+        scopeKey,
+      });
     codeViewReveal.request(item.id, range);
   };
 
@@ -977,6 +1003,7 @@ function PullRequestCodeTab({
     const file = files.find((candidate) => buildFileDiffIdentityKey(candidate) === item.id);
     if (
       !file ||
+      !isCurrentFileRendered(item.id) ||
       item.collapsed === true ||
       !isCurrentFile(item.id, fileContentVersion(item.fileDiff), scopeKey)
     )
@@ -1008,6 +1035,7 @@ function PullRequestCodeTab({
     (anchor: DraftAnchor) =>
       draft === anchor &&
       canSelectLines &&
+      isCurrentFileRendered(anchor.fileKey) &&
       isCurrentFile(anchor.fileKey, anchor.contentVersion, anchor.scopeKey),
   );
   const finishSelection = (
@@ -1109,15 +1137,29 @@ function PullRequestCodeTab({
     themeType: resolvedTheme,
     stickyHeaders: true,
     loadDiffFiles,
-    enableGutterUtility: canSelectLines && draft === null,
-    enableLineSelection: canSelectLines && draft === null,
+    enableGutterUtility:
+      canSelectLines && draft === null && !diffQuery.isPending && sliceState.refreshing === null,
+    enableLineSelection:
+      canSelectLines && draft === null && !diffQuery.isPending && sliceState.refreshing === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: codeViewReveal.flush,
+    onPostRender: (_node, _instance, phase, context) => {
+      if (context.type === "diff") {
+        if (phase === "unmount") renderedFiles.current.delete(context.item.id);
+        else {
+          const { fileDiff } = context.instance.__getNextRenderData({
+            fileDiff: context.item.fileDiff,
+            lineAnnotations: undefined,
+          });
+          renderedFiles.current.set(context.item.id, fileDiff);
+        }
+      }
+      codeViewReveal.flush();
+    },
     // Find may repeat requests before render; only unfold, never toggle.
     onRevealSearchMatch: (item: CodeViewItem<ReviewAnnotationGroup>) =>
       setFoldChoices((current) => withFileDiffFold(current, item.id, false)),
-  };
+  } satisfies StyledDiffCodeViewOptions<ReviewAnnotationGroup>;
 
   const runThreadCommand = async (
     label: string,
@@ -1792,6 +1834,7 @@ function PullRequestCodeTab({
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={(selection) => {
+                if (selection !== null && !isCurrentFileRendered(selection.id)) return;
                 const contentVersion =
                   selection === null ? undefined : contentVersions.get(selection.id);
                 setSelectedLines(
