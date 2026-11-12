@@ -6551,7 +6551,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .pipe(mapDispatchError(command));
           if (
             Option.isSome(session) &&
-            session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools === true
+            session.value.providerSession.capabilities.turns.deliversUpdatesAtToolBoundary === true
           ) {
             dispatchMode = { type: "queue_after_active" };
             atToolBoundary = true;
@@ -10962,7 +10962,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .pipe(mapDispatchError(command));
       if (
         Option.isSome(session) &&
-        session.value.providerSession.capabilities.turns.activeSteeringInterruptsTools === true
+        session.value.providerSession.capabilities.turns.deliversUpdatesAtToolBoundary === true
       ) {
         // Stop wins, and unrelated task owners keep their own turns.
         if (

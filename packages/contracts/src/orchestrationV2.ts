@@ -286,6 +286,8 @@ export const OrchestrationV2TurnCapabilities = Schema.Struct({
   supportsActiveSteering: Schema.Boolean,
   // Some native steering mechanisms cancel pending tools before consuming the message.
   activeSteeringInterruptsTools: Schema.optional(Schema.Boolean),
+  // The adapter hands queued updates to the provider between tool batches, so a steer queues instead.
+  deliversUpdatesAtToolBoundary: Schema.optional(Schema.Boolean),
   // Some take text only, so a steer with attachments restarts the turn instead.
   activeSteeringAcceptsAttachments: Schema.optional(Schema.Boolean),
   // Only where a steer leaves a running automatic compaction intact; otherwise clients queue.

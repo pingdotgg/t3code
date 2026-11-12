@@ -78,6 +78,7 @@ it.effect.each(
           ...CodexProviderCapabilitiesV2.turns,
           supportsActiveSteering: timing !== "without native steering",
           activeSteeringInterruptsTools: timing === "with interrupting native steering",
+          deliversUpdatesAtToolBoundary: timing === "with interrupting native steering",
         },
       };
       const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
@@ -515,6 +516,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
       supportsActiveSteering: canSteer,
       supportsSteeringByInterruptRestart: canRestart,
       activeSteeringInterruptsTools,
+      deliversUpdatesAtToolBoundary: activeSteeringInterruptsTools,
       activeSteeringAcceptsAttachments: steeringAcceptsAttachments,
       ...(nativeGoals === undefined ? {} : { supportsNativeGoals: nativeGoals }),
     },

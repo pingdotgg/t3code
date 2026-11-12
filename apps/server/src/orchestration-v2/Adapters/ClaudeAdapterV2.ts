@@ -488,6 +488,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsInterrupt: true,
     supportsActiveSteering: true,
     activeSteeringInterruptsTools: true,
+    deliversUpdatesAtToolBoundary: true,
     supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
