@@ -1,0 +1,77 @@
+name: Publish blogpost
+
+# Publishes blog posts from main to production without shipping unreleased
+# docs: checks out the latest release tag, overlays the blog folders from
+# main, and deploys the website to alchemy.run.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to deploy (defaults to the latest v* tag reachable from main)"
+        type: string
+        required: false
+      paths:
+        description: "Space-separated folders copied from main onto the release"
+        type: string
+        default: "website/src/content/docs/blog website/public/blog"
+
+# Same group as production deploys in website.yml, so the two never race.
+concurrency:
+  group: deploy-website-prod
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish blogpost
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: release
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${TAG:-$(git describe --tags --abbrev=0 --match 'v*' origin/main)}"
+          sha="$(git rev-parse "$tag^{commit}")"
+          echo "Deploying $tag ($sha) with blog content from main $(git rev-parse --short origin/main)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release and overlay blog from main
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          PATHS: ${{ inputs.paths }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "$TAG"
+          # `git restore` mirrors main exactly, so posts deleted on main are
+          # deleted here too.
+          read -ra paths <<< "$PATHS"
+          git restore --source=origin/main --staged --worktree -- "${paths[@]}"
+          git status --short
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
+
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      - name: Deploy
+        working-directory: website
+        run: bun alchemy deploy --stage prod --yes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.PROD_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.PROD_CLOUDFLARE_ACCOUNT_ID }}
+          BUILD_SHA: ${{ steps.release.outputs.sha }}

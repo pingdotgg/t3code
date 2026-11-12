@@ -63,6 +63,7 @@ const makeHarness = Effect.fn(function* (options: {
       }),
     write: (input) => Queue.offer(writes, input.data).pipe(Effect.asVoid),
     closeIdle: () => Effect.void,
+    closeOnSettle: () => Effect.void,
   });
   const runner = yield* ProjectSetupScriptRunner.make.pipe(
     Effect.provide(
