@@ -76,7 +76,7 @@ export default ({
 ```
 
 The API object holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`, `ask`, `store`,
-`signal`, the
+`signal`, `invoke`, `start`, the
 triggers `every`, `daily`, `webhook` with their payload schemas `Tick` and `WebhookRequest`, and
 Effect's `Effect`, `Schema`, `Option`, `Duration`, `Schedule`. Take everything from it, and list each name you use in the function's parameter: a name that is
 not listed, `Option` for example, is not defined. An
@@ -114,15 +114,15 @@ Every call takes a name first. Names are how results are stored, so each must be
 workflow, across all kinds: an `ask("fix", …)` and an `agent("fix", …)` in one workflow collide and
 pause the run. Name the question `approve-fix` and the agent `fix`.
 
-| Call                                                                         | Does                                                                                                                                                                                                      | Gives back                                                                                             |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `step(name, { returns, retry? }, effect)`                                    | Runs code once per run. `returns` is the Schema of the result.                                                                                                                                            | The result                                                                                             |
-| `agent(name, { brief, project? \| thread?, environment?, output?, model? })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id, or the project's folder as an absolute path) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `output`, or the agent's last message without it. |
-| `ask(name, { title, choices, data?, timeout? })`                             | Puts a question to a person.                                                                                                                                                                              | `Option` of `{ choice, reason? }`; none after the timeout                                              |
-| `wait(name, { returns, timeout?, key? })`                                    | Sleeps until a signal arrives.                                                                                                                                                                            | `Option` of the signal's value; none after the timeout                                                 |
-| `sleep(name, duration)`                                                      | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                |
-| `title(name, text)`                                                          | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                |
-| `stop(reason)`                                                               | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                          |
+| Call                                                                                   | Does                                                                                                                                                                                                      | Gives back                                                                                             |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `step(name, { returns, retry? }, effect)`                                              | Runs code once per run. `returns` is the Schema of the result.                                                                                                                                            | The result                                                                                             |
+| `agent(name, { brief, project? \| thread?, environment?, output?, model?, timeout? })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id, or the project's folder as an absolute path) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `output`, or the agent's last message without it. |
+| `ask(name, { title, choices, data?, timeout? })`                                       | Puts a question to a person.                                                                                                                                                                              | `Option` of `{ choice, reason? }`; none after the timeout                                              |
+| `wait(name, { returns, timeout?, key? })`                                              | Sleeps until a signal arrives.                                                                                                                                                                            | `Option` of the signal's value; none after the timeout                                                 |
+| `sleep(name, duration)`                                                                | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                |
+| `title(name, text)`                                                                    | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                |
+| `stop(reason)`                                                                         | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                          |
 
 `step` retries three times with a growing delay, then pauses the run. Pass
 `retry: { times: 0 }` for something that must not be repeated blindly. A step whose failure the
@@ -131,7 +131,13 @@ workflow should handle returns the failure as data instead of failing.
 `agent` with `output` finishes when the agent submits data that fits the schema, not when its turn
 ends. Write the brief as the whole job: the agent sees only the brief and its project.
 Find a project's id with the `t3_project_list` tool.
-`model` is `{ instanceId, model }`; leave it out for the project's default.
+`model` is `{ instanceId, model, options? }`; leave it out for the project's default. `options`
+are the model's own, as `{ id, value }` pairs: `[{ id: "reasoningEffort", value: "high" }]`.
+`timeout: "2 hours"` is how long the agent has: past it the thread is stopped and the run pauses
+at this step, where `resume` gives a fresh agent the job.
+
+Agents run side by side with Effect's own `Effect.all([agent("a", …), agent("b", …)], {
+concurrency: 2 })`.
 
 ### Agents on other machines
 
@@ -186,6 +192,40 @@ workflow(
 `exec` here is your own function that runs a command and returns an Effect; it is not part of the
 API. If `onEnd` fails, a finished run pauses at the `onEnd` step, and a cancelled run's is tried
 again up to five times; `show` has the error.
+
+## Other workflows
+
+A workflow can run another. Keep the other workflow in a variable, so its payload and result are
+typed:
+
+```ts
+export default ({ workflow, invoke, stop, Effect, Schema }) => {
+  const review = workflow("review", { version: 1, payload: Change, returns: Verdict }, …);
+
+  const fix = workflow(
+    "fix",
+    { version: 1, payload: Issue },
+    Effect.fn(function* (issue) {
+      const ended = yield* invoke("review", review, { branch: "fix/1" });
+      if (ended.outcome !== "completed") {
+        return yield* stop(`review ${ended.outcome}: ${ended.reason}`);
+      }
+      ended.value; // a Verdict
+    }),
+  );
+
+  return [review, fix]; // both are registered
+};
+```
+
+| Call                                        | Does                                                                                                                                                                         |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoke(name, workflow, payload, { key? })` | In the body. Runs it as part of this run and waits. Gives `{ outcome: "completed", value }`, or `{ outcome: "stopped" \| "cancelled", reason }`. A paused run is waited for. |
+| `start(workflow, payload, { key })`         | Inside `step`. Starts it and goes on without it. Gives `{ runId }`. The same `key` is the same run.                                                                          |
+
+The invoked run is a run of its own in `t3 workflow list`, and is resumed by itself when it
+pauses. Cancelling the run that invoked it cancels it too; a run started with `start` is on its
+own. To fan out, `start` one run per item from a step, each with a key made from the item.
 
 ## The store
 

@@ -9,8 +9,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import type { WorkflowInputError } from "./Workflows.ts";
-import type { SignalAddress } from "./WorkflowStore.ts";
+import type { WorkflowDefinition } from "./workflow.ts";
+import type { WorkflowError, WorkflowInputError } from "./Workflows.ts";
+import type { RunParent, SignalAddress } from "./WorkflowStore.ts";
 
 /** The shared store as rows of JSON text. `store` puts schemas on top. */
 export class KeyValues extends Context.Service<
@@ -44,22 +45,47 @@ export class Signals extends Context.Service<
   }
 >()("t3/workflows/stepServices/Signals") {}
 
-export type InStep = KeyValues | Signals;
+export type StartRun = (
+  workflow: string,
+  input: unknown,
+  options: { readonly idempotencyKey: string; readonly parent?: RunParent },
+) => Effect.Effect<{ readonly runId: string }, WorkflowError>;
+
+/** Starting other runs from the step that is running. */
+export class Runs extends Context.Service<Runs, { readonly start: StartRun }>()(
+  "t3/workflows/stepServices/Runs",
+) {}
+
+export type InStep = KeyValues | Signals | Runs;
 
 /**
- * The engine's way to send a signal, which exists only once the engine does, while the workflows
+ * What a step needs of the engine, which exists only once the engine does, while the workflows
  * that use it are registered before. The engine fills this in when it starts.
  */
-export class SignalSender extends Context.Service<
-  SignalSender,
-  { current: SendSignal | undefined }
->()("t3/workflows/stepServices/SignalSender") {}
-export const layerSignalSender = Layer.sync(SignalSender, () => ({ current: undefined }));
+export class EngineLink extends Context.Service<
+  EngineLink,
+  {
+    current:
+      | {
+          readonly signal: SendSignal;
+          readonly start: StartRun;
+          /** Tell the run that invoked `runId`, if one did, how it ended. */
+          readonly ended: (runId: string) => Effect.Effect<void>;
+        }
+      | undefined;
+  }
+>()("t3/workflows/stepServices/EngineLink") {}
+export const layerEngineLink = Layer.sync(EngineLink, () => ({ current: undefined }));
+
+const engineOf = (link: EngineLink["Service"]) =>
+  link.current === undefined
+    ? Effect.die(new Error("The workflow engine is not up."))
+    : Effect.succeed(link.current);
 
 /** The services for one step. `owner` names it, and each signal it sends is `owner` and a number. */
 export const forStep = (
   keyValues: KeyValues["Service"],
-  sender: SignalSender["Service"],
+  link: EngineLink["Service"],
   owner: string,
 ): Context.Context<InStep> => {
   let sent = 0;
@@ -68,13 +94,20 @@ export const forStep = (
       Signals,
       Signals.of({
         send: Effect.fn("Signals.send")(function* (address, value, options) {
-          const send = sender.current;
-          if (send === undefined)
-            return yield* Effect.die(new Error("The workflow engine is not up."));
+          const { signal: send } = yield* engineOf(link);
           return yield* send(address, value, {
             id: options?.id ?? `${owner}/signal/${sent++}`,
             ...(options?.ttl === undefined ? {} : { ttl: options.ttl }),
           });
+        }),
+      }),
+    ),
+    Context.add(
+      Runs,
+      Runs.of({
+        start: Effect.fn("Runs.start")(function* (workflow, input, options) {
+          const engine = yield* engineOf(link);
+          return yield* engine.start(workflow, input, options);
         }),
       }),
     ),
@@ -208,3 +241,16 @@ export const signal = (
   value: Schema.Json,
   options?: { readonly id?: string; readonly ttl?: Duration.Input },
 ) => Effect.flatMap(Signals, (signals) => signals.send(address, value, options));
+
+/**
+ * Start a run of another workflow and go on without it. The same `key` is the same run. Inside
+ * `step` or `onEnd` only; to wait for the run's result, use `invoke` in the body instead.
+ */
+export const start = <P>(
+  workflow: WorkflowDefinition<P>,
+  payload: P,
+  options: { readonly key: string },
+) =>
+  Effect.flatMap(Runs, (runs) =>
+    runs.start(workflow.name, payload, { idempotencyKey: options.key }),
+  );

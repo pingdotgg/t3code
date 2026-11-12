@@ -8,6 +8,6 @@ export * as Schedule from "effect/Schedule";
 export * as Schema from "effect/Schema";
 
 export { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
-export { signal, store } from "./stepServices.ts";
-export { sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+export { signal, start, store } from "./stepServices.ts";
+export { invoke, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 export { agent, ask } from "./workflowAgent.ts";

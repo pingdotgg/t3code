@@ -13,7 +13,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } from "effect/workflow";
 
 import { checkOutput } from "../orchestration-v2/runOutput.ts";
-import { forStep, type InStep, KeyValues, SignalSender } from "./stepServices.ts";
+import { EngineLink, forStep, type InStep, KeyValues, Runs } from "./stepServices.ts";
 import type { ScheduleTrigger, Trigger, WebhookTrigger } from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
@@ -131,6 +131,13 @@ export const journaled = <A, I, E>(
     ),
   });
 };
+
+/** How an invoked run ended, as its parent's wait receives it. */
+export const ChildEnd = Schema.Struct({
+  outcome: Schema.Literals(["completed", "stopped", "cancelled"]),
+  value: Schema.Json,
+  reason: Schema.optional(Schema.String),
+});
 
 export interface StepRetry {
   /** How many more times to try before the run is paused. */
@@ -288,7 +295,10 @@ export const title = (name: string, value: string): Effect.Effect<void, StepFail
     }),
   );
 
-export interface WorkflowDefinition {
+// The defaults are every workflow: a registry holds workflows of every payload and result type.
+export interface WorkflowDefinition<P = never, A = unknown> {
+  /** Types only: what a run is started with and what it returns, for `start` and `invoke`. */
+  readonly "~types"?: { readonly payload: (payload: P) => void; readonly returns: A };
   readonly name: string;
   readonly version: number;
   readonly payload: Schema.Codec<unknown, unknown>;
@@ -313,6 +323,48 @@ export interface RunEnd {
   readonly outcome: "completed" | "stopped" | "cancelled";
   readonly reason: string | undefined;
 }
+
+/**
+ * Run another workflow as part of this one and wait for how it ends. The other run is a run of
+ * its own, listed and resumable by itself; cancelling this run cancels it. A run that paused has
+ * not ended, so this waits on while someone resumes it.
+ */
+export const invoke = Effect.fn("workflow.invoke")(function* <P, A>(
+  name: string,
+  workflow: WorkflowDefinition<P, A>,
+  payload: P,
+  options?: { readonly key?: string },
+): Effect.fn.Return<
+  | { readonly outcome: "completed"; readonly value: A }
+  | { readonly outcome: "stopped" | "cancelled"; readonly reason: string },
+  StepFailed,
+  InRun
+> {
+  const run = yield* RunContext;
+  yield* step(
+    `${name}/start`,
+    { returns: Schema.String },
+    Effect.flatMap(Runs, (runs) =>
+      runs.start(workflow.name, payload, {
+        idempotencyKey: options?.key ?? `${run.runId}/${name}`,
+        parent: { runId: run.runId, wait: name },
+      }),
+    ).pipe(Effect.map((started) => started.runId)),
+  );
+  const ended = yield* waitAs("wait", name, { returns: ChildEnd });
+  if (Option.isNone(ended)) {
+    return yield* new StepFailed({ step: name, reason: "the wait ended without an outcome" });
+  }
+  if (ended.value.outcome !== "completed") {
+    return { outcome: ended.value.outcome, reason: ended.value.reason ?? "" };
+  }
+  const returnsCodec = Schema.toCodecJson(workflow.returns);
+  const decode = Schema.decodeEffect(returnsCodec);
+  const value = yield* decode(ended.value.value).pipe(
+    Effect.mapError((error) => new StepFailed({ step: name, reason: text(error) })),
+  );
+  return { outcome: "completed", value: value as A };
+});
 
 /** The step `onEnd` runs as. */
 export const END_STEP = "onEnd";
@@ -350,7 +402,7 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
     payload: P,
     run: { readonly id: string },
   ) => Effect.Effect<A, StepFailed | WorkflowStop, InRun>,
-): WorkflowDefinition => ({
+): WorkflowDefinition<P, A> => ({
   name,
   version: options.version,
   // Erased here, once: the registry holds workflows of every payload and result type.
@@ -395,7 +447,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
       const keyValues = yield* KeyValues;
-      const sender = yield* SignalSender;
+      const link = yield* EngineLink;
       yield* Activity.make({
         name: "run/begin",
         execute: store.runStarted({
@@ -443,13 +495,17 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             workflow: definition.name,
             store,
             names: new Set(),
-            forStep: (name) => forStep(keyValues, sender, `${runId}/${name}`),
+            forStep: (name) => forStep(keyValues, link, `${runId}/${name}`),
           }),
         ),
       );
       yield* Activity.make({
         name: "run/end",
         execute: store.runEnded(runId, outcome.outcome, outcome.reason ?? null, outcome.value),
+      });
+      yield* Activity.make({
+        name: "run/told",
+        execute: Effect.suspend(() => link.current?.ended(runId) ?? Effect.void),
       });
       return outcome;
     }).pipe(

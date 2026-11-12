@@ -54,7 +54,11 @@ export class Workflows extends Context.Service<
     readonly start: (
       workflow: string,
       input: unknown,
-      options: { readonly idempotencyKey: string },
+      options: {
+        readonly idempotencyKey: string;
+        /** The run that waits for this one. A run started with a key has one parent or none. */
+        readonly parent?: WorkflowStore.RunParent;
+      },
     ) => Effect.Effect<{ readonly runId: string }, WorkflowError>;
     /**
      * Say that something a run waits on happened. `delivered` woke a wait; `buffered` is kept for
