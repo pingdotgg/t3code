@@ -64,9 +64,7 @@ export const toOperationError = (
       detail: timeoutMs === undefined ? undefined : { timeoutMs },
     });
   }
-  if (
-    /while parsing selector|Unknown engine|Unexpected token|strict mode violation/i.test(message)
-  ) {
+  if (/while parsing selector|Unknown engine|Unexpected token/i.test(message)) {
     return new ServerBrowserOperationError({
       tag: "PreviewAutomationInvalidSelectorError",
       message: firstLine,
@@ -477,6 +475,24 @@ export const captureViewport = async (
   return data;
 };
 
+export const captureFinalRecordingFrame = (cdp: CDPSession, quality: number) =>
+  answered(
+    cdp
+      .send("Runtime.evaluate", {
+        // Capture the destination of finite transitions, not their initially transparent frame.
+        expression: `(async () => {
+          const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          await paint();
+          await Promise.allSettled(document.getAnimations()
+            .filter(animation => animation.playState === "running" && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished));
+          await paint();
+        })()`,
+        awaitPromise: true,
+      })
+      .then(() => captureViewport(cdp, { format: "jpeg", quality })),
+  );
+
 /** Runs in the page's own isolated world, as the server has no image library. */
 const SHRINK_PNG = `async function (png, width, height) {
   const bytes = Uint8Array.from(atob(png), (char) => char.charCodeAt(0));
@@ -519,6 +535,7 @@ type SnapshotInput = {
   readonly cdp: CDPSession;
   /** Headless pages render at the scale the server set; a desktop page at its display's. */
   readonly renderScale: number | "display";
+  readonly fullScreenshot?: boolean | undefined;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
@@ -562,8 +579,13 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.cdp, { format: "png" }).then((png) =>
-      scale < 1 ? shrinkPng(input.cdp, png, scale) : png,
+    captureViewport(input.cdp, { format: "png" }).then(async (full) =>
+      scale < 1
+        ? {
+            data: await shrinkPng(input.cdp, full, scale),
+            full: input.fullScreenshot ? full : undefined,
+          }
+        : { data: full, full: undefined },
     ),
   ]);
   void pageAndScreenshot.catch(constVoid);
@@ -588,7 +610,7 @@ const capture = async (
     void iframe.dispose().catch(constVoid);
     if (frame && unread.includes(frame)) throw tooBusy();
   }
-  const [page, data] = await pageAndScreenshot;
+  const [page, { full, data }] = await pageAndScreenshot;
   if (state.generation !== generation) throw pageChanged();
   const mask = (text: string) => (dotted ? text.replace(dotted, MASKED_VALUE) : text);
   // Redacted before the cut, so a payload crossing it can't leave its start showing, and before
@@ -615,6 +637,7 @@ const capture = async (
       data,
       ...pngSize(data),
     },
+    ...(full !== undefined ? { fullScreenshot: { data: full, ...pngSize(full) } } : {}),
   };
 };
 
@@ -885,8 +908,10 @@ export const evaluate = async (
   timeoutMs: number,
 ) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      timedOut = true;
       // Stops a busy script; an awaited promise is abandoned and settles unread.
       void cdp.send("Runtime.terminateExecution").catch(constVoid);
       reject(
@@ -897,10 +922,23 @@ export const evaluate = async (
       );
     }, timeoutMs);
   });
-  const evaluation = cdp.send("Runtime.evaluate", {
+  const params = {
     expression: input.expression,
     awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
+    returnByValue: true,
+  };
+  // The devtools console's replMode allows top-level await but returns a trailing promise unawaited,
+  // so it only retries what the page's parser rejected. A parse error has a scriptId but no stack and
+  // ran nothing; a browser-internal rejection has neither.
+  const evaluation = cdp.send("Runtime.evaluate", params).then((classic) => {
+    const failure = classic.exceptionDetails;
+    const unparsed =
+      failure?.exception?.className === "SyntaxError" &&
+      failure.scriptId !== undefined &&
+      failure.stackTrace === undefined;
+    return unparsed && !timedOut && input.expression.includes("await")
+      ? cdp.send("Runtime.evaluate", { ...params, replMode: true })
+      : classic;
   });
   void evaluation.catch(constVoid);
   const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
@@ -925,7 +963,6 @@ export const evaluate = async (
 
 export const waitFor = async (page: Page, input: PreviewAutomationWaitForInput) => {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
   const locator = targetLocator(page, input);
   const { text, urlIncludes } = input;
   const checks: Array<() => Promise<boolean>> = [];
@@ -940,16 +977,28 @@ export const waitFor = async (page: Page, input: PreviewAutomationWaitForInput) 
     );
   }
   if (urlIncludes !== undefined) checks.push(async () => page.url().includes(urlIncludes));
-  for (;;) {
-    const results = await Promise.all(checks.map((check) => check()));
-    if (results.every(Boolean)) return;
-    if (Date.now() >= deadline) {
-      throw new ServerBrowserOperationError({
-        tag: "PreviewAutomationTimeoutError",
-        message: `Waited ${timeoutMs}ms without every condition holding.`,
-      });
+  // `count()` and `evaluate()` take no timeout; a stalled check would hold the tab's control queue.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new ServerBrowserOperationError({
+            tag: "PreviewAutomationTimeoutError",
+            message: `Waited ${timeoutMs}ms without every condition holding.`,
+          }),
+        ),
+      timeoutMs,
+    );
+  });
+  try {
+    for (;;) {
+      const results = await Promise.race([Promise.all(checks.map((check) => check())), expired]);
+      if (results.every(Boolean)) return;
+      await Promise.race([new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS)), expired]);
     }
-    await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+  } finally {
+    clearTimeout(timer);
   }
 };
 

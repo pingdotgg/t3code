@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
 import * as NetService from "@t3tools/shared/Net";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -58,6 +59,7 @@ import * as DesktopConnectionCatalogStore from "./DesktopConnectionCatalogStore.
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopManagedPolicy from "./DesktopManagedPolicy.ts";
+import * as DesktopPrimaryPaste from "./DesktopPrimaryPaste.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -107,6 +109,7 @@ it.effect.each([false, true])(
             platform: "linux",
             isDevelopment: false,
             isPackaged: true,
+            stateDir: "/isolated/userdata",
             configuredBackendPort: Option.some(3773),
             defaultDesktopSettings: { serverExposureMode: "local-only" },
           } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
@@ -117,6 +120,7 @@ it.effect.each([false, true])(
           Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
             installIntoProcess: Effect.succeed(true),
             awaitDiscovery: Effect.succeed(true),
+            awaitUserShellDiscovery: Effect.succeed(true),
             updates: Stream.empty,
           }),
           Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
@@ -212,6 +216,7 @@ it.effect.each([false, true])(
         Effect.provide(
           Layer.mergeAll(
             Layer.mock(BrowserImport.BrowserImport, {}),
+            Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {}),
             Layer.mock(DesktopBackendConfiguration.DesktopBackendConfiguration, {}),
             Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
             Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
@@ -219,6 +224,7 @@ it.effect.each([false, true])(
             Layer.mock(DesktopIpc.DesktopIpc, {}),
             Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),
             Layer.mock(DesktopManagedPolicy.DesktopManagedPolicy, {}),
+            Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
             Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {}),
             Layer.mock(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {}),
             Layer.mock(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {}),
