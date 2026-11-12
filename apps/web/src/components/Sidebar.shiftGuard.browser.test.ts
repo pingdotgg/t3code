@@ -8,7 +8,7 @@ function mountList(container: HTMLElement, names: readonly string[]) {
   list.style.cssText = "position: relative; margin: 0; padding: 0; width: 200px; list-style: none";
   const pressed: string[] = [];
   const rows = new Map<string, HTMLLIElement>();
-  for (const name of names) {
+  const add = (name: string) => {
     const row = document.createElement("li");
     row.style.height = "40px";
     const button = document.createElement("button");
@@ -17,13 +17,15 @@ function mountList(container: HTMLElement, names: readonly string[]) {
     row.append(button);
     list.append(row);
     rows.set(name, row);
-  }
+  };
+  for (const name of names) add(name);
   container.append(list);
   const guard = createSidebarShiftGuard(list);
   return {
     pressed,
     guard,
     button: (name: string) => rows.get(name)!.querySelector("button")!,
+    add,
     remove: (name: string) => rows.get(name)!.remove(),
     [Symbol.dispose]: () => guard.dispose(),
   };
@@ -63,6 +65,18 @@ describe("sidebar shift guard", () => {
     list.guard.update();
     await userEvent.click(list.button("A"));
     expect(list.pressed).toEqual(["A"]);
+  });
+
+  it("keeps rows clickable when an empty list first fills", async () => {
+    await using screen = await render(null);
+    using list = mountList(screen.container, []);
+    using _clock = fakeTimers();
+
+    list.add("A");
+    list.add("B");
+    list.guard.update();
+    await userEvent.click(list.button("B"));
+    expect(list.pressed).toEqual(["B"]);
   });
 
   it("lets the user act on the row their own press moved", async () => {

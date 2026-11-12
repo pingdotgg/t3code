@@ -110,7 +110,8 @@ export function createSidebarShiftGuard(list: HTMLElement) {
     update() {
       const next = readTops(list);
       const now = performance.now();
-      const ownMove = now - lastInputAt < OWN_INPUT_WINDOW_MS;
+      // A list filling from empty slid nothing under the pointer.
+      const ownMove = tops.size === 0 || now - lastInputAt < OWN_INPUT_WINDOW_MS;
       for (const [row, top] of next) {
         if (tops.get(row) === top) continue;
         // The latest move decides: one the user caused clears an earlier mark.
