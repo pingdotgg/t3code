@@ -25,10 +25,13 @@ const decodeOutput = Schema.decodeUnknownEffect(
 
 /** 16 kHz mono Float32 PCM to a 16-bit WAV that AVAudioFile reads. */
 function encodeSpeechWav(pcmBytes: Uint8Array): Uint8Array {
+  // Float32Array needs a 4-byte-aligned offset; copy a view that is not.
+  const aligned =
+    pcmBytes.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0 ? pcmBytes : pcmBytes.slice();
   const samples = new Float32Array(
-    pcmBytes.buffer,
-    pcmBytes.byteOffset,
-    pcmBytes.byteLength / Float32Array.BYTES_PER_ELEMENT,
+    aligned.buffer,
+    aligned.byteOffset,
+    aligned.byteLength / Float32Array.BYTES_PER_ELEMENT,
   );
   const wav = new Uint8Array(44 + samples.length * 2);
   const view = new DataView(wav.buffer);
@@ -172,6 +175,8 @@ export const layer = Layer.effect(
     // failure is dropped so the next start retries it.
     const prepared = new Map<string, Effect.Effect<DesktopAppleSpeechResult>>();
     const claimPermit = yield* Semaphore.make(1);
+    // One native analysis at a time, even if IPC callers overlap.
+    const transcribePermit = yield* Semaphore.make(1);
     const claimPrepare = Effect.fn("AppleSpeech.claimPrepare")(function* (locale: string) {
       const existing = prepared.get(locale);
       if (existing !== undefined) return existing;
@@ -216,6 +221,7 @@ export const layer = Layer.effect(
             code: "failed",
             message: "Could not save the recording for Apple Speech.",
           })),
+          transcribePermit.withPermits(1),
         );
       }),
     });

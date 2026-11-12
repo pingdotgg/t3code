@@ -145,9 +145,14 @@ describe("AppleSpeech", () => {
 
   it.effect("transcribes Float32 PCM through a 16-bit WAV file", () => {
     const { layer, commands, written } = setup({ stdout: '{"value":"hello"}', exitCode: 0 });
-    const pcm = new Uint8Array(new Float32Array([0, 1, -1, 2]).buffer);
+    // An unaligned view, as a structured-clone or subarray caller may pass.
+    const pcm = new Uint8Array(17);
+    new DataView(pcm.buffer).setFloat32(1, 0, true);
+    new DataView(pcm.buffer).setFloat32(5, 1, true);
+    new DataView(pcm.buffer).setFloat32(9, -1, true);
+    new DataView(pcm.buffer).setFloat32(13, 2, true);
     return Effect.gen(function* () {
-      const result = yield* (yield* AppleSpeech.AppleSpeech).transcribe("en-US", pcm);
+      const result = yield* (yield* AppleSpeech.AppleSpeech).transcribe("en-US", pcm.subarray(1));
       assert.deepEqual(result, { ok: true, value: "hello" });
       assert.deepEqual(commands, [
         [
