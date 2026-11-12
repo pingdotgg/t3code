@@ -1154,6 +1154,29 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a status refresh that leaves a branch unchanged keeps its no-PR answer", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["branch", "feature/idle"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/idle"]);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: { prListOtherwise: [] },
+      });
+      const lookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/idle" });
+
+      expect(yield* lookup).toBeNull();
+      // Clients refresh the checkout's status while other threads work there.
+      yield* manager.invalidateStatus(repoDir);
+      expect(yield* lookup).toBeNull();
+
+      expect(listedSelectors(providerCalls)).toEqual(["feature/idle"]);
+    }),
+  );
+
   it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
