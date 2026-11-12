@@ -116,7 +116,8 @@ describe("Claude advisor iterations", () => {
             model: "claude-fable-5-1",
             input_tokens: 54204,
             cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0,
+            cache_creation_input_tokens: 500,
+            cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 300 },
             output_tokens: 4229,
           },
           {
@@ -161,10 +162,11 @@ describe("Claude advisor iterations", () => {
         totals: {
           uncachedInputTokens: 54204,
           cachedInputTokens: 0,
-          cacheCreationTokens: 0,
+          cacheCreationTokens: 500,
           outputTokens: 4229,
           reasoningTokens: 0,
         },
+        cacheCreation1hTokens: 300,
         dedupeKey: expect.any(String),
       },
     ];
