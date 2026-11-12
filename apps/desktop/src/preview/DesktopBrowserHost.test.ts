@@ -491,6 +491,9 @@ describe("DesktopBrowserHost", () => {
       // Playwright re-enabling a domain after a reload is not the agent using the tab.
       yield* command(host, 1, "Runtime.enable");
       yield* settle;
+      // The relay resets Runtime before a connection's first enable: answer the disable, then the enable.
+      debuggee.release();
+      yield* settle;
       debuggee.release();
       yield* settle;
       yield* TestClock.adjust("1 minute");
