@@ -954,11 +954,13 @@ const layerMakeServer = Layer.unwrap(
                   }),
                 ),
                 Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
+                  Effect.logWarning(
+                    cause._tag === "TailscaleCommandExitError" &&
+                      cause.stderrDiagnostic === "unsupported-target"
+                      ? `Tailscale Serve left off; this Tailscale install can only proxy to localhost, not ${localHost}. Bind --host 127.0.0.1 or 0.0.0.0 instead`
+                      : "Failed to configure Tailscale Serve",
+                    { cause, localPort, servePort: config.tailscaleServePort },
+                  ).pipe(Effect.as(null)),
                 ),
               );
             }),
