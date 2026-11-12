@@ -66,7 +66,9 @@ export function installSidebarTree(root: HTMLElement) {
   const onPointerDown = (event: PointerEvent) => {
     const focusable =
       event.target instanceof Element
-        ? event.target.closest(`${ROW}, button, a[href], input, [tabindex]`)
+        ? event.target.closest(
+            `${ROW}, [data-sidebar-action-for], button, a[href], input, [tabindex]`,
+          )
         : null;
     ownsFocus = focusable !== null && root.contains(focusable);
   };

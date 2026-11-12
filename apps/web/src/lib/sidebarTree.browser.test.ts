@@ -163,6 +163,24 @@ describe("sidebar keyboard navigation", () => {
     expect(tree.root.scrollTop).toBe(0);
   });
 
+  it("follows a focused row that moves after a press on its visible content", async () => {
+    using tree = setup();
+    const container = document.createElement("div");
+    container.dataset.sidebarActionFor = "thread";
+    const primary = tree.row("thread");
+    const title = document.createElement("span");
+    title.textContent = "Thread title";
+    container.append(primary, title);
+    tree.root.append(container);
+    tree.row("other");
+    tree.install();
+    primary.focus();
+    title.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    // A drag reorder moves the row's node, which drops focus to the body.
+    tree.root.append(container);
+    await vi.waitFor(() => expect(document.activeElement).toBe(primary));
+  });
+
   it("does not pull focus back after a click outside the rows", async () => {
     using tree = setup();
     const first = tree.row("first");
