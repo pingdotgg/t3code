@@ -69,6 +69,39 @@ class ComposerTouchTest {
     event.recycle()
   }
 
+  // A second finger lands while the first is still down, so the event carries both pointers.
+  private fun secondFingerDown(firstX: Float, firstY: Float, x: Float, y: Float) {
+    val pointers = Array(2) { id ->
+      MotionEvent.PointerProperties().apply {
+        this.id = id
+        toolType = MotionEvent.TOOL_TYPE_FINGER
+      }
+    }
+    val coords = arrayOf(
+      MotionEvent.PointerCoords().apply { this.x = firstX; this.y = firstY; pressure = 1f; size = 1f },
+      MotionEvent.PointerCoords().apply { this.x = x; this.y = y; pressure = 1f; size = 1f },
+    )
+    val action = MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+    val event = MotionEvent.obtain(
+      downTime,
+      SystemClock.uptimeMillis(),
+      action,
+      2,
+      pointers,
+      coords,
+      0,
+      0,
+      1f,
+      1f,
+      0,
+      0,
+      InputDevice.SOURCE_TOUCHSCREEN,
+      0,
+    )
+    editor.dispatchTouchEvent(event)
+    event.recycle()
+  }
+
   private fun holdPastLongPressTimeout() {
     shadowOf(Looper.getMainLooper())
       .idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 100L))
@@ -83,6 +116,22 @@ class ComposerTouchTest {
 
     touch(MotionEvent.ACTION_DOWN, 40f, 250f)
     touch(MotionEvent.ACTION_MOVE, 40f, 250f - slop * 3)
+    holdPastLongPressTimeout()
+
+    assertEquals(bottom, editor.scrollY)
+    assertEquals(editor.selectionStart, editor.selectionEnd)
+  }
+
+  @Test
+  fun secondFingerDuringADragDoesNotSelectAWord() {
+    scrolledToBottom()
+    val bottom = editor.scrollY
+    val slop = ViewConfiguration.get(activity).scaledTouchSlop
+    val movedY = 250f - slop * 3
+
+    touch(MotionEvent.ACTION_DOWN, 40f, 250f)
+    touch(MotionEvent.ACTION_MOVE, 40f, movedY)
+    secondFingerDown(40f, movedY, 120f, 250f)
     holdPastLongPressTimeout()
 
     assertEquals(bottom, editor.scrollY)

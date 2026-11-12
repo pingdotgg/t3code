@@ -827,7 +827,7 @@ internal class SelectionAwareEditText(
       touchDownX = event.x
       touchDownY = event.y
     }
-    touchDragged = isFingerDrag(event)
+    updateTouchDragged(event)
     val releasesScroll =
       event.actionMasked == MotionEvent.ACTION_UP &&
         event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER &&
@@ -848,12 +848,16 @@ internal class SelectionAwareEditText(
   // Touch drops a pending long press only if a drag scrolls, so at a scroll limit it would select.
   override fun performLongClick(): Boolean = !touchDragged && super.performLongClick()
 
-  private fun isFingerDrag(event: MotionEvent): Boolean {
-    val movedPastSlop =
-      abs(event.x - touchDownX) >= touchSlop || abs(event.y - touchDownY) >= touchSlop
-    return event.actionMasked == MotionEvent.ACTION_MOVE &&
-      event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER &&
-      (touchDragged || movedPastSlop)
+  // Latched until the touch ends, so a second finger's pointer events cannot reopen the long press.
+  private fun updateTouchDragged(event: MotionEvent) {
+    touchDragged = when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> false
+      MotionEvent.ACTION_MOVE -> touchDragged || (
+        event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER &&
+          (abs(event.x - touchDownX) >= touchSlop || abs(event.y - touchDownY) >= touchSlop)
+        )
+      else -> touchDragged
+    }
   }
 
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
