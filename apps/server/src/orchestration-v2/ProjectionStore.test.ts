@@ -1536,6 +1536,30 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     subagentNames(yield* store.getThreadRecords(threadId, ["subagents"])),
     subagents.map(([name]) => name).toSorted(),
   );
+  const childSelection = {
+    ...modelSelection,
+    options: [{ id: "thinking", value: "high" }],
+  };
+  const parent = (yield* store.getThreadProjection(threadId)).thread;
+  yield* store.apply({
+    id: EventId.make("event:settled-subagents:child-created"),
+    type: "thread.created",
+    threadId: childThreadIds.delivered!,
+    occurredAt: now,
+    payload: { ...parent, id: childThreadIds.delivered!, modelSelection: childSelection },
+  });
+  for (const records of [
+    yield* store.getThreadRecords(threadId, ["subagents"]),
+    (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 76 })).projection,
+  ]) {
+    assert.deepEqual(
+      records.subagents.find((agent) => agent.title === "delivered")?.modelSelection,
+      childSelection,
+    );
+    assert.isUndefined(
+      records.subagents.find((agent) => agent.title === "no-delivery")?.modelSelection,
+    );
+  }
   // A command about one settled task keeps it, and reads only its node and turn item.
   const deliveredId = NodeId.make("node:settled-subagents:delivered");
   const forTask = yield* store.getThreadRecords(threadId, ["subagents", "nodes", "turnItems"], {

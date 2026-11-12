@@ -3216,6 +3216,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 },
               };
         });
+        // Settled children leave the shell stream, so their own selection travels with the task.
+        const subagentPayload = sql`CASE
+          WHEN subagent.origin = 'app_owned'
+            AND child.provider_instance_id = subagent.provider_instance_id
+          THEN json_set(subagent.payload_json, '$.modelSelection',
+            json_extract(child.payload_json, '$.modelSelection'))
+          ELSE subagent.payload_json
+        END AS payload_json`;
         const cohortJson = (field: string) =>
           JSON.stringify(
             turnItems.flatMap((payload) => {
@@ -3451,11 +3459,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
-            SELECT payload_json
+            SELECT ${subagentPayload}
             FROM orchestration_v2_projection_subagents AS subagent
-            WHERE thread_id = ${threadId}
-              ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
-              ${filter?.subagentRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
+            LEFT JOIN orchestration_v2_projection_threads AS child
+              ON child.thread_id = subagent.child_thread_id
+            WHERE subagent.thread_id = ${threadId}
+              ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent.subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
+              ${filter?.subagentRunIds === undefined ? sql`` : sql`AND subagent.run_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentRunIds)}))`}
               ${
                 filter?.omitSettledSubagents !== undefined
                   ? sql`AND (${
@@ -3474,15 +3484,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ))`
                   : sql``
               }
-            ORDER BY COALESCE(started_at, ''), subagent_id ASC
+            ORDER BY COALESCE(subagent.started_at, ''), subagent.subagent_id ASC
           `
               : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_subagents
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR parent_node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
-            ORDER BY COALESCE(started_at, ''), subagent_id ASC
+            SELECT ${subagentPayload}
+            FROM orchestration_v2_projection_subagents AS subagent
+            LEFT JOIN orchestration_v2_projection_threads AS child
+              ON child.thread_id = subagent.child_thread_id
+            WHERE subagent.thread_id = ${threadId}
+              AND (subagent.status IN ('pending','starting','running','waiting')
+                OR subagent.run_id IN (SELECT value FROM json_each(${cohortRunIds}))
+                OR subagent.parent_node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+            ORDER BY COALESCE(subagent.started_at, ''), subagent.subagent_id ASC
           `,
           fields !== undefined && !fields.includes("providerSessions")
             ? Effect.succeed([])
