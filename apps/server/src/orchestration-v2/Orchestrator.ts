@@ -9938,7 +9938,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     ) {
       const projection = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs", "nodes", "turnItems"], {
+        .getThreadRecords(command.threadId, ["runs", "nodes", "turnItems", "providerTurns"], {
           turnItemTypes: ["secret_delivery"],
           messageRoles: [],
         })
@@ -9997,7 +9997,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               providerThreadId: existing
                 ? existing.providerThreadId
                 : (node?.providerThreadId ?? null),
-              providerTurnId: existing ? existing.providerTurnId : (node?.providerTurnId ?? null),
+              providerTurnId: existing
+                ? existing.providerTurnId
+                : (projection.providerTurns
+                    .filter((turn) => turn.nodeId === command.nodeId)
+                    .toSorted((left, right) => right.ordinal - left.ordinal)[0]?.id ??
+                  node?.providerTurnId ??
+                  null),
               nativeItemRef: null,
               parentItemId: null,
               ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),

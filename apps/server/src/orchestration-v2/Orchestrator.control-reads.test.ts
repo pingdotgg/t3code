@@ -2247,7 +2247,25 @@ it.effect("records secret delivery metadata without reopening a deleted item", (
       type: "node.updated",
       threadId,
       occurredAt: yield* DateTime.now,
-      payload: { ...originalNode, providerThreadId, providerTurnId },
+      payload: { ...originalNode, providerThreadId },
+    });
+    yield* projections.apply({
+      id: EventId.make("delivery:original-provider-turn"),
+      type: "provider-turn.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: yield* DateTime.now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId,
+        nodeId: originalNode.id,
+        runAttemptId: run.activeAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: yield* DateTime.now,
+        completedAt: null,
+      },
     });
     const turnItemId = yield* Effect.scoped(
       Effect.gen(function* () {
