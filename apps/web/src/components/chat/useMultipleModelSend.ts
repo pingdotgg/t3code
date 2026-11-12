@@ -7,7 +7,6 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useNavigate } from "@tanstack/react-router";
 import { newMessageId } from "~/lib/utils";
@@ -171,7 +170,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                     ...withMessageContext({
                       text: target.text,
                       context,
-                      unformattedText: messageText || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
                     }),
                   },
                   modelSelection: target.selection,

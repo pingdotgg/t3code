@@ -312,8 +312,6 @@ export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
   guest: Schema.optional(GuestMessageAttribution),
-  /** What the client prepended to the typed text for a prompt-injected effort, e.g. `Ultrathink:\n`. */
-  effortPrefix: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),

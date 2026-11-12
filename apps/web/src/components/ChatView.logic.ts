@@ -1356,18 +1356,8 @@ export function boundAttachmentIds(
 export function withMessageContext(input: {
   readonly text: string;
   readonly context: OrchestrationMessageContext | undefined;
-  /** The text `formatOutgoingPrompt` was given, so the prefix it added is recorded. */
-  readonly unformattedText: string;
 }): { readonly text: string; readonly context?: OrchestrationMessageContext } {
-  const { text } = input;
-  const unformatted = input.unformattedText.trim();
-  const context =
-    text !== unformatted && text.endsWith(unformatted)
-      ? {
-          ...(input.context ?? { version: 1 as const, records: [] }),
-          effortPrefix: text.slice(0, text.length - unformatted.length),
-        }
-      : input.context;
+  const { text, context } = input;
   if (context === undefined) return { text };
   return { text, context };
 }

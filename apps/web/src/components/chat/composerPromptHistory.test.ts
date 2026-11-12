@@ -1,4 +1,5 @@
-import { ScheduledTaskId } from "@t3tools/contracts";
+import { ProviderInstanceId, ScheduledTaskId } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -99,8 +100,11 @@ describe("recallableComposerPrompt", () => {
 });
 
 describe("buildComposerPromptHistoryEntries", () => {
-  it("drops only what a send recorded, and text shapes only from server-written messages", () => {
+  it("drops what the message's run records, and text shapes only from server-written messages", () => {
     const attachments = [{ id: "a1" }];
+    const ultrathink = createModelSelection(ProviderInstanceId.make("claude"), "claude-opus", [
+      { id: "effort", value: "ultrathink" },
+    ]);
     const review = '<review_comment filePath="src/app.ts">Keep this configurable.</review_comment>';
     expect(
       buildComposerPromptHistoryEntries(
@@ -109,8 +113,10 @@ describe("buildComposerPromptHistoryEntries", () => {
             id: "m1",
             role: "user",
             text: "Ultrathink:\ntyped",
-            context: { effortPrefix: "Ultrathink:\n" },
+            createdBy: "user",
+            creationSource: "web",
           },
+          { id: "m6", role: "user", text: "Ultrathink:\nsteered", runId: "r1" },
           { id: "m2", role: "user", text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, attachments },
           {
             id: "m3",
@@ -127,10 +133,19 @@ describe("buildComposerPromptHistoryEntries", () => {
             creationSource: "server",
           },
         ],
-        [{ userMessageId: "m4", sourcePlanRef: { threadId: "t1", planId: "p1" } }],
+        [
+          { id: "r1", userMessageId: "m1", modelSelection: ultrathink },
+          {
+            id: "r4",
+            userMessageId: "m4",
+            modelSelection: ultrathink,
+            sourcePlanRef: { threadId: "t1", planId: "p1" },
+          },
+        ],
       ),
     ).toEqual([
       { id: "m1", prompt: "typed" },
+      { id: "m6", prompt: "steered" },
       { id: "m5", prompt: "Please update this." },
     ]);
   });

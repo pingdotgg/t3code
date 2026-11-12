@@ -1,4 +1,6 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import type { ModelSelection } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -13,12 +15,14 @@ const TRAILING_LEGACY_CONTEXT =
 
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
-  readonly context?: { readonly effortPrefix?: string | undefined } | undefined;
+  readonly runId?: string | null | undefined;
   readonly attachments?: ReadonlyArray<unknown> | undefined;
 };
 
 interface ComposerPromptHistoryRun {
+  readonly id: string;
   readonly userMessageId: string;
+  readonly modelSelection: ModelSelection;
   readonly sourcePlanRef?: unknown;
 }
 
@@ -89,11 +93,18 @@ function stripContextReferences(prompt: string): string {
   return prompt.trim();
 }
 
-/** A client-sent message records what the send added, so only that is removed. */
-function recallableSentPrompt(message: ComposerPromptHistoryMessage): string {
+/** A client-sent message's run records whether the send added the ultrathink prefix. */
+function recallableSentPrompt(
+  message: ComposerPromptHistoryMessage,
+  run: ComposerPromptHistoryRun | undefined,
+): string {
   let prompt = message.text.trim();
-  const effortPrefix = message.context?.effortPrefix;
-  if (effortPrefix && prompt.startsWith(effortPrefix)) prompt = prompt.slice(effortPrefix.length);
+  if (
+    getModelSelectionStringOptionValue(run?.modelSelection, "effort") === "ultrathink" &&
+    prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)
+  ) {
+    prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
+  }
   if (isAttachmentOnlyBootstrapPrompt(prompt) && (message.attachments?.length ?? 0) > 0) return "";
   return stripContextReferences(prompt);
 }
@@ -142,19 +153,22 @@ export function buildComposerPromptHistoryEntries(
   messages: ReadonlyArray<ComposerPromptHistoryMessage>,
   runs: ReadonlyArray<ComposerPromptHistoryRun> = [],
 ): ComposerPromptHistoryEntry[] {
-  const planImplementationMessageIds = new Set(
-    runs.flatMap((run) => (run.sourcePlanRef === undefined ? [] : [run.userMessageId])),
-  );
+  const runsByUserMessageId = new Map(runs.map((run) => [run.userMessageId, run]));
+  const runsById = new Map(runs.map((run) => [run.id, run]));
   const entries: ComposerPromptHistoryEntry[] = [];
   for (const message of messages) {
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
-    if (planImplementationMessageIds.has(message.id)) continue;
+    const startedRun = runsByUserMessageId.get(message.id);
+    if (startedRun?.sourcePlanRef !== undefined) continue;
     const prompt =
       message.creationSource === "server"
         ? recallableComposerPrompt(message.text)
-        : recallableSentPrompt(message);
+        : recallableSentPrompt(
+            message,
+            startedRun ?? (message.runId ? runsById.get(message.runId) : undefined),
+          );
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {
