@@ -269,6 +269,11 @@ function isMiseExecutablePath(commandPath: string): boolean {
   return /(?:^|\/)mise(?:\.exe)?$/.test(normalizeCommandPath(commandPath));
 }
 
+/** The Nix store is read-only, so no updater can replace a CLI that lives there. */
+export function isNixStoreCommandPath(commandPath: string): boolean {
+  return normalizeCommandPath(commandPath).startsWith("/nix/store/");
+}
+
 const winGetClaudeCommandPath =
   /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
 
@@ -477,6 +482,37 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+// `bun outdated` has no JSON output; its `Latest` column is what `@latest` installs
+// under minimumReleaseAge (marked `*`). `Update` is only the global package.json range.
+function parseBunOutdatedLatestVersion(output: string, packageName: string): string | null {
+  for (const line of output.split("\n")) {
+    const cells = line.split("|").map((cell) => cell.trim());
+    if (cells.length === 6 && cells[1] === packageName) {
+      return nonEmptyString(cells[4]?.replace(/ \*$/, ""));
+    }
+  }
+  return null;
+}
+
+// bun rejects an exact pin to a release inside minimumReleaseAge, so the update stays `@latest`.
+const resolveBunGlobalLatestVersion = Effect.fn("resolveBunGlobalLatestVersion")(function* (
+  packageName: string,
+  env: NodeJS.ProcessEnv,
+) {
+  // Match the updater's bun and environment.
+  const bunPath = yield* resolveCommandPath("bun", {
+    env: { ...(yield* HostProcess.Environment), ...env },
+  });
+  if (!bunPath) return null;
+  // FORCE_COLOR=1 draws the table with box characters and splits versions with ANSI codes.
+  const outdated = yield* runProbe(bunPath, ["outdated", "-g", packageName], {
+    ...env,
+    FORCE_COLOR: "0",
+  });
+  // A missing row reads the same whether bun is current or its registry failed, so npm decides.
+  return outdated ? parseBunOutdatedLatestVersion(outdated, packageName) : null;
+});
+
 const MiseInstall = Schema.Struct({
   install_path: Schema.String,
   requested_version: Schema.optional(Schema.NullOr(Schema.String)),
@@ -672,6 +708,10 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     context,
   );
   if (mise) return mise;
+  // After mise: a shim of a Nix-installed mise resolves into the store, yet its installs are writable.
+  if (commandPaths.some(isNixStoreCommandPath)) {
+    return manual;
+  }
 
   const nativeUpdate = definition.nativeUpdate;
   const nativeEnv = nativeUpdate?.env;
@@ -714,6 +754,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -721,6 +762,9 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateArgs: ["i", "-g", `${packageName}@latest`],
       updateLockKey: "bun-global",
       env: context.env,
+      lookupLatestVersion: resolveBunGlobalLatestVersion(packageName, context.env).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
@@ -938,6 +982,14 @@ const decodeNpmViewVersion = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
 );
 
+function environmentCacheKey(env: NodeJS.ProcessEnv): string {
+  return NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify(Object.entries(env).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+    )
+    .digest("hex");
+}
+
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
 ) {
@@ -981,6 +1033,14 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
     ...capabilities,
     // npm owns registry, scoped auth and proxy configuration; failure must not retry public npm.
     latestVersion: null,
+    latestVersionCacheKey: [
+      "configured-npm",
+      npmPath,
+      packageName,
+      prefix ?? "",
+      environmentCacheKey(env),
+      installerLatestVersionKey(capabilities) ?? "",
+    ].join("\0"),
     lookupLatestVersion: capabilities.lookupLatestVersion
       ? capabilities.lookupLatestVersion.pipe(
           Effect.filterOrElse(
