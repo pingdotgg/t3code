@@ -303,6 +303,25 @@ describe("buildProjectGroups", () => {
     expect(label(renamed)).toBe("t3code");
   });
 
+  it("labels a group by its repository when clones disagree on its casing", () => {
+    // A subfolder project, its repository root, and a clone whose remote URL is
+    // lowercased: no shared title or display name, but one repository.
+    const subfolder = makeProject("design-study", "/work/NewCo/reference/design-study");
+    const root = makeProject("NewCo", "/work/NewCo");
+    const lowercasedClone = makeProject("NewCo", "/remote/NewCo", {
+      environmentId: EnvironmentId.make("remote"),
+      repositoryIdentity: { ...repositoryIdentity, name: "T3CODE", displayName: "t3 code" },
+    });
+
+    const groups = buildProjectGroups({
+      projects: [subfolder, root, lowercasedClone],
+      settings: settings("repository"),
+      preferredEnvironmentId: environmentId,
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.label).toBe("T3 Code");
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");

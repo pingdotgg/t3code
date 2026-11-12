@@ -230,7 +230,15 @@ export function deriveProjectGroupLabel(input: {
     return sharedRepositoryNames[0]!;
   }
 
-  return input.representative.title;
+  // Members share a repository, so its name describes the whole group. Clones
+  // can disagree on its casing (each keeps its own remote URL's), and one
+  // member's title would label every thread with that one folder's name.
+  const representativeIdentity = input.representative.repositoryIdentity;
+  return (
+    (representativeIdentity ? repositoryGroupingDisplayNameOf(representativeIdentity) : null) ??
+    representativeIdentity?.name ??
+    input.representative.title
+  );
 }
 
 export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
