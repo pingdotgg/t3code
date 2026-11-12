@@ -221,3 +221,64 @@ let newerRequest = AgentWidgetStorage.beginRefresh(in: defaults)
 assert(AgentWidgetStorage.commit(entries, generation: storageGeneration, requestId: newerRequest, in: defaults))
 assert(!AgentWidgetStorage.commit(entries, generation: storageGeneration, requestId: firstRequest, in: defaults))
 print("Revocation retries deduplicate across shared storage; superseded reads cannot commit")
+
+// Relay rotation preserves the old destination before clearing its capability.
+defaults.set("same-owner", forKey: "t3_agent_widget_identity")
+defaults.set("old-capability", forKey: "t3_agent_widget_token")
+defaults.set("https://old-relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
+var rotationRevocations = [URLRequest]()
+assert(!AgentWidgetStorage.prepareRelay(url: "https://new-relay.test/v1/widget/agent-activity", in: defaults, storeRevocation: { _ in false }))
+assert(defaults.string(forKey: "t3_agent_widget_url") == "https://old-relay.test/v1/widget/agent-activity")
+assert(defaults.string(forKey: "t3_agent_widget_token") == "old-capability")
+assert(AgentWidgetStorage.prepareRelay(url: "https://new-relay.test/v1/widget/agent-activity", in: defaults, storeRevocation: { request in
+  rotationRevocations.append(request)
+  return true
+}))
+assert(rotationRevocations.count == 1)
+assert(rotationRevocations[0].url?.host == "old-relay.test")
+assert(rotationRevocations[0].value(forHTTPHeaderField: "Authorization") == "Bearer old-capability")
+assert(defaults.string(forKey: "t3_agent_widget_url") == nil)
+assert(defaults.string(forKey: "t3_agent_widget_token") == nil)
+assert(defaults.string(forKey: "t3_agent_widget_identity") == nil)
+print("Relay URL rotation: failed preservation stays recoverable; old URL/token persist before new authority")
+// Uncapped source rows let native refresh reconcile each environment independently.
+var observedRow = row("relay", "running")
+observedRow["threadId"] = "observed"
+var hiddenRow = row("relay", "running")
+hiddenRow["threadId"] = "hidden"
+var completedRow = observedRow
+completedRow["phase"] = "completed"
+completedRow["updatedAt"] = "2026-01-02T00:00:00Z"
+var completedHidden = hiddenRow
+completedHidden["phase"] = "completed"
+completedHidden["updatedAt"] = "2026-01-02T00:00:00Z"
+let cappedLocal: [String: Any] = ["activeCount": 2, "totalCount": 2, "expiresAt": 1_600_000,
+  "observedEnvironmentIds": ["relay"], "activities": [observedRow],
+  "observedActivities": ["relay": [observedRow, hiddenRow]]]
+let reconciledRelay: [String: Any] = ["activeCount": 0, "totalCount": 2, "activities": [completedRow, completedHidden]]
+let reconciled = props(AgentWidgetState.timeline(aggregate: reconciledRelay, environmentIds: ["relay"], localObservation: cappedLocal, now: now)[0])
+assert(reconciled["activeCount"] as? Int == 0)
+assert((reconciled["activities"] as! [[String: Any]]).allSatisfy { $0["phase"] as? String == "completed" })
+let partialRelay: [String: Any] = ["activeCount": 0, "totalCount": 1, "activities": [completedRow]]
+let partial = props(AgentWidgetState.timeline(aggregate: partialRelay, environmentIds: ["relay"], localObservation: cappedLocal, now: now)[0])
+assert(partial["activeCount"] as? Int == 2)
+assert((partial["activities"] as! [[String: Any]]).count == 1)
+print("Capped observations: newer relay rows reconcile all source rows; hidden unfinished rows remain protected")
+
+
+var mixedObservation = cappedLocal
+mixedObservation["observedActivities"] = ["relay": [observedRow, hiddenRow], "direct": [row("direct", "running")]]
+mixedObservation["activities"] = [observedRow, row("direct", "running")]
+let mixedEntries = AgentWidgetState.timeline(aggregate: reconciledRelay, environmentIds: ["relay"], localObservation: mixedObservation, now: now)
+let mixed = props(mixedEntries[0])
+assert(mixed["activeCount"] as? Int == 1)
+assert(mixed["totalCount"] as? Int == 3)
+assert((mixed["activities"] as! [[String: Any]]).map { $0["phase"] as! String } == ["completed", "completed", "running"])
+assert(props(mixedEntries[1])["activeCount"] as? Int == -1)
+var hiddenOnly = cappedLocal
+hiddenOnly["activities"] = [[String: Any]]()
+let hiddenEntries = AgentWidgetState.timeline(aggregate: nil, environmentIds: [], localObservation: hiddenOnly, now: now)
+assert(props(hiddenEntries[0])["activeCount"] as? Int == 2)
+assert(hiddenEntries[1]["timestamp"] as? Int == 1_600_000)
+assert(props(hiddenEntries[1])["activeCount"] as? Int == -1)
+print("Per-environment reconciliation releases confirmed scopes, preserves exact hidden counts, and expires hidden work")

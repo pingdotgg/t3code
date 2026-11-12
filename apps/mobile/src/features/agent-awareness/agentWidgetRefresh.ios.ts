@@ -4,20 +4,17 @@ import { agentActivityTimeline } from "../../widgets/agentActivityTimeline";
 
 const native = requireOptionalNativeModule<{
   observeAgentWidget(props: string, timeline: string): boolean;
-  agentWidgetToken(identity: string): string | null;
+  agentWidgetToken(identity: string, url: string | null): string | null;
   configureAgentWidgetRefresh(url: string, token: string): void;
   clearAgentWidgetRefresh(): void;
 }>("T3NativeControls");
 
-export function agentWidgetToken(identity: string): string | null {
-  return native?.agentWidgetToken?.(identity) ?? null;
+export function agentWidgetToken(identity: string, relayUrl?: string): string | null {
+  return native?.agentWidgetToken?.(identity, relayUrl ? widgetRefreshUrl(relayUrl) : null) ?? null;
 }
 
 export function configureAgentWidgetRefresh(relayUrl: string, token: string): void {
-  native?.configureAgentWidgetRefresh?.(
-    new URL("v1/widget/agent-activity", `${relayUrl.replace(/\/$/, "")}/`).href,
-    token,
-  );
+  native?.configureAgentWidgetRefresh?.(widgetRefreshUrl(relayUrl), token);
 }
 
 export function clearAgentWidgetRefresh(): void {
@@ -36,4 +33,8 @@ export function observeAgentWidget(props: AgentActivityProps): boolean {
       ),
     ) ?? false
   );
+}
+
+function widgetRefreshUrl(relayUrl: string): string {
+  return new URL("v1/widget/agent-activity", `${relayUrl.replace(/\/$/, "")}/`).href;
 }

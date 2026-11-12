@@ -414,7 +414,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         thread,
         now: input.now,
       });
-      return state !== null;
+      return state !== null || (thread.snoozedUntil?.epochMilliseconds ?? 0) > input.now;
     })
     .map((thread) => thread.id);
 }

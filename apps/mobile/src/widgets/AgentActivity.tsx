@@ -54,6 +54,9 @@ export interface AgentActivityProps {
   readonly totalCount?: number | null;
   // Native reads need source coverage even when the visible rows are capped.
   readonly observedEnvironmentIds?: ReadonlyArray<string>;
+  readonly observedActivities?: Readonly<
+    Record<string, ReadonlyArray<Pick<AgentActivityRowProps, "threadId" | "phase" | "updatedAt">>>
+  >;
   readonly isStale?: boolean;
   readonly isExpired?: boolean;
   readonly expiresAt?: number;
