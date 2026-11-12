@@ -41,6 +41,20 @@ settings. T3 Code uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
 
+When **Server URL** points to a locally running server (such as `127.0.0.1`),
+the update button upgrades its installed CLI. If that server is this machine's
+OpenCode background service, T3 Code then restarts it on the new version. The URL
+must use the service's own protocol, host, and port. For a service listening on
+`0.0.0.0` use `127.0.0.1`, and for `[::]` use `[::1]`.
+
+Restarting interrupts running turns, and the service then runs with T3 Code's
+environment. Set any variables it needs with `opencode service set env <name> <value>`.
+
+T3 Code does not restart any other server, including the background service
+reached through `localhost`. That server can still report the previous version
+until you restart it. For a loopback URL, T3 Code shows that restart requirement
+instead of treating the CLI update as a failure.
+
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
 
@@ -68,6 +82,10 @@ cached while the local helper is running. Let it sit for 30 seconds without mode
 refreshes or text-generation work, then refresh again to reload the files. Repeated
 refreshes keep the helper alive. An external server may need its own reload or
 restart before T3 Code can see configuration changes.
+
+Models defined in a project's own `opencode.json` appear only in that project's
+model picker, after T3 Code reads the project's catalog the first time the picker
+opens there.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.

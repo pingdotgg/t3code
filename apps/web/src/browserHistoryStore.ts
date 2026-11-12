@@ -3,11 +3,12 @@ import {
   scopedThreadKey,
   scopeProjectRef,
 } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  PreviewSessionSnapshot,
-  ScopedProjectRef,
-  ScopedThreadRef,
+import {
+  type EnvironmentId,
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type PreviewSessionSnapshot,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -468,6 +469,7 @@ function recordPreviewTitles(
   );
   for (const session of sessions) {
     const status = session.navStatus;
+    if (session.profileId === INCOGNITO_BROWSER_PROFILE_ID) continue;
     if (status._tag !== "Success" || !status.title || !include(session, status.url)) continue;
     state.setTitleForUrl(projectKey, status.url, status.title, environmentHostname);
   }
