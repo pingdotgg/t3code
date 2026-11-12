@@ -471,6 +471,23 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("finds symlinked files and folders by their link names", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlink-search-" });
+        yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
+        yield* fileSystem.symlink("src/index.ts", path.join(cwd, "index-link.ts"));
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src-link");
+        expect(paths).toContain("index-link.ts");
+      }),
+    );
+
     it.effect("excludes gitignored paths for git repositories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
