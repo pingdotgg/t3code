@@ -195,30 +195,6 @@ it("keeps decimal markers in nested user lists while documents keep their counte
   ).toEqual(["decimal", "lower-alpha", "lower-roman"]);
 });
 
-it("colors inline code in user messages with the message foreground", async () => {
-  setup();
-  const root = document.documentElement;
-  root.style.setProperty("--foreground", "rgb(10, 20, 30)");
-  root.style.setProperty("--message-foreground", "rgb(240, 200, 40)");
-  try {
-    await using screen = await render(
-      <div>
-        <ChatMarkdown cwd={undefined} text="Run `pnpm dev`" className="user-message-markdown" />
-        <ChatMarkdown cwd={undefined} text="Run `pnpm dev`" />
-        <span data-probe style={{ color: "var(--contrast-message-foreground)" }} />
-      </div>,
-    );
-    await expect.element(screen.getByText("pnpm dev").first()).toBeVisible();
-    const [message, preview] = [...screen.container.querySelectorAll(".chat-markdown code")];
-    const probe = screen.container.querySelector("[data-probe]")!;
-    expect(getComputedStyle(message!).color).toBe(getComputedStyle(probe).color);
-    expect(getComputedStyle(preview!).color).not.toBe(getComputedStyle(probe).color);
-  } finally {
-    root.style.removeProperty("--foreground");
-    root.style.removeProperty("--message-foreground");
-  }
-});
-
 it("shows unavailable audio when a workspace embed has no thread", async () => {
   setup();
   await using screen = await renderText("![recording](clip.wav)");

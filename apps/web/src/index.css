@@ -2193,18 +2193,18 @@ code {
   background: transparent !important;
 }
 
-/* Plain-text fences override the highlighter's inline foreground colors. The
-   frame keeps its own code foreground, so the text inherits that rather than
-   the surrounding message color. */
+/* Plain-text fences override the highlighter's inline foreground colors. */
 :is(.chat-markdown, .composer-tiptap)
   .chat-markdown-codeblock:is(
     [data-language="text" i],
     [data-language="txt" i],
     [data-language="plain" i],
     [data-language="plaintext" i]
-  )
-  :is(pre, pre *) {
-  color: inherit !important;
+  ) {
+  &,
+  & :is(pre, pre *) {
+    color: inherit !important;
+  }
 }
 
 /* Paragraphs and code blocks arrive in chunks while a response streams. Fade
