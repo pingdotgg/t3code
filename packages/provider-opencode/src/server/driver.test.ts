@@ -560,10 +560,6 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           }
           if (url.pathname === "/api/agent") {
             agentDirectories.push(directory);
-            assert.deepStrictEqual(
-              [...(directory ? (workspaceReads.get(directory) ?? []) : [])].sort(),
-              ["/api/command", "/api/skill"],
-            );
           }
           if (url.pathname === "/api/agent" && stallAgents) return Effect.never;
           const responses = {
@@ -678,29 +674,19 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         hiddenOnlyAgents = true;
         const hiddenOnly = yield* instance.snapshotForCwd!("/work");
         assert.isUndefined(hiddenOnly.optionDescriptors);
-        assert.isFalse(hiddenOnly.optionDescriptorsPending ?? false);
         hiddenOnlyAgents = false;
         emptyCommands = true;
         const incompleteScan = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
         yield* TestClock.adjust("10 seconds");
         const incomplete = yield* Fiber.join(incompleteScan);
-        assert.isUndefined(incomplete.optionDescriptors);
+        assert.deepStrictEqual(choices(incomplete), ["build", "reviewer"]);
         assert.includeMembers(
           incomplete.skills.map((skill) => skill.name),
           ["plum", "opencode"],
         );
         emptyCommands = false;
-        assert.deepStrictEqual(agentDirectories, [
-          "/work",
-          "/other",
-          "/work",
-          "/work",
-          "/work",
-          "/work",
-          "/work",
-          "/work",
-          "/work",
-        ]);
+        assert.deepStrictEqual(agentDirectories.slice(0, 2), ["/work", "/other"]);
+        assert.isTrue(agentDirectories.slice(2).every((directory) => directory === "/work"));
         assert.deepStrictEqual(serverStarts, []);
       }).pipe(Effect.scoped),
   );

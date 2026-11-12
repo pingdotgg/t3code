@@ -2461,11 +2461,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           (snapshot) => snapshot.cwd === providerAgentCwd,
         )?.optionDescriptors
       }
-      optionDescriptorsPending={
-        selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
-          (snapshot) => snapshot.cwd === providerAgentCwd,
-        )?.optionDescriptorsPending
-      }
       keybindings={keybindings}
       modelOptionsByInstance={modelOptionsByInstance}
       terminalOpen={terminalOpen}
@@ -3023,9 +3018,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           workspaceOptionDescriptors: selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
             (snapshot) => snapshot.cwd === providerAgentCwd,
           )?.optionDescriptors,
-          optionDescriptorsPending: selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
-            (snapshot) => snapshot.cwd === providerAgentCwd,
-          )?.optionDescriptorsPending,
           direction,
         });
         if (!change) return;

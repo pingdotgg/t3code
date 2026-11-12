@@ -422,6 +422,11 @@ export const OpenCodeDriver: ProviderDriver<
           return yield* loadOpenCode2Workspace(
             Effect.all(
               {
+                agents: client.agent.list({ location }).pipe(
+                  Effect.timeout("10 seconds"),
+                  Effect.map((list) => list.data),
+                  Effect.catchCause(() => Effect.undefined),
+                ),
                 skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
                 commands: client.command.list({ location }).pipe(Effect.map((list) => list.data)),
               },
@@ -512,8 +517,7 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.all(
         {
           agents: OpenCodeRuntime.loadOpenCodeAgents(client).pipe(
-            Effect.timeout("10 seconds"),
-            Effect.orElseSucceed(() => undefined),
+            Effect.catchCause(() => Effect.undefined),
           ),
           skills: openCodeRuntime.loadOpenCodeSkills(client),
           commandInventory: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
@@ -693,9 +697,9 @@ export const OpenCodeDriver: ProviderDriver<
                           ? {}
                           : { optionDescriptors: [agentDescriptor] }),
                         skills: openCode2SkillsToServerProviderSkills(skills),
-                      slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
-                      // A finished scan lists at least the built-ins. None means it
-                      // timed out, so the registry decides from the provider's health.
+                        slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                        // A finished scan lists at least the built-ins. None means it
+                        // timed out, so the registry decides from the provider's health.
                         slashCommandsPending: commands.length > 0 ? false : undefined,
                       };
                     }),
@@ -705,17 +709,17 @@ export const OpenCodeDriver: ProviderDriver<
                     loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
                   ]).pipe(
                     Effect.map(
-                      ([machineSnapshot, { agents, skills, models, commands, slashCommandsPending }]) => {
+                      ([
+                        machineSnapshot,
+                        { agents, skills, models, commands, slashCommandsPending },
+                      ]) => {
                         const agentDescriptor =
                           agents === undefined || agents.length === 0
                             ? undefined
                             : openCodeAgentOptionDescriptor(agents);
                         return {
                           ...machineSnapshot,
-<<<<<<< HEAD
                           ...workspaceModelsFor(machineSnapshot.models, models),
-=======
->>>>>>> a9009c4fa7 (fix(opencode): drop empty workspace agent descriptors)
                           ...(agentDescriptor === undefined || agentDescriptor.options.length === 0
                             ? {}
                             : { optionDescriptors: [agentDescriptor] }),

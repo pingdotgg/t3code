@@ -153,11 +153,7 @@ function normalizeSelectionOptions(
       (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
         descriptor.id === "agent" && descriptor.type === "select",
     );
-    if (
-      driver === "opencode" &&
-      workspaceAgent &&
-      selection.options?.length
-    ) {
+    if (driver === "opencode" && workspaceAgent && selection.options?.length) {
       const savedAgent = selection.options.find((option) => option.id === "agent");
       const normalizedAgent =
         savedAgent &&
@@ -573,8 +569,6 @@ export function buildModelOptions(
                 fallbackModelSelection,
                 model?.capabilities ?? null,
                 provider?.driver ?? providerDriver,
-                provider?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)
-                  ?.optionDescriptorsPending ?? false,
                 provider?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)
                   ?.optionDescriptors,
                 model === undefined,

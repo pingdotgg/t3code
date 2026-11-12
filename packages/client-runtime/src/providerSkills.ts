@@ -312,12 +312,7 @@ export function isProviderWorkspaceSnapshotScanning(
   );
 }
 
-type WorkspaceSnapshotStatus =
-  | "absent"
-  | "commands-pending"
-  | "descriptors-pending"
-  | "both-pending"
-  | "complete";
+type WorkspaceSnapshotStatus = "absent" | "pending" | "complete";
 
 function resolveWorkspaceSnapshotStatus(
   provider: ServerProvider | undefined,

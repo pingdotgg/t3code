@@ -122,7 +122,6 @@ function getSelectedTraits(
   allowPromptInjectedEffort: boolean,
   includePlanAgent: boolean | undefined,
   workspaceOptionDescriptors: ReadonlyArray<{ readonly id: string }> | undefined,
-  optionDescriptorsPending: boolean | undefined,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
   const modelIsUnavailable =
@@ -144,7 +143,6 @@ function getSelectedTraits(
     preserve: shouldPreserveOpenCodeAgent({
       driver: provider,
       descriptors: workspaceOptionDescriptors,
-      optionDescriptorsPending,
     }),
     includePlanAgent: includePlanAgent ?? false,
   });
@@ -212,7 +210,6 @@ export function getTraitsSectionVisibility(input: {
   allowPromptInjectedEffort?: boolean;
   includePlanAgent?: boolean | undefined;
   workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
-  optionDescriptorsPending?: boolean | undefined;
 }) {
   const selected = getSelectedTraits(
     input.provider,
@@ -223,7 +220,6 @@ export function getTraitsSectionVisibility(input: {
     input.allowPromptInjectedEffort ?? true,
     input.includePlanAgent,
     input.workspaceOptionDescriptors,
-    input.optionDescriptorsPending,
   );
 
   const showEffort = selected.primarySelectDescriptor !== null;
@@ -264,7 +260,6 @@ export function getReasoningTraitStep(input: {
   prompt: string;
   includePlanAgent?: boolean | undefined;
   workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
-  optionDescriptorsPending?: boolean | undefined;
   direction: 1 | -1;
 }) {
   const selected = getSelectedTraits(
@@ -276,7 +271,6 @@ export function getReasoningTraitStep(input: {
     true,
     input.includePlanAgent,
     input.workspaceOptionDescriptors,
-    input.optionDescriptorsPending,
   );
   if (selected.modelIsUnavailable || selected.ultrathinkInBodyText) return null;
   const descriptor = selected.selectDescriptors.find(isReasoningSelect);
@@ -317,7 +311,6 @@ export interface TraitsMenuContentProps {
   allowPromptInjectedEffort?: boolean;
   includePlanAgent?: boolean | undefined;
   workspaceOptionDescriptors?: ReadonlyArray<{ readonly id: string }> | undefined;
-  optionDescriptorsPending?: boolean | undefined;
   triggerClassName?: string;
 }
 
@@ -336,7 +329,6 @@ export function useTraitsSelection({
   allowPromptInjectedEffort = true,
   includePlanAgent,
   workspaceOptionDescriptors,
-  optionDescriptorsPending,
   triggerClassName: _triggerClassName,
   ...persistence
 }: TraitsSelectionInput) {
@@ -368,7 +360,6 @@ export function useTraitsSelection({
     allowPromptInjectedEffort,
     includePlanAgent,
     workspaceOptionDescriptors,
-    optionDescriptorsPending,
   });
   return {
     ...selected,

@@ -1311,12 +1311,6 @@ export default function ChatView(props: ChatViewProps) {
     automaticEnvironment,
     autoUpdateEnvironments,
   });
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
   // Agent options follow the same workspace as skills and snapshot refresh.
   const providerAgentCwd = gitCwd;
   const providerInstanceEntries = providerInstanceEntriesFor(

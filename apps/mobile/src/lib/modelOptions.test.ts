@@ -579,14 +579,6 @@ describe("mobile model options", () => {
               optionDescriptors: [agent(name)],
             })),
             {
-              cwd: "/work/pending",
-              checkedAt: "2026-01-01T00:00:00.000Z",
-              skills: [],
-              slashCommands: [],
-              optionDescriptors: [agent("stale")],
-              optionDescriptorsPending: true,
-            },
-            {
               cwd: "/work/plan-default",
               checkedAt: "2026-01-01T00:00:00.000Z",
               skills: [],
@@ -654,7 +646,7 @@ describe("mobile model options", () => {
         )
         .toEqual(expectedSelection);
     }
-    for (const cwd of ["/work/new", "/work/pending", null]) {
+    for (const cwd of ["/work/new", null]) {
       const options = buildModelOptions(config, draft, instanceId, projectId, false, cwd);
       expect(options[0]?.selection).toEqual(draft);
       expect(

@@ -87,9 +87,6 @@ export function useComposerProviderModel(
     workspaceOptionDescriptors: selection.selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
       (snapshot) => snapshot.cwd === cwd,
     )?.optionDescriptors,
-    optionDescriptorsPending: selection.selectedProviderEntry?.snapshot.workspaceSnapshots?.find(
-      (snapshot) => snapshot.cwd === cwd,
-    )?.optionDescriptorsPending,
   });
   return {
     providerInstanceEntries,
