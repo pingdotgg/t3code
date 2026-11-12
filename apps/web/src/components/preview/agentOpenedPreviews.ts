@@ -152,7 +152,12 @@ function hasLiveSession(
 export function applyDeviceSnapshot(
   environmentId: EnvironmentId,
   state: DeviceServiceState,
-  options: { readonly sheetLayout: boolean; readonly autoShowFloatingPreview: boolean },
+  options: {
+    readonly sheetLayout: boolean;
+    /** Threads whose own pane is too narrow for the inline panel, where sheetLayout applies. */
+    readonly sheetLayoutThreadKeys?: ReadonlySet<string>;
+    readonly autoShowFloatingPreview: boolean;
+  },
 ): void {
   const deviceFor = (session: DeviceServiceState["sessions"][number]) =>
     state.devices.find((entry) => entry.hostId === session.hostId && entry.id === session.deviceId);
@@ -176,6 +181,7 @@ export function applyDeviceSnapshot(
     const device = deviceFor(session);
     if (!device) continue;
     const threadRef = scopeThreadRef(environmentId, session.threadId);
+    if (options.sheetLayoutThreadKeys?.has(scopedThreadKey(threadRef))) continue;
     const target = {
       hostId: session.hostId,
       deviceId: session.deviceId,
@@ -225,6 +231,15 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
       if (state === null) return;
       applyDeviceSnapshot(environmentId, state, {
         sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
+        // A split pane too narrow for the inline right panel opens it as a sheet too.
+        sheetLayoutThreadKeys: new Set(
+          Array.from(
+            document.querySelectorAll<HTMLElement>(
+              "[data-chat-pane-narrow][data-chat-pane-thread]",
+            ),
+            (pane) => pane.dataset.chatPaneThread ?? "",
+          ),
+        ),
         autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
       });
     },

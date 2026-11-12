@@ -9,7 +9,6 @@ import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
-import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
@@ -46,18 +45,26 @@ function useOpenThreadFamily(threadRef: ScopedThreadRef | null, missing: boolean
 }
 
 /**
- * Unkeyed so navigating between server threads reuses one ChatView. Rendered by the `_chat`
- * layout, since an element only survives a route swap when the same parent renders it. Draft
- * promotion runs in the draft store; this only follows the redirect it leaves behind.
- * `background` keeps the thread mounted, inert and in place under Settings or Usage.
+ * Unkeyed so route changes reuse one ChatView, which only survives while the same pane renders it.
+ * `background` keeps the thread inert under Settings or Usage; `passive` is an unfocused split pane
+ * that never moves the route or takes global shortcuts; `unavailable` replaces a missing thread.
+ * Draft promotion runs in the draft store; this only follows the redirect it leaves behind.
  */
-export function ThreadRouteView({
+export function ThreadRouteContent({
   target,
   background = false,
+  passive = false,
+  unavailable = null,
+  onMissing,
 }: {
   target: ThreadRouteTarget;
   background?: boolean;
+  passive?: boolean;
+  unavailable?: React.ReactNode;
+  /** Replaces the trip home when the routed thread turns out deleted or archived. */
+  onMissing?: (() => void) | undefined;
 }) {
+  const ownsRoute = !background && !passive;
   const navigate = useNavigate();
   const draftId = target.kind === "draft" ? target.draftId : null;
   const draftSession = useComposerDraftStore((store) =>
@@ -148,11 +155,20 @@ export function ThreadRouteView({
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads && !background) {
+      if (ownsRoute && onMissing) onMissing();
+      else if (environmentHasAnyThreads && ownsRoute) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [background, bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [
+    ownsRoute,
+    bootstrapComplete,
+    environmentHasAnyThreads,
+    navigate,
+    onMissing,
+    renderState,
+    target,
+  ]);
 
   let view: React.ReactNode = null;
   let redirect: React.ReactNode = null;
@@ -224,13 +240,15 @@ export function ThreadRouteView({
     );
   }
 
+  // A thread whose detail is still loading shows nothing yet, as an unsplit route does.
+  const showUnavailable =
+    view === null && (target.kind === "draft" || (bootstrapComplete && renderState !== "loading"));
   return (
-    <SidebarInset
-      className="h-svh min-h-0 overflow-hidden overscroll-y-none md:h-dvh"
-      inert={background}
-    >
-      <BackgroundThreadContext value={background}>{view}</BackgroundThreadContext>
-      {background ? null : redirect}
-    </SidebarInset>
+    <>
+      <BackgroundThreadContext value={!ownsRoute}>
+        {showUnavailable ? unavailable : view}
+      </BackgroundThreadContext>
+      {ownsRoute ? redirect : null}
+    </>
   );
 }

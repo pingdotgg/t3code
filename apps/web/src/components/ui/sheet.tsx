@@ -63,10 +63,13 @@ function SheetPopup({
   side = "right",
   variant = "default",
   style,
+  portalContainer,
   ...props
 }: SheetPrimitive.Popup.Props & {
   showCloseButton?: boolean;
   keepMounted?: boolean;
+  /** Where the sheet mounts; it covers that element when it contains fixed descendants. */
+  portalContainer?: SheetPrimitive.Portal.Props["container"];
   transitionDurationMs?: number;
   side?: "right" | "left" | "top" | "bottom";
   variant?: "default" | "inset";
@@ -78,7 +81,7 @@ function SheetPopup({
   const instant = transitionDurationMs === 0;
 
   return (
-    <SheetPortal keepMounted={keepMounted}>
+    <SheetPortal keepMounted={keepMounted} container={portalContainer}>
       <SheetBackdrop
         className={
           instant

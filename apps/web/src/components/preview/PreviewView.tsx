@@ -25,7 +25,8 @@ import {
   previewPdfAssetUrl,
   resolveSearchUrlTemplate,
 } from "@t3tools/shared/preview";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { BackgroundThreadContext } from "../chat/backgroundThread";
 
 import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
@@ -936,9 +937,11 @@ export function PreviewView({
       }
     },
   );
+  // Actions broadcast on window, so a preview in an unfocused split pane stays out of them.
+  const backgroundThread = use(BackgroundThreadContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview and desktop menu actions while the view is visible
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || backgroundThread) return;
     const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
     // A focused page swallows its own keydowns, so the desktop forwards these
     // shortcuts from the guest as menu actions instead.
@@ -950,7 +953,7 @@ export function PreviewView({
       unsubscribeAction();
       unsubscribeMenu?.();
     };
-  }, [visible]);
+  }, [backgroundThread, visible]);
 
   return (
     <div
