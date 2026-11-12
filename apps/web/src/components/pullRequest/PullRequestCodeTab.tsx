@@ -37,6 +37,7 @@ import {
   ChevronsUpDownIcon,
 } from "lucide-react";
 import { sha256 } from "@noble/hashes/sha2";
+import * as Hex from "effect/encoding/Hex";
 import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -974,7 +975,7 @@ function PullRequestCodeTab({
     const host = sourceControlClients.get(detail.provider);
     const fileUrl =
       binary && detail.provider === "github"
-        ? `${detail.url}/files#diff-${Array.from(sha256(new TextEncoder().encode(path)), (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+        ? `${detail.url}/files#diff-${Hex.encode(sha256(new TextEncoder().encode(path)))}`
         : detail.url;
     return (
       <FileViewedToggle
