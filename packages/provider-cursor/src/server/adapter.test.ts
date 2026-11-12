@@ -2155,6 +2155,11 @@ describe("CursorAdapterV2", () => {
         const commandServers = {
           ditto: { type: "http" as const, url: "https://example.test/ditto" },
         };
+        const commandConfig = path.join(scratch, "command-mcp.json");
+        yield* fileSystem.writeFileString(
+          commandConfig,
+          JSON.stringify({ mcpServers: commandServers }),
+        );
         const inlineServers = cursorMcpServers(yield* mcpSessions.read(threadId), commandServers);
         const modelSelection = { instanceId, model: "composer-2.5" };
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -2174,7 +2179,8 @@ describe("CursorAdapterV2", () => {
             T3CODE_CURSOR_MCP_CONFIG_COMMAND: JSON.stringify([
               process.execPath,
               "-e",
-              `process.stdout.write(${JSON.stringify(JSON.stringify({ mcpServers: commandServers }))})`,
+              "process.stdout.write(require('node:fs').readFileSync(process.argv[1], 'utf8'))",
+              commandConfig,
             ]),
           },
         }).pipe(
@@ -2296,6 +2302,10 @@ describe("CursorAdapterV2", () => {
         );
         yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
         assert.deepEqual(yield* loadServers(), {});
+        yield* mcpSessions.clear(threadId);
+        yield* fileSystem.writeFileString(commandConfig, JSON.stringify({ mcpServers: {} }));
+        yield* sendTurn(4);
+        assert.deepEqual(sentWith[3], {});
       }).pipe(
         Effect.scoped,
         Effect.provide(

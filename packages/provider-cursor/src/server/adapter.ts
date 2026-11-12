@@ -974,6 +974,7 @@ interface CursorLiveAgent {
   readonly nativeThreadId: string;
   readonly storeCwd: string;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
+  commandMcpServersWereActive: boolean;
 }
 
 export interface CursorAdapterV2Options {
@@ -2310,10 +2311,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
           }
+          const additionalMcpServers =
+            openInput.additionalMcpServers ??
+            (yield* loadAdditionalMcpServers(openInput.threadId, openInput.runtimePolicy.cwd));
           const options = makeCursorAgentOptions({
-            additionalMcpServers:
-              openInput.additionalMcpServers ??
-              (yield* loadAdditionalMcpServers(openInput.threadId, openInput.runtimePolicy.cwd)),
+            additionalMcpServers,
             ...(apiKey === undefined ? {} : { apiKey }),
             modelSelection: openInput.modelSelection,
             runtimePolicy: openInput.runtimePolicy,
@@ -2346,6 +2348,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nativeThreadId: sdkSession.agentId,
             storeCwd,
             session: sdkSession,
+            commandMcpServersWereActive: Object.keys(additionalMcpServers).length > 0,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
           return next;
@@ -2479,6 +2482,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               additionalMcpServers,
             });
+            if (Object.keys(additionalMcpServers).length > 0)
+              agent.commandMcpServersWereActive = true;
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession, additionalMcpServers);
             const hasDeviceTools =
@@ -2513,7 +2518,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 options: {
                   model: cursorSdkModelSelection(turnInput.modelSelection),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                  ...(Object.keys(turnMcpServers).length === 0
+                  ...(Object.keys(turnMcpServers).length === 0 && !agent.commandMcpServersWereActive
                     ? {}
                     : { mcpServers: turnMcpServers }),
                 },
