@@ -18,6 +18,7 @@ import {
   type RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
+import { computeDpopAccessTokenHash } from "@t3tools/shared/dpop";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
@@ -420,7 +421,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
   return [
     body.deviceId,
     body.pushToken ?? "",
-    body.widgetAccessToken ?? "",
+    body.widgetAccessToken ? computeDpopAccessTokenHash(body.widgetAccessToken) : "",
     body.bundleId ?? "",
     body.apsEnvironment ?? "",
     body.appVersion ?? "",
@@ -608,6 +609,7 @@ function publishReconciledWidget(): void {
   const confirmations = [...observedWidgetActivities.entries()]
     .filter(([, rows]) => rows.some((row) => row.phase !== "completed" && row.phase !== "failed"))
     .map(([id]) => widgetShellConfirmedAt.get(id) ?? 0);
+  const hasDirectWork = confirmations.length > 0;
   if (relayWidgetConfirmedAt !== null && (relayWidgetSnapshot?.aggregate?.activeCount ?? 0) > 0)
     confirmations.push(relayWidgetConfirmedAt);
   const confirmedAt =
@@ -632,7 +634,7 @@ function publishReconciledWidget(): void {
       ]),
     ),
     isStale: [...observedWidgetActivities.keys()].some((id) => !liveWidgetActivities.has(id)),
-    expiresAt: confirmedAt + AGENT_ACTIVITY_FRESHNESS_MS,
+    expiresAt: confirmedAt + (hasDirectWork ? AGENT_ACTIVITY_FRESHNESS_MS : 60 * 60_000),
     updatedAt: new Date().toISOString(),
     activities: result.activities,
   });
