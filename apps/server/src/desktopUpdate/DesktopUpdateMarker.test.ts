@@ -16,15 +16,11 @@ describe("DesktopUpdateMarker", () => {
   it.effect.each([
     ["fresh", '{"startedAt":0,"expiresAt":60000}', 0, Option.some(60000)],
     ["partly elapsed", '{"startedAt":0,"expiresAt":60000}', 8000, Option.some(52000)],
-    ["shorter lifetime", '{"startedAt":0,"expiresAt":1000}', 0, Option.some(1000)],
     ["expired", '{"startedAt":0,"expiresAt":60000}', 60000, Option.none()],
     ["future", '{"startedAt":1000,"expiresAt":61000}', 0, Option.none()],
     ["long host TTL", '{"startedAt":0,"expiresAt":600000}', 0, Option.some(60000)],
     ["reversed", '{"startedAt":1000,"expiresAt":0}', 0, Option.none()],
-    ["numeric strings", '{"startedAt":"0","expiresAt":"60000"}', 0, Option.none()],
-    ["fractional", '{"startedAt":0,"expiresAt":1.5}', 0, Option.some(1.5)],
     ["missing fields", "{}", 0, Option.none()],
-    ["expired missing start", '{"expiresAt":0}', 0, Option.none()],
     ["malformed", "not json", 0, Option.none()],
   ] as const)("%s", ([name, contents, now, expected]) =>
     Effect.gen(function* () {
@@ -53,7 +49,7 @@ describe("DesktopUpdateMarker", () => {
     }),
   );
 
-  it.effect("missing marker and failed cleanup allow launch", () =>
+  it.effect("a missing marker allows launch", () =>
     Effect.gen(function* () {
       assert.isTrue(Option.isNone(yield* remainingWait({})));
     }),

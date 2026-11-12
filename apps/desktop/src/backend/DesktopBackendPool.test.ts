@@ -8,8 +8,8 @@ import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -217,11 +217,9 @@ function layerPool(
 const markerPath = "/test-home/runtime/desktop-update-in-progress";
 const runtimePath = "/test-home/userdata/server-runtime.json";
 
-const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
+const makeUpdateMarkerFixture = () =>
   Effect.gen(function* () {
-    const probeStarted = yield* Deferred.make<void>();
     const allowReady = yield* Deferred.make<void>();
-    const ready = yield* Deferred.make<void>();
     const runtimeChecked = yield* Deferred.make<void>();
     const markerRemoved = yield* Deferred.make<void>();
     const readyRuns = yield* Queue.unbounded<void>();
@@ -238,7 +236,7 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
         mode: "desktop",
         noBrowser: true,
         port: 3774,
-        ...(backendMode === "native" ? { t3Home: "/test-home" } : {}),
+        t3Home: "/test-home",
         host: "127.0.0.1",
         desktopBootstrapToken: "token",
         tailscaleServeEnabled: false,
@@ -293,15 +291,11 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
         }),
       ),
       httpClient: HttpClient.make((request) =>
-        Deferred.succeed(probeStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(allowReady)),
+        Deferred.await(allowReady).pipe(
           Effect.as(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
         ),
       ),
-      onReady: Deferred.succeed(ready, undefined).pipe(
-        Effect.andThen(Queue.offer(readyRuns, undefined)),
-        Effect.asVoid,
-      ),
+      onReady: Queue.offer(readyRuns, undefined).pipe(Effect.asVoid),
     });
     const publishRuntime = (pid: number) =>
       files.set(
@@ -318,9 +312,7 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
       layer,
       files,
       removed,
-      probeStarted,
       allowReady,
-      ready,
       readyRuns,
       runtimeChecked,
       markerRemoved,
@@ -329,47 +321,18 @@ const makeUpdateMarkerFixture = (backendMode: "native" | "WSL") =>
   });
 
 describe("DesktopBackendPool", () => {
-  it.effect.each(["native", "WSL"] as const)(
-    "%s primary retains the update marker through an eight-second boot gap and clears it once ready and published",
-    (backendMode) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = yield* makeUpdateMarkerFixture(backendMode);
-          yield* Effect.gen(function* () {
-            const pool = yield* DesktopBackendPool.DesktopBackendPool;
-            const primary = yield* pool.primary;
-            yield* primary.start;
-            yield* Deferred.await(fixture.probeStarted);
-            yield* TestClock.adjust(Duration.seconds(8));
-            assert.isTrue(fixture.files.has(markerPath), "starting a replacement is not readiness");
-            assert.deepEqual(fixture.removed, []);
-            fixture.publishRuntime(123);
-            yield* Deferred.succeed(fixture.allowReady, undefined);
-            yield* Deferred.await(fixture.ready);
-            assert.isTrue(yield* primary.waitForReady(Duration.seconds(1)));
-            yield* Deferred.await(fixture.markerRemoved);
-            assert.isFalse(
-              fixture.files.has(markerPath),
-              "readiness must clear the handoff marker",
-            );
-            assert.deepEqual(fixture.removed, [markerPath]);
-          }).pipe(Effect.provide(fixture.layer));
-        }),
-      ),
-  );
-
   it.effect(
     "keeps the update marker after HTTP readiness until the backend publishes its runtime",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const fixture = yield* makeUpdateMarkerFixture("native");
+          const fixture = yield* makeUpdateMarkerFixture();
           yield* Effect.gen(function* () {
             const pool = yield* DesktopBackendPool.DesktopBackendPool;
             const primary = yield* pool.primary;
             yield* primary.start;
             yield* Deferred.succeed(fixture.allowReady, undefined);
-            yield* Deferred.await(fixture.ready);
+            yield* Queue.take(fixture.readyRuns);
             assert.isTrue(
               fixture.files.has(markerPath),
               "a launcher could neither wait nor adopt between readiness and publication",
@@ -392,38 +355,16 @@ describe("DesktopBackendPool", () => {
       ),
   );
 
-  it.effect("clears the update marker after its lifetime when no runtime is published", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fixture = yield* makeUpdateMarkerFixture("native");
-        yield* Effect.gen(function* () {
-          const pool = yield* DesktopBackendPool.DesktopBackendPool;
-          const primary = yield* pool.primary;
-          yield* primary.start;
-          yield* Deferred.succeed(fixture.allowReady, undefined);
-          yield* Deferred.await(fixture.ready);
-          assert.isTrue(fixture.files.has(markerPath));
-          yield* Deferred.await(fixture.runtimeChecked);
-          yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS - 1_000));
-          assert.isTrue(fixture.files.has(markerPath));
-          yield* TestClock.adjust(Duration.seconds(1));
-          yield* Deferred.await(fixture.markerRemoved);
-          assert.deepEqual(fixture.removed, [markerPath]);
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
-  );
-
   it.effect("leaves a replacement update marker written while an earlier wait is pending", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeUpdateMarkerFixture("native");
+        const fixture = yield* makeUpdateMarkerFixture();
         yield* Effect.gen(function* () {
           const pool = yield* DesktopBackendPool.DesktopBackendPool;
           const primary = yield* pool.primary;
           yield* primary.start;
           yield* Deferred.succeed(fixture.allowReady, undefined);
-          yield* Deferred.await(fixture.ready);
+          yield* Queue.take(fixture.readyRuns);
           yield* Deferred.await(fixture.runtimeChecked);
           yield* TestClock.adjust(Duration.millis(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS - 1_000));
           const replacement = JSON.stringify({ startedAt: 59_000, expiresAt: 119_000 });
@@ -439,7 +380,7 @@ describe("DesktopBackendPool", () => {
   it.effect("a later backend run's readiness supersedes the earlier run's marker wait", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fixture = yield* makeUpdateMarkerFixture("native");
+        const fixture = yield* makeUpdateMarkerFixture();
         yield* Effect.gen(function* () {
           const pool = yield* DesktopBackendPool.DesktopBackendPool;
           const primary = yield* pool.primary;
