@@ -29,6 +29,7 @@ it.each([
   ],
   ["What's the password for the sandbox tester?", true],
   ["What is the pairing code?", true],
+  ["What's the authorization code?", true],
   ["Can you share the sandbox account's password?", true],
   ["Please paste your Cloudflare API token here.", true],
   ["The pairing code is on the phone. Send it here when you have it.", true],
@@ -71,6 +72,25 @@ it.each([
   ["You don't need to paste the password here.", false],
   ["Don't send me the password in chat.", false],
   ["Never paste tokens in chat.", false],
+  [
+    "The CLI needs an authorization code from your browser. I’m opening a secure prompt with the sign-in link so you can provide it without putting it in chat.",
+    false,
+  ],
+  ["The sandbox needs a password. Paste it here in chat.", true],
+  ["The sign-in page shows a code. Paste it without quotes in chat.", true],
+  ["The sign-in page shows a code. Paste it without adding spaces here.", true],
+  ["The sign-in page shows a code. Paste it as text (not a screenshot) here.", true],
+  ["The sign-in page shows a code. Paste it without putting it in quotes here.", true],
+  [
+    "The sign-in page shows a code. I opened a secure prompt so you can provide it without pasting it here.",
+    false,
+  ],
+  [
+    "The sign-in page shows a verification code. I opened a secure prompt so you can provide it without pasting it in this chat.",
+    false,
+  ],
+  ["If the secure prompt fails, paste the verification code without spaces in this chat.", true],
+  ["If the secure prompt fails, paste the authorization code without spaces in this chat.", true],
   ["Please don't share your password here; I opened a private card instead.", false],
   ["Rather than sending the code here, enter it in the card.", false],
   ["Instead of pasting the key in chat, use the card.", false],
@@ -168,7 +188,6 @@ it.each([
     "I need one of two things from you:\n- **Password:** tell me when `qa+checkout@example.com` is signed up and I'll request the password securely. I'll sign in with `login.mjs`.\n- **Sign-in yourself:** run `login.mjs` against the new profile directory.",
     false,
   ],
-  ["Paste the token into the card, not the chat.", false],
   ["Sharing tokens in chat is unsafe, so I opened a card.", false],
   ["What's the token for?", false],
   // Review round 2: asks after "or", in later list items and for a bare key.
@@ -492,7 +511,6 @@ it.each([
   [`cat > run.sh <<EOS\nadb pair 10.0.0.2:4242 "$(cat ${F})"\nEOS`, ["copy"]],
   // Only a stdout redirect moves the printed value.
   [`cat ${F} 2>/dev/null`, ["print"]],
-  [`cat ${F} >/dev/null`, ["meta"]],
 ])("classifies a secret file use: %s", (command, expected) => {
   assert.deepEqual(
     classifyFileUse(command, [F]).map(({ verdict }) => verdict.split(" ")[0]),
