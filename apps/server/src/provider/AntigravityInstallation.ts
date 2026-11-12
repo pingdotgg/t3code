@@ -21,7 +21,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
@@ -46,6 +46,8 @@ const VALIDATION_TIMEOUT = "90 seconds";
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
+const LARGE_PAGE_KERNEL_MESSAGE =
+  "Google's linux-arm64 Antigravity runtime needs a kernel with 4 KiB memory pages, and this kernel uses larger pages (as on Asahi Linux or Raspberry Pi 5). Use a remote environment or a custom Antigravity executable.";
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
@@ -458,10 +460,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.mapError((cause) => {
         if (isInstallationError(cause)) return cause;
-        const detail =
-          isAcpProcessExitedError(cause) &&
-          /\b(?:AF_INET6|enforce_kernel_ipv6_support)\b/.test(cause.stderr ?? "")
-            ? "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown."
+        const stderr = isAcpProcessExitedError(cause) ? (cause.stderr ?? "") : "";
+        const detail = /\b(?:AF_INET6|enforce_kernel_ipv6_support)\b/.test(stderr)
+          ? "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown."
+          : /page-size\.cc|Compile-time page size does not match/.test(stderr)
+            ? LARGE_PAGE_KERNEL_MESSAGE
             : "The downloaded Antigravity runtime could not start in this environment.";
         return installationError("verify", detail, cause);
       }),
@@ -477,6 +480,18 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           installationError("verify", nodeRuntimeUnavailableMessage("Antigravity"), cause),
         ),
       );
+      if (platform === "linux" && arch === "arm64") {
+        const pageSize = yield* spawner
+          .string(ChildProcess.make("getconf", ["PAGESIZE"], { stdin: "ignore", stderr: "ignore" }))
+          .pipe(
+            Effect.map((output) => Number(output.trim())),
+            Effect.timeout("5 seconds"),
+            Effect.orElseSucceed(() => Number.NaN),
+          );
+        if (pageSize > 4096) {
+          return yield* installationError("download", LARGE_PAGE_KERNEL_MESSAGE);
+        }
+      }
       const report = (phase: ProviderInstallState["phase"], message: string | null) =>
         SubscriptionRef.update(state, (current) => ({ ...current, phase, message }));
       yield* fs.makeDirectory(versionsDirectory, { recursive: true });
@@ -599,7 +614,18 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           ),
           Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
         );
-      }).pipe(Effect.timeout(DOWNLOAD_TIMEOUT));
+      }).pipe(
+        Effect.timeout(DOWNLOAD_TIMEOUT),
+        Effect.mapError((cause) =>
+          HttpClientError.isHttpClientError(cause) || Cause.isTimeoutError(cause)
+            ? installationError(
+                "download",
+                "Could not download Antigravity from Google. Check the network connection and any proxy settings, then try again.",
+                cause,
+              )
+            : cause,
+        ),
+      );
       if (downloadedBytes !== asset.archiveBytes || hash.digest("hex") !== asset.sha256) {
         return yield* installationError(
           "download",
