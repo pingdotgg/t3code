@@ -237,10 +237,9 @@ const decodeCursorPluginManifest = Schema.decodeUnknownOption(
   ),
 );
 
-// Mirrors `@cursor/sdk`'s loader: local plugins sit in `plugins/local/<name>`, installed
-// marketplace plugins in `plugins/cache/cursor-public/<plugin>/<version>` once
-// `.cache-complete` exists. The SDK loads no other marketplace, so neither do we.
-// A manifest `skills` field overrides the default `skills/` folder.
+// Mirrors `@cursor/sdk`'s loader for `plugins/local/<name>`, which it loads unconditionally.
+// Cached marketplace plugins load only when Cursor's account API reports them enabled,
+// which a disk scan cannot see. A manifest `skills` field overrides the default `skills/`.
 const listCursorPluginSkillDirectories = Effect.fn("listCursorPluginSkillDirectories")(function* (
   userHome: string,
   budget: CursorSkillScanBudget,
@@ -278,16 +277,7 @@ const listCursorPluginSkillDirectories = Effect.fn("listCursorPluginSkillDirecto
     return undefined;
   });
 
-  const pluginsDirectory = path.join(userHome, ".cursor", "plugins");
-  const pluginRoots = yield* subdirectories(path.join(pluginsDirectory, "local"));
-  for (const plugin of yield* subdirectories(
-    path.join(pluginsDirectory, "cache", "cursor-public"),
-  )) {
-    for (const version of yield* subdirectories(plugin)) {
-      const marker = yield* orUndefined(fileSystem.stat(path.join(version, ".cache-complete")));
-      if (marker?.type === "File") pluginRoots.push(version);
-    }
-  }
+  const pluginRoots = yield* subdirectories(path.join(userHome, ".cursor", "plugins", "local"));
 
   const directories: string[] = [];
   for (const pluginRoot of pluginRoots) {

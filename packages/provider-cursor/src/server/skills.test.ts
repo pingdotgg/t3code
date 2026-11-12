@@ -176,7 +176,7 @@ describe("Cursor skills", () => {
       }),
     ));
 
-  it("lists skills from installed Cursor plugins", async () =>
+  it("lists skills from local Cursor plugins, not from the plugin cache", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -215,11 +215,9 @@ describe("Cursor skills", () => {
 
         const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
         const names = new Set(skills.map((skill) => skill.name));
-        expect([...names]).toEqual(
-          expect.arrayContaining(["cached-plugin-skill", "local-plugin-skill"]),
-        );
-        expect(rewriteCursorSkillMentions("$local-plugin-skill go", names)).toBe(
-          "/local-plugin-skill go",
+        expect([...names]).toEqual(["local-plugin-skill"]);
+        expect(rewriteCursorSkillMentions("$local-plugin-skill $cached-plugin-skill", names)).toBe(
+          "/local-plugin-skill $cached-plugin-skill",
         );
       }),
     ));
