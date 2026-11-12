@@ -47,6 +47,19 @@ describe("resolveRemoteOpenState", () => {
       }),
     ).toEqual({
       mode: "remote-links",
+      host: { kind: "route", host: "sol.tail1234.ts.net" },
+    });
+    // A public route host may be a proxy that cannot take SSH.
+    expect(
+      resolveRemoteOpenState({
+        target: primaryTarget("https://t3.example.com"),
+        sshTarget: null,
+        isDesktopRenderer: false,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        hostEnvironmentId: null,
+      }),
+    ).toEqual({
+      mode: "remote-links",
       host: { kind: "tailscale", host: "sol.tail1234.ts.net" },
     });
   });
