@@ -1307,6 +1307,30 @@ describe("server state projection", () => {
 
     const latest = snapshot("/a", "latest");
     const latestConfig = { ...digested("d1"), workspaceCatalogRevision: 2 };
+    for (const fresh of [false, true]) {
+      const aheadFetched = recordFetchedWorkspaceSnapshot(
+        [],
+        { instanceId: claude, cwd: "/a", fresh },
+        [{ ...provider(claude, [latest]), workspaceCatalogRevision: 2 }],
+        invalidated,
+      );
+      expect(
+        withFetchedWorkspaceSnapshots(configWith(true, [invalidated]), aheadFetched).providers[0]
+          ?.workspaceSnapshots,
+      ).toBeUndefined();
+      expect(
+        withFetchedWorkspaceSnapshots(configWith(true, [latestConfig]), aheadFetched).providers[0]
+          ?.workspaceSnapshots,
+      ).toEqual([latest]);
+      expect(
+        recordFetchedWorkspaceSnapshot(
+          aheadFetched,
+          { instanceId: claude, cwd: "/a", fresh },
+          [{ ...provider(claude, [claudeA]), workspaceCatalogRevision: 1 }],
+          invalidated,
+        ),
+      ).toBe(aheadFetched);
+    }
     const latestFetched = recordFetchedWorkspaceSnapshot(
       [],
       { instanceId: claude, cwd: "/a", fresh: false },

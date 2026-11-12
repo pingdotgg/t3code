@@ -805,21 +805,28 @@ export function recordFetchedWorkspaceSnapshot(
 ): ReadonlyArray<FetchedWorkspaceSnapshot> {
   const basis = snapshotBasis(configProvider);
   const respondingProvider = providers.find((provider) => provider.instanceId === input.instanceId);
-  if (respondingProvider?.workspaceCatalogRevision !== basis?.workspaceCatalogRevision)
-    return current;
   const snapshot = respondingProvider?.workspaceSnapshots?.find(
     (candidate) => candidate.cwd === input.cwd,
   );
   const stored = current.find(
     (entry) => entry.instanceId === input.instanceId && entry.snapshot.cwd === input.cwd,
   );
+  const responseRevision = respondingProvider?.workspaceCatalogRevision;
+  if (
+    (responseRevision ?? 0) <
+    Math.max(basis?.workspaceCatalogRevision ?? 0, stored?.basis?.workspaceCatalogRevision ?? 0)
+  ) {
+    return current;
+  }
+  // The RPC may beat the debounced config stream; keep its revision until the stream catches up.
+  const fetchedBasis = basis && { ...basis, workspaceCatalogRevision: responseRevision };
   // A cached answer from the server would otherwise re-render every config reader.
   if (
     !input.fresh &&
     snapshot &&
     stored &&
     Equal.equals(stored.snapshot, snapshot) &&
-    Equal.equals(stored.basis, basis)
+    Equal.equals(stored.basis, fetchedBasis)
   ) {
     return current;
   }
@@ -829,7 +836,7 @@ export function recordFetchedWorkspaceSnapshot(
       entry.snapshot.cwd !== input.cwd || (!input.fresh && entry.instanceId !== input.instanceId),
   );
   if (!snapshot) return kept.length === current.length ? current : kept;
-  return [...kept, { instanceId: input.instanceId, snapshot, basis }].slice(
+  return [...kept, { instanceId: input.instanceId, snapshot, basis: fetchedBasis }].slice(
     -MAX_FETCHED_WORKSPACE_SNAPSHOTS,
   );
 }
