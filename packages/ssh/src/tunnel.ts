@@ -604,7 +604,10 @@ if [ "$T3_ARCHIVE_MODE" = "1" ]; then
   # archive before the port and readiness probes rely on it.
   "$RUNNER_NEXT" --version >/dev/null
 elif ! ensure_remote_node_path; then
-  printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+  # A node that fails the engine check has already said why.
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+  fi
   exit 1
 fi
 # Recovery runs under its own lock and re-reads the owner there, so a waiter
