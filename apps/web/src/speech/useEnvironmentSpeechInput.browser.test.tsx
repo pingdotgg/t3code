@@ -368,22 +368,46 @@ it.each([
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
-it("delivers a confirmed send once to its owner after the owner changes during transcription", async () => {
-  setup({ destination: "env-a" });
-  let finishTranscription = () => {};
-  mocks.transcribeGate = new Promise<void>((resolve) => {
-    finishTranscription = resolve;
-  });
-  const submit = vi.fn();
-  await using screen = await render(<Probe ownerKey="thread-a" />);
-  await act(() => mocks.voice.start());
-  await act(() => mocks.voice.submitAfterDictation(submit));
-  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("transcribing"));
-  await screen.rerender(<Probe ownerKey="thread-b" />);
-  finishTranscription();
-  await screen.rerender(<Probe ownerKey="thread-a" />);
-  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
-});
+it.each(["owner change", "remount"] as const)(
+  "delivers a confirmed send once to its own draft after a %s during transcription",
+  async (navigation) => {
+    setup({ destination: "env-a" });
+    let finishTranscription = () => {};
+    mocks.transcribeGate = new Promise<void>((resolve) => {
+      finishTranscription = resolve;
+    });
+    const submit = vi.fn();
+    await using screen = await render(<Probe ownerKey="thread-a" />);
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.submitAfterDictation(submit));
+    await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("transcribing"));
+    await screen.rerender(
+      navigation === "remount" ? (
+        <Probe key="b" ownerKey="thread-b" />
+      ) : (
+        <Probe ownerKey="thread-b" />
+      ),
+    );
+    // The other draft is free to dictate while the confirmed send finishes in the background.
+    expect(mocks.voice.state.phase).toBe("idle");
+    const started = act(() => mocks.voice.start());
+    finishTranscription();
+    await started;
+    expect(mocks.voice.state.phase).toBe("recording");
+    await act(() => mocks.voice.cancel());
+    expect(mocks.committed).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    await screen.rerender(
+      navigation === "remount" ? (
+        <Probe key="a" ownerKey="thread-a" />
+      ) : (
+        <Probe ownerKey="thread-a" />
+      ),
+    );
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+  },
+);
 
 it("retries a failed transcription on the same chosen environment", async () => {
   setup({ destination: "env-a" });

@@ -451,6 +451,11 @@ export class VoiceInputController {
     }
   }
 
+  /** Lets this operation finish in the background: another controller's start waits for it instead of failing. */
+  detach(): void {
+    if (this.sessionToken) this.sessionToken.abandoned = true;
+  }
+
   ownerChanged(): void {
     if (this.state.phase === "idle") return;
     this.cancel();

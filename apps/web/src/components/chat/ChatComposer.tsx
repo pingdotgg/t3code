@@ -494,6 +494,13 @@ export interface ChatComposerProps {
 const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
+type DictationSubmitter = (
+  dispatchMode?: ComposerDispatchMode,
+  submissionIntent?: ComposerSubmissionIntent,
+) => void;
+// A send confirmed during dictation goes through whichever composer shows its draft when the transcript lands.
+const dictationSubmitters = new Map<string, DictationSubmitter>();
+
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
     composerDraftTarget,
@@ -1802,11 +1809,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const speechOwnerKey = questionAttachmentTarget ?? composerDraftTargetKey;
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
     projectName,
-    ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
+    ownerKey: speechOwnerKey,
     draftText: prompt,
     disabled: dictationDisabled,
     readDraft: () => {
@@ -2103,9 +2111,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return composerSendState.hasSendableContent;
   };
 
-  const submitComposerRef = useRef<
-    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
-  >(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
@@ -2113,7 +2118,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ) => {
     if (voiceInputActive) {
       event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+      const ownerKey = speechOwnerKey;
+      submitAfterDictation(() =>
+        dictationSubmitters.get(ownerKey)?.(dispatchMode, submissionIntent),
+      );
       return false;
     }
     if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
@@ -2172,8 +2180,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const submitComposerStable = useStableCallback(submitComposer);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
   useLayoutEffect(() => {
-    submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
-  }, [submitComposerStable]);
+    const submit: DictationSubmitter = (mode, intent) =>
+      submitComposerStable(undefined, mode, intent);
+    dictationSubmitters.set(speechOwnerKey, submit);
+    return () => {
+      if (dictationSubmitters.get(speechOwnerKey) === submit)
+        dictationSubmitters.delete(speechOwnerKey);
+    };
+  }, [submitComposerStable, speechOwnerKey]);
   useDictationSubmissionShortcut({
     enabled: voiceInputActive && !speechInput.preparing,
     formRef: composerFormRef,
