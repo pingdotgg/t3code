@@ -168,6 +168,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly reportedLabel?: string;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -393,7 +394,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       const prepared: PreparedConnection = {
         ...PREPARED,
         environmentId: target.environmentId,
-        label: target.label,
+        label: options?.reportedLabel ?? target.label,
         httpAuthorization: Option.isSome(credential)
           ? { _tag: "Bearer", token: credential.value.token }
           : null,
@@ -2315,6 +2316,33 @@ describe("EnvironmentRegistry routes", () => {
           learned: true,
           httpBaseUrl,
         });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a saved environment takes the label its server reports on connect", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [LAN_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { reportedLabel: "Renamed host" },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          LAN_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId);
+        expect(entry?.target.label).toBe("Renamed host");
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), LAN_TARGET.environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["Renamed host"]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
