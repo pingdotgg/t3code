@@ -25,6 +25,7 @@ import {
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -197,20 +198,24 @@ function makeHarness(options: HarnessOptions = {}) {
               : Option.none(),
         ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
+      workspaceScanDirectory: () => Effect.die("unused"),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
+      repositoryRoot: () => Effect.succeed(project.workspaceRoot),
       createWorktree,
       renameBranch,
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      currentBranch: () => Effect.succeed(null),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
+      listLocalBranchNames: () => Effect.succeed([]),
       removeWorktree,
       deleteLocalBranch,
       ...options.git,
@@ -237,6 +242,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
+        layerOrchestrator,
         IdAllocator.layer,
       ),
     ),
@@ -412,7 +418,11 @@ it.effect(
     );
     return Effect.gen(function* () {
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
-      const threadId = ThreadId.make("thread:missing");
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const { threadId } = yield* launches.launch(
+        launchInput({ command: "command:missing", thread: "thread:missing" }),
+      );
       const { task } = yield* tasks.upsert({
         title: "Daily audit",
         prompt: "Audit performance and crashes.",
@@ -426,6 +436,11 @@ it.effect(
         interactionMode: "default",
         createdBy: "user",
         creationSource: "web",
+      });
+      yield* threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("command:missing:delete"),
+        threadId,
       });
       const result = yield* tasks.runNow({ id: task.id });
       assert.equal(result.task.lastRunStatus, "failed");
@@ -901,6 +916,7 @@ function scratchHarness() {
           return Option.some(`/scratch/folder-${claimed.length}`);
         }),
     }),
+    git: { repositoryRoot: (cwd) => Effect.succeed(cwd === scratchRoot ? null : cwd) },
     remoteExists: (input) =>
       input.cwd === scratchRoot
         ? Effect.fail(notARepository("GitWorkflowService.remoteExists", input.cwd))
@@ -968,10 +984,26 @@ function scheduledTaskInput(id: string, targetProjectId: ProjectId) {
   };
 }
 
+it.effect("records the checkout's branch on a root launch that names none", () => {
+  const harness = makeHarness({
+    git: { currentBranch: () => Effect.succeed("fix/checkout-total") },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({ command: "command:launch:root-branch", thread: "thread:launch:root-branch" }),
+    );
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const { thread } = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(thread.branch, "fix/checkout-total");
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("launches a worktree request for Scratch at the root, in its own folder", () => {
   const harness = scratchHarness();
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
+    yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: worktreeStrategy });
     const launched = yield* launches.launch(
       launchInput({
         command: "command:launch:scratch-worktree",
@@ -2339,6 +2371,95 @@ it.effect("stops an in-flight branch rename when tracked setup is cancelled", ()
   }),
 );
 
+it.effect("starts the agent of a new worktree thread only after its branch is renamed", () =>
+  Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
+    const allowBranchName = yield* Deferred.make<void>();
+    const releasedAtRename = yield* Deferred.make<boolean>();
+    let releaseEffects: Effect.Effect<ReadonlyArray<unknown>> = Effect.succeed([]);
+    const harness = makeHarness({
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowBranchName)),
+          Effect.as({ branch: "generated-branch" }),
+        ),
+      renameBranch: (input) =>
+        Effect.suspend(() => releaseEffects).pipe(
+          Effect.flatMap((effects) => Deferred.succeed(releasedAtRename, effects.length > 0)),
+          Effect.as({ branch: input.newBranch }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const input = launchInput({
+        command: "launch:release-after-rename",
+        thread: "thread:release-after-rename",
+        message: "Start",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+      releaseEffects = outbox
+        .listByCommandId(CommandId.make(`${input.commandId}:release`))
+        .pipe(Effect.orDie);
+      const launched = yield* launches.launch(input);
+      yield* Deferred.await(branchNameStarted);
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter(
+          (snapshot) =>
+            snapshot?.stages.some(
+              (stage) => stage.id === "setup-script" && stage.status === "skipped",
+            ) === true,
+        ),
+        Stream.runHead,
+      );
+      yield* Deferred.succeed(allowBranchName, undefined);
+      assert.isFalse(
+        yield* Deferred.await(releasedAtRename),
+        "the agent's run was released while its branch still had the temporary name",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("tells the thread when its worktree branch could not be renamed", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      generateBranchName: () =>
+        Effect.fail(
+          new TextGenerationError({
+            operation: "generateBranchName",
+            detail: "Failed to spawn Codex CLI process",
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:rename-fails",
+          thread: "thread:rename-fails",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      const notice = projection.turnItems.find((item) => item.type === "system_notice");
+      assert.equal(notice?.type === "system_notice" ? notice.runId : null, projection.runs[0]?.id);
+      assert.include(
+        notice?.type === "system_notice" ? notice.message : "",
+        `stays ${projection.thread.branch}. Text generation failed in generateBranchName: Failed to spawn Codex CLI process`,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect.each([0, 1])("releases an async setup before its completion with exit %s", (exitCode) =>
   Effect.gen(function* () {
     const completion = yield* Deferred.make<{ exitCode: number | null; durationMs: number }>();
@@ -2396,6 +2517,64 @@ it.effect.each([0, 1])("releases an async setup before its completion with exit 
   }),
 );
 
+it.effect.each(["origin/master", ":/initial"])(
+  "refuses a worktree in a non-Git project before checking base %s",
+  (baseRef) =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        git: { repositoryRoot: () => Effect.succeed(null) },
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const result = yield* launches
+          .checkWorktreeBase({
+            projectId,
+            workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: true },
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, ThreadLaunch.ThreadLaunchNotRepositoryError);
+          assert.deepInclude(result.failure, {
+            projectId,
+            projectTitle: project.title,
+            workspaceRoot: project.workspaceRoot,
+          });
+        }
+        yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: { type: "root" } });
+        yield* launches.checkWorktreeBase({
+          projectId,
+          workspaceStrategy: { type: "existing_worktree", worktreePath: "/existing-worktree" },
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect("leaves uncertain Git detection failures to workspace preparation", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      git: {
+        repositoryRoot: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "detect-repository",
+              command: "git",
+              cwd: project.workspaceRoot,
+              detail: "Detection failed.",
+            }),
+          ),
+      },
+      hasCommit: () => Effect.succeed(true),
+    });
+    yield* ThreadLaunch.ThreadLaunchService.pipe(
+      Effect.flatMap((launches) =>
+        launches.checkWorktreeBase({ projectId, workspaceStrategy: worktreeStrategy }),
+      ),
+      Effect.provide(harness.layer),
+    );
+  }),
+);
+
 it.effect.each([
   { name: "is missing", baseRef: "t3/renamed", startFromOrigin: false, origin: true },
   {
@@ -2441,6 +2620,40 @@ it.effect.each([
         error.message,
         `Base ref "${testCase.baseRef}" does not resolve to a commit in project "Project" (/repo).`,
       );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each([
+  { requested: "werkstatt/baseline", blocking: "werkstatt" },
+  { requested: "foo", blocking: "foo/bar" },
+])("refuses a new worktree branch $requested that collides with branch $blocking", (testCase) =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      hasCommit: () => Effect.succeed(true),
+      git: { listLocalBranchNames: () => Effect.succeed(["main", "werkstatt", "foo/bar"]) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const workspace = { type: "worktree" as const, baseRef: "main", branch: testCase.requested };
+      const commandId = CommandId.make("launch:branch-conflict");
+      const check = (branch: string) =>
+        launches.checkWorktreeBase({
+          commandId,
+          projectId,
+          workspaceStrategy: { ...workspace, branch },
+        });
+      yield* check("werkstatt-baseline");
+      const error = yield* check(testCase.requested).pipe(Effect.flip);
+      assert.deepInclude(error, {
+        _tag: "ThreadLaunchBranchConflictError",
+        branch: testCase.requested,
+        conflictingBranch: testCase.blocking,
+      });
+      yield* launches.launch(
+        launchInput({ command: commandId, thread: "thread:branch-conflict", workspace }),
+      );
+      yield* check(testCase.requested);
     }).pipe(Effect.provide(harness.layer));
   }),
 );
