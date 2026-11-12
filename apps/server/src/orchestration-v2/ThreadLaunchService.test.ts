@@ -2277,7 +2277,7 @@ it.effect("cancels tracked setup before provider work is released", () =>
       assert.isNull(projection.thread.worktreePath);
       assert.deepEqual(harness.deleteLocalBranch.mock.calls[0]?.[0], {
         cwd: "/repo",
-        refName: "t3/start",
+        refName: "generated-branch",
         force: true,
       });
       assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
@@ -2345,7 +2345,7 @@ it.effect("stops an in-flight branch rename when tracked setup is cancelled", ()
         launchInput({
           command: "launch:cancel-renaming",
           thread: "thread:cancel-renaming",
-          message: "Start the reconnect investigation now",
+          message: "Start",
           workspace: { type: "worktree", baseRef: "main" },
         }),
       );
@@ -2371,69 +2371,53 @@ it.effect("stops an in-flight branch rename when tracked setup is cancelled", ()
   }),
 );
 
-it.effect(
-  "starts the agent of a new worktree thread only after a short prompt names its branch",
-  () =>
-    Effect.gen(function* () {
-      const releasedAtRename = yield* Deferred.make<boolean>();
-      let releaseEffects: Effect.Effect<ReadonlyArray<unknown>> = Effect.succeed([]);
-      const harness = makeHarness({
-        renameBranch: (input) =>
-          Effect.suspend(() => releaseEffects).pipe(
-            Effect.flatMap((effects) => Deferred.succeed(releasedAtRename, effects.length > 0)),
-            Effect.as({ branch: input.newBranch }),
-          ),
-      });
-      yield* Effect.gen(function* () {
-        const launches = yield* ThreadLaunch.ThreadLaunchService;
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const input = launchInput({
-          command: "launch:release-after-rename",
-          thread: "thread:release-after-rename",
-          message: "Start",
-          workspace: { type: "worktree", baseRef: "main" },
-        });
-        releaseEffects = outbox
-          .listByCommandId(CommandId.make(`${input.commandId}:release`))
-          .pipe(Effect.orDie);
-        yield* launches.launch(input);
-        assert.isFalse(
-          yield* Deferred.await(releasedAtRename),
-          "the agent's run was released while its branch still had the temporary name",
-        );
-        assert.equal(harness.renameBranch.mock.calls[0]?.[0].newBranch, "t3/start");
-        assert.equal(harness.generateBranchName.mock.calls.length, 0);
-      }).pipe(Effect.provide(harness.layer));
-    }),
-);
-
-it.effect("starts the agent of a new worktree thread without waiting for a model branch name", () =>
+it.effect("starts the agent of a new worktree thread only after its branch is renamed", () =>
   Effect.gen(function* () {
     const branchNameStarted = yield* Deferred.make<void>();
+    const allowBranchName = yield* Deferred.make<void>();
+    const releasedAtRename = yield* Deferred.make<boolean>();
+    let releaseEffects: Effect.Effect<ReadonlyArray<unknown>> = Effect.succeed([]);
     const harness = makeHarness({
       generateBranchName: () =>
-        Deferred.succeed(branchNameStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowBranchName)),
+          Effect.as({ branch: "generated-branch" }),
+        ),
+      renameBranch: (input) =>
+        Effect.suspend(() => releaseEffects).pipe(
+          Effect.flatMap((effects) => Deferred.succeed(releasedAtRename, effects.length > 0)),
+          Effect.as({ branch: input.newBranch }),
+        ),
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const input = launchInput({
-        command: "launch:release-before-rename",
-        thread: "thread:release-before-rename",
-        message: "Start the reconnect investigation now",
+        command: "launch:release-after-rename",
+        thread: "thread:release-after-rename",
+        message: "Start",
         workspace: { type: "worktree", baseRef: "main" },
       });
+      releaseEffects = outbox
+        .listByCommandId(CommandId.make(`${input.commandId}:release`))
+        .pipe(Effect.orDie);
       const launched = yield* launches.launch(input);
       yield* Deferred.await(branchNameStarted);
       yield* tracker.stream(launched.threadId).pipe(
-        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.filter(
+          (snapshot) =>
+            snapshot?.stages.some(
+              (stage) => stage.id === "setup-script" && stage.status === "skipped",
+            ) === true,
+        ),
         Stream.runHead,
       );
-      assert.isNotEmpty(
-        yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)),
+      yield* Deferred.succeed(allowBranchName, undefined);
+      assert.isFalse(
+        yield* Deferred.await(releasedAtRename),
+        "the agent's run was released while its branch still had the temporary name",
       );
-      assert.equal(harness.renameBranch.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
   }),
 );
@@ -2457,7 +2441,7 @@ it.effect("tells the thread when its worktree branch could not be renamed", () =
         launchInput({
           command: "launch:rename-fails",
           thread: "thread:rename-fails",
-          message: "Start the reconnect investigation now",
+          message: "Start",
           workspace: { type: "worktree", baseRef: "main" },
         }),
       );

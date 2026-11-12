@@ -737,10 +737,12 @@ it.effect("names a short prompt from its own text without calling a provider", (
       message: "Fix login bug",
       naming: { ...naming, mode: "semantic" },
     });
+    yield* service.generateBranchName({ ...base, message: "你好", naming });
     expect(calls).toEqual([
       "generateThreadTitle",
       "generateThreadTitle",
       "generateThreadTitle",
+      "generateBranchName",
       "generateBranchName",
     ]);
   }),

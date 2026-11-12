@@ -88,13 +88,15 @@ const shortPromptText = ({ message, attachments }: ShortPromptInput) => {
 };
 
 /** The branch name for a short prompt, or undefined when naming it needs a model. */
-export const shortPromptBranchName = (
+const shortPromptBranchName = (
   input: ShortPromptInput & { readonly naming?: BranchNamingOptions | undefined },
 ) => {
   // Semantic and custom modes ask the model for a prefix or the user's own format.
   if (input.naming !== undefined && input.naming.mode !== "static") return undefined;
   const text = shortPromptText(input);
-  return text === undefined ? undefined : formatGeneratedBranchName(text, input.naming);
+  // A prompt with no ASCII letters or digits slugs to the generic fallback name.
+  if (text === undefined || !/[a-z0-9]/i.test(text)) return undefined;
+  return formatGeneratedBranchName(text, input.naming);
 };
 
 // Review guides investigate the checkout read-only; the other drivers reject that request.
