@@ -26,6 +26,13 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       "hub.test:8317",
       "Usage limit source",
     ]);
+    expect(snapshots.map((source) => source.host)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      "hub.test",
+      undefined,
+    ]);
     expect(() =>
       encodeConfigEvent({
         version: 1,

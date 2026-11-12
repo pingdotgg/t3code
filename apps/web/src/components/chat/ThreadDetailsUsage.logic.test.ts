@@ -43,7 +43,12 @@ function claudeInstance(usageLimits: ServerProviderUsageLimits): ServerProvider 
     installed: true,
     version: null,
     status: "ready",
-    auth: { status: "authenticated", type: "customEndpoint", label: "Custom API endpoint" },
+    auth: {
+      status: "authenticated",
+      type: "customEndpoint",
+      label: "Custom API endpoint",
+      endpointHost: "hub.example",
+    },
     checkedAt,
     models: [],
     slashCommands: [],
@@ -75,6 +80,7 @@ function hub(
     id: UsageLimitSourceId.make(label),
     kind: "cliproxy",
     label,
+    host: "hub.example",
     checkedAt,
     accounts: accounts.map((account) => ({
       id: account.id,
@@ -114,16 +120,19 @@ describe("resolveThreadDetailsLimits", () => {
     expect(resolved).toEqual({ limits: limitsAt(40), sourceLabel: null });
   });
 
-  it("does not borrow a hub account for an instance that is not on a custom endpoint", () => {
-    const direct = claudeInstance(unsupported);
-    const resolved = resolveThreadDetailsLimits(
-      instanceId,
-      [{ ...direct, auth: { ...direct.auth, type: "apiKey", label: "Claude API Key" } }],
-      [hub("hub", [{ id: "claude-a.json", limits: limitsAt(19) }])],
-      now,
-    );
+  it("does not borrow from a hub the instance does not send its requests to", () => {
+    const base = claudeInstance(unsupported);
+    const resolve = (auth: ServerProvider["auth"]) =>
+      resolveThreadDetailsLimits(
+        instanceId,
+        [{ ...base, auth }],
+        [hub("hub", [{ id: "claude-a.json", limits: limitsAt(19) }])],
+        now,
+      );
 
-    expect(resolved).toEqual({ limits: unsupported, sourceLabel: null });
+    // A direct API key, and a custom endpoint on another host.
+    expect(resolve({ status: "authenticated", type: "apiKey" })?.sourceLabel).toBeNull();
+    expect(resolve({ ...base.auth, endpointHost: "gateway.example" })?.sourceLabel).toBeNull();
   });
 
   it("keeps the instance's notice when the account in use is not certain", () => {

@@ -20,9 +20,9 @@ export interface ThreadDetailsLimits {
 
 /**
  * The limits the thread details card shows for one provider instance.
- * An instance on a custom endpoint, such as a usage hub (CLIProxyAPI), reads no subscription limits
- * of its own, so the card falls back to the hub, but only when exactly one hub account serves the driver:
- * with several, nothing says which one this thread spends.
+ * An instance that sends its requests to a usage hub (CLIProxyAPI) reads no subscription limits of
+ * its own, so the card falls back to that hub, but only when exactly one of its accounts serves the
+ * driver: with several, nothing says which one this thread spends.
  */
 export function resolveThreadDetailsLimits(
   providerInstanceId: ProviderInstanceId | null,
@@ -40,9 +40,7 @@ export function resolveThreadDetailsLimits(
     provider?.usageLimits;
   if (own && limitsNotice(own) === null) return { limits: own, sourceLabel: null };
 
-  // Only an instance sending requests to a custom endpoint may be spending a hub's account.
-  const hub =
-    provider?.auth.type === "customEndpoint" ? onlyHubAccount(provider, providers, sources) : null;
+  const hub = provider ? onlyHubAccount(provider, providers, sources) : null;
   if (hub) return { limits: hub.account.usageLimits, sourceLabel: hub.source.label };
   return own ? { limits: own, sourceLabel: null } : null;
 }
@@ -53,8 +51,8 @@ interface HubAccount {
 }
 
 /**
- * The one hub account serving a driver, if its limits are usable. Unreadable accounts still count,
- * since the hub may route the thread through them. An account is a login (driver + email, else
+ * The one account serving the driver on the hubs the instance sends requests to, if its limits are
+ * usable. Unreadable accounts still count, since the hub may route the thread through them. An account is a login (driver + email, else
  * credential) plus workspace: one login from two hubs is one account, its freshest snapshot wins.
  */
 function onlyHubAccount(
@@ -62,9 +60,13 @@ function onlyHubAccount(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
 ): HubAccount | null {
+  const endpointHost = provider.auth.endpointHost?.toLowerCase();
+  const routedHubs = sources.filter((source) => endpointHost && source.host === endpointHost);
   // A hub that failed to read may hold accounts for this driver too.
-  if (sources.some((source) => source.error !== undefined)) return null;
-  const candidates = sources.flatMap((source) =>
+  if (routedHubs.length === 0 || routedHubs.some((source) => source.error !== undefined)) {
+    return null;
+  }
+  const candidates = routedHubs.flatMap((source) =>
     source.accounts
       .filter((account) => canServeInstance(provider, account))
       .map((account) => ({ source, account })),
