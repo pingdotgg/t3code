@@ -9,6 +9,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
+import { takeTabWindowRequest } from "./pendingTabWindows";
 import {
   preventThumbButtonFocus,
   takeThumbButtonNavigation,
@@ -183,6 +184,15 @@ export function HostedBrowserWebview(props: {
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
             withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, reportedShown()));
+            if (takeTabWindowRequest(runtimeTabId)) {
+              await bridge.tabWindow.open(runtimeTabId, config.partition).catch((error) => {
+                toastManager.add({
+                  type: "error",
+                  title: "Unable to open browser window",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                });
+              });
+            }
           }
         } catch {}
       })();

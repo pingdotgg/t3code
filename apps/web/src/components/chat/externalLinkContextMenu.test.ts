@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
+import {
+  externalLinkContextMenuItems,
+  resolveExternalWebLinkHref,
+} from "./externalLinkContextMenu";
 
 describe("external chat link context menu", () => {
   it.each([
@@ -25,5 +28,15 @@ describe("external chat link context menu", () => {
     "",
   ])("rejects unsafe external web-link href %s", (href) => {
     expect(resolveExternalWebLinkHref(href)).toBeNull();
+  });
+
+  it.each([
+    [true, true, ["open-in-preview", "open-in-window", "open-external", "copy-link"]],
+    [true, false, ["open-in-preview", "open-external", "copy-link"]],
+    [false, true, ["open-external", "copy-link"]],
+  ])("with preview %s and window %s offers %j", (canOpenInPreview, canOpenInWindow, ids) => {
+    expect(
+      externalLinkContextMenuItems({ canOpenInPreview, canOpenInWindow }).map((item) => item.id),
+    ).toEqual(ids);
   });
 });
