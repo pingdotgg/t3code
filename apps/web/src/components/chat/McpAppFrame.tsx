@@ -53,6 +53,8 @@ const fullscreenSupported =
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 // Exclude activation left by input elsewhere in T3.
 const PAGE_ACTIVATION_MS = 5_000;
+// Apps can paint light until `ui/initialize` gives them the theme; one that never initializes still shows.
+const REVEAL_FALLBACK_MS = 3_000;
 
 // Frame input does not bubble here. An app can refocus itself, so focus
 // alone cannot exclude activation from input elsewhere in T3.
@@ -98,6 +100,7 @@ export function McpAppFrame(props: {
   const [displayMode, setDisplayMode] = useState<McpAppDisplayMode>("inline");
   const [closed, setClosed] = useState(false);
   const [documentGeneration, setDocumentGeneration] = useState(0);
+  const [revealedGeneration, setRevealedGeneration] = useState<number | null>(null);
   // Closing and reopening replaces the box, which re-attaches this.
   const attachBox = (box: HTMLDivElement) => {
     boxRef.current = box;
@@ -227,6 +230,9 @@ export function McpAppFrame(props: {
   // The host belongs to this frame element, which is replaced when the document is reopened.
   const attachFrame = (frame: HTMLIFrameElement) => {
     frameRef.current = frame;
+    const generation = documentGeneration;
+    const reveal = () => setRevealedGeneration(generation);
+    const revealFallback = setTimeout(reveal, REVEAL_FALLBACK_MS);
     const hostContext = (): McpAppHostContext => {
       const current = readLive();
       return {
@@ -387,6 +393,7 @@ export function McpAppFrame(props: {
         if (readLive().displayMode === "fullscreen") return;
         if (size.height !== undefined) setHeight(clampMcpAppHeight(size.height));
       },
+      onInitialized: reveal,
     });
     hostRef.current = host;
     const receive = (event: MessageEvent) => {
@@ -394,6 +401,7 @@ export function McpAppFrame(props: {
     };
     window.addEventListener("message", receive);
     return () => {
+      clearTimeout(revealFallback);
       window.removeEventListener("message", receive);
       void host.teardown();
       hostRef.current = null;
@@ -480,7 +488,11 @@ export function McpAppFrame(props: {
             sandbox="allow-scripts allow-forms"
             allow={mcpAppAllowAttribute(app.permissions)}
             onLoad={onFrameLoad}
-            className={cn("block w-full border-0", fullscreen ? "min-h-0 flex-1" : "h-full")}
+            className={cn(
+              "block w-full border-0",
+              fullscreen ? "min-h-0 flex-1" : "h-full",
+              revealedGeneration !== documentGeneration && "invisible",
+            )}
             style={{ colorScheme: theme.appearance }}
           />
         ) : asset._tag === "Failure" ? (
