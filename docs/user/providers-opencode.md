@@ -42,10 +42,18 @@ does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version ch
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
 
 When **Server URL** points to a locally running server (such as `127.0.0.1`),
-the update button upgrades its installed CLI without terminating the running server.
-The server can still report the previous version until you restart it. T3 Code
-shows that restart requirement instead of treating the CLI update as a failure.
-Restart the server when active sessions can safely be interrupted.
+the update button upgrades its installed CLI. If that server is this machine's
+OpenCode background service, T3 Code then restarts it on the new version. The URL
+must use the service's own protocol, host, and port. For a service listening on
+`0.0.0.0` use `127.0.0.1`, and for `[::]` use `[::1]`.
+
+Restarting interrupts running turns, and the service then runs with T3 Code's
+environment. Set any variables it needs with `opencode service set env <name> <value>`.
+
+T3 Code does not restart any other server, including the background service
+reached through `localhost`. That server can still report the previous version
+until you restart it. For a loopback URL, T3 Code shows that restart requirement
+instead of treating the CLI update as a failure.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.

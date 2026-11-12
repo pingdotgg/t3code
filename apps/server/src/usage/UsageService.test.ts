@@ -577,9 +577,55 @@ describe("UsageService", () => {
         assert.strictEqual(totalOutputTokens(rewritten), 71);
         assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, rewritten.buckets);
         yield* service.awaitPersisted;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const originalPath = (yield* Effect.promise(() => NodeFSP.realpath(compressedPath))).slice(
+          0,
+          -4,
+        );
+        yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<
+              string,
+              { cs: Record<string, unknown>; r: unknown[]; t: unknown[]; mr: number }
+            >;
+          };
+          const archived = document.files[await NodeFSP.realpath(compressedPath)];
+          assert.ok(archived);
+          document.files[originalPath] = {
+            ...archived,
+            r: [],
+            t: [],
+            mr: 1,
+            cs: { ...archived.cs, malformedRecords: 1 },
+          };
+          await NodeFSP.writeFile(cachePath, encodeUnknownJsonString(document));
+        });
         const restarted = yield* UsageService.make;
-        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, rewritten.buckets);
+        const restored = yield* restarted.readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, rewritten.buckets);
+        assert.strictEqual(
+          restored.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          0,
+        );
         yield* restarted.awaitPersisted;
+        yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, unknown>;
+          };
+          assert.strictEqual(document.files[originalPath], undefined);
+          await NodeFSP.rm(compressedPath);
+        });
+        const removed = yield* UsageService.make;
+        const retained = yield* removed.readSummary(WINDOW);
+        assert.deepStrictEqual(retained.buckets, rewritten.buckets);
+        assert.strictEqual(
+          retained.sources.find((source) => source.fingerprint.provider === "codex")
+            ?.malformedRecords,
+          0,
+        );
+        yield* removed.awaitPersisted;
       }).pipe(
         Effect.scoped,
         Effect.provide(layerService({ prefix: "usage-compressed-codex", home, settings })),
@@ -1887,6 +1933,43 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("counts unpriced tokens from the unpriced records of a mixed model", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const message = (id: string, cost: number, input: number, output: number, minute: number) =>
+        encodeUnknownJson({
+          id,
+          sessionID: "session-1",
+          role: "assistant",
+          modelID: "acme-coder-1",
+          providerID: "acme",
+          time: { created: Date.parse(`2026-08-01T10:0${minute}:00Z`) },
+          cost,
+          tokens: { input, output, reasoning: 0, cache: { read: 0, write: 0 } },
+        });
+      const priced = yield* message("msg_priced", 1, 60, 40, 0);
+      const unpriced = yield* message("msg_unpriced", 0, 9_000, 900, 1);
+      yield* Effect.promise(async () => {
+        const directory = NodePath.join(home, "opencode", "storage", "message", "session-1");
+        await NodeFSP.mkdir(directory, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(directory, "msg_priced.json"), priced);
+        await NodeFSP.writeFile(NodePath.join(directory, "msg_unpriced.json"), unpriced);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-unpriced-tokens", home, settings })),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const model = mergeUsage(
+        [{ environmentId: EnvironmentId.make("local"), label: "local", summary }],
+        summary.contractVersion,
+      ).models.find((entry) => entry.model === "acme-coder-1");
+
+      assert.strictEqual(model?.costUsd, 1);
+      assert.strictEqual(model?.totalTokens, 10_000);
+      assert.strictEqual(model?.unpricedTokens, 9_900);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -2752,7 +2835,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6, 7, 8, 10])(
+  it.live.each([4, 5, 6, 7, 8, 10, 11, 12, 13])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts, removes the old file",
     (version) =>
       Effect.gen(function* () {
@@ -2853,7 +2936,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v14.json");
           assert.deepStrictEqual(
             (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
               .filter((name) => name.startsWith("usage-scan-cache"))

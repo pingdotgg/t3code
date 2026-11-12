@@ -302,6 +302,47 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
+  it.effect("keeps the service manager's append log bounded when it starts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-log-" });
+      const home = path.join(root, "home");
+      const unitPath = path.join(home, "Library", "LaunchAgents", "t3code.plist");
+      const plan = unitPlan(root, "1.0.0");
+      yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
+      yield* fs.writeFileString(
+        unitPath,
+        renderBootServicePlist(plan, { homeDir: home, environmentPath: "" }),
+      );
+      const oversized = 64 * 1024 * 1024;
+      yield* fs.makeDirectory(path.dirname(plan.logPath), { recursive: true });
+      yield* fs.writeFileString(plan.logPath, "");
+      yield* fs.truncate(plan.logPath, oversized);
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        "process.exit(0);\n",
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(path.join(root, "runtime", "service-state.json"), {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("T3_BOOT_SERVICE_UNIT", "t3code.plist");
+
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow("Active child exited unexpectedly (0)."),
+      );
+
+      const { size } = yield* fs.stat(plan.logPath);
+      expect(Number(size)).toBeLessThan(oversized);
+    }),
+  );
+
   it.effect("adopts a legacy install record without rewriting it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
