@@ -9,6 +9,10 @@ export const Platform = Context.Reference<NodeJS.Platform>("@t3tools/shared/Host
   defaultValue: () => process.platform,
 });
 
+export const Umask = Context.Reference<number>("@t3tools/shared/HostProcess/Umask", {
+  defaultValue: () => process.umask(),
+});
+
 export const Architecture = Context.Reference<NodeJS.Architecture>(
   "@t3tools/shared/HostProcess/Architecture",
   {
