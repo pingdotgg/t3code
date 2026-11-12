@@ -296,6 +296,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     hostExecPath = "/usr/bin/t3",
     underSudo = false,
     serviceInstallBinDir: string | null | undefined = installBinDir,
+    windowsUserName = "theo",
   ) =>
     Effect.gen(function* () {
       const paths = pinnedRuntimePaths(path, serviceBaseDir, cliVersion, platform);
@@ -330,7 +331,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 USERPROFILE: home,
                 LOCALAPPDATA: path.join(home, "AppData", "Local"),
                 USERDOMAIN: "PC",
-                USERNAME: "theo",
+                USERNAME: windowsUserName,
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
@@ -1418,6 +1419,21 @@ process.disconnect();
       const launcher = new NodeSqlite.DatabaseSync(serviceLauncherLockPath(plan.baseDir));
       launcher.exec("BEGIN EXCLUSIVE");
       control.launcher = launcher;
+      expect(yield* service.status).toMatchObject({ problems: [], current: true });
+
+      // Windows account names ignore case, and a desktop logon spells it as the account does
+      // while an SSH logon keeps what was typed.
+      const desktop = yield* makeService(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "Theo",
+      );
+      expect(yield* desktop.status).toMatchObject({ problems: [], current: true });
 
       // Task Scheduler runs its own copy of the task, so a deferred restart registers the new one.
       const newer = yield* makeService(undefined, "1.2.4");
