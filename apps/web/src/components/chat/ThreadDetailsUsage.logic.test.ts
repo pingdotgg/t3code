@@ -51,7 +51,12 @@ function claudeInstance(usageLimits: ServerProviderUsageLimits): ServerProvider 
     installed: true,
     version: null,
     status: "ready",
-    auth: { status: "authenticated", type: "customEndpoint", label: "Custom API endpoint" },
+    auth: {
+      status: "authenticated",
+      type: "customEndpoint",
+      label: "Custom API endpoint",
+      endpoint: "http://127.0.0.1:8317",
+    },
     checkedAt,
     models: [],
     slashCommands: [],
@@ -83,11 +88,13 @@ function hub(
   label: string,
   accounts: readonly HubAccountInput[],
   error?: string,
+  origin = "http://127.0.0.1:8317",
 ): UsageLimitSourceSnapshot {
   return {
     id: UsageLimitSourceId.make(label),
     kind: "cliproxy",
     label,
+    origin,
     checkedAt,
     accounts: accounts.map((account) => ({
       id: account.id,
@@ -128,17 +135,28 @@ function shown(
 }
 
 describe("resolveThreadDetailsLimits", () => {
-  it("keeps a direct login's failed reading instead of an unrelated hub", () => {
+  it("keeps an instance's failed reading instead of a hub it is not sent to", () => {
     const failed: ServerProviderUsageLimits = {
       checkedAt,
       windows: [],
       unavailable: { reason: "probeFailed" },
     };
     const direct = { ...claudeInstance(failed), auth: { status: "authenticated" as const } };
+    const elsewhere = claudeInstance(unsupported);
     const readableHub = hub("Hub", [{ id: "a.json", limits: limitsAt(20) }]);
+    const otherHub = hub(
+      "Other",
+      [{ id: "a.json", limits: limitsAt(20) }],
+      undefined,
+      "http://hub",
+    );
     expect(resolveThreadDetailsLimits(instanceId, null, [direct], [readableHub], now)).toEqual({
       kind: "instance",
       limits: failed,
+    });
+    expect(resolveThreadDetailsLimits(instanceId, null, [elsewhere], [otherHub], now)).toEqual({
+      kind: "instance",
+      limits: unsupported,
     });
   });
 

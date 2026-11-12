@@ -27,7 +27,6 @@ import * as SqlError from "effect/sql/SqlError";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { hubRoutedModel, isProxied } from "@t3tools/shared/usageLimits";
 import {
   ProviderTurnAnalytics,
   type ProviderTurnAnalyticsContext,
@@ -671,11 +670,11 @@ export const layer: Layer.Layer<
                       (instance) => instance?.snapshot.getSnapshot ?? Effect.undefined,
                     )
                   : undefined;
-              // A direct login whose own probe failed is not served by the hub.
-              const proxied = provider !== undefined && isProxied(provider);
+              // Only an instance sent to a hub's address is served by that hub.
+              const endpoint = provider?.auth.endpoint;
               // The failing run's model, which may differ from a selection changed mid-turn.
               const model =
-                provider !== undefined && proxied
+                endpoint !== undefined
                   ? yield* Effect.gen(function* () {
                       const { runs } =
                         input.runId === undefined
@@ -686,12 +685,13 @@ export const layer: Layer.Layer<
                       const selection =
                         runs[0]?.modelSelection ??
                         (yield* projections.getThread(input.threadId)).modelSelection;
-                      return hubRoutedModel(provider, selection.model);
+                      return selection.model;
                     }).pipe(Effect.orElseSucceed(() => null))
                   : null;
-              const hubResetAt = proxied
-                ? yield* usageLimitResets.resetAt(input.event.driver, model)
-                : null;
+              const hubResetAt =
+                endpoint !== undefined
+                  ? yield* usageLimitResets.resetAt(input.event.driver, endpoint, model)
+                  : null;
               const failure = hubResetAt === null ? reported : { ...reported, resetAt: hubResetAt };
               return [
                 ...dismissed,

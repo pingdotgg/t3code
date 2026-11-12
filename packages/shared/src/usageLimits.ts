@@ -841,17 +841,13 @@ export function withUsageLimitsCommands(
   });
 }
 
-/** An instance that sends requests through a hub reads no limits of its own. */
-export function isProxied(provider: ServerProvider): boolean {
-  return (
-    provider.auth.type === "customEndpoint" ||
-    provider.usageLimits?.unavailable?.reason === "unsupported"
-  );
-}
-
-/** Only an instance sent to a custom endpoint is known to reach the hub that routes its model. */
-export function hubRoutedModel(provider: ServerProvider, model: string | null): string | null {
-  return provider.auth.type === "customEndpoint" ? model : null;
+/** The hubs an instance sends its requests through: those whose address is its endpoint. */
+export function instanceHubs(
+  provider: ServerProvider,
+  sources: UsageLimitSourceSnapshots,
+): UsageLimitSourceSnapshots {
+  const endpoint = provider.auth.endpoint;
+  return endpoint === undefined ? [] : sources.filter((source) => source.origin === endpoint);
 }
 
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */
@@ -882,7 +878,12 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected) return null;
-  const routes = hubRoutes(sources, selected.driver, hubRoutedModel(selected, model));
+  // Only an instance sent to a hub is known to reach the accounts that hub routes its model to.
+  const routes = hubRoutes(
+    sources,
+    selected.driver,
+    instanceHubs(selected, sources).length > 0 ? model : null,
+  );
   const drivers = new Set(
     sources.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
   );

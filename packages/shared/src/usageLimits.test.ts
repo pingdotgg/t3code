@@ -1167,6 +1167,7 @@ describe("/usage-limits", () => {
       id: UsageLimitSourceId.make("hub"),
       kind: "cliproxy" as const,
       label: "Accounts",
+      origin: "http://hub:8317",
       checkedAt: limits.checkedAt,
       accounts: [
         {
@@ -1347,7 +1348,7 @@ describe("/usage-limits", () => {
     const proxy = provider({
       instanceId: ProviderInstanceId.make("claudex"),
       driver: ProviderDriverKind.make("claudeAgent"),
-      auth: { status: "authenticated", type: "customEndpoint" },
+      auth: { status: "authenticated", type: "customEndpoint", endpoint: "http://hub:8317" },
     });
     const ids = (instance: ServerProvider, model: string | null) =>
       collectProviderUsageLimits(
@@ -1358,6 +1359,17 @@ describe("/usage-limits", () => {
         model,
       )?.accounts.map((account) => account.id);
     expect(ids(proxy, "gpt-5.6-sol[1m]")).toEqual(["codex", "hub:oss"]);
+    // regression: #30778 a custom endpoint other than the hub does not follow the hub's routing
+    const elsewhere = { ...proxy, auth: { ...proxy.auth, endpoint: "http://other:8317" } };
+    expect(
+      collectProviderUsageLimits(
+        proxy.instanceId,
+        [selected, elsewhere],
+        routed,
+        now,
+        "gpt-5.6-sol",
+      ),
+    ).toBeNull();
     const unread = provider({
       instanceId: ProviderInstanceId.make("cursor"),
       driver: ProviderDriverKind.make("cursor"),

@@ -340,7 +340,11 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           {
             failureClass: "usage_limit",
             provider: {
-              auth: { status: "authenticated", type: "customEndpoint" },
+              auth: {
+                status: "authenticated",
+                type: "customEndpoint",
+                endpoint: "http://hub:8317",
+              },
               usageLimits: { ...unread, unavailable: { reason: "probeFailed" } },
             },
             resetAt: hubResetAt,
@@ -349,10 +353,19 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
           {
             failureClass: "usage_limit",
             provider: {
-              auth: { status: "unknown" },
+              auth: { status: "unknown", endpoint: "http://hub:8317" },
               usageLimits: { ...unread, unavailable: { reason: "unsupported" } },
             },
             resetAt: hubResetAt,
+          },
+          // regression: #30778 an instance with no hub endpoint gets no hub reset
+          {
+            failureClass: "usage_limit",
+            provider: {
+              auth: { status: "authenticated", type: "customEndpoint" },
+              usageLimits: { ...unread, unavailable: { reason: "unsupported" } },
+            },
+            resetAt: undefined,
           },
         ] as const;
         for (const [index, { failureClass, provider, resetAt, ...run }] of cases.entries()) {
@@ -392,18 +405,18 @@ it.effect("refreshes the failing instance snapshot after a committed usage_limit
             resetAt,
           );
         }
-        assert.deepEqual(lookups, Array(6).fill(instance.instanceId));
+        assert.deepEqual(lookups, Array(8).fill(instance.instanceId));
         assert.deepEqual(hubLookups, [
-          `${instance.driverKind}:gpt-run-model`,
-          `${instance.driverKind}:null`,
+          `${instance.driverKind}:http://hub:8317:gpt-run-model`,
+          `${instance.driverKind}:http://hub:8317:${modelSelection.model}`,
         ]);
         yield* Deferred.await(refreshed);
       }).pipe(
         Effect.provide(makeLayerTest(layerTestEventSink, instances)),
         Effect.provideService(UsageLimitResetFallback, {
-          resetAt: (driver, model) =>
+          resetAt: (driver, endpoint, model) =>
             Effect.sync(() => {
-              hubLookups.push(`${driver}:${model}`);
+              hubLookups.push(`${driver}:${endpoint}:${model}`);
               return hubResetAt;
             }),
         }),

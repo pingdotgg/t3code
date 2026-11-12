@@ -31,6 +31,13 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       "hub.test:8317",
       "Usage limit source",
     ]);
+    expect(snapshots.map((source) => source.origin)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      "https://hub.test:8317",
+      undefined,
+    ]);
     expect(() =>
       encodeConfigEvent({
         version: 1,
@@ -202,7 +209,14 @@ it("waits for the first refill only when every pooled account of the driver is s
       },
     ]),
   ];
+  // regression: #30778 a spent Fable allowance does not hold back other models
   expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, null, now)).toBe(
+    "2026-11-06T13:00:00.000Z",
+  );
+  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, "claude-sonnet-5-5", now)).toBe(
+    "2026-11-06T13:00:00.000Z",
+  );
+  expect(UsageLimitSources.hubPoolResetAt(hub(spent), claude, "claude-fable-5-2", now)).toBe(
     "2026-11-06T14:00:00.000Z",
   );
   const withRoom = [...spent, account("c", [session(40, "2026-11-06T15:00:00.000Z")])];
@@ -228,4 +242,55 @@ it("waits for the first refill only when every pooled account of the driver is s
   expect(
     UsageLimitSources.hubPoolResetAt(hub([...routed, unlisted]), claude, "claude-opus-5-5", now),
   ).toBeNull();
+});
+
+it.effect("takes a reset only from the hub at the instance's endpoint", () => {
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const spentHub = (id: string, origin: string) => ({
+    id: UsageLimitSourceId.make(id),
+    kind: "cliproxy" as const,
+    label: id,
+    origin,
+    checkedAt: "2026-11-06T12:00:00.000Z",
+    accounts: [
+      {
+        id: "a",
+        driver: claude,
+        usageLimits: {
+          checkedAt: "2026-11-06T12:00:00.000Z",
+          windows: [
+            {
+              id: "five_hour",
+              kind: "session" as const,
+              label: "Session",
+              usedPercent: 100,
+              resetsAt: `2026-11-06T1${id === "home" ? 3 : 4}:00:00.000Z`,
+            },
+          ],
+        },
+      },
+    ],
+  });
+  return Effect.gen(function* () {
+    const fallback = yield* UsageLimitSources.UsageLimitResetFallback;
+    expect(yield* fallback.resetAt(claude, "http://home:8317", null)).toBe(
+      "2026-11-06T13:00:00.000Z",
+    );
+    // regression: #30778 a gateway that is not a configured hub gets no hub's reset
+    expect(yield* fallback.resetAt(claude, "http://gateway:8080", null)).toBeNull();
+  }).pipe(
+    Effect.provide(
+      UsageLimitSources.layerResetFallback.pipe(
+        Layer.provide(
+          Layer.mock(UsageLimitSources.UsageLimitSources)({
+            current: Effect.succeed([
+              spentHub("home", "http://home:8317"),
+              spentHub("work", "http://work:8317"),
+            ]),
+            refresh: Effect.void,
+          }),
+        ),
+      ),
+    ),
+  );
 });

@@ -11,9 +11,8 @@ import {
   collectLimitPools,
   collectProviderUsageLimits,
   displayLimitWindows,
-  hubRoutedModel,
   hubRoutes,
-  isProxied,
+  instanceHubs,
   type LimitPoolWindow,
   limitsNotice,
 } from "@t3tools/shared/usageLimits";
@@ -41,14 +40,10 @@ export function resolveThreadDetailsLimits(
     report?.accounts.find((entry) => entry.instanceId === provider.instanceId)?.limits ??
     provider.usageLimits;
   if (!own) return null;
-  if (limitsNotice(own) === null || !isProxied(provider)) return { kind: "instance", limits: own };
-  // A proxied instance reads no limits of its own; its hub pools the accounts it spends.
-  return (
-    hubPool(provider.driver, hubRoutedModel(provider, model), providers, sources, now) ?? {
-      kind: "instance",
-      limits: own,
-    }
-  );
+  const hubs = instanceHubs(provider, sources);
+  if (limitsNotice(own) === null || hubs.length === 0) return { kind: "instance", limits: own };
+  // An instance sent to a hub reads no limits of its own; its hub pools the accounts it spends.
+  return hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own };
 }
 
 export function nextPoolReset(window: LimitPoolWindow, now: number) {
