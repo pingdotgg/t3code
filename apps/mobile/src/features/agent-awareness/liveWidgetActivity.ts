@@ -3,9 +3,14 @@ import {
   type EnvironmentCatalogState,
 } from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { isListedThreadLineage, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import {
+  projectThreadAwarenessV2,
+  subagentAwaitsApproval,
+  type SubagentRequestAwareness,
+} from "@t3tools/shared/agentAwareness";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
@@ -43,11 +48,39 @@ export function createLiveWidgetActivitiesAtom(input: {
       if (shell.status !== "live" || Option.isNone(shell.snapshot)) continue;
       const snapshot = shell.snapshot.value;
       const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
+      const threads = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
+      const childRequests = new Map<ThreadId, SubagentRequestAwareness>();
+      for (const child of snapshot.threads) {
+        if (child.archivedAt !== null || !subagentAwaitsApproval(child)) continue;
+        const request = child.pendingRuntimeRequest;
+        if (!request) continue;
+        const seen = new Set<ThreadId>([child.id]);
+        let parentId = child.lineage.parentThreadId;
+        while (parentId !== null && !seen.has(parentId)) {
+          seen.add(parentId);
+          const parent = threads.get(parentId);
+          if (!parent) break;
+          if (isListedThreadLineage(parent.lineage)) {
+            const previous = childRequests.get(parent.id);
+            if (!previous || DateTime.isGreaterThan(child.updatedAt, previous.updatedAt)) {
+              childRequests.set(parent.id, { requestId: request.id, updatedAt: child.updatedAt });
+            }
+            break;
+          }
+          parentId = parent.lineage.parentThreadId;
+        }
+      }
       const rows: AgentActivityRowProps[] = [];
       for (const thread of snapshot.threads) {
         const project = projects.get(thread.projectId);
         if (!project) continue;
-        const state = projectThreadAwarenessV2({ environmentId, project, thread, now });
+        const state = projectThreadAwarenessV2({
+          environmentId,
+          project,
+          thread,
+          now,
+          pendingSubagentRequest: childRequests.get(thread.id),
+        });
         if (!state) continue;
         rows.push({
           environmentId,

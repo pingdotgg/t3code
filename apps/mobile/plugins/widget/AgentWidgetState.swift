@@ -21,7 +21,9 @@ enum AgentWidgetState {
       guard let environmentId = $0["environmentId"] as? String else { return false }
       return !covered.contains(environmentId)
     }
-    let countUnavailable = !localRows.isEmpty && localObservation != nil && (localCount == nil || localCount! < 0 || localCount! > allLocalRows.filter { isUnfinished($0) }.count)
+    let localActiveCount = allLocalRows.filter { isUnfinished($0) }.count
+    let countUnavailable = !localRows.isEmpty && localObservation != nil &&
+      (localCount.map { $0 < 0 || $0 > localActiveCount } ?? true)
     let localDeadline = (localObservation?["expiresAt"] as? NSNumber).map {
       Date(timeIntervalSince1970: $0.doubleValue / 1000)
     }

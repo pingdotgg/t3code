@@ -1098,6 +1098,12 @@ const RelayMobileGroup = HttpApiGroup.make("mobile")
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")
   .middleware(RelayDpopClientAuth);
 
+export class RelayWidgetRateLimitedError extends Schema.TaggedError<RelayWidgetRateLimitedError>()(
+  "RelayWidgetRateLimitedError",
+  { code: Schema.Literal("widget_rate_limited"), traceId: TrimmedNonEmptyString },
+  { httpApiStatus: 429 },
+) {}
+
 const RelayWidgetGroup = HttpApiGroup.make("widget").add(
   HttpApiEndpoint.get("refresh", "/v1/widget/agent-activity", {
     headers: RelayBearerRequestHeaders,
@@ -1110,7 +1116,7 @@ const RelayWidgetGroup = HttpApiGroup.make("widget").add(
   HttpApiEndpoint.delete("revoke", "/v1/widget/agent-activity", {
     headers: RelayBearerRequestHeaders,
     success: RelayOkResponse,
-    error: RelayAuthAndInternalErrors,
+    error: [...RelayAuthAndInternalErrors, RelayWidgetRateLimitedError],
   }),
 );
 
