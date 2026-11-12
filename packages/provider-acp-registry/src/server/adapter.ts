@@ -258,6 +258,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
           restartRuntimeAfterPromptError: isCopilotLostSessionError,
+          // session/new reports a built-in default, not the model Copilot runs (github/copilot-cli#5363).
+          alwaysSetModel: true,
         }),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
     ...(runtimeCoordinator === undefined
