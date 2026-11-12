@@ -313,6 +313,8 @@ export default function BinaryViewer(props: {
                           else {
                             setSelectedPath(item.path);
                             setEntry(null);
+                            // Hide the list now so a second entry can't be opened mid-refresh.
+                            setBusy(true);
                             void (props.refreshSrc?.() ?? Promise.resolve(null))
                               .catch(() => null)
                               .then((src) =>
