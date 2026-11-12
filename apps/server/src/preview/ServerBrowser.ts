@@ -1575,20 +1575,36 @@ const make = Effect.gen(function* () {
   const isVisible = (tab: ServerTab) =>
     tab.viewers.size > 0 || (tab.desktop !== null && desktopChannel.isShown(tab));
 
+  const reclaimingTabs = new Set<ServerTab>();
   const idleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     return [...tabs.values()].filter(
-      (tab) => tab.control.agentId !== null && !isVisible(tab) && tab.usedAt < cutoff,
+      (tab) =>
+        tab.control.agentId !== null &&
+        !reclaimingTabs.has(tab) &&
+        !isVisible(tab) &&
+        tab.usedAt < cutoff,
     );
   };
 
   // The desktop app renders every server tab, so idle desktop agent tabs would otherwise
   // hold the server's budget forever. Hidden ones give up their slots, longest idle first,
-  // only when an agent needs one and has room for it.
-  const freeIdleAgentSlot = (agentSessionId: string) => {
-    if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
-    const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
-    if (longestIdle) dropTab(longestIdle, true);
+  // only when an agent needs one and has room for it. The slot goes to `reserve` as the tab
+  // leaves, so no other open can take it in between.
+  const freeIdleAgentSlot = async (agentSessionId: string, reserve: () => void) => {
+    const longestIdle =
+      serverAtTabLimit() && !agentAtTabLimit(agentSessionId)
+        ? idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0]
+        : undefined;
+    if (!longestIdle) return reserve();
+    reclaimingTabs.add(longestIdle);
+    try {
+      await unloadDesktopTab(longestIdle);
+      dropTab(longestIdle, true);
+      reserve();
+    } finally {
+      reclaimingTabs.delete(longestIdle);
+    }
   };
 
   // A Playwright launch must settle before its capacity can be released.
@@ -1599,13 +1615,15 @@ const make = Effect.gen(function* () {
     let key: string = NodeCrypto.randomUUID();
     const reservation = { agentId: input.automationOwner ?? null };
     return yield* Effect.acquireUseRelease(
-      Effect.try({
-        try: () => {
-          if (input.automationOwner !== undefined) {
-            if (options.reclaimIdleSlot) freeIdleAgentSlot(input.automationOwner);
-            assertTabCapacity(input.automationOwner);
-          }
-          pendingTabs.set(key, reservation);
+      Effect.tryPromise({
+        try: async () => {
+          const reserve = () => {
+            if (input.automationOwner !== undefined) assertTabCapacity(input.automationOwner);
+            pendingTabs.set(key, reservation);
+          };
+          if (input.automationOwner !== undefined && options.reclaimIdleSlot) {
+            await freeIdleAgentSlot(input.automationOwner, reserve);
+          } else reserve();
         },
         catch: ServerBrowserPage.toOperationError,
       }),
@@ -3212,16 +3230,35 @@ const make = Effect.gen(function* () {
       catch: (cause) => new PreviewClearProfileError({ profileId, cause }),
     });
 
+  // A page still attaching registers before its unload, unless it outlasts the grace period;
+  // then the closed session aborts its setup instead.
+  const awaitAttaching = async (keys: ReadonlyArray<string>) => {
+    const attaching = keys.flatMap((key) => {
+      const opening = tabs.has(key) ? undefined : pendingTabs.get(key)?.promise;
+      return opening ? [opening.catch(constVoid)] : [];
+    });
+    if (attaching.length === 0) return;
+    const grace = Promise.withResolvers<void>();
+    const timeout = setTimeout(grace.resolve, PAGE_CLOSE_GRACE_MS);
+    await Promise.race([Promise.all(attaching), grace.promise]);
+    clearTimeout(timeout);
+  };
+
+  // Uninterruptible: stopping after the unload starts would leave a closing tab open.
   const close = Effect.fn("ServerBrowser.close")(function* (input: PreviewCloseInput) {
-    const closing = [...tabs.values()].filter(
-      (tab) =>
-        tab.desktop !== null &&
-        tab.threadId === input.threadId &&
-        (input.tabId === undefined || tab.tabId === input.tabId),
-    );
-    yield* Effect.promise(() => Promise.all(closing.map(unloadDesktopTab)));
+    const closes = (key: string) =>
+      input.tabId === undefined
+        ? key.startsWith(tabKey(input.threadId, ""))
+        : key === tabKey(input.threadId, input.tabId);
+    yield* Effect.promise(async () => {
+      await awaitAttaching([...pendingTabs.keys()].filter(closes));
+      const closing = [...tabs.entries()].flatMap(([key, tab]) =>
+        tab.desktop !== null && closes(key) ? [tab] : [],
+      );
+      await Promise.all(closing.map(unloadDesktopTab));
+    });
     yield* manager.close(input);
-  });
+  }, Effect.uninterruptible);
 
   return ServerBrowser.of({
     attachViewer,

@@ -430,6 +430,10 @@ export function beginPreviewSessionClose(ref: ScopedThreadRef, tabId: string): v
   });
 }
 
+export function finishPreviewSessionClose(ref: ScopedThreadRef, tabId: string): void {
+  updateThreadPreviewState(ref, (current) => removeSession(current, tabId));
+}
+
 export function cancelPreviewSessionClose(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot | null,

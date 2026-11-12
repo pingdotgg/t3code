@@ -91,7 +91,7 @@ describe("closePreviewSession", () => {
     expect(closePreview).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
   });
 
-  it("keeps a tab this desktop renders mounted until the server closes it", async () => {
+  it("keeps a tab this desktop renders mounted until its close returns", async () => {
     setPrimaryEnvironment(threadRef.environmentId);
     const desktopSnapshot = { ...snapshot, runtime: "server" as const };
     applyPreviewServerSnapshot(threadRef, desktopSnapshot);
@@ -104,6 +104,8 @@ describe("closePreviewSession", () => {
     });
 
     expect(readThreadPreviewState(threadRef).sessions).toEqual({ "tab-1": desktopSnapshot });
+    // The page has unloaded once the close returns, even if its closed event never arrives.
     await closing;
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
   });
 });
