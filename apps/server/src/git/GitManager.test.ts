@@ -5324,6 +5324,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
 
       expect(result.worktreePath).not.toBeNull();
+      expect(result.createdWorktree).toBe(true);
       const upstreamRef = (yield* runGit(result.worktreePath as string, [
         "rev-parse",
         "--abbrev-ref",
@@ -5392,6 +5393,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         NodeFS.realpathSync.native(worktreePath),
       );
       expect(result.branch).toBe("feature/pr-reused-stale");
+      expect(result.createdWorktree).toBe(false);
       expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(updatedHead);
     }),
   );

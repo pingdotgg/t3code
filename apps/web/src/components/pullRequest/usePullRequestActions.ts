@@ -409,6 +409,9 @@ export function usePullRequestHandoffs({
       checkoutPullRequest: {
         url: prepared.value.pullRequest.url,
         branch: prepared.value.branch,
+        ...(prepared.value.createdWorktree && prepared.value.worktreePath
+          ? { createdWorktreePath: prepared.value.worktreePath }
+          : {}),
       },
     });
     setHandoff(null);

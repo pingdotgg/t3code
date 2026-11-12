@@ -131,6 +131,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
   const handlePreparedPullRequestThread = async (input: {
     branch: string;
     worktreePath: string | null;
+    createdWorktree: boolean;
     pullRequestUrl: string;
   }) => {
     // The draft carries the pull request until its first send makes it a thread, which links it.
@@ -138,7 +139,13 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
       branch: input.branch,
       worktreePath: input.worktreePath,
       envMode: input.worktreePath ? "worktree" : "local",
-      checkoutPullRequest: { url: input.pullRequestUrl, branch: input.branch },
+      checkoutPullRequest: {
+        url: input.pullRequestUrl,
+        branch: input.branch,
+        ...(input.createdWorktree && input.worktreePath
+          ? { createdWorktreePath: input.worktreePath }
+          : {}),
+      },
     });
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);

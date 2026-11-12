@@ -77,6 +77,7 @@ export function PullRequestThreadDialogHost(props: {
   readonly onPrepared: (input: {
     branch: string;
     worktreePath: string | null;
+    createdWorktree: boolean;
     pullRequestUrl: string;
   }) => Promise<void> | void;
 }) {

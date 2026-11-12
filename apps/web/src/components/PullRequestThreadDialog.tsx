@@ -46,6 +46,7 @@ interface PullRequestThreadDialogProps {
   onPrepared: (input: {
     branch: string;
     worktreePath: string | null;
+    createdWorktree: boolean;
     pullRequestUrl: string;
   }) => Promise<void> | void;
 }
@@ -164,6 +165,7 @@ export function PullRequestThreadDialog({
     await onPrepared({
       branch: result.value.branch,
       worktreePath: result.value.worktreePath,
+      createdWorktree: result.value.createdWorktree,
       pullRequestUrl: result.value.pullRequest.url,
     });
     if (!result.value.isOnPullRequestHead) {

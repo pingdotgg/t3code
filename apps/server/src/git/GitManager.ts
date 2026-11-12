@@ -2937,6 +2937,7 @@ export const make = Effect.gen(function* () {
           branch,
           worktreePath: null,
           isOnPullRequestHead: yield* moveToPullRequestHead(input.cwd, pullRequestSummary.headSha),
+          createdWorktree: false,
         };
       }
 
@@ -2973,6 +2974,7 @@ export const make = Effect.gen(function* () {
             branch: localPullRequestBranch,
             worktreePath,
             isOnPullRequestHead: false,
+            createdWorktree: false,
           };
         }
 
@@ -3043,6 +3045,7 @@ export const make = Effect.gen(function* () {
           branch: localPullRequestBranch,
           worktreePath,
           isOnPullRequestHead: refreshed.onTarget,
+          createdWorktree: false,
         };
       });
 
@@ -3152,6 +3155,7 @@ export const make = Effect.gen(function* () {
         branch: worktree.worktree.refName,
         worktreePath: worktree.worktree.path,
         isOnPullRequestHead: true,
+        createdWorktree: true,
       };
     }).pipe(
       Effect.tap((result) =>

@@ -79,6 +79,8 @@ import {
   subscribeComposerDraftModelReconciliation,
   deriveEffectiveComposerModelState,
   checkoutPullRequestUrlToLink,
+  type DraftCheckoutPullRequest,
+  releasedCheckoutWorktrees,
   clearComposerDraftsEnvironment,
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
@@ -2727,6 +2729,54 @@ describe("composerDraftStore checkout pull request", () => {
     expect(store().getDraftSession(draftId)?.checkoutPullRequest).toBeUndefined();
   });
 
+  it("releases a worktree the checkout created once its draft drops it unsent", () => {
+    const worktreePath = "/worktrees/widgets/pr-42";
+    const owned = { ...checkout, createdWorktreePath: worktreePath };
+    const pointAtCheckout = (checkoutPullRequest: DraftCheckoutPullRequest = owned) =>
+      store().setProjectDraftThreadId(projectRef, draftId, {
+        threadId,
+        branch: checkout.branch,
+        worktreePath,
+        envMode: "worktree",
+        checkoutPullRequest,
+      });
+    const releasedBy = (change: () => void) => {
+      const before = store().draftThreadsByThreadKey;
+      change();
+      return releasedCheckoutWorktrees(before, store().draftThreadsByThreadKey);
+    };
+    const expected = [{ environmentId: TEST_ENVIRONMENT_ID, projectId, threadId, worktreePath }];
+
+    pointAtCheckout();
+    expect(
+      releasedBy(() =>
+        store().setDraftThreadContext(draftId, {
+          branch: "main",
+          worktreePath: null,
+          envMode: "local",
+        }),
+      ),
+    ).toEqual(expected);
+
+    pointAtCheckout();
+    expect(releasedBy(() => store().clearDraftThread(draftId))).toEqual(expected);
+
+    pointAtCheckout();
+    expect(releasedBy(() => store().markDraftThreadPromoting(draftId))).toEqual([]);
+    expect(releasedBy(() => store().finalizePromotedDraftThread(draftId))).toEqual([]);
+
+    pointAtCheckout(checkout);
+    expect(releasedBy(() => store().clearDraftThread(draftId))).toEqual([]);
+
+    pointAtCheckout();
+    store().setProjectDraftThreadId(otherProjectRef, DraftId.make("draft-reusing"), {
+      threadId: ThreadId.make("thread-reusing"),
+      worktreePath,
+      envMode: "worktree",
+    });
+    expect(releasedBy(() => store().clearDraftThread(draftId))).toEqual([]);
+  });
+
   it("persists the pull request and still restores drafts saved without one", async () => {
     vi.useFakeTimers();
     try {
@@ -2753,7 +2803,10 @@ describe("composerDraftStore checkout pull request", () => {
         state: {
           draftsByThreadKey: {},
           draftThreadsByThreadKey: {
-            [draftId]: { ...persistedDraftThread(threadId), checkoutPullRequest: checkout },
+            [draftId]: {
+              ...persistedDraftThread(threadId),
+              checkoutPullRequest: { ...checkout, createdWorktreePath: "/worktrees/pr-42" },
+            },
             [legacyDraftId]: persistedDraftThread(ThreadId.make("thread-legacy")),
           },
           logicalProjectDraftThreadKeyByLogicalProjectKey: {
@@ -2771,7 +2824,9 @@ describe("composerDraftStore checkout pull request", () => {
       expect(checkoutPullRequestUrlToLink(legacy)).toBeNull();
       expect(
         partializeComposerDraftStoreState(store()).draftThreadsByThreadKey[draftId],
-      ).toMatchObject({ checkoutPullRequest: checkout });
+      ).toMatchObject({
+        checkoutPullRequest: { ...checkout, createdWorktreePath: "/worktrees/pr-42" },
+      });
     } finally {
       await useComposerDraftStore.persist.clearStorage();
       vi.useRealTimers();

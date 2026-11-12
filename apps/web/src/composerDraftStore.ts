@@ -323,7 +323,11 @@ const PersistedDraftThreadState = Schema.Struct({
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   checkoutPullRequest: Schema.optionalKey(
-    Schema.Struct({ url: Schema.String, branch: Schema.String }),
+    Schema.Struct({
+      url: Schema.String,
+      branch: Schema.String,
+      createdWorktreePath: Schema.optionalKey(Schema.String),
+    }),
   ),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
@@ -431,6 +435,8 @@ export type DraftThreadState = DraftSessionState;
 export interface DraftCheckoutPullRequest {
   readonly url: string;
   readonly branch: string;
+  /** Set when the checkout created this worktree for the draft, which then owns it until sent. */
+  readonly createdWorktreePath?: string;
 }
 
 /**
@@ -444,6 +450,42 @@ export function checkoutPullRequestUrlToLink(
 ): string | null {
   const checkout = draft?.checkoutPullRequest;
   return checkout && draft.branch === checkout.branch ? checkout.url : null;
+}
+
+export interface ReleasedCheckoutWorktree {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+  readonly worktreePath: string;
+}
+
+/**
+ * Worktrees a pull request checkout created for a draft that has since let go of them unsent:
+ * the draft was discarded or moved off the worktree, and no other draft points there.
+ */
+export function releasedCheckoutWorktrees(
+  previous: Readonly<Record<string, DraftThreadState>>,
+  next: Readonly<Record<string, DraftThreadState>>,
+): ReleasedCheckoutWorktree[] {
+  if (previous === next) return [];
+  const released: ReleasedCheckoutWorktree[] = [];
+  for (const [key, before] of Object.entries(previous)) {
+    const owned = before.checkoutPullRequest?.createdWorktreePath;
+    if (!owned || before.worktreePath !== owned || before.promotedTo) continue;
+    const after = next[key];
+    if (after && (after.worktreePath === owned || after.promotedTo)) continue;
+    const stillUsed = Object.values(next).some(
+      (draft) => draft.environmentId === before.environmentId && draft.worktreePath === owned,
+    );
+    if (stillUsed) continue;
+    released.push({
+      environmentId: before.environmentId,
+      projectId: before.projectId,
+      threadId: before.threadId,
+      worktreePath: owned,
+    });
+  }
+  return released;
 }
 
 interface ProjectDraftSession extends DraftSessionState {
@@ -1591,7 +1633,12 @@ function checkoutPullRequestsEqual(
   left: DraftCheckoutPullRequest | undefined,
   right: DraftCheckoutPullRequest | undefined,
 ): boolean {
-  return left === right || (left?.url === right?.url && left?.branch === right?.branch);
+  return (
+    left === right ||
+    (left?.url === right?.url &&
+      left?.branch === right?.branch &&
+      left?.createdWorktreePath === right?.createdWorktreePath)
+  );
 }
 
 function scopedThreadRefsEqual(
@@ -1666,12 +1713,18 @@ function removeDraftThreadReferences(
 
 function normalizePersistedCheckoutPullRequest(value: unknown): DraftCheckoutPullRequest | null {
   if (!value || typeof value !== "object") return null;
-  const { url, branch } = value as Record<string, unknown>;
+  const { url, branch, createdWorktreePath } = value as Record<string, unknown>;
   return typeof url === "string" &&
     url.length > 0 &&
     typeof branch === "string" &&
     branch.length > 0
-    ? { url, branch }
+    ? {
+        url,
+        branch,
+        ...(typeof createdWorktreePath === "string" && createdWorktreePath.length > 0
+          ? { createdWorktreePath }
+          : {}),
+      }
     : null;
 }
 
