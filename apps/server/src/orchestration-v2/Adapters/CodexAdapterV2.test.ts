@@ -2277,6 +2277,43 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
             {
               type: "emit_inbound",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  completedAtMs: 1782622446000,
+                  item: {
+                    type: "subAgentActivity",
+                    id: "capped-stop-spawn",
+                    kind: "started",
+                    agentThreadId: "capped-stop-child",
+                    agentPath: "/root/capped_stop_child",
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: "capped-stop-child",
+                  turn: makeCodexReplayTurn({ id: "capped-stop-child-turn", status: "inProgress" }),
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                id: 5,
+                method: "turn/interrupt",
+                params: { threadId: "capped-stop-child", turnId: "capped-stop-child-turn" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 5, result: {} } },
+            {
+              type: "emit_inbound",
               label: "turn/completed",
               afterMs: 1_000,
               frame: {
@@ -2336,6 +2373,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.deepEqual(
         harness.terminalEvents().map((event) => event.status),
         ["interrupted"],
+      );
+      assert.isFalse(
+        harness.events.some(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === "capped-stop-child-turn",
+        ),
+        "a child starting after the cap is stopped, not run",
       );
     }).pipe(
       Effect.scoped,

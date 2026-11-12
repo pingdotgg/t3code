@@ -8246,6 +8246,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.forkIn(scope, { startImmediately: true }),
               );
 
+              // Unconfirmed (timed out or capped): children starting under these roots are stopped on sight.
+              const stopLateDescendants = Effect.sync(() => {
+                for (const root of lineageRoots) unconfirmedStopTurns.add(root.nativeTurnId);
+              }).pipe(Effect.andThen(interruptLateDescendants));
               const confirmed = yield* Effect.gen(function* () {
                 for (const target of interruptTargets) {
                   const context = target.context;
@@ -8302,14 +8306,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   });
                 }
                 if (!rootStillActive) return true;
-                for (const root of lineageRoots) unconfirmedStopTurns.add(root.nativeTurnId);
-                yield* interruptLateDescendants;
+                yield* stopLateDescendants;
                 yield* terminateTrackedTerminals(interruptTargets);
                 return false;
               }).pipe(
                 Effect.onError((cause) =>
                   Cause.hasInterruptsOnly(cause)
-                    ? Effect.asVoid(settleInScope)
+                    ? Effect.forkIn(stopLateDescendants, scope).pipe(
+                        Effect.andThen(settleInScope),
+                        Effect.asVoid,
+                      )
                     : finalizeRemainingInterruptLineage.pipe(
                         Effect.ensuring(cleanupInterruptState),
                       ),
