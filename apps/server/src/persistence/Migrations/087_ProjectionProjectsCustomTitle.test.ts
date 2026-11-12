@@ -7,11 +7,11 @@ import { runMigrations } from "../Migrations.ts";
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 
-layer("086_ProjectionProjectsCustomTitle", (it) => {
+layer("087_ProjectionProjectsCustomTitle", (it) => {
   it.effect("marks projects with a recorded title update as renamed", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 85 });
+      yield* runMigrations({ toMigrationInclusive: 86 });
       for (const projectId of ["renamed", "untouched"]) {
         yield* sql`
           INSERT INTO projection_projects
