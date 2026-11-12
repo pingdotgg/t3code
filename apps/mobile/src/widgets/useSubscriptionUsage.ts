@@ -4,9 +4,9 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
-import { isAppActive, subscribeAppState } from "../lib/appState";
+import { isAppActive } from "../lib/appState";
 import { appAtomRegistry } from "../state/atom-registry";
-import { connectedEnvironmentIdsAtom } from "../state/presentation";
+import { environmentPresentations } from "../state/presentation";
 import { serverEnvironment } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { createWidgetRefresher, WIDGET_REFRESH_INTERVAL } from "./subscriptionUsageSnapshot";
@@ -33,8 +33,9 @@ const refreshableEnvironmentsAtom = Atom.make((get) =>
 );
 
 /**
- * App-lifetime worker that keeps provider quotas fresh for the usage widget:
- * once a resumed or new connection has synced its shell, and on a fixed interval while active.
+ * Keeps provider quotas fresh for the usage widget whenever an environment becomes refreshable
+ * and on an interval. No AppState trigger: on resume the shell reads a stale "live" until its
+ * wakeup resync, so refreshing then would compete with the reload.
  * Each environment is refreshed at most once per interval.
  */
 export function installSubscriptionUsageRefresh(): () => void {
@@ -55,12 +56,10 @@ export function installSubscriptionUsageRefresh(): () => void {
   const unsubscribeEnvironments = appAtomRegistry.subscribe(refreshableEnvironmentsAtom, update, {
     immediate: true,
   });
-  const unsubscribeAppState = subscribeAppState(update);
   const timer = setInterval(update, WIDGET_REFRESH_INTERVAL);
   return () => {
     unsubscribeCatalog();
     unsubscribeEnvironments();
-    unsubscribeAppState();
     clearInterval(timer);
   };
 }

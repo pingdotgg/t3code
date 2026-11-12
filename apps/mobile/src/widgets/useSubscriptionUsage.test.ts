@@ -34,7 +34,9 @@ vi.mock("../connection/catalog", async () => {
 
 vi.mock("../state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
-  return { connectedEnvironmentIdsAtom: Atom.make<ReadonlyArray<string>>([]) };
+  return {
+    environmentPresentations: { presentationsAtom: Atom.make(new Map<string, unknown>()) },
+  };
 });
 
 vi.mock("../state/shell", async () => {
@@ -53,13 +55,6 @@ vi.mock("../state/server", () => ({
   serverEnvironment: { refreshProviders: { label: "Refresh providers" } },
 }));
 
-vi.mock("../state/shell", async () => {
-  const { Atom } = await import("effect/reactivity");
-  return {
-    environmentShell: { statusAtom: Atom.family((_id: string) => Atom.make("synchronizing")) },
-  };
-});
-
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   runAtomCommand: (
     _registry: unknown,
@@ -75,14 +70,15 @@ import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentPresentations } from "../state/presentation";
 import { environmentShell } from "../state/shell";
+import { WIDGET_REFRESH_INTERVAL } from "./subscriptionUsageSnapshot";
 import { installSubscriptionUsageRefresh } from "./useSubscriptionUsage";
 
 const registry = appAtomRegistry as AtomRegistry.AtomRegistry;
 const catalogAtom = environmentCatalog.catalogValueAtom as unknown as Atom.Writable<{
   isReady: boolean;
 }>;
-const connectedIdsAtom = connectedEnvironmentIdsAtom as unknown as Atom.Writable<
-  ReadonlyArray<EnvironmentId>
+const presentationsAtom = environmentPresentations.presentationsAtom as unknown as Atom.Writable<
+  Map<string, { connection: { phase: string } }>
 >;
 
 const shellAtom = (environmentId: EnvironmentId) =>
@@ -97,8 +93,8 @@ const syncing = EnvironmentId.make("env-syncing");
 const failed = EnvironmentId.make("env-failed");
 
 describe("installSubscriptionUsageRefresh", () => {
-  it("refreshes synced environments once the catalog is ready and the app is active", () => {
-    fixture.appState = "background";
+  it("refreshes connected environments once the catalog is ready", () => {
+    fixture.appState = "active";
     fixture.refreshed = [];
     registry.set(catalogAtom, { isReady: false });
     registry.set(
@@ -115,12 +111,9 @@ describe("installSubscriptionUsageRefresh", () => {
     registry.set(shellAtom(failed), { status: "cached", error: Option.some("Shell failed") });
 
     const dispose = installSubscriptionUsageRefresh();
-    registry.set(catalogAtom, { isReady: true });
-    // Backgrounded: nothing refreshes yet.
     expect(fixture.refreshed).toEqual([]);
 
-    fixture.appState = "active";
-    for (const listener of fixture.appStateListeners) listener();
+    registry.set(catalogAtom, { isReady: true });
     expect(fixture.refreshed).toEqual([connected, failed]);
 
     // The refresh waits for the thread list, so it never competes with it on a cold start.
@@ -128,23 +121,33 @@ describe("installSubscriptionUsageRefresh", () => {
     expect(fixture.refreshed).toEqual([connected, failed, syncing]);
 
     dispose();
-    expect(fixture.appStateListeners.size).toBe(0);
   });
 
-  it("waits for the shell to sync before refreshing a reconnected environment", () => {
+  it("waits for the resumed shell to resync before refreshing again", async () => {
+    vi.useFakeTimers();
     const resumed = EnvironmentId.make("env-resumed");
     fixture.appState = "active";
     fixture.refreshed = [];
     registry.set(catalogAtom, { isReady: true });
-    registry.set(connectedIdsAtom, [resumed]);
+    registry.set(presentationsAtom, new Map([[resumed, { connection: { phase: "connected" } }]]));
+    registry.set(shellAtom(resumed), { status: "live", error: Option.none() });
 
     const dispose = installSubscriptionUsageRefresh();
-    // Connected but still loading the shell snapshot: the provider probe must not compete with it.
-    expect(fixture.refreshed).toEqual([]);
-
-    registry.set(statusAtom(resumed), "live");
     expect(fixture.refreshed).toEqual([resumed]);
 
+    // Backgrounded past the throttle. On resume the shell still reads its pre-suspend "live"
+    // until the wakeup resubscribes it, so the app turning active alone must not refresh.
+    fixture.appState = "background";
+    await vi.advanceTimersByTimeAsync(WIDGET_REFRESH_INTERVAL + 1);
+    fixture.appState = "active";
+    for (const listener of fixture.appStateListeners) listener();
+    expect(fixture.refreshed).toEqual([resumed]);
+
+    registry.set(shellAtom(resumed), { status: "synchronizing", error: Option.none() });
+    registry.set(shellAtom(resumed), { status: "live", error: Option.none() });
+    expect(fixture.refreshed).toEqual([resumed, resumed]);
+
     dispose();
+    vi.useRealTimers();
   });
 });
