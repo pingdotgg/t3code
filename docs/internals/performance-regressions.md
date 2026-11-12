@@ -68,8 +68,11 @@ fixtures exclude unrelated settings calls and subscription events. Payload budge
 these tests so regressions fail locally. The transfer budget integration test
 (`apps/server/integration/transferBudgetV2.integration.test.ts`) sends the opt-ins current clients
 send and caps the decoded bytes and rows of the bounded snapshot and one older page for a 900-row
-agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. When
-clients gain an opt-in, add it to the test's client queries and give a fixture the data it saves.
+agent turn, and of the cold-connect shell for a sidebar of settled threads and idle subagents. It
+also caps the bytes and the node, subagent, plan, provider turn and checkpoint counts of the
+bounded snapshot for a thread of 40 finished runs behind one working run, so finished runs cannot
+ride along with a window. When clients gain an opt-in, add it to the test's client queries and give
+a fixture the data it saves.
 
 ## Event store and startup
 
@@ -106,9 +109,9 @@ background items, including idle items. Latest user-message reads use an index o
 time.
 
 A projection read that orders messages by their first user or assistant turn item groups those
-items by `$.messageId` through a partial index on that expression (migration 83), so it does not
+items by `$.messageId` through a partial index on that expression (migration 84), so it does not
 parse every message item's payload; the index's expression and `WHERE` must stay identical to the
-query's. Migration 83 scans the turn-item table once on first start; a message item whose payload
+query's. Migration 84 scans the turn-item table once on first start; a message item whose payload
 is not valid JSON is left out of the index. Each message-item write re-parses the old and new
 payload for the index, so its cost grows with the payload.
 
