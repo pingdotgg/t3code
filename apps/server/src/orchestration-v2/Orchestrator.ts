@@ -3683,7 +3683,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           pullRequestSnapshotEndsWatch(link?.snapshot ?? null, entry.startedAt),
       );
       if (
-        entries.some(({ entry, link }) => link?.watch?.startedAt !== entry.startedAt) ||
+        entries.some(
+          ({ entry, link }) =>
+            link?.watch?.startedAt !== entry.startedAt ||
+            // Keeping startedAt on a policy change keeps queued wakes; a read under the old policy is stale.
+            (entry.watch !== null &&
+              (entry.watch.includeOwnRemarks ?? false) !== (link.watch.includeOwnRemarks ?? false)),
+        ) ||
         (wake && inactive) ||
         // One wake cannot drop the news of just some of its pull requests; the sender splits it.
         (entries.length > 1 && outdated.some(Boolean))
@@ -4733,19 +4739,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.includeOwnRemarks !== undefined &&
             command.includeOwnRemarks !== (watch.includeOwnRemarks ?? false)
           ) {
-            // A changed policy must reject in-flight syncs even within the same clock tick.
-            const policyStartedAt = DateTime.formatIso(
-              DateTime.makeUnsafe(
-                Math.max(
-                  DateTime.toEpochMillis(now),
-                  DateTime.toEpochMillis(DateTime.makeUnsafe(watch.startedAt)) + 1,
-                ),
-              ),
-            );
             watch = {
               ...watch,
               includeOwnRemarks: command.includeOwnRemarks,
-              startedAt: policyStartedAt,
               remarksThrough: DateTime.formatIso(now),
               remarkIds: [],
               wakes: 0,

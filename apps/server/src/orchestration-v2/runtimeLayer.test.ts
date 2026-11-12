@@ -3620,7 +3620,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       const changed = yield* watchOf;
       assert.isFalse(changed?.includeOwnRemarks);
-      assert.notEqual(changed?.startedAt, started.startedAt);
+      assert.equal(changed?.startedAt, started.startedAt);
       assert.equal(changed?.remarksThrough, DateTime.formatIso(yield* DateTime.now));
       assert.deepEqual(changed?.failedChecks, recorded.failedChecks);
       yield* orchestrator.dispatch({
