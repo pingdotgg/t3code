@@ -38,7 +38,6 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -152,78 +151,6 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
-
-it.effect("an agent's message to another thread does not invoke a skill it mentions", () => {
-  const projectId = ProjectId.make("project:thread-management:chokepoint");
-  const threadId = ThreadId.make("thread:thread-management:chokepoint");
-  const instanceId = ProviderInstanceId.make("codex_work");
-  const skills = new Map([["technical-writing", { path: "/skills/technical-writing/SKILL.md" }]]);
-  const texts: Array<string> = [];
-  const layerTest = ThreadManagementService.layer.pipe(
-    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
-    Layer.provide(
-      Layer.mock(Orchestrator.OrchestratorV2)({
-        getThreadRecords: () =>
-          Effect.succeed({
-            thread: {
-              id: threadId,
-              projectId,
-              deletedAt: null,
-              archivedAt: null,
-              modelSelection: { instanceId, model: "test" },
-            },
-            runs: [],
-            providerTurns: [],
-            messages: [],
-            turnItems: [],
-          } as unknown as OrchestrationV2ThreadProjection),
-        dispatch: (command) =>
-          Effect.sync(() => {
-            if (command.type === "message.dispatch") texts.push(command.text);
-            return { sequence: 1, storedEvents: [] } as never;
-          }),
-      }),
-    ),
-    Layer.provide(
-      ServerSettings.layerTest({
-        providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
-      }),
-    ),
-    Layer.provideMerge(layerReceiptsTest),
-  );
-
-  return Effect.gen(function* () {
-    const threads = yield* ThreadManagementService.ThreadManagementService;
-    const sent = [
-      "PREFIX: the literal mention $technical-writing appears mid-sentence here. SUFFIX.",
-      "PREFIX: the literal mention \u20actechnical-writing appears mid-sentence here. SUFFIX.",
-      "/technical-writing PREFIX: report the exact text you received, then stop.",
-    ];
-    for (const [index, text] of sent.entries()) {
-      // The read-back after dispatch has no message in this mock; only the dispatched text matters.
-      yield* Effect.exit(
-        threads.sendToThread({
-          projectId,
-          commandId: CommandId.make(`command:thread-management:agent-skill-${index}`),
-          threadId,
-          messageId: MessageId.make(`message:thread-management:agent-skill-${index}`),
-          senderThreadId: ThreadId.make("thread:thread-management:sender"),
-          text,
-          attachments: [],
-          mode: "queue",
-          createdBy: "agent",
-          creationSource: "mcp",
-        }),
-      );
-    }
-
-    expect(texts).toHaveLength(sent.length);
-    for (const text of texts) {
-      expect(planClaudeSkillDispatch(text, skills)).toBeUndefined();
-      expect(text.startsWith("/technical-writing")).toBe(false);
-    }
-  }).pipe(Effect.provide(layerTest));
-});
 
 it.effect(
   "a replay of an already-accepted command id dispatches despite the instance now being disabled",

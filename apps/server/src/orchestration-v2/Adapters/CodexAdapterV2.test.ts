@@ -1383,6 +1383,93 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect("keeps another agent's mentions of the recipient's skills as text", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "agent-mention-thread";
+      const nativeTurnId = "agent-mention-turn";
+      const prompt = 'Use ($review), then result=ready; printf "%s" "$result"';
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId,
+        prompt,
+        sentPrompt: prompt.replace("$review", "$\u2060review"),
+      });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "agent-skill-mention",
+          entries: [
+            ...preamble.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "skills/list",
+              frame: { id: 3, method: "skills/list", params: {} },
+            },
+            {
+              type: "emit_inbound",
+              label: "skills/list",
+              frame: {
+                id: 3,
+                result: {
+                  data: [
+                    {
+                      cwd: "/workspace",
+                      skills: [
+                        {
+                          name: "review",
+                          description: "Review the change",
+                          path: "/skills/review/SKILL.md",
+                          enabled: true,
+                          scope: "repo",
+                        },
+                      ],
+                      errors: [],
+                    },
+                  ],
+                },
+              },
+            },
+            ...preamble.slice(5, 7).map((entry) => withReplayRequestId(entry, 4)),
+            ...preamble.slice(7),
+            {
+              type: "emit_inbound",
+              label: "turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("agent-mention-attempt"),
+        text: prompt,
+      });
+      yield* harness.runtime.startTurn({
+        ...turnInput,
+        message: { ...turnInput.message, createdBy: "agent" },
+      });
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {
       const nativeThreadId = "image-view-thread";

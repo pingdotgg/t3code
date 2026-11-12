@@ -164,6 +164,10 @@ import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
+  isAgentWrittenMessage,
+  neutralizeSkillMentions,
+} from "../../provider/agentSkillMentions.ts";
+import {
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -5367,6 +5371,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+    );
+
+  const claudePromptWithSkills = (
+    message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+    cwd: string | null,
+    prefix: (text: string) => string,
+  ) =>
+    userInvocableSkills(cwd).pipe(
+      Effect.map((skills) => ({
+        text: prefix(
+          isAgentWrittenMessage(message)
+            ? neutralizeSkillMentions(message.text, (name) => skills.has(name))
+            : message.text,
+        ),
+        skills,
+      })),
     );
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -12041,16 +12061,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptUuid === null
                 ? null
                 : yield* makeClaudeUserMessageWithAttachments({
-                    text: applyClaudePromptEffortPrefix(
-                      turnInput.message.text,
-                      compileClaudeModelSelection(turnInput.modelSelection, modelCatalog)
-                        .promptEffort,
-                    ),
+                    ...(yield* claudePromptWithSkills(
+                      turnInput.message,
+                      turnInput.runtimePolicy.cwd,
+                      (text) =>
+                        applyClaudePromptEffortPrefix(
+                          text,
+                          compileClaudeModelSelection(turnInput.modelSelection, modelCatalog)
+                            .promptEffort,
+                        ),
+                    )),
                     attachments: turnInput.message.attachments,
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -12537,20 +12561,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? steerSelection
                 : undefined;
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
-              text: applyClaudePromptEffortPrefix(
-                turnInput.message.text,
-                (
-                  liveSteerSelection ??
-                  compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
-                ).promptEffort,
-              ),
+              ...(yield* claudePromptWithSkills(
+                turnInput.message,
+                currentTurn.input.runtimePolicy.cwd,
+                (text) =>
+                  applyClaudePromptEffortPrefix(
+                    text,
+                    (
+                      liveSteerSelection ??
+                      compileClaudeModelSelection(currentTurn.input.modelSelection, modelCatalog)
+                    ).promptEffort,
+                  ),
+              )),
               attachments: turnInput.message.attachments,
               priority: "now",
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),

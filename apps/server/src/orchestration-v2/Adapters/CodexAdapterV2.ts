@@ -155,6 +155,10 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  isAgentWrittenMessage,
+  neutralizeSkillMentions,
+} from "../../provider/agentSkillMentions.ts";
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
@@ -3452,8 +3456,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           >,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+          let messageText = turnInput.message.text;
+          if (isAgentWrittenMessage(turnInput.message)) {
+            // Without the catalog, break every mention rather than run one the user never asked for.
+            const skillNames = yield* client.request("skills/list", {}).pipe(
+              Effect.map(
+                (response) =>
+                  new Set(
+                    response.data.flatMap((entry) => entry.skills.map((skill) => skill.name)),
+                  ),
+              ),
+              Effect.orElseSucceed(() => undefined),
+            );
+            messageText = neutralizeSkillMentions(
+              messageText,
+              (name) => skillNames === undefined || skillNames.has(name),
+            );
+          }
           const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+            text: codexSkillMentionText(messageText),
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(

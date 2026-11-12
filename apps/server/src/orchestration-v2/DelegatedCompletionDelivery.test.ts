@@ -316,7 +316,7 @@ const seedParentWithTerminalTask = (input: {
               observedByRunId: task.deliveryState === "acknowledged" ? input.runId : null,
             },
             status: "completed" as const,
-            result: "child finished $probe-marker",
+            result: "child finished",
             startedAt: input.now,
             completedAt: input.now,
             updatedAt: input.now,
@@ -417,7 +417,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         }
         assert.equal(
           stopped.subagents.find((task) => task.id === incomingTaskId)?.result,
-          "child finished $probe-marker",
+          "child finished",
         );
 
         yield* orchestrator.dispatch({
@@ -1175,11 +1175,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.equal(wake.status, "queued");
       const message = rewritten.messages.find((row) => row.id === delivery.messageId);
       assert.deepEqual(message?.delegatedCompletion?.taskIds, [siblingId]);
-      // The child's text must not run the parent's skills.
-      assert.equal(
-        message?.text,
-        `Delegated task ${siblingId} [completed]:\nchild finished $\u2060probe-marker`,
-      );
+      assert.equal(message?.text, `Delegated task ${siblingId} [completed]:\nchild finished`);
 
       yield* acknowledge(siblingId);
       const cancelled = yield* orchestrator.getThreadProjection(threadId);
