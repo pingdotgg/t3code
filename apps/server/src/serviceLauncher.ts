@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
 
 import type {
   PendingServiceUpdate,
@@ -20,13 +21,20 @@ import {
   compareExactServiceVersions,
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
+  parseLegacyServiceState,
+  disabledServiceTask,
   parseServiceState,
+  serviceTaskIsDisabled,
+  serviceUnitBaseDirOf,
+  serviceUnitLogPathOf,
   SERVICE_ENV_FILE,
+  SERVICE_LAUNCHER_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_UNIT_ENV,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
@@ -36,6 +44,9 @@ const HANDOFF_DELAY_MS = 2_000;
  */
 const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
+// A replacement started by a handoff waits up to two minutes for the stopping launcher.
+const LOCK_RETRY_MS = 500;
+const LOCK_ATTEMPTS = 240;
 // Match contracts' SERVER_EXIT_CODE_STATE_DIR_OWNED without depending on Effect.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
 
@@ -63,6 +74,149 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   command: paths.entryPath,
   args: ["serve"],
 });
+
+/**
+ * The unit or launch agent that `t3 service install` wrote. Its program names
+ * the runtime that ran the install, and a remote update never replaces it, so
+ * after a commit the launcher points it at the committed runtime. Otherwise the
+ * next start lands on a runtime that nothing in the service state records.
+ */
+export interface ServiceUnit {
+  readonly path: string;
+  /** systemd and Task Scheduler keep a loaded copy; launchd re-reads the plist at bootstrap. */
+  readonly reload: () => Promise<void>;
+}
+
+const runSchtasks = (...args: ReadonlyArray<string>) =>
+  NodeUtil.promisify(NodeChildProcess.execFile)("schtasks", args, {
+    windowsHide: true,
+    timeout: 30_000,
+  });
+
+/**
+ * Registering replaces the task, so one the CLI disabled to keep the service stopped is
+ * registered disabled. The caller holds the unit lease, as the CLI does to disable it.
+ */
+export async function registerServiceTask(
+  unitPath: string,
+  taskName: string,
+  schtasks: (...args: ReadonlyArray<string>) => Promise<{ readonly stdout: string }> = runSchtasks,
+): Promise<void> {
+  const register = (xmlPath: string) => schtasks("/Create", "/XML", xmlPath, "/TN", taskName, "/F");
+  const registered = await schtasks("/Query", "/TN", taskName, "/XML");
+  if (!serviceTaskIsDisabled(registered.stdout)) {
+    await register(unitPath);
+    return;
+  }
+  const disabledPath = `${unitPath}.${process.pid}.disabled`;
+  try {
+    const unit = await NodeFSP.readFile(unitPath, "utf8");
+    await NodeFSP.writeFile(disabledPath, disabledServiceTask(unit));
+    await register(disabledPath);
+  } finally {
+    await NodeFSP.rm(disabledPath, { force: true });
+  }
+}
+
+function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): ServiceUnit | undefined {
+  const unitName = env[SERVICE_UNIT_ENV]?.trim();
+  if (!unitName) return undefined;
+  if (unitName.endsWith(".xml")) {
+    const localAppData = env.LOCALAPPDATA?.trim();
+    if (!localAppData) return undefined;
+    const path = NodePath.win32.join(localAppData, "t3code", unitName);
+    const taskName = serviceTaskName(env.USERDOMAIN ?? "", env.USERNAME ?? "");
+    return { path, reload: () => registerServiceTask(path, taskName) };
+  }
+  const home = env.HOME?.trim();
+  if (!home) return undefined;
+  if (unitName.endsWith(".plist")) {
+    return {
+      path: NodePath.join(home, "Library", "LaunchAgents", unitName),
+      reload: () => Promise.resolve(),
+    };
+  }
+  // The manager's own environment, which decides where it reads user units.
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
+  const configHome =
+    xdgConfigHome && NodePath.isAbsolute(xdgConfigHome)
+      ? xdgConfigHome
+      : NodePath.join(home, ".config");
+  return {
+    path: NodePath.join(configHome, "systemd", "user", unitName),
+    reload: () =>
+      new Promise((resolve, reject) => {
+        NodeChildProcess.spawn("systemctl", ["--user", "daemon-reload"], {
+          stdio: "ignore",
+          timeout: 30_000,
+        })
+          .once("error", reject)
+          .once("exit", (code, signal) =>
+            code === 0
+              ? resolve()
+              : reject(new Error(`systemctl --user daemon-reload exited with ${code ?? signal}`)),
+          );
+      }),
+  };
+}
+
+// systemd's ExecStart value, or the plist string or task argument before __service-launcher.
+// Only the version segment changes, so quoted or escaped paths stay as rendered.
+// The launch agent's PATH names a versions directory without the executable; leave it.
+const SERVICE_UNIT_PROGRAMS = [
+  /^(ExecStart=.*?[\\/]runtime[\\/]versions[\\/])([^\\/\s"]+)([\\/]t3)(?=["\s])/m,
+  /(<string>[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<]+)([\\/]t3<\/string>\s*<string>__service-launcher<\/string>)/,
+  /(<Arguments>--headless "[^"<]*?[\\/]runtime[\\/]versions[\\/])([^\\/"<]+)([\\/]t3\.exe" "__service-launcher")/,
+] as const;
+
+/**
+ * The unit contents with their program pointed at `version`'s runtime. A unit
+ * already at that version or a newer one is returned unchanged: `t3 update`
+ * may have repointed it to a later version while this commit was in flight.
+ */
+function repointServiceUnit(contents: string, version: string): string {
+  for (const program of SERVICE_UNIT_PROGRAMS) {
+    const match = program.exec(contents);
+    if (match === null) continue;
+    const [, prefix = "", current = "", suffix = ""] = match;
+    if (isExactServiceVersion(current) && compareExactServiceVersions(current, version) >= 0) {
+      return contents;
+    }
+    return contents.replace(program, () => `${prefix}${version}${suffix}`);
+  }
+  return contents;
+}
+
+const SERVICE_LOG_MAX_BYTES = 10 * 1024 * 1024;
+const SERVICE_LOG_CHECK_INTERVAL_MS = 10 * 60_000;
+
+/**
+ * The service manager holds the log open for appending, so it is copied aside and emptied in
+ * place rather than renamed. The copy is best effort: on a full disk the truncate frees space.
+ */
+async function boundServiceLog(logPath: string): Promise<void> {
+  const size = await NodeFSP.stat(logPath).then(
+    (stats) => stats.size,
+    () => 0,
+  );
+  if (size <= SERVICE_LOG_MAX_BYTES) return;
+  const archivePath = `${logPath}.1`;
+  const pendingArchivePath = `${archivePath}.tmp`;
+  await NodeFSP.copyFile(logPath, pendingArchivePath)
+    .then(() => NodeFSP.rename(pendingArchivePath, archivePath))
+    .catch(() => NodeFSP.rm(pendingArchivePath, { force: true }).catch(() => undefined));
+  await NodeFSP.truncate(logPath, 0).catch(() => undefined);
+}
+
+async function serviceLogPath(
+  options: LauncherOptions,
+  serviceUnit: ServiceUnit | undefined,
+): Promise<string | undefined> {
+  if (options.logFile !== undefined) return options.logFile;
+  if (serviceUnit === undefined) return undefined;
+  const contents = await NodeFSP.readFile(serviceUnit.path, "utf8").catch(() => undefined);
+  return contents === undefined ? undefined : serviceUnitLogPathOf(contents);
+}
 
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
@@ -162,6 +316,8 @@ const GIB = 1024 ** 3;
 // Cloned backups still need headroom for trial writes and migrations to diverge.
 const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
 const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
+// While the online backup holds its snapshot, the live WAL and its copy can each reach the server's 128 MiB gate.
+const ONLINE_BACKUP_WAL_HEADROOM_BYTES = 2 * 128 * 1024 ** 2;
 
 async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
   const stats: Array<NodeFS.Stats> = [];
@@ -242,7 +398,7 @@ export async function databaseBackupBlocker(
   await removeAbandonedBackupCopies(backupRoot);
   const [files, free] = await Promise.all([statDatabaseFiles(dbPath), readFreeBytes(backupRoot)]);
   const size = files.reduce((total, file) => total + file.size, 0);
-  const fullCopyBytes = size * 1.05;
+  const fullCopyBytes = size * 1.05 + ONLINE_BACKUP_WAL_HEADROOM_BYTES;
   if (free >= fullCopyBytes) return undefined;
   const clonedBytes = Math.max(
     CLONED_BACKUP_MIN_HEADROOM_BYTES,
@@ -252,6 +408,83 @@ export async function databaseBackupBlocker(
   if (free >= needed) return undefined;
   const gb = (bytes: number) => (bytes / GIB).toFixed(1);
   return `Not enough free disk space to back up the database before updating: ${gb(needed)} GB needed, ${gb(free)} GB free. Free up disk space and try again. The server was not stopped.`;
+}
+
+// A child-process copy: closing any descriptor this process opens on the database drops the snapshot's POSIX locks.
+async function copyWithoutOpening(source: string, destination: string): Promise<void> {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  if (process.platform === "win32") return NodeFSP.copyFile(source, destination);
+  if (!(await runCp([source, destination]))) throw new Error(`cp ${source} failed.`);
+}
+
+// Copies the main file while the server runs; an open read transaction stops SQLite resetting the WAL,
+// which `finish` copies after the stop and which overrides any page the copy caught mid-checkpoint.
+// `-shm` is left out: its backfill count would make SQLite trust those pages. Past the WAL size gate,
+// a write-heavy server's new writes wait, uncommitted, until the server stops.
+async function startOnlineDatabaseBackup(
+  baseDir: string,
+  pending: PendingServiceUpdate,
+  probe: Partial<BackupSpaceProbe> = {},
+): Promise<(() => Promise<void>) | undefined> {
+  const backupDir = databaseBackupDir(baseDir, pending.id);
+  if (await pathExists(backupDir)) return undefined;
+  const { canClone } = { ...filesystemBackupSpaceProbe, ...probe };
+  if (await canClone(pending.dbPath, NodePath.dirname(backupDir)).catch(() => true))
+    return undefined;
+  const NodeSqlite = await import("node:sqlite").catch(() => undefined);
+  if (NodeSqlite === undefined) return undefined;
+
+  const stagingDir = `${backupDir}.staging`;
+  const discardStaging = () =>
+    NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+  const fallBack = async (cause: unknown) => {
+    await discardStaging();
+    process.stderr.write(
+      `[service-launcher] Copying the database while the server runs failed; backing it up offline: ${cause instanceof Error ? cause.message : String(cause)}\n`,
+    );
+    return undefined;
+  };
+  let snapshot: InstanceType<typeof NodeSqlite.DatabaseSync> | undefined;
+  // SQLite keeps -wal beside the resolved file, not beside a symlink to it.
+  let dbPath = pending.dbPath;
+  const release = () => {
+    try {
+      snapshot?.close();
+    } catch {}
+    snapshot = undefined;
+  };
+  try {
+    await discardStaging();
+    await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    dbPath = await NodeFSP.realpath(pending.dbPath);
+    snapshot = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+    const mode = String(snapshot.prepare("PRAGMA journal_mode").get()?.journal_mode);
+    if (mode.toLowerCase() !== "wal") throw new Error(`journal_mode is ${mode}, not wal.`);
+    snapshot.exec("BEGIN");
+    snapshot.prepare("SELECT count(*) FROM sqlite_schema").get();
+    const mainCopy = databaseBackupFile(stagingDir, "");
+    await copyWithoutOpening(dbPath, mainCopy);
+    await syncFile(mainCopy);
+  } catch (cause) {
+    release();
+    return fallBack(cause);
+  }
+  return async () => {
+    try {
+      const wal = `${dbPath}-wal`;
+      if (!(await pathExists(wal)))
+        throw new Error("the WAL disappeared while the snapshot was open.");
+      const walCopy = databaseBackupFile(stagingDir, "-wal");
+      await copyWithoutOpening(wal, walCopy);
+      await syncFile(walCopy);
+      release();
+      await NodeFSP.rename(stagingDir, backupDir);
+      await syncDirectory(NodePath.dirname(backupDir));
+    } catch (cause) {
+      release();
+      await fallBack(cause);
+    }
+  };
 }
 
 // Preserve completed backups; restarted trials may already have changed the live database.
@@ -330,8 +563,13 @@ async function restoreDatabaseBackup(
 
   await markDatabaseRestorePending(backupDir);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);
+  // SQLite keeps -wal and -shm beside the resolved database file, not beside a symlink to it.
+  const mainTarget = await restoreTarget(pending.dbPath);
   for (const suffix of DB_FILE_SUFFIXES) {
-    const livePath = `${pending.dbPath}${suffix}`;
+    const livePath = suffix === "" ? pending.dbPath : `${mainTarget}${suffix}`;
+    if (livePath !== `${pending.dbPath}${suffix}`) {
+      await NodeFSP.rm(`${pending.dbPath}${suffix}`, { force: true });
+    }
     const source = databaseBackupFile(backupDir, suffix);
     if (await pathExists(source)) {
       // Restore into the symlink target; cloning would replace the link.
@@ -355,14 +593,26 @@ async function discardDatabaseBackup(baseDir: string, updateId: string): Promise
 
 export async function readServiceState(filePath: string): Promise<ServiceState> {
   const contents = await NodeFSP.readFile(filePath, "utf8");
-  const state = parseServiceState(contents);
+  const state = parseServiceState(contents) ?? adoptLegacyServiceState(contents);
   if (state === undefined) throw new Error("Service state is invalid or unsupported.");
   return state;
 }
 
+// An older coordinator can write protocol 2 beside a newer runtime. Adopt
+// only its install record, in memory: rewriting it outside the selection lock
+// could replace state a concurrent install wrote after this read.
+function adoptLegacyServiceState(contents: string): ServiceState | undefined {
+  const legacy = parseLegacyServiceState(contents);
+  return legacy && { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion: legacy.activeVersion };
+}
+
 export async function writeServiceState(filePath: string, state: ServiceState): Promise<void> {
+  await NodeFSP.mkdir(NodePath.dirname(filePath), { recursive: true, mode: 0o700 });
+  await replaceFileDurably(filePath, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+async function replaceFileDurably(filePath: string, contents: string): Promise<void> {
   const directory = NodePath.dirname(filePath);
-  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
   const tempPath = NodePath.join(
     directory,
     `.${NodePath.basename(filePath)}.${process.pid}.${NodeCrypto.randomUUID()}`,
@@ -370,7 +620,7 @@ export async function writeServiceState(filePath: string, state: ServiceState): 
   let handle: NodeFSP.FileHandle | undefined;
   try {
     handle = await NodeFSP.open(tempPath, "wx", 0o600);
-    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await handle.writeFile(contents, "utf8");
     await handle.sync();
     await handle.close();
     handle = undefined;
@@ -429,15 +679,60 @@ function waitForExit(child: NodeChildProcess.ChildProcess): Promise<void> {
 
 async function terminateChild(
   child: NodeChildProcess.ChildProcess,
-  signal: NodeJS.Signals = "SIGTERM",
+  signal: NodeJS.Signals,
+  overIpc: boolean,
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill(signal);
+  if (overIpc) {
+    await sendMessage(child, { type: "stop" }).catch(() => child.kill(signal));
+  } else {
+    child.kill(signal);
+  }
   const force = setTimeout(() => child.kill("SIGKILL"), TERMINATE_GRACE_MS);
   try {
     await waitForExit(child);
   } finally {
     clearTimeout(force);
+  }
+}
+
+/** Task Scheduler names are machine-wide, so each Windows account runs its own task. */
+export const serviceTaskName = (domain: string, userName: string) => `t3code-${domain}-${userName}`;
+
+export const serviceLauncherLockPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_LAUNCHER_LOCK_FILE);
+
+// An exclusive SQLite transaction, like the server's owner lock: the OS drops it when the holder dies.
+async function tryAcquireLauncherLock(
+  lockPath: string,
+): Promise<{ readonly close: () => void } | undefined> {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(lockPath);
+  try {
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    return db;
+  } catch (cause) {
+    db.close();
+    if (cause instanceof Error && "errcode" in cause && cause.errcode === 5) return undefined;
+    throw cause;
+  }
+}
+
+export async function serviceLauncherIsRunning(lockPath: string): Promise<boolean> {
+  if (!NodeFS.existsSync(lockPath)) return false;
+  const lock = await tryAcquireLauncherLock(lockPath);
+  lock?.close();
+  return lock === undefined;
+}
+
+/** Resolves once no launcher holds the lock; the caller bounds the wait through `signal`. */
+export async function waitForServiceLauncherExit(
+  lockPath: string,
+  signal: AbortSignal,
+): Promise<void> {
+  while (await serviceLauncherIsRunning(lockPath)) {
+    signal.throwIfAborted();
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
@@ -458,19 +753,35 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
+  readonly #serviceUnit: ServiceUnit | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #output: number | undefined;
+  readonly #lockPath: string | undefined;
+  readonly #stopChildOverIpc: boolean;
 
   constructor(
     baseDir: string,
     state: ServiceState,
     options: {
       readonly backupSpaceProbe?: Partial<BackupSpaceProbe>;
+      readonly serviceUnit?: ServiceUnit;
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
+      /** Launcher and server output, for managers that cannot redirect it. */
+      readonly output?: number;
+      /** Makes this the only launcher for its home; a replacement waits for the one stopping. */
+      readonly lockPath?: string;
+      /** Windows `kill()` is TerminateProcess, which skips the server's shutdown finalizers. */
+      readonly stopChildOverIpc?: boolean;
     } = {},
   ) {
     this.#baseDir = baseDir;
     this.#backupSpaceProbe = options.backupSpaceProbe;
+    this.#serviceUnit = options.serviceUnit;
     this.#environment = { ...(options.environment ?? process.env) };
+    this.#output = options.output;
+    this.#lockPath = options.lockPath;
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+    this.#stopChildOverIpc = options.stopChildOverIpc ?? process.platform === "win32";
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
   }
@@ -481,12 +792,46 @@ export class Launcher {
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     try {
-      this.#enqueue(() => this.#recover());
-      await this.#completion.promise;
+      const lock =
+        this.#lockPath === undefined ? undefined : await this.#acquireLock(this.#lockPath);
+      try {
+        // The launcher that held the lock may have moved the state since main read it.
+        if (lock !== undefined) this.#state = await readServiceState(this.#statePath);
+        // A stop that arrived before this point leaves nothing to start or recover.
+        if (!this.#stopRequested) this.#enqueue(() => this.#recover());
+        await this.#completion.promise;
+      } finally {
+        if (lock !== undefined) {
+          // Releasing the lock says this launcher is done with the home.
+          await this.#transitions.catch(() => undefined);
+          lock.close();
+        }
+      }
     } finally {
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
     }
+  }
+
+  async #acquireLock(lockPath: string): Promise<{ readonly close: () => void } | undefined> {
+    for (let attempt = 1; !this.#stopRequested; attempt++) {
+      const lock = await tryAcquireLauncherLock(lockPath);
+      if (lock !== undefined) return lock;
+      if (attempt >= LOCK_ATTEMPTS) {
+        throw new Error("Another T3 Code service launcher still runs for this T3 home.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
+    }
+    return undefined;
+  }
+
+  #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
+    return terminateChild(child, signal, this.#stopChildOverIpc);
+  }
+
+  #log(line: string): void {
+    if (this.#output === undefined) process.stderr.write(line);
+    else NodeFS.writeSync(this.#output, line);
   }
 
   #enqueue(transition: () => Promise<void>): void {
@@ -504,7 +849,7 @@ export class Launcher {
     this.#clearTimer();
     const child = this.#child?.process;
     this.#child = null;
-    if (child !== undefined) await terminateChild(child);
+    if (child !== undefined) await this.#terminate(child);
     this.#completion.reject(error);
   }
 
@@ -524,7 +869,7 @@ export class Launcher {
       this.#stopping = true;
       const child = this.#child?.process;
       this.#child = null;
-      if (child !== undefined) await terminateChild(child, signal);
+      if (child !== undefined) await this.#terminate(child, signal);
       this.#done = true;
       this.#completion.resolve();
     });
@@ -536,20 +881,66 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  async #selectState(next: ServiceState): Promise<void> {
+    const release = await acquireServiceSelectionLock(this.#statePath);
+    try {
+      const selected = await readServiceState(this.#statePath);
+      // Local installs replace the selection and clear its update record. An old
+      // launcher must not restore its own selection when asked to update again.
+      if (
+        selected.activeVersion !== this.#state.activeVersion ||
+        selected.update?.id !== this.#state.update?.id ||
+        selected.update?.status !== this.#state.update?.status
+      ) {
+        throw new Error("Service selection changed. Restart the service before updating.");
+      }
+      await writeServiceState(this.#statePath, next);
+      this.#state = next;
+    } finally {
+      release();
+    }
+  }
+
   async #recover(): Promise<void> {
     // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
-    const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
-    if (awaitedVersion?.trim() === this.#state.activeVersion) {
-      await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
+    try {
+      const release = await acquireServiceSelectionLock(this.#statePath);
+      try {
+        const selected = await readServiceState(this.#statePath);
+        const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(
+          () => undefined,
+        );
+        const awaited = awaitedVersion?.trim();
+        if (
+          selected.activeVersion === this.#state.activeVersion &&
+          selected.update?.id === this.#state.update?.id &&
+          selected.update?.status === this.#state.update?.status &&
+          awaited !== undefined &&
+          isExactServiceVersion(awaited) &&
+          compareExactServiceVersions(awaited, this.#state.activeVersion) <= 0
+        ) {
+          await NodeFSP.rm(restartPending, { force: true });
+        }
+      } finally {
+        release();
+      }
+    } catch (error) {
+      process.stderr.write(
+        `[service-launcher] Could not clear ${restartPending}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
     }
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
       }
-      await this.#startChild(this.#state.activeVersion, "active", update);
+      try {
+        await this.#startChild(this.#state.activeVersion, "active", update);
+      } finally {
+        if (update !== undefined) await this.#repointServiceUnit(this.#state.activeVersion);
+      }
       return;
     }
     if (await databaseRestorePending(this.#baseDir, update)) {
@@ -592,7 +983,10 @@ export class Launcher {
     const spawnArguments = runtimeSpawnArguments(paths);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
       env: { ...this.#environment, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
-      stdio: ["inherit", "inherit", "inherit", "ipc"],
+      stdio:
+        this.#output === undefined
+          ? ["inherit", "inherit", "inherit", "ipc"]
+          : ["ignore", this.#output, this.#output, "ipc"],
     });
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
@@ -604,7 +998,7 @@ export class Launcher {
       });
     });
     if (this.#stopping) {
-      await terminateChild(child);
+      await this.#terminate(child);
       return;
     }
 
@@ -696,8 +1090,12 @@ export class Launcher {
       status: "pending",
     };
     const next: ServiceState = { ...this.#state, update: pending };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    try {
+      await this.#selectState(next);
+    } catch (error) {
+      await reject(error instanceof Error ? error.message : String(error));
+      return;
+    }
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }
@@ -708,8 +1106,17 @@ export class Launcher {
       return;
     }
     this.#timer = undefined;
+    // Anything thrown outside its own fallback still leaves the offline backup to run.
+    const finishOnlineBackup = await startOnlineDatabaseBackup(
+      this.#baseDir,
+      pending,
+      this.#backupSpaceProbe,
+    ).catch(() => undefined);
     this.#child = null;
-    await terminateChild(child.process);
+    await this.#terminate(child.process);
+    await finishOnlineBackup?.();
+    // A stop during a minutes-long copy should not start a trial; restart resumes the pending update.
+    if (this.#stopRequested) return;
     await this.#startTrial(pending);
   }
 
@@ -734,11 +1141,53 @@ export class Launcher {
       activeVersion: pending.targetVersion,
       update: committed,
     };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    await this.#selectState(next);
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
-    await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    try {
+      await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    } finally {
+      await this.#repointServiceUnit(committed.targetVersion);
+    }
+  }
+
+  // Selection is durable before this best-effort unit reconciliation.
+  async #repointServiceUnit(version: string): Promise<void> {
+    const unit = this.#serviceUnit;
+    if (unit === undefined) return;
+    try {
+      const release = await acquireServiceSelectionLock(unit.path);
+      try {
+        // The installer writes state before the unit under this lease. Do not
+        // acquire its state lease here: the installer takes that lease first.
+        const selected = await readServiceState(this.#statePath);
+        if (
+          selected.activeVersion !== this.#state.activeVersion ||
+          selected.update?.id !== this.#state.update?.id ||
+          selected.update?.status !== this.#state.update?.status
+        ) {
+          return;
+        }
+        const contents = await NodeFSP.readFile(unit.path, "utf8");
+        const installedBaseDir = serviceUnitBaseDirOf(contents);
+        if (
+          installedBaseDir === undefined ||
+          NodePath.resolve(installedBaseDir) !== NodePath.resolve(this.#baseDir)
+        ) {
+          return;
+        }
+        const repointed = repointServiceUnit(contents, version);
+        if (repointed !== contents) await replaceFileDurably(unit.path, repointed);
+        // A previous rename may have succeeded before reload failed.
+        await unit.reload();
+      } finally {
+        release();
+      }
+    } catch (error) {
+      process.stderr.write(
+        `[service-launcher] Could not point ${unit.path} at t3@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
   }
 
   async #handlePreparedTimeout(child: ManagedChild): Promise<void> {
@@ -794,13 +1243,13 @@ export class Launcher {
         activeVersion: pending.fromVersion,
         update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
       };
-      await writeServiceState(this.#statePath, next);
-      this.#state = next;
+      await this.#selectState(next);
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
+      await this.#repointServiceUnit(next.activeVersion);
     }
     // Signal listeners alone do not keep Node alive.
     this.#timer = setInterval(() => {}, 2_147_483_647);
-    process.stderr.write(
+    this.#log(
       "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
     );
   }
@@ -813,7 +1262,7 @@ export class Launcher {
   ): Promise<void> {
     if (child !== undefined) {
       this.#child = null;
-      await terminateChild(child.process);
+      await this.#terminate(child.process);
     }
     await restoreDatabaseBackup(this.#baseDir, pending);
     const outcome = terminalUpdate({ pending, status, reason });
@@ -822,20 +1271,102 @@ export class Launcher {
       activeVersion: pending.fromVersion,
       update: outcome,
     };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    await this.#selectState(next);
     await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
-    await this.#startChild(next.activeVersion, "active", outcome);
+    try {
+      await this.#startChild(next.activeVersion, "active", outcome);
+    } finally {
+      await this.#repointServiceUnit(next.activeVersion);
+    }
   }
 }
 
-export async function main(): Promise<void> {
-  const baseDir = process.env.T3CODE_HOME?.trim();
+/** Task Scheduler cannot set variables or redirect output, so a Windows task passes them as flags. */
+export interface LauncherOptions {
+  readonly baseDir?: string | undefined;
+  readonly logFile?: string | undefined;
+  readonly serviceUnit?: string | undefined;
+}
+
+export async function main(options: LauncherOptions = {}): Promise<void> {
+  const baseDir = (options.baseDir ?? process.env.T3CODE_HOME)?.trim();
   if (baseDir === undefined || baseDir === "") {
     throw new Error("T3CODE_HOME is required by the T3 Code service launcher.");
   }
-  const environment = await readServiceEnvironment(baseDir);
-  const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
-  const state = await readServiceState(statePath);
-  await new Launcher(baseDir, state, { environment }).run();
+  const output =
+    options.logFile === undefined ? undefined : NodeFS.openSync(options.logFile, "a", 0o600);
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
+  const windows = process.platform === "win32";
+  let logTimer: NodeJS.Timeout | undefined;
+  try {
+    // What the service manager started the launcher with. It locates the unit; service.env
+    // changes only what the server gets.
+    const managerEnvironment = {
+      ...process.env,
+      T3CODE_HOME: baseDir,
+      ...(options.serviceUnit === undefined ? {} : { [SERVICE_UNIT_ENV]: options.serviceUnit }),
+    };
+    const environment = await readServiceEnvironment(baseDir, managerEnvironment);
+    const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
+    const contents = await NodeFSP.readFile(statePath, "utf8");
+    let state = parseServiceState(contents);
+    if (state === undefined) {
+      state = adoptLegacyServiceState(contents);
+      if (state === undefined) throw new Error("Service state is invalid or unsupported.");
+      if (!(await runtimeExists(baseDir, state.activeVersion))) {
+        throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
+      }
+    }
+    const serviceUnit = serviceUnitFromEnvironment(managerEnvironment);
+    const logPath = await serviceLogPath(options, serviceUnit);
+    if (logPath !== undefined) {
+      await boundServiceLog(logPath);
+      logTimer = setInterval(
+        () => void boundServiceLog(logPath),
+        SERVICE_LOG_CHECK_INTERVAL_MS,
+      ).unref();
+    }
+    const launcher = new Launcher(baseDir, state, {
+      environment,
+      ...(serviceUnit === undefined ? {} : { serviceUnit }),
+      ...(output === undefined ? {} : { output }),
+      ...(windows ? { lockPath: serviceLauncherLockPath(baseDir) } : {}),
+    });
+    // Ending a scheduled task kills its console host without a signal; the console read fails instead.
+    const watchConsole = windows && process.stdin.isTTY === true;
+    const onConsoleLost = () => void launcher.stop("SIGTERM");
+    if (watchConsole) {
+      process.stdin.on("error", () => undefined);
+      process.stdin.once("close", onConsoleLost);
+      process.stdin.resume();
+    }
+    try {
+      await launcher.run();
+    } finally {
+      if (watchConsole) {
+        process.stdin.off("close", onConsoleLost);
+        process.stdin.destroy();
+      }
+    }
+  } catch (cause) {
+    if (output !== undefined) {
+      NodeFS.writeSync(
+        output,
+        `[service-launcher] ${cause instanceof Error ? cause.message : String(cause)}\n`,
+      );
+    }
+    // Agents the server left behind keep the console host, and so the task, running; ending it
+    // lets the next repeating trigger start the service again.
+    if (windows && options.serviceUnit !== undefined) {
+      const taskName = serviceTaskName(process.env.USERDOMAIN ?? "", process.env.USERNAME ?? "");
+      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", taskName], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    }
+    throw cause;
+  } finally {
+    clearInterval(logTimer);
+    if (output !== undefined) NodeFS.closeSync(output);
+  }
 }

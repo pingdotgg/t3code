@@ -1,9 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -13,6 +18,7 @@ import {
   parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
+  probeTailscaleHttpsEndpoint,
   readTailscaleSshEnabled,
   readTailscaleStatus,
   TailscaleCommandExitError,
@@ -95,6 +101,27 @@ function layerMockSpawner(
 }
 
 describe("tailscale", () => {
+  it.effect("does not treat a non-T3 response on the HTTPS probe path as reachable", () =>
+    Effect.gen(function* () {
+      for (const [body, status] of [
+        ["<!doctype html><title>Other application</title>", 200],
+        [null, 204],
+      ] as const) {
+        const reachable = yield* probeTailscaleHttpsEndpoint({
+          baseUrl: "https://desktop.example.ts.net",
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status }))),
+            ),
+          ),
+        );
+        assert.isFalse(reachable, `HTTP ${status} without a T3 descriptor`);
+      }
+    }),
+  );
+
   it("finds the Serve routes that forward to the bound address, and only those", () => {
     const status = JSON.stringify({
       TCP: {
@@ -316,6 +343,45 @@ describe("tailscale", () => {
       assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
     });
   });
+
+  // regression: #34736 - a full stdout pipe blocks the child before it exits.
+  it.effect("drains serve stdout so a long success summary does not time out", () =>
+    Effect.gen(function* () {
+      const stdoutDrained = yield* Deferred.make<void>();
+      const layer = layerSpawner(
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Deferred.await(stdoutDrained).pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.make(encoder.encode("https://example.ts.net/\n")).pipe(
+                Stream.ensuring(Deferred.succeed(stdoutDrained, undefined)),
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+      );
+
+      const fiber = yield* ensureTailscaleServe({ localPort: 3773 }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("11 seconds");
+      const exit = yield* Fiber.join(fiber);
+      assert.isTrue(Exit.isSuccess(exit), String(exit));
+    }),
+  );
 
   // regression: #21609 - without forceKillAfter a timed-out probe only gets
   // SIGTERM, so a group member that ignores it outlives the call.
