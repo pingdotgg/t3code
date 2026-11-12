@@ -326,7 +326,7 @@ export function ReviewThreadCard({
     thread.comments,
     currentPage?.comments ?? [],
   );
-  const pendingComments = usePendingReviewComments(reference, [
+  const pendingComments = usePendingReviewComments(environmentId, reference, [
     { ...thread, comments: receivedComments },
   ]);
   const pendingById = new Map(
@@ -335,7 +335,7 @@ export function ReviewThreadCard({
     ),
   );
   const comments = receivedComments.filter(
-    (comment) => !comment.pendingReviewId || pendingById.has(comment.id),
+    (comment) => !comment.pendingReviewId || thread.line === null || pendingById.has(comment.id),
   );
   const nextCommentsCursor =
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;

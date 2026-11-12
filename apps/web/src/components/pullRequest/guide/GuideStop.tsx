@@ -141,7 +141,11 @@ export function GuideStop({
                 loadDiffFiles={loadDiffFiles}
                 onOpenFile={onOpenFile}
                 viewed={isViewed(excerpt.path)}
-                onSetViewed={onSetViewed ? (value) => onSetViewed([excerpt.path], value) : null}
+                onSetViewed={
+                  onSetViewed && files.get(excerpt.path)?.newObjectId
+                    ? (value) => onSetViewed([excerpt.path], value)
+                    : null
+                }
               />
             ))}
           </DiffWorkerPoolProvider>
@@ -219,6 +223,7 @@ export function GuideStop({
                               id={reviewCheckboxId}
                               aria-label={`Reviewed ${file.path}`}
                               checked={viewed}
+                              disabled={!diff?.newObjectId}
                               onCheckedChange={(value) => onSetViewed([file.path], value === true)}
                             />
                             <label

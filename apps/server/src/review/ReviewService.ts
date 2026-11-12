@@ -302,19 +302,33 @@ export const make = Effect.gen(function* () {
       .split("\0")
       .filter(Boolean)
       .map((file) => `:(top,literal)${file}`);
-    if (trackedPaths.length > 0)
+    yield* Effect.gen(function* () {
+      if (trackedPaths.length > 0)
+        yield* git.execute({
+          operation: "ReviewService.revert.restore",
+          cwd: input.cwd,
+          args: ["restore", "--worktree", "--", ...trackedPaths],
+        });
+      // Clean only the explicit selection. Indexed files (including staged additions) are kept.
       yield* git.execute({
-        operation: "ReviewService.revert.restore",
+        operation: "ReviewService.revert.untracked",
         cwd: input.cwd,
-        args: ["restore", "--worktree", "--", ...trackedPaths],
+        args: ["clean", "-f", "--", ...paths],
       });
-    // Clean only the explicit selection. Indexed files (including staged additions) are kept.
-    yield* git.execute({
-      operation: "ReviewService.revert.untracked",
-      cwd: input.cwd,
-      args: ["clean", "-f", "--", ...paths],
-    });
-    yield* workflow.invalidateLocalStatus(input.cwd);
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation: "ReviewService.revert",
+            cwd: input.cwd,
+            command: "git restore / git clean",
+            detail:
+              "Revert may have partially completed. Some selected files could not be reverted.",
+            cause,
+          }),
+      ),
+      Effect.ensuring(workflow.invalidateLocalStatus(input.cwd)),
+    );
   });
   return ReviewService.of({
     getBranchCommits,

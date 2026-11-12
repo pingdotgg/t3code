@@ -1,3 +1,4 @@
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
@@ -5,7 +6,6 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import {
-  pullRequestReviewKey,
   savePendingReviewComment,
   usePullRequestReviewStore,
   type PendingReviewComment,
@@ -16,7 +16,7 @@ export function usePendingReviewCommentActions(
   environmentId: EnvironmentId,
   reference: PullRequestRef,
 ) {
-  const key = pullRequestReviewKey(reference);
+  const key = usePullRequestReviewKey(environmentId, reference);
   const canSave = useAtomValue(
     pullRequestEnvironment.saveDraftComment.permissionAtom(environmentId),
   );

@@ -60,18 +60,18 @@ export function DiffDisplayControls({
           <ToggleGroup
             aria-label="Diff layout"
             variant="segmented"
-            className="w-full"
+            className="w-full *:flex-1"
             value={[settings.diffLayout]}
             onValueChange={(value) => {
               const next = value[0];
               if (next === "stacked" || next === "split") updateSettings({ diffLayout: next });
             }}
           >
-            <Toggle aria-label="Unified diff view" value="stacked" className="flex-1">
+            <Toggle aria-label="Unified diff view" value="stacked">
               <Rows3Icon className="size-3.5" />
               Unified
             </Toggle>
-            <Toggle aria-label="Split diff view" value="split" className="flex-1">
+            <Toggle aria-label="Split diff view" value="split">
               <Columns2Icon className="size-3.5" />
               Split
             </Toggle>

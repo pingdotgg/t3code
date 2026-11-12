@@ -1,3 +1,5 @@
+import { pendingReviewIdentityFromThreads } from "@t3tools/client-runtime/review-editing";
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -12,11 +14,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { PullRequestReviewForm } from "./PullRequestReviewForm";
-import {
-  pullRequestReviewKey,
-  usePendingReviewComments,
-  usePullRequestReviewStore,
-} from "./pullRequestReviewStore";
+import { usePendingReviewComments, usePullRequestReviewStore } from "./pullRequestReviewStore";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 
 export function PullRequestComposer({
@@ -47,7 +45,7 @@ export function PullRequestComposer({
   const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const reviewRef = useRef<HTMLTextAreaElement>(null);
-  const pendingComments = usePendingReviewComments(reference, detail.reviewThreads);
+  const pendingComments = usePendingReviewComments(environmentId, reference, detail.reviewThreads);
   const {
     busy: draftBusy,
     canDiscard,
@@ -55,11 +53,15 @@ export function PullRequestComposer({
   } = usePendingReviewCommentActions(environmentId, reference);
   // A summary typed but not sent is review work too, and it outlives the popover. Selected as a
   // boolean rather than the text, so typing one does not re-render the composer per keystroke.
-  const reviewKey = pullRequestReviewKey(reference);
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
   const summaryStarted = usePullRequestReviewStore(
     (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
   );
-  const reviewStarted = pendingComments.length > 0 || summaryStarted;
+  const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
+  const pendingCount =
+    pendingComments.length +
+    pendingReviewIdentityFromThreads(detail.reviewThreads, removedIds).outdatedCommentIds.length;
+  const reviewStarted = pendingCount > 0 || summaryStarted;
   const [answeredOpenRequest, setAnsweredOpenRequest] = useState(openReviewRequest);
   if (openReviewRequest !== answeredOpenRequest) {
     setAnsweredOpenRequest(openReviewRequest);
@@ -86,20 +88,20 @@ export function PullRequestComposer({
       <PopoverTrigger
         render={<Button size="icon" variant="glass" />}
         aria-label={
-          pendingComments.length > 0
-            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+          pendingCount > 0
+            ? `Review ${term}, ${pendingCount} ${pendingCount === 1 ? "comment" : "comments"} pending`
             : reviewStarted || !canComment
               ? `Review ${term}`
               : `Comment on ${term}`
         }
       >
         <MessageSquareIcon className="size-4" />
-        {pendingComments.length > 0 ? (
+        {pendingCount > 0 ? (
           <span
             aria-hidden
             className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-3xs font-semibold tabular-nums text-white"
           >
-            {pendingComments.length}
+            {pendingCount}
           </span>
         ) : null}
       </PopoverTrigger>
@@ -125,7 +127,7 @@ export function PullRequestComposer({
             >
               <Toggle value="comment">Comment</Toggle>
               <Toggle value="review">
-                {pendingComments.length > 0 ? `Review (${pendingComments.length})` : "Review"}
+                {pendingCount > 0 ? `Review (${pendingCount})` : "Review"}
               </Toggle>
             </ToggleGroup>
           ) : (

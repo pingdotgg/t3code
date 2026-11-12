@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   reviewThreadReplyTarget,
+  pendingReviewIdentityFromThreads,
   pendingReviewCommentsFromThreads,
   groupPendingReviewComments,
   canEditPullRequestChangeRequest,
@@ -290,6 +291,17 @@ describe("reviewThreadReplyTarget", () => {
         pendingReviewId: "private-review",
       })),
     };
+    const outdatedThread = { ...privateThread, line: null, isOutdated: true };
+    expect(pendingReviewCommentsFromThreads([outdatedThread])).toEqual([]);
+    expect(groupPendingReviewComments([outdatedThread], []).threads).toEqual([outdatedThread]);
+    expect(pendingReviewIdentityFromThreads([outdatedThread])).toEqual({
+      pendingReviewId: "private-review",
+      outdatedCommentIds: ["root", "reply"],
+    });
+    expect(pendingReviewIdentityFromThreads([outdatedThread], ["root", "reply"])).toEqual({
+      pendingReviewId: undefined,
+      outdatedCommentIds: [],
+    });
     const pending = pendingReviewCommentsFromThreads([privateThread]);
     const local = {
       id: "local",

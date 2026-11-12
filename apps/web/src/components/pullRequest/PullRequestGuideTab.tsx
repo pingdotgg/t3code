@@ -1,3 +1,4 @@
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -22,7 +23,6 @@ import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import {
   nextPendingReviewCommentId,
-  pullRequestReviewKey,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
@@ -73,8 +73,8 @@ export function PullRequestGuideTab({
     title,
   });
   const runKey = guideRunKey(environmentId, reference);
-  const reviewKey = pullRequestReviewKey(reference);
-  const pending = usePendingReviewComments(reference, detail.reviewThreads);
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const pending = usePendingReviewComments(environmentId, reference, detail.reviewThreads);
   const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const commenting: ExcerptCommenting | null =

@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
-import { ProjectId } from "@t3tools/contracts";
+import { GitCommandError, ProjectId } from "@t3tools/contracts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -21,6 +21,7 @@ function layer(input: {
   readonly gitLayer?: typeof GitVcsDriver.layer;
   readonly workspaceRoot: string;
   readonly baseDir: string;
+  readonly invalidations?: string[];
   readonly detectCalls?: Array<{ readonly cwd: string }>;
   readonly worktreesDirectory?: string;
   readonly previousWorktreesDirectories?: ReadonlyArray<string>;
@@ -54,7 +55,10 @@ function layer(input: {
     Layer.provide(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
         generateStagedCommitMessage: () => Effect.succeed("Generated staged commit"),
-        invalidateLocalStatus: () => Effect.void,
+        invalidateLocalStatus: (cwd) =>
+          Effect.sync(() => {
+            input.invalidations?.push(cwd);
+          }),
         invalidateStatus: () => Effect.void,
       }),
     ),
@@ -274,6 +278,70 @@ describe("ReviewService", () => {
           assert.strictEqual(traversal._tag, "GitCommandError");
         }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, gitLayer: GitVcsDriver.layer })));
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reports a partial revert and refreshes status when cleaning fails after restore", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-review-failed-clean-",
+      });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-state-" });
+      const invalidations: string[] = [];
+      const mutations: string[] = [];
+      const failure = new GitCommandError({
+        operation: "test.clean",
+        cwd: workspaceRoot,
+        command: "git clean",
+        detail: "Cannot remove selected file.",
+      });
+      const gitLayer = Layer.effect(
+        GitVcsDriver.GitVcsDriver,
+        Effect.gen(function* () {
+          const git = yield* GitVcsDriver.GitVcsDriver;
+          return {
+            ...git,
+            execute: (request: Parameters<typeof git.execute>[0]) =>
+              request.args[0] === "clean"
+                ? Effect.fail(failure)
+                : git.execute(request).pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        if (request.args[0] === "restore") mutations.push("restore");
+                      }),
+                    ),
+                  ),
+          };
+        }),
+      ).pipe(Layer.provide(GitVcsDriver.layer));
+      const error = yield* Effect.gen(function* () {
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const service = yield* ReviewService.ReviewService;
+        const run = (args: string[]) =>
+          git.execute({ operation: "review.test", cwd: workspaceRoot, args });
+        yield* run(["init"]);
+        yield* fs.writeFileString(`${workspaceRoot}/tracked.txt`, "index contents\n");
+        yield* run(["add", "tracked.txt"]);
+        yield* fs.writeFileString(`${workspaceRoot}/tracked.txt`, "unstaged edits\n");
+        yield* fs.writeFileString(`${workspaceRoot}/untracked.txt`, "untracked contents\n");
+        return yield* service
+          .revert({ cwd: workspaceRoot, paths: ["tracked.txt", "untracked.txt"] })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, gitLayer, invalidations })));
+      assert.strictEqual(
+        yield* fs.readFileString(`${workspaceRoot}/tracked.txt`),
+        "index contents\n",
+      );
+      assert.strictEqual(
+        yield* fs.readFileString(`${workspaceRoot}/untracked.txt`),
+        "untracked contents\n",
+      );
+      assert.deepStrictEqual(mutations, ["restore"]);
+      assert.deepStrictEqual(invalidations, [workspaceRoot]);
+      assert.strictEqual(error._tag, "GitCommandError");
+      assert.include("detail" in error ? error.detail : "", "partially completed");
+      assert.strictEqual("cause" in error ? error.cause : undefined, failure);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reverts a hunk or selected addition without changing the index or other edits", () =>

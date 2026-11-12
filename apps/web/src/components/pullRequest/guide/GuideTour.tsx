@@ -29,6 +29,7 @@ import {
   stopFilePaths,
   reviewGuideStopProgress,
 } from "@t3tools/client-runtime/review-guide-tour";
+import { guideViewedFiles } from "./GuideTour.logic";
 import { useGuideDiffFiles } from "./useGuideDiffFiles";
 
 export function GuideTour({
@@ -148,7 +149,9 @@ export function GuideTour({
             onSetViewed={
               allowed && viewed.enabled
                 ? (paths, value) => {
-                    for (const path of paths) viewed.setViewed(path, value);
+                    const files = guideViewedFiles(diff.files, paths);
+                    if (files === null) return;
+                    for (const { path, revision } of files) viewed.setViewed(path, value, revision);
                   }
                 : null
             }
@@ -179,7 +182,10 @@ export function GuideTour({
               onSetViewed={
                 allowed && viewed.enabled
                   ? (paths, value) => {
-                      for (const path of paths) viewed.setViewed(path, value);
+                      const files = guideViewedFiles(diff.files, paths);
+                      if (files === null) return;
+                      for (const { path, revision } of files)
+                        viewed.setViewed(path, value, revision);
                     }
                   : null
               }
@@ -198,7 +204,10 @@ export function GuideTour({
                   onSetViewed={
                     allowed && viewed.enabled
                       ? (paths, value) => {
-                          for (const path of paths) viewed.setViewed(path, value);
+                          const files = guideViewedFiles(diff.files, paths);
+                          if (files === null) return;
+                          for (const { path, revision } of files)
+                            viewed.setViewed(path, value, revision);
                         }
                       : null
                   }

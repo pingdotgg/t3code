@@ -124,20 +124,7 @@ function pullRequestThreadMenuItems(
   agent: ReturnType<typeof usePullRequestAgentActions>,
   task: PullRequestAgentTask,
 ) {
-  return agent
-    .threadActions(task)
-    .filter((item) => item.id !== undefined)
-    .map((item) => (
-      <Toolbar.MenuAction
-        key={item.id}
-        icon={item.image}
-        subtitle={"subtitle" in item ? item.subtitle : undefined}
-        disabled={agent.disabled || ("attributes" in item && item.attributes?.disabled)}
-        onPress={() => item.id !== undefined && agent.select(item.id)}
-      >
-        <Toolbar.Label>{item.title}</Toolbar.Label>
-      </Toolbar.MenuAction>
-    ));
+  return renderThreadMenuItems(agent.threadActions(task), agent.select, agent.disabled);
 }
 
 function pullRequestAgentMenuItems(agent: ReturnType<typeof usePullRequestAgentActions>) {
@@ -435,18 +422,22 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
   );
 }
 
-function renderThreadMenuItems(items: MenuAction[], select: (id: string) => void): ReactNode {
+function renderThreadMenuItems(
+  items: MenuAction[],
+  select: (id: string) => void,
+  disabled = false,
+): ReactNode {
   return items.map((item) =>
     item.subactions ? (
-      <Toolbar.Menu key={item.id} title={item.title} icon={item.image}>
-        {renderThreadMenuItems(item.subactions, select)}
+      <Toolbar.Menu key={item.id} title={item.title} icon={item.image} disabled={disabled}>
+        {renderThreadMenuItems(item.subactions, select, disabled)}
       </Toolbar.Menu>
     ) : (
       <Toolbar.MenuAction
         key={item.id}
         icon={item.image}
         subtitle={item.subtitle}
-        disabled={item.attributes?.disabled}
+        disabled={disabled || item.attributes?.disabled}
         onPress={() => item.id && select(item.id)}
       >
         <Toolbar.Label>{item.title}</Toolbar.Label>

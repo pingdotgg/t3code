@@ -200,14 +200,14 @@ export function WorkingChangesTree({
           const batchSelected = selectedKeys.has(reviewTreeRowKey(row));
           const current = selected?.scope === row.scope && selected.path === row.path;
           const status = folder ? "modified" : row.file.status;
-          const statusColor =
+          const statusClass =
             status === "added" || status === "untracked"
-              ? "light-dark(#16a994, #00cab1)"
+              ? "text-success-foreground"
               : status === "deleted"
-                ? "light-dark(#ff2e3f, #ff6762)"
+                ? "text-destructive-foreground"
                 : status === "renamed"
-                  ? "light-dark(#d5a910, #ffd452)"
-                  : "light-dark(#1ca1c7, #08c0ef)";
+                  ? "text-warning-foreground"
+                  : "text-info-foreground";
           return (
             <div
               data-git-scope={row.scope}
@@ -270,7 +270,8 @@ export function WorkingChangesTree({
                 ) : null}
                 <ReviewPath path={row.path} className="min-w-0 flex-1 truncate">
                   <span
-                    style={{ color: folder ? undefined : statusColor, colorScheme: resolvedTheme }}
+                    className={folder ? undefined : statusClass}
+                    style={{ colorScheme: resolvedTheme }}
                   >
                     {folder ? row.label.replaceAll("/", " / ") : row.path.split("/").at(-1)}
                   </span>
@@ -280,8 +281,8 @@ export function WorkingChangesTree({
                 {actions(row.scope, row)}
               </div>
               <span
-                className={`w-3 shrink-0 text-center ${folder ? "opacity-50" : ""}`}
-                style={{ color: statusColor, colorScheme: resolvedTheme }}
+                className={`w-3 shrink-0 text-center ${statusClass} ${folder ? "opacity-50" : ""}`}
+                style={{ colorScheme: resolvedTheme }}
                 aria-label={folder ? "Contains changes" : row.file.status}
               >
                 {folder

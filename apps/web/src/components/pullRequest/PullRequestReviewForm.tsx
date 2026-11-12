@@ -1,3 +1,5 @@
+import { pendingReviewIdentityFromThreads } from "@t3tools/client-runtime/review-editing";
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import { PullRequestAttachments } from "./PullRequestAttachments";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -28,7 +30,6 @@ import { toastManager } from "../ui/toast";
 import { readableFailure } from "./pullRequestDetail.logic";
 import {
   mergePendingReviewComments,
-  pullRequestReviewKey,
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
@@ -95,10 +96,13 @@ export function PullRequestReviewForm({
   const { busy: draftBusy } = usePendingReviewCommentActions(environmentId, reference);
   const [uploading, setUploading] = useState(false);
   const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
-  const comments = usePendingReviewComments(reference, reviewThreads);
-  const reviewKey = pullRequestReviewKey(reference);
-  const pendingReviewId = comments.find((comment) => comment.hostedComment)?.hostedComment
-    ?.reviewId;
+  const comments = usePendingReviewComments(environmentId, reference, reviewThreads);
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const removedIds = usePullRequestReviewStore((store) => store.removedHostComments[reviewKey]);
+  const remoteIdentity = pendingReviewIdentityFromThreads(reviewThreads, removedIds);
+  const pendingReviewId =
+    comments.find((comment) => comment.hostedComment)?.hostedComment?.reviewId ??
+    remoteIdentity.pendingReviewId;
   // The panel stays mounted while the selected pull request changes. Keeping summaries beside
   // the keyed line-comment drafts makes the selected pull request's body correct on the first
   // render, before an effect could reset state left behind by the previous one.
@@ -135,8 +139,13 @@ export function PullRequestReviewForm({
       reviewThreads,
       state.removedHostComments[reviewKey] ?? [],
     );
-    const submittedReviewId = submittedComments.find((comment) => comment.hostedComment)
-      ?.hostedComment?.reviewId;
+    const identity = pendingReviewIdentityFromThreads(
+      reviewThreads,
+      state.removedHostComments[reviewKey],
+    );
+    const submittedReviewId =
+      submittedComments.find((comment) => comment.hostedComment)?.hostedComment?.reviewId ??
+      identity.pendingReviewId;
     if (
       pending ||
       uploading ||
@@ -154,6 +163,9 @@ export function PullRequestReviewForm({
         ...(submittedReviewId ? { pendingReviewId: submittedReviewId } : {}),
         body: submittedBody,
         comments: submittedComments,
+        ...(identity.outdatedCommentIds.length
+          ? { outdatedCommentIds: identity.outdatedCommentIds }
+          : {}),
       },
     });
     onPendingChange(false);
@@ -172,9 +184,12 @@ export function PullRequestReviewForm({
     removeComments(
       reviewKey,
       submittedComments.map((comment) => comment.id),
-      submittedComments.flatMap((comment) =>
-        comment.hostedComment ? [comment.hostedComment.commentId] : [],
-      ),
+      [
+        ...identity.outdatedCommentIds,
+        ...submittedComments.flatMap((comment) =>
+          comment.hostedComment ? [comment.hostedComment.commentId] : [],
+        ),
+      ],
     );
     clearSummary(reviewKey, submittedBody);
     toastManager.add({ type: "success", title: verdict.sent(term) });

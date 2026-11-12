@@ -136,6 +136,7 @@ export function PullRequestMergeControls(props: {
     permissions.connected &&
     permissions.canWrite &&
     pr.viewerPermissions.adminMerge === true &&
+    pr.headSha != null &&
     canPerformPullRequestAction(pr, "merge") &&
     !stack.stack &&
     canMergeSingle &&
@@ -174,7 +175,9 @@ export function PullRequestMergeControls(props: {
         input: {
           ...target.input,
           action,
-          ...(adminOverride ? { adminOverride: true, mergeMethod: method } : {}),
+          ...(adminOverride
+            ? { adminOverride: true, mergeMethod: method, expectedHeadSha: pr.headSha ?? undefined }
+            : {}),
           ...(action === "merge" && method && stack.stack && scope
             ? {
                 stackNumber: stack.stack.number,

@@ -2340,6 +2340,9 @@ export const make = Effect.gen(function* () {
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                    ...(input.expectedHeadSha === undefined
+                      ? {}
+                      : { expectedHeadSha: input.expectedHeadSha }),
                     ...(input.adminOverride === undefined
                       ? {}
                       : { adminOverride: input.adminOverride }),
@@ -2632,11 +2635,14 @@ export const make = Effect.gen(function* () {
         const review = project.api.capabilities.review;
         const refuse = (detail: string) =>
           Effect.fail(new PullRequestOperationError({ operation: "submitReview", detail }));
+        if ((input.outdatedCommentIds?.length ?? 0) > 0 && input.pendingReviewId === undefined)
+          return refuse("Refresh the pending review before submitting outdated comments.");
         if (!review.verdicts.includes(input.verdict)) {
           return refuse(`This host cannot ${VERDICT_LABELS[input.verdict]} a change request.`);
         }
         if (
           (input.pendingReviewId !== undefined ||
+            (input.outdatedCommentIds?.length ?? 0) > 0 ||
             input.comments.some((comment) => comment.hostedComment !== undefined)) &&
           review.draftComment !== true
         )
@@ -2672,7 +2678,10 @@ export const make = Effect.gen(function* () {
                 } a change request.`,
               );
             }
-            if (input.comments.length > 0 && !viewer.comment) {
+            if (
+              (input.comments.length > 0 || (input.outdatedCommentIds?.length ?? 0) > 0) &&
+              !viewer.comment
+            ) {
               return refuse(
                 "You need write access on this repository to comment on a line of a change request.",
               );
@@ -2689,6 +2698,9 @@ export const make = Effect.gen(function* () {
                   : { pendingReviewId: input.pendingReviewId }),
                 body: input.body,
                 comments: input.comments,
+                ...(input.outdatedCommentIds
+                  ? { outdatedCommentIds: input.outdatedCommentIds }
+                  : {}),
               })
               .pipe(Effect.mapError(toPullRequestError("submitReview")));
           }),

@@ -51,8 +51,10 @@ export function usePullRequestFilesViewed(options: {
   return {
     enabled,
     filePaths:
-      query.data && !query.data.truncated ? query.data.files.map((file) => file.path) : null,
-    ready: query.data !== null,
+      query.error === null && query.data && !query.data.truncated
+        ? query.data.files.map((file) => file.path)
+        : null,
+    ready: query.error === null && query.data !== null,
     viewedCount: options.paths.filter((path) => isFileViewed(path, states, overlay)).length,
     isViewed: (path: string) => isFileViewed(path, states, overlay),
     isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),

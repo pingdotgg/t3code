@@ -16,6 +16,7 @@ import {
 
 import { Badge } from "../../ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "../../ui/alert";
+import { guideViewedFiles } from "./GuideTour.logic";
 import { GuideNotes } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 import { ReviewChapterProgress } from "../ReviewChapterHeader";
@@ -73,6 +74,7 @@ export function GuideRail({
                 review: {
                   reviewedCount: progress.reviewedCount,
                   fileCount: paths.length,
+                  disabled: guideViewedFiles(files, paths) === null,
                   onSetReviewed: (value: boolean) => onSetViewed(paths, value),
                 },
               }
@@ -84,6 +86,7 @@ export function GuideRail({
                   <ReviewChapterProgress
                     reviewedCount={progress.reviewedCount}
                     fileCount={paths.length}
+                    disabled={guideViewedFiles(files, paths) === null}
                     onSetReviewed={(value) => onSetViewed(paths, value)}
                   />
                 ) : null}

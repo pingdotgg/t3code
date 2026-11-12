@@ -49,6 +49,23 @@ export function pendingReviewCommentsFromThreads(threads: ReadonlyArray<PullRequ
   });
 }
 
+/** Existing private comments retain their identity after their diff lines become outdated. */
+export function pendingReviewIdentityFromThreads(
+  threads: ReadonlyArray<PullRequestReviewThread>,
+  removedIds: ReadonlyArray<string> = [],
+) {
+  const removed = new Set(removedIds);
+  const comments = threads.flatMap((thread) =>
+    thread.comments
+      .filter((comment) => comment.pendingReviewId && !removed.has(comment.id))
+      .map((comment) => ({ comment, outdated: thread.line === null })),
+  );
+  return {
+    pendingReviewId: comments[0]?.comment.pendingReviewId,
+    outdatedCommentIds: comments.filter((entry) => entry.outdated).map((entry) => entry.comment.id),
+  };
+}
+
 export function groupPendingReviewComments<T extends PullRequestReviewCommentDraft>(
   threads: ReadonlyArray<PullRequestReviewThread>,
   pendingComments: ReadonlyArray<T>,
@@ -61,7 +78,7 @@ export function groupPendingReviewComments<T extends PullRequestReviewCommentDra
   const represented = new Set<string>();
   const conversations = threads.flatMap((thread) => {
     const comments = thread.comments.filter(
-      (comment) => !comment.pendingReviewId || pendingIds.has(comment.id),
+      (comment) => !comment.pendingReviewId || thread.line === null || pendingIds.has(comment.id),
     );
     if (comments.length === 0) return [];
     for (const comment of comments) represented.add(comment.id);

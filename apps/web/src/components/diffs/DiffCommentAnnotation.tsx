@@ -172,7 +172,7 @@ export function DiffCommentAnnotation({
       {renderAttachments?.(onTextChange ?? setLocalDraftText, setUploading, textarea)}
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
         <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
-        {speech ? <TextFieldSpeechControls speech={speech} disabled={pending} /> : null}
+        {speech ? <TextFieldSpeechControls speech={speech} disabled={blocked} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
@@ -210,7 +210,7 @@ export function DiffCommentAnnotation({
       text={displayedText}
       textareaRef={{ current: textarea }}
       onTextChange={onTextChange ?? setLocalDraftText}
-      disabled={pending}
+      disabled={blocked}
     >
       {renderDraft}
     </SpeechTextField>
