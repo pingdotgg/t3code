@@ -48,6 +48,7 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly remoteRefinementArgs?: (
     context: SourceControlProvider.SourceControlProviderContext,
   ) => ReadonlyArray<string>;
+  readonly remoteRefinementEnv?: NodeJS.ProcessEnv;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   /** `null` when the CLI holds nothing for the remote; `undefined` when its output cannot say. */
@@ -408,6 +409,7 @@ function refineWithSpec(input: {
       operation: "source-control.discovery.refine-unknown-remote",
       command: spec.executable,
       args: spec.remoteRefinementArgs?.(context) ?? spec.authArgs,
+      ...(spec.remoteRefinementEnv !== undefined ? { env: spec.remoteRefinementEnv } : {}),
       cwd: input.cwd,
       allowNonZeroExit: true,
       timeoutMs: probeTimeoutMs(spec),

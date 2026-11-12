@@ -173,3 +173,25 @@ it.effect("claims a self-hosted remote glab is signed in to while the host is of
     assert.strictEqual(verdict.settled, true);
   }),
 );
+
+// Older glab (1.90.0 among them) answers `config get user` from $USER, even for a host it has no login for.
+it.effect("leaves a host glab has no login for unknown when glab reads $USER", () =>
+  Effect.gen(function* () {
+    const remoteUrl = "https://nowhere.example.test/team/repo.git";
+    const remote = parseGitRemoteHost(remoteUrl);
+    assert.ok(remote);
+    const verdict = yield* refineUnknownRemoteProvider({
+      specs: [GitLabSourceControlProvider.discovery],
+      cwd: "/repo",
+      context: { provider: unknownRemoteProvider(remote), remoteName: "origin", remoteUrl },
+      process: {
+        run: ({ env }) => {
+          const user = env && "USER" in env ? env.USER : "review-user";
+          return Effect.succeed(processOutput(user ? `${user}\n` : "\n"));
+        },
+      },
+    });
+    assert.strictEqual(verdict.provider, null);
+    assert.strictEqual(verdict.settled, true);
+  }),
+);

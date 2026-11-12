@@ -150,6 +150,8 @@ export const discovery = {
       : provider.name;
     return ["config", "get", "user", "--host", host];
   },
+  // Older glab answers `config get user` from $USER, even for a host it has no login for.
+  remoteRefinementEnv: { USER: "" },
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:
