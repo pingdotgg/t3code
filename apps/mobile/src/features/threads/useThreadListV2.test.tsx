@@ -17,6 +17,11 @@ vi.mock("../../state/threads", () => ({
   threadFamilies: { mountRows: () => () => {} },
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
+vi.mock("../../state/expanded-parents", () => {
+  const expanded = new Set<string>();
+  const toggle = () => {};
+  return { useExpandedParents: () => ({ expanded, toggle }) };
+});
 
 it("reuses a large thread list across tab renders and updates when its inputs change", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

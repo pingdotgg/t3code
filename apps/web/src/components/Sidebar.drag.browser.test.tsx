@@ -45,6 +45,8 @@ it("keeps the title when dragging a search result from a collapsed folder", asyn
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
   );
   await router.load();
+  // Test files share an origin, so another file may have stored the sidebar collapsed.
+  localStorage.removeItem("chat_thread_sidebar_open");
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
     router: false,

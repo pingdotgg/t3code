@@ -265,7 +265,16 @@ describe("MessagesTimeline work rows", () => {
     const props = baseProps();
     const html = injectHtmlRenderBootstrap(`<div style="height:1400px">Earlier preview content</div>
       <details><summary>More rows</summary><div style="height:900px">More rows</div></details>
-      <script>addEventListener('message', e => { if(e.data === 'toggle') document.querySelector('details').open = !document.querySelector('details').open; });</script>`);
+      <script>addEventListener('message', e => { if(e.data === 'toggle') document.querySelector('details').open = !document.querySelector('details').open; }); parent.postMessage('preview-ready', '*');</script>`);
+    // The initial 1437px height is also the placeholder's, so it does not prove the frame listens yet.
+    let onReady = (_event: MessageEvent) => {};
+    const ready = new Promise<void>((resolve) => {
+      onReady = (event) => {
+        if (event.data === "preview-ready") resolve();
+      };
+    });
+    window.addEventListener("message", onReady);
+    using _ready = { [Symbol.dispose]: () => window.removeEventListener("message", onReady) };
     const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
     function Preview() {
@@ -308,6 +317,7 @@ describe("MessagesTimeline work rows", () => {
       expect(viewport.scrollTop).toBeGreaterThan(0);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
     });
+    await ready;
     const top = frame.getBoundingClientRect().top;
     frame.focus();
     frame.contentWindow!.postMessage("toggle", "*");
