@@ -495,6 +495,29 @@ describe("buildThreadFeed", () => {
     expect(standIn(["rtk", "rtk proxy"], new Set([groupId]))?.label).toBe("rtk proxy git status");
   });
 
+  it("keeps the full invocation when no ignored prefix matches", () => {
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected({ ...command(), input: "/bin/zsh -lc 'git status'" }, 1),
+    ]);
+    const preview = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set([runId]),
+      new Set(),
+      null,
+      false,
+      undefined,
+      {
+        toolCallVisibility: "showAll",
+        revealedMessageId: null,
+        ignoredCommandPrefixes: ["rtk"],
+      },
+    ).flatMap((row) => (row.type === "activity-group" ? row.activities : []))[0]?.groupStandIn
+      ?.label;
+    expect(preview).toBe("/bin/zsh -lc 'git status'");
+  });
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

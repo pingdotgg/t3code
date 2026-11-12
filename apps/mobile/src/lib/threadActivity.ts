@@ -894,14 +894,14 @@ function singleToolCallLabel(
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
-  return command
-    ? truncate(
-        !expanded && ignoredCommandPrefixes.length > 0
-          ? commandDisplayText(command, ignoredCommandPrefixes)
-          : command,
-        WORK_LOG_LABEL_MAX_LENGTH,
-      )
-    : activity.summary;
+  if (!command) return activity.summary;
+  const preview =
+    !expanded && ignoredCommandPrefixes.length > 0
+      ? commandDisplayText(command, ignoredCommandPrefixes)
+      : null;
+  // Unmatched prefixes keep the full invocation instead of the shell-unwrapped preview.
+  const prefixRemoved = preview !== null && preview !== commandDisplayText(command);
+  return truncate(prefixRemoved ? preview : command, WORK_LOG_LABEL_MAX_LENGTH);
 }
 
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
