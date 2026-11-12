@@ -191,7 +191,12 @@ export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
 ): string | null {
   if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const allWindows = codexRateLimitsToWindows(snapshot);
+  // Matches exhaustedUsageWindow: the credit cap blocks only plans without plan windows.
+  const hasPlanWindows = allWindows.some((window) => window.id !== "individual");
+  const windows = allWindows.filter(
+    (window) => window.usedPercent >= 100 && (window.id !== "individual" || !hasPlanWindows),
+  );
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>
