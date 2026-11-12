@@ -3,8 +3,5 @@
   "compilerOptions": {
     "composite": true
   },
-  "references": [
-    { "path": "./tsconfig.runtime.json" },
-    { "path": "./tsconfig.node.json" }
-  ]
+  "references": [{ "path": "./tsconfig.runtime.json" }, { "path": "./tsconfig.node.json" }]
 }
