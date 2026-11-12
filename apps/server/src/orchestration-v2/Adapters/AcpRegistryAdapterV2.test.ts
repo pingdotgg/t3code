@@ -476,6 +476,8 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
       readonly rejectedModel?: string;
+      readonly storedOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
+      readonly failsConfiguration?: boolean;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -563,6 +565,7 @@ describe("AcpRegistryAdapterV2", () => {
         ...(input.storedModePick === undefined
           ? {}
           : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
+        ...(input.storedOptions === undefined ? {} : { options: input.storedOptions }),
       };
       const configurations: Array<AcpRegistryLiveConfiguration | undefined> = [];
       yield* Effect.gen(function* () {
@@ -616,13 +619,17 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(
         Effect.match({
           onFailure: (error) => {
+            if (input.failsConfiguration === true) return;
             assert.isDefined(input.rejectedModel);
             assert.equal(
               makeProviderFailure({ cause: error }).message,
               `The agent did not accept the model "${input.rejectedModel}". Choose another model for this provider, then retry.`,
             );
           },
-          onSuccess: () => assert.isUndefined(input.rejectedModel),
+          onSuccess: () => {
+            assert.isUndefined(input.rejectedModel);
+            assert.notEqual(input.failsConfiguration, true, "configuration should have failed");
+          },
         }),
         Effect.scoped,
       );
@@ -902,6 +909,55 @@ describe("AcpRegistryAdapterV2", () => {
           ["hermes", "hermes", "hermes", "other", "other", "other", "other", "other"],
         );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+    it.effect(
+      "fails configuration when an option write errors for a reason other than refusal",
+      () => {
+        const sessionModel = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["default", "named"].map((value) => ({ value, name: value })),
+        });
+        const thinking = {
+          id: "thinking",
+          name: "Thinking",
+          category: "thought_level",
+          type: "select",
+          currentValue: "low",
+          options: ["low", "high"].map((value) => ({ value, name: value })),
+        };
+        return openWithStoredPicks({
+          setup: { configOptions: [sessionModel("default")] },
+          storedModel: "named",
+          storedOptions: [
+            { id: "thinking", value: "high" },
+            { id: "unavailable", value: "x" },
+          ],
+          failsConfiguration: true,
+          pickFrames: [
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "named",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [sessionModel("named"), thinking],
+            }),
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "thinking",
+              value: "high",
+            }),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/set_config_option",
+                error: { code: -32603, message: "Internal error" },
+              },
+            },
+          ],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
     );
     const modelOptions = [
       { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
@@ -1210,7 +1266,10 @@ describe("AcpRegistryAdapterV2", () => {
           type: "http",
           name: "t3-code",
           url: endpoint,
-          headers: [{ name: "Authorization", value: authorization }],
+          headers: [
+            { name: "Authorization", value: authorization },
+            { name: "t3-tool-exposure", value: "deferred" },
+          ],
         },
       ];
       const stdio = (authorization: string) => [
