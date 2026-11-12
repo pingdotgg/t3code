@@ -124,13 +124,41 @@ function makeRun(input: {
 
 it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
   let callerUnavailable = false;
+  const pullRequestLink = (number: number, state: "open" | "merged", watched: boolean) => ({
+    host: "github.com",
+    repository: "acme/web",
+    number,
+    url: `https://github.com/acme/web/pull/${number}`,
+    source: "agent",
+    linkedAt: "2026-08-04T11:00:00.000Z",
+    snapshot: { state },
+    stack: null,
+    ...(watched
+      ? {
+          watch: {
+            startedAt: "2026-08-04T11:30:00.000Z",
+            headSha: null,
+            failedChecks: [],
+            passed: false,
+            passedChecks: [],
+            remarksThrough: "2026-08-04T11:30:00.000Z",
+            remarkIds: [],
+            conflicting: false,
+            wakes: 0,
+          },
+        }
+      : {}),
+  });
   const projection = {
-    thread: baseThread({
-      threadId: parentThreadId,
-      title: "Parent",
-      instanceId: parentInstanceId,
-      model: "gpt-5.4",
-    }),
+    thread: {
+      ...baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      pullRequests: [pullRequestLink(1, "merged", false), pullRequestLink(2, "open", true)],
+    },
     runs: [
       makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
       makeRun({ id: cancelledRunId, ordinal: 2, status: "cancelled" }),
@@ -165,7 +193,19 @@ it("readThread preserves caller access errors and prefers activity-run status ov
               ? Effect.die("A failed caller read must not reach the target")
               : Effect.succeed(
                   threadId === parentThreadId
-                    ? (projection.thread as unknown as OrchestrationV2ThreadShell)
+                    ? ({
+                        ...projection.thread,
+                        blockedOnThreadWait: true,
+                        pendingBackgroundTasks: [
+                          {
+                            taskId: "task-subagent",
+                            kind: "subagent",
+                            parentTaskId: "task-parent",
+                            providerInstanceId: parentInstanceId,
+                            childThreadId,
+                          },
+                        ],
+                      } as unknown as OrchestrationV2ThreadShell)
                     : null,
                 ),
           getProjectThreadRecords: (input) =>
@@ -197,6 +237,23 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.blockedOnThreadWait).toBe(true);
+    expect(result.thread.pendingBackgroundTasks).toEqual([
+      { taskId: "task-subagent", kind: "subagent", childThreadId },
+    ]);
+    // Every page read must not repeat each linked PR, and an open PR shows whether it is watched.
+    const listed = result.thread.pullRequests ?? [];
+    expect(listed.map((link) => link.number)).not.toContain(1);
+    expect(listed.find((link) => link.number === 2)).toMatchObject({
+      watching: true,
+      watchStartedAt: "2026-08-04T11:30:00.000Z",
+    });
+    const laterPage = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      afterPosition: 0,
+    });
+    expect(laterPage.thread.pullRequests).toBeUndefined();
+    expect(laterPage.thread.pullRequestCount).toBe(2);
 
     callerUnavailable = true;
     const denied = yield* service
@@ -244,17 +301,35 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
       updatedAt: now,
     },
   };
+  const rows = [
+    row,
+    ...Array.from({ length: 11 }, (_, index) => ({
+      ...row,
+      position: index + 1,
+      sourceItemId: TurnItemId.make(`turn-item-mcp-${index}`),
+      item: { ...row.item, text: "x".repeat(600) },
+    })),
+  ];
 
   const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getTimelinePage: () =>
-            Effect.succeed({
-              items: [row] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
-              totalItems: 1,
-              hasMore: false,
-            }),
+          getTimelinePage: (_threadId, options) => {
+            const remaining = rows.filter(
+              (candidate) =>
+                candidate.position > (options.afterPosition ?? -1) &&
+                (options.itemId === undefined || candidate.sourceItemId === options.itemId),
+            );
+            return Effect.succeed({
+              items: remaining.slice(
+                0,
+                options.limit,
+              ) as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: remaining.length > options.limit,
+            });
+          },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
           getThreadShell: () =>
@@ -301,6 +376,17 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
         });
       }
     }
+    const first = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+    });
+    expect(first.items[1]).toMatchObject({
+      text: "x".repeat(500),
+      textTruncated: true,
+      nextTextOffset: 500,
+    });
+    expect(first.items).toHaveLength(10);
+    expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
