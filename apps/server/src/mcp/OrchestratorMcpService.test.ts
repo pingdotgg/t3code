@@ -3649,6 +3649,76 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("an implicit delegate target falls back from an exhausted inherited provider", () =>
+    Effect.gen(function* () {
+      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+      const fallback = { instanceId: claudeInstanceId, model: "claude-sonnet-4-6" } as const;
+      const commands: Array<{ readonly modelSelection?: unknown }> = [];
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: claudeInstanceId,
+        model: fallback.model,
+        status: "running",
+        result: null,
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(commands.length > 0 ? [task] : [])
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command as { readonly modelSelection?: unknown });
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        ServerSettings.layerTest({ fallbackModelSelection: fallback }),
+        providerRegistryLayer([
+          {
+            ...providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            usageLimits: {
+              checkedAt: "2026-09-13T00:00:00.000Z",
+              windows: [{ id: "primary", kind: "session", label: "5h", usedPercent: 100 }],
+            },
+          },
+          providerSnapshot({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: fallback.model,
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, { task: "Review the change.", mode: "async" });
+        assert.deepEqual(commands[0]?.modelSelection, fallback);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
   it.effect("validates options against the model a target names by alias", () =>
     Effect.gen(function* () {
       const dependencies = Layer.mergeAll(
