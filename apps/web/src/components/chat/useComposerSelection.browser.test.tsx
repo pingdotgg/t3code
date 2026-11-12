@@ -109,6 +109,7 @@ function Picker(props: {
 }
 
 it("keeps a Cursor thread's stored model and options when the user re-picks its unavailable row", async () => {
+  setup();
   const thread = cursorThread("thread-cursor");
   await using _screen = await render(<Picker thread={thread} runtime={null} />);
   await page.getByRole("button", { name: "Pick the model" }).click();
@@ -122,6 +123,7 @@ it("keeps a Cursor thread's stored model and options when the user re-picks its 
 });
 
 it("switches back to the thread's stored model while the session runs on another instance", async () => {
+  setup();
   const thread = cursorThread("thread-cursor-handoff");
   const runtime = { providerInstanceId: ProviderInstanceId.make("codex") } as Parameters<
     typeof useComposerSelection
