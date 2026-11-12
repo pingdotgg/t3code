@@ -471,6 +471,7 @@ describe("AcpRegistryAdapterV2", () => {
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
       readonly pickFrames: ReadonlyArray<Frame>;
+      readonly agentId?: string;
       readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
@@ -524,7 +525,7 @@ describe("AcpRegistryAdapterV2", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
-          agentId: "fixture-agent",
+          agentId: input.agentId ?? "fixture-agent",
           authMethodId: "test",
           customModels: input.customModels ?? [],
         }),
@@ -797,6 +798,36 @@ describe("AcpRegistryAdapterV2", () => {
             ],
           );
         }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    // Copilot's session/new reports its built-in default, not the model it will run
+    // (github/copilot-cli#5363), so the selected model must be written even when it matches.
+    it.effect(
+      "writes the selected Copilot model even when session/new reports it as current",
+      () => {
+        const copilotModel = (currentValue: string) => ({
+          ...modelOption("model", currentValue),
+          options: ["claude-sonnet-5.5", "claude-haiku-4.5"].map((value) => ({
+            value,
+            name: value,
+          })),
+        });
+        return openWithStoredPicks({
+          agentId: "github-copilot-cli",
+          setup: { configOptions: [copilotModel("claude-sonnet-5.5")] },
+          storedModel: "claude-sonnet-5.5",
+          pickFrames: [
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "claude-sonnet-5.5",
+            }),
+            answer("session/set_config_option", {
+              configOptions: [copilotModel("claude-sonnet-5.5")],
+            }),
+          ],
+        }).pipe(Effect.provide(layerTest), Effect.scoped);
+      },
     );
 
     it.effect.each([
