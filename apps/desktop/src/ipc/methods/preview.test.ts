@@ -42,14 +42,17 @@ describe("preview IPC methods", () => {
     Effect.scoped(
       Effect.gen(function* () {
         let listener: DesktopIpc.DesktopIpcHandleListener | undefined;
-        const ipc = DesktopIpc.make({
-          removeHandler: vi.fn(),
-          handle: (_channel, registered) => {
-            listener = registered;
+        const ipc = DesktopIpc.make(
+          {
+            removeHandler: vi.fn(),
+            handle: (_channel, registered) => {
+              listener = registered;
+            },
+            removeAllListeners: vi.fn(),
+            on: vi.fn(),
           },
-          removeAllListeners: vi.fn(),
-          on: vi.fn(),
-        });
+          () => Effect.succeed(true),
+        );
         yield* ipc.handle(method);
         return yield* Effect.promise(async () =>
           structuredClone(await listener!({ sender: { id: 7 } }, { tabId: "capture-tab" })),
