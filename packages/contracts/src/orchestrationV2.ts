@@ -3799,8 +3799,8 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
    */
   omitIdleSubagents: Schema.optionalKey(Schema.Boolean),
   /**
-   * With `omitIdleSubagents`, an idle subagent stays only while a live one is under it, not as the
-   * parent of any child. Send only from clients that read the family of a child whose parent row
+   * With `omitIdleSubagents`, an idle subagent stays only while a live subagent, a side chat or a
+   * fork is under it, not as the parent of an idle subagent. Send only from clients that read the family of a child whose parent row
    * is missing; older servers ignore it.
    */
   omitIdleSubagentParents: Schema.optionalKey(Schema.Boolean),

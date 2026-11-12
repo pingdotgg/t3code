@@ -138,7 +138,10 @@ function hiddenChildAncestorIds(
   return ancestorIds;
 }
 
-/** Live subagents and the subagents above them, so each live one keeps its chain to the root. */
+/**
+ * Live subagents, the parents of other children (side chats, forks), and the subagents above
+ * them, so each of those keeps its chain to the root.
+ */
 function liveSubagentChainIds<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineage">>(
   rows: ReadonlyArray<T>,
   isLive: (row: T) => boolean,
@@ -148,9 +151,15 @@ function liveSubagentChainIds<T extends Pick<OrchestrationV2ThreadShell, "id" | 
     if (row.lineage.relationshipToParent === "subagent") subagents.set(row.id, row);
   }
   const kept = new Set<string>();
-  for (const row of subagents.values()) {
-    if (!isLive(row)) continue;
-    let current: T | undefined = row;
+  for (const row of rows) {
+    const isSubagent = row.lineage.relationshipToParent === "subagent";
+    if (isSubagent && !isLive(row)) continue;
+    const rowParentId = row.lineage.parentThreadId;
+    let current: T | undefined = isSubagent
+      ? row
+      : rowParentId === null
+        ? undefined
+        : subagents.get(rowParentId);
     while (current !== undefined && !kept.has(current.id)) {
       kept.add(current.id);
       const parentId: string | null = current.lineage.parentThreadId;
@@ -212,8 +221,8 @@ function omitOlderSettledShellsWith(
 /**
  * Idle subagent children have no sidebar row; opted-in clients read them from their thread family.
  * A child stays while it is live or the parent of another child, so shell walks never meet a gap.
- * With `omitIdleSubagentParents` it stays only while live or above a live one, for clients that
- * read the family of a child whose parent row is missing.
+ * With `omitIdleSubagentParents` it stays only while live or above a live subagent or a side chat
+ * or fork, for clients that read the family of a child whose parent row is missing.
  */
 export function omitIdleSubagentShells(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
