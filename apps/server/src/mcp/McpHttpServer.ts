@@ -549,6 +549,7 @@ const parameterValidationMessage = (error: unknown) =>
     : undefined;
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
+const isPreviewScreenshotSaveError = Schema.is(PreviewScreenshotSaveError);
 
 const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
   cause: Cause.Cause<E>,
@@ -566,9 +567,10 @@ const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
       ? firstFailure._tag
       : "PreviewSnapshotError";
   // Preview errors contain server-authored recovery guidance, never page output.
-  const message = isPreviewAutomationError(firstFailure)
-    ? firstFailure.message
-    : parameterValidationMessage(firstFailure);
+  const message =
+    isPreviewAutomationError(firstFailure) || isPreviewScreenshotSaveError(firstFailure)
+      ? firstFailure.message
+      : parameterValidationMessage(firstFailure);
   const result = new McpSchema.CallToolResult({
     isError: true,
     structuredContent: {
