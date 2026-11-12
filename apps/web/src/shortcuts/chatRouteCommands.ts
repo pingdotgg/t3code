@@ -114,8 +114,14 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     (action: PreviewAction): CommandHandler =>
     (event) => {
       claim(event);
-      const threadRef = readRouteThreadRef();
-      if (threadRef && canOperatePreview(threadRef.environmentId)) dispatchPreviewAction(action);
+      const target = readRouteTarget();
+      const environmentId =
+        target?.kind === "server"
+          ? target.threadRef.environmentId
+          : target
+            ? useComposerDraftStore.getState().getDraftSession(target.draftId)?.environmentId
+            : undefined;
+      if (environmentId && canOperatePreview(environmentId)) dispatchPreviewAction(action);
     };
 
   return registerCommands(

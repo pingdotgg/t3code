@@ -3,11 +3,14 @@ import type { AnyRouter } from "@tanstack/react-router";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as commandPalette from "../commandPaletteBus";
+import { useComposerDraftStore } from "../composerDraftStore";
+import * as previewActions from "../components/preview/previewActionBus";
 import * as settings from "../hooks/useSettings";
 import * as storage from "../hooks/useLocalStorage";
 import * as threadActions from "../lib/chatThreadActions";
 import * as entities from "../state/entities";
 import * as projectsState from "../state/projects";
+import * as session from "../state/session";
 import { Atom } from "effect/reactivity";
 import type { Project } from "../types";
 import { installChatRouteCommands } from "./chatRouteCommands";
@@ -71,5 +74,32 @@ describe("new thread commands", () => {
         projectId: scenario.count === 1 ? "active" : "idle",
       });
     }
+  });
+});
+
+describe("preview commands", () => {
+  it.each([
+    { route: "saved thread", params: { environmentId: "local", threadId: "thread-1" } },
+    { route: "draft thread", params: { draftId: "draft-1" } },
+  ])("find reaches the panel on a $route", ({ params }) => {
+    using _scope = vi.spyOn(session, "readEnvironmentScope").mockReturnValue(true);
+    using _draft = vi
+      .spyOn(useComposerDraftStore.getState(), "getDraftSession")
+      .mockReturnValue({ environmentId: EnvironmentId.make("local") } as never);
+    using dispatchAction = vi
+      .spyOn(previewActions, "dispatchPreviewAction")
+      .mockImplementation(() => {});
+    using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
+    const router = { state: { matches: [{ params }] } } as unknown as AnyRouter;
+    using stack = new DisposableStack();
+    stack.defer(installChatRouteCommands(router));
+    const commands = register.mock.calls[0]![0];
+
+    commands["preview.find"]!({
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    expect(dispatchAction).toHaveBeenCalledWith("find");
   });
 });
