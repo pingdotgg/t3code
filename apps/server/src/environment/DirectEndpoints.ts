@@ -155,17 +155,22 @@ export const make = Effect.gen(function* () {
             magicDnsName,
             servePort: config.tailscaleServePort,
           });
-          return probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl }).pipe(
-            Effect.map((reachable) => (reachable ? httpBaseUrl : null)),
-          );
+          // The probe's own timeout outlasts ours, so a slow probe ends as a timeout below.
+          return probeTailscaleHttpsEndpoint({
+            baseUrl: httpBaseUrl,
+            timeout: Duration.sum(TAILSCALE_ENDPOINT_TIMEOUT, Duration.seconds(1)),
+          }).pipe(Effect.map((reachable) => (reachable ? httpBaseUrl : null)));
         }),
         Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
-        Effect.map(Option.flatMap(Option.fromNullishOr)),
-        Effect.orElseSucceed(() => Option.none<string>()),
+        Effect.orElseSucceed(() => Option.some(null)),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
-      yield* Ref.set(servedEndpoint, servedUrl);
+      // A timeout is no answer, so it keeps the last validated URL rather than
+      // withdrawing it from every client until the next probe.
+      if (Option.isSome(servedUrl)) {
+        yield* Ref.set(servedEndpoint, Option.fromNullishOr(servedUrl.value));
+      }
     }
     return yield* resolveAvailable();
   });

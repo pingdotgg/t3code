@@ -3,6 +3,7 @@ import { it as effectIt } from "@effect/vitest";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
@@ -12,6 +13,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -326,6 +328,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
                   Deferred.succeed(probeStarted, undefined).pipe(
                     Effect.andThen(Deferred.await(finishProbe)),
                     Effect.andThen(Ref.get(status)),
+                    Effect.tap((status) => (status === 0 ? Effect.never : Effect.void)),
                     Effect.tap((status) =>
                       status === 502
                         ? Deferred.succeed(revalidationStarted, undefined).pipe(
@@ -351,6 +354,11 @@ describe("DirectEndpoints Tailscale Serve", () => {
           { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" },
         ]);
         expect(yield* service.resolveAvailable()).toEqual(validated);
+        // A probe that times out keeps the validated URL.
+        yield* Ref.set(status, 0);
+        const timingOut = yield* Effect.forkScoped(service.resolve());
+        yield* TestClock.adjust(Duration.seconds(3));
+        expect(yield* Fiber.join(timingOut)).toEqual(validated);
         yield* Ref.set(status, 502);
         const revalidating = yield* Effect.forkScoped(service.resolve());
         yield* Deferred.await(revalidationStarted);
