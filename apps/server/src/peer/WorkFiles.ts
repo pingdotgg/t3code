@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 import * as NodeZlib from "node:zlib";
 
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -40,6 +41,17 @@ const SKIPPED_DIRECTORIES = new Set([
 
 /** A repository's own folder; its hooks run on the next checkout, so no transfer writes into one. */
 const isGitFolder = (segment: string) => segment.toLowerCase() === ".git";
+
+/**
+ * Names Windows may resolve to another one, `.git` among them: a trailing dot
+ * or space, an NTFS stream after a colon, or the 8.3 name `GIT~1`. Refused on
+ * every platform, as git's `is_ntfs_dotgit` does, since the sender's is unknown.
+ */
+const isWindowsAlias = (segment: string) =>
+  segment.endsWith(".") ||
+  segment.endsWith(" ") ||
+  segment.includes(":") ||
+  /^git~\d$/i.test(segment);
 
 export class WorkFilesError extends Schema.TaggedError<WorkFilesError>()("WorkFilesError", {
   reason: Schema.Literals(["over_limit", "head_mismatch", "conflict", "invalid_archive", "failed"]),
@@ -307,7 +319,9 @@ export const isSafeRelativePath = (path: string) =>
   !/^[A-Za-z]:/.test(path) &&
   !path.includes("\\") &&
   !path.includes("\0") &&
-  path.split("/").every((segment) => segment !== ".." && !isGitFolder(segment));
+  path
+    .split("/")
+    .every((segment) => segment !== ".." && !isGitFolder(segment) && !isWindowsAlias(segment));
 
 interface ArchiveEntry {
   readonly path: string;
@@ -440,8 +454,10 @@ const readArchiveEntries = async (archivePath: string) => {
         ) {
           throw invalid("The archive could not be read.");
         }
-        // Metadata for the entry after it: pax records, a global pax header, GNU long names.
-        if (flag === "x" || flag === "g" || flag === "L" || flag === "K") {
+        // GNU tar applies a global header's size to every later entry; T3 never writes one.
+        if (flag === "g") throw invalid("The archive has a global pax header.");
+        // Metadata for the entry after it: pax records and GNU long names.
+        if (flag === "x" || flag === "L" || flag === "K") {
           if (size > TAR_MAX_METADATA_BYTES) throw invalid("The archive has an oversized header.");
           collecting = { type: flag, size };
           continue;
@@ -502,7 +518,7 @@ export const listArchive = Effect.fn("WorkFiles.listArchive")(function* (archive
     try: () => readArchiveEntries(archivePath),
     catch: (error) => (isWorkFilesError(error) ? error : invalid("The archive could not be read.")),
   });
-  const files: string[] = [];
+  const files: Array<{ readonly path: string; readonly size: number }> = [];
   for (const entry of entries) {
     const name = entry.path.startsWith("./") ? entry.path.slice(2) : entry.path;
     const path = name.endsWith("/") ? name.slice(0, -1) : name;
@@ -510,18 +526,18 @@ export const listArchive = Effect.fn("WorkFiles.listArchive")(function* (archive
     if (!isSafeRelativePath(path)) {
       return yield* invalid(`The archive holds an unsafe path: "${entry.path}".`);
     }
-    if (entry.type === "file") files.push(path);
+    if (entry.type === "file") files.push({ path, size: entry.size });
   }
   return files;
 });
 
-/** Checks the extracted tree is only directories and single-link files, exactly those listed. */
+/** Checks the extracted tree is only directories and single-link files, exactly those listed at their listed sizes. */
 const verifyStaging = Effect.fn("WorkFiles.verifyStaging")(function* (
   staging: string,
-  listed: ReadonlyArray<string>,
+  listed: ReadonlyArray<{ readonly path: string; readonly size: number }>,
 ) {
   // Some tars change a name's Unicode normalization on the way to disk, as macOS bsdtar does.
-  const expected = new Set(listed.map((path) => path.normalize("NFC")));
+  const expected = new Map(listed.map((file) => [file.path.normalize("NFC"), file.size]));
   const pending = [""];
   let seen = 0;
   while (pending.length > 0) {
@@ -540,7 +556,7 @@ const verifyStaging = Effect.fn("WorkFiles.verifyStaging")(function* (
         stat === null ||
         !stat.isFile() ||
         stat.nlink > 1 ||
-        !expected.has(relative.normalize("NFC"))
+        expected.get(relative.normalize("NFC")) !== stat.size
       ) {
         return yield* invalid(`The archive extracted an unexpected entry: ${relative}.`);
       }
@@ -579,23 +595,12 @@ const targetConflict = Effect.fn("WorkFiles.targetConflict")(function* (
     // Copying onto it would change its other names too.
     if (stat.nlink > 1) return "it is a hard link to another file there";
   }
-  if (local === null) {
-    // Outside git nothing records local changes, so only an identical file may be replaced.
-    return incoming === null ? null : "it already exists there with other content";
-  }
+  // Outside git nothing records local changes, so only an identical file may be replaced.
+  if (local === null) return "it already exists there with other content";
   if (local.changed.has(path)) return "it has local changes there";
   if (!local.tracked.has(path)) return "it is an untracked file there";
   return null;
 });
-
-export interface ApplyWorkFilesInput {
-  readonly archivePath: string;
-  readonly stagingDir: string;
-  readonly root: string;
-  /** The source's HEAD; null when the source is not a git checkout. */
-  readonly head: string | null;
-  readonly deletions: ReadonlyArray<string>;
-}
 
 /** One lock per checkout, by its resolved path, held from the conflict checks through the copy. */
 const checkoutLocks = new Map<string, Semaphore.Semaphore>();
@@ -611,6 +616,24 @@ const checkoutLock = (root: string) =>
     }),
   );
 
+/** Moves the backups of files a rollback could not restore out of staging, into a new dated folder. */
+const keepBackups = async (
+  keptBackupsDir: string,
+  stamp: string,
+  backups: string,
+  unrestored: ReadonlyArray<{ readonly backup: string | null }>,
+) => {
+  await NodeFSP.mkdir(keptBackupsDir, { recursive: true });
+  const kept = await NodeFSP.mkdtemp(NodePath.join(keptBackupsDir, `${stamp}-`));
+  for (const { backup } of unrestored) {
+    if (backup === null) continue;
+    const destination = NodePath.join(kept, NodePath.relative(backups, backup));
+    await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+    await NodeFSP.rename(backup, destination);
+  }
+  return kept;
+};
+
 /**
  * Copies the staged files into `root` and applies the deletions, backing up
  * each file it replaces or deletes. On any failure it puts those back and
@@ -620,6 +643,9 @@ const copyIn = async (input: {
   readonly root: string;
   readonly staged: string;
   readonly backups: string;
+  readonly keptBackupsDir: string;
+  /** Names the folder kept backups go in. */
+  readonly stamp: string;
   readonly files: ReadonlyArray<string>;
   readonly deletions: ReadonlyArray<string>;
 }) => {
@@ -666,21 +692,30 @@ const copyIn = async (input: {
     }
     return deleted;
   } catch {
-    const unrestored: string[] = [];
+    const unrestored: Array<{ readonly path: string; readonly backup: string | null }> = [];
     for (const { destination, backup } of changed.toReversed()) {
       await (
         backup === null
           ? NodeFSP.rm(destination, { force: true })
           : NodeFSP.copyFile(backup, destination)
-      ).catch(() => unrestored.push(NodePath.relative(input.root, destination)));
+      ).catch(() => unrestored.push({ path: NodePath.relative(input.root, destination), backup }));
     }
     for (const folder of createdFolders.toReversed()) {
       await NodeFSP.rmdir(folder).catch(() => undefined);
     }
+    if (unrestored.length === 0)
+      throw failed(`Could not ${step} there; nothing was changed there.`);
+    const names = unrestored.map((file) => file.path).join(", ");
+    const kept = await keepBackups(
+      input.keptBackupsDir,
+      input.stamp,
+      input.backups,
+      unrestored,
+    ).catch(() => null);
     throw failed(
-      unrestored.length === 0
-        ? `Could not ${step} there; nothing was changed there.`
-        : `Could not ${step} there, and could not put back ${unrestored.join(", ")}.`,
+      kept === null
+        ? `Could not ${step} there, and could not put back ${names}; their backups are lost.`
+        : `Could not ${step} there, and could not put back ${names}; their earlier contents are in ${kept}.`,
     );
   }
 };
@@ -688,6 +723,8 @@ const copyIn = async (input: {
 export interface ApplyWorkFilesInput {
   readonly archivePath: string;
   readonly stagingDir: string;
+  /** Where backups a failed rollback could not put back are kept, in a dated folder. */
+  readonly keptBackupsDir: string;
   readonly root: string;
   /** The source's HEAD; null when the source is not a git checkout. */
   readonly head: string | null;
@@ -702,19 +739,33 @@ export interface ApplyWorkFilesInput {
  */
 export const applyWorkFiles = Effect.fn("WorkFiles.apply")(function* (input: ApplyWorkFilesInput) {
   const files = yield* listArchive(input.archivePath);
+  // A folder outside git has no record of what the source deleted.
+  if (input.head === null && input.deletions.length > 0) {
+    return yield* invalid("The files come from a folder outside git, which cannot send deletions.");
+  }
   for (const path of input.deletions) {
     if (!isSafeRelativePath(path)) {
       return yield* invalid(`A deletion names an unsafe path: "${path}".`);
     }
   }
+  // The sender keeps these behind, so another sender is not T3.
+  for (const path of [...files.map((file) => file.path), ...input.deletions]) {
+    if (looksLikeSecret(path)) {
+      return yield* invalid(`The work files name a credential file: "${path}".`);
+    }
+  }
   const lock = yield* checkoutLock(input.root);
-  return yield* Semaphore.withPermit(lock, applyLocked(input, files));
+  // A half-applied copy cannot be left behind: once the lock is held, the apply
+  // and any rollback run to the end before an interruption lands, and only
+  // then are the lock and the caller's staging released.
+  return yield* Semaphore.withPermit(lock, Effect.uninterruptible(applyLocked(input, files)));
 });
 
 const applyLocked = Effect.fn("WorkFiles.applyLocked")(function* (
   input: ApplyWorkFilesInput,
-  files: ReadonlyArray<string>,
+  listed: ReadonlyArray<{ readonly path: string; readonly size: number }>,
 ) {
+  const files = listed.map((file) => file.path);
   const staged = NodePath.join(input.stagingDir, "files");
   const head = yield* gitHead(input.root);
   if (input.head !== null) {
@@ -735,11 +786,19 @@ const applyLocked = Effect.fn("WorkFiles.applyLocked")(function* (
   yield* fileSystemCall("create the staging folder", () =>
     NodeFSP.mkdir(staged, { recursive: true }),
   );
+  const needed = listed.reduce((total, file) => total + file.size, 0);
+  const space = yield* fileSystemCall("check free disk space", () => NodeFSP.statfs(staged));
+  if (space.bavail * space.bsize < needed) {
+    return yield* new WorkFilesError({
+      reason: "over_limit",
+      message: `The work files are ${formatMiB(needed)}, more than the free disk space there.`,
+    });
+  }
   const extracted = yield* runProcess("tar", ["-xzf", input.archivePath, "-C", staged], {
     cwd: staged,
   });
   if (extracted.code !== 0) return yield* invalid("The archive could not be extracted.");
-  yield* verifyStaging(staged, files);
+  yield* verifyStaging(staged, listed);
   const local =
     head === null
       ? null
@@ -767,12 +826,15 @@ const applyLocked = Effect.fn("WorkFiles.applyLocked")(function* (
       message: `Nothing was changed there, because these paths would overwrite local work: ${conflicts.slice(0, 20).join(", ")}${conflicts.length > 20 ? `, and ${conflicts.length - 20} more` : ""}.`,
     });
   }
+  const stamp = DateTime.formatIso(yield* DateTime.now).replaceAll(":", "-");
   const deleted = yield* Effect.tryPromise({
     try: () =>
       copyIn({
         root: input.root,
         staged,
         backups: NodePath.join(input.stagingDir, "backup"),
+        keptBackupsDir: input.keptBackupsDir,
+        stamp,
         files,
         deletions: input.deletions,
       }),

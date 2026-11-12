@@ -8,7 +8,9 @@ import * as NodeZlib from "node:zlib";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import {
   applyWorkFiles,
@@ -191,6 +193,13 @@ it("keeps archive and deletion paths inside the checkout on every platform", () 
     ".git/hooks/post-checkout",
     ".GIT/config",
     "sub/.Git/hooks/pre-commit",
+    // Names Windows resolves to .git.
+    ".git./hooks/post-checkout",
+    ".git /config",
+    ".git::$INDEX_ALLOCATION/hooks/post-checkout",
+    "GIT~1/config",
+    "sub/git~2/hooks/pre-commit",
+    "a/b:stream",
   ]) {
     expect(isSafeRelativePath(path), path).toBe(false);
   }
@@ -275,6 +284,7 @@ it.live("applies the work to the same commit there, deletions included", () =>
     const input = {
       archivePath,
       stagingDir,
+      keptBackupsDir: NodePath.join(stagingDir, "..", "kept"),
       root: target,
       head: selection.head,
       deletions: selection.deletions,
@@ -302,6 +312,7 @@ it.live("refuses a checkout on another commit, naming both", () =>
     const refused = yield* applyWorkFiles({
       archivePath,
       stagingDir,
+      keptBackupsDir: NodePath.join(stagingDir, "..", "kept"),
       root: target,
       head: selection.head,
       deletions: [],
@@ -349,6 +360,7 @@ it.live("never overwrites a file with local changes there, and changes nothing",
     const refused = yield* applyWorkFiles({
       archivePath,
       stagingDir,
+      keptBackupsDir: NodePath.join(stagingDir, "..", "kept"),
       root: target,
       head: selection.head,
       deletions: selection.deletions,
@@ -394,6 +406,7 @@ it.live("a write or delete that fails partway puts back every file it changed", 
     const refused = yield* applyWorkFiles({
       archivePath,
       stagingDir,
+      keptBackupsDir: NodePath.join(stagingDir, "..", "kept"),
       root: target,
       head: selection.head,
       deletions: selection.deletions,
@@ -403,6 +416,105 @@ it.live("a write or delete that fails partway puts back every file it changed", 
     expect(NodeFS.readFileSync(NodePath.join(target, "gone.ts"), "utf8")).toBe("gone");
     expect(NodeFS.existsSync(NodePath.join(target, "deep"))).toBe(false);
     expect(git(target, "status", "--porcelain")).toBe("");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("a rollback that cannot put a file back keeps its backup and names where", () =>
+  Effect.gen(function* () {
+    const { source, target, archivePath, stagingDir } = yield* pair({ "ro.ts": "original" });
+    write(source, "ro.ts", "changed");
+    yield* writeArchive(source, ["ro.ts"], archivePath);
+    // Writing fails, and so does putting the backup back.
+    const readOnly = NodePath.join(target, "ro.ts");
+    NodeFS.chmodSync(readOnly, 0o444);
+    yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.chmodSync(readOnly, 0o644)));
+    const keptBackupsDir = NodePath.join(stagingDir, "..", "kept");
+
+    const refused = yield* applyWorkFiles({
+      archivePath,
+      stagingDir,
+      keptBackupsDir,
+      root: target,
+      head: git(source, "rev-parse", "HEAD"),
+      deletions: [],
+    }).pipe(Effect.flip);
+    const [kept] = NodeFS.readdirSync(keptBackupsDir);
+    const keptPath = NodePath.join(keptBackupsDir, kept!);
+    expect(refused.message).toContain("could not put back ro.ts");
+    expect(refused.message).toContain(keptPath);
+    expect(NodeFS.readFileSync(NodePath.join(keptPath, "ro.ts"), "utf8")).toBe("original");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("an apply interrupted after it takes the lock finishes before it ends", () =>
+  Effect.gen(function* () {
+    const { source, target, archivePath, stagingDir } = yield* pair({ "a.ts": "a" });
+    const paths = Array.from({ length: 200 }, (_, index) => `many/${index}.ts`);
+    for (const path of paths) write(source, path, "new");
+    yield* writeArchive(source, paths, archivePath);
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => (locked = resolve));
+    const tracer = Tracer.make({
+      span(options) {
+        if (options.name === "WorkFiles.applyLocked") locked();
+        return new Tracer.NativeSpan(options);
+      },
+    });
+
+    const fiber = yield* applyWorkFiles({
+      archivePath,
+      stagingDir,
+      keptBackupsDir: NodePath.join(stagingDir, "..", "kept"),
+      root: target,
+      head: git(source, "rev-parse", "HEAD"),
+      deletions: [],
+    }).pipe(Effect.withTracer(tracer), Effect.forkChild);
+    yield* Effect.promise(() => lockTaken);
+    // The caller removes staging once this returns, so the copy must be over.
+    yield* Fiber.interrupt(fiber);
+    for (const path of paths) {
+      expect(NodeFS.readFileSync(NodePath.join(target, path), "utf8"), path).toBe("new");
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses deletions from a folder outside git, and secret names from any sender", () =>
+  Effect.gen(function* () {
+    const target = yield* tempDir;
+    const scratch = yield* tempDir;
+    write(target, "a.ts", "a");
+    write(scratch, "empty/keep.ts", "k");
+    const archivePath = NodePath.join(scratch, "work.tgz");
+    yield* writeArchive(NodePath.join(scratch, "empty"), ["keep.ts"], archivePath);
+    const input = {
+      archivePath,
+      stagingDir: NodePath.join(scratch, "staging"),
+      keptBackupsDir: NodePath.join(scratch, "kept"),
+      root: target,
+      head: null,
+      deletions: ["a.ts"],
+    };
+    const outsideGit = yield* applyWorkFiles(input).pipe(Effect.flip);
+    expect(outsideGit.reason).toBe("invalid_archive");
+    expect(NodeFS.readFileSync(NodePath.join(target, "a.ts"), "utf8")).toBe("a");
+
+    const {
+      source,
+      target: checkout,
+      stagingDir,
+    } = yield* pair({
+      "a.ts": "a",
+      "config/.env": "TOKEN=0",
+    });
+    const secret = yield* applyWorkFiles({
+      ...input,
+      stagingDir,
+      root: checkout,
+      head: git(source, "rev-parse", "HEAD"),
+      deletions: ["config/.env"],
+    }).pipe(Effect.flip);
+    expect(secret.reason).toBe("invalid_archive");
+    expect(NodeFS.existsSync(NodePath.join(checkout, "config/.env"))).toBe(true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -423,11 +535,14 @@ it.live("reads non-ASCII and long names from the archive itself", () =>
     expect(selection.files.map((file) => file.path.normalize("NFC")).toSorted()).toEqual(
       [long, prefixed, "café.md"].toSorted(),
     );
-    expect(yield* listArchive(archivePath)).toEqual(selection.files.map((file) => file.path));
+    expect((yield* listArchive(archivePath)).map((file) => file.path)).toEqual(
+      selection.files.map((file) => file.path),
+    );
     expect(
       yield* applyWorkFiles({
         archivePath,
         stagingDir,
+        keptBackupsDir: NodePath.join(stagingDir, "..", "kept"),
         root: target,
         head: selection.head,
         deletions: [],
@@ -449,7 +564,27 @@ it.live("reads non-ASCII and long names from the archive itself", () =>
         ]),
       ),
     );
-    expect(yield* listArchive(gnu)).toEqual([gnuName]);
+    expect((yield* listArchive(gnu)).map((file) => file.path)).toEqual([gnuName]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("refuses a global pax header, which GNU tar applies to every entry after it", () =>
+  Effect.gen(function* () {
+    const dir = yield* tempDir;
+    const archive = NodePath.join(dir, "global.tgz");
+    // Lists as one empty file, yet GNU tar would extract 150 MiB of what follows.
+    NodeFS.writeFileSync(
+      archive,
+      NodeZlib.gzipSync(
+        Buffer.concat([
+          tarEntry("pax_global_header", "g", Buffer.from("18 size=157286400\n")),
+          tarEntry("empty.txt", "0", Buffer.alloc(0)),
+          Buffer.alloc(1024),
+        ]),
+      ),
+    );
+    const refused = yield* listArchive(archive).pipe(Effect.flip);
+    expect(refused.reason).toBe("invalid_archive");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -464,6 +599,7 @@ it.live("refuses an archive that expands past the size limit before extracting i
     const refused = yield* applyWorkFiles({
       archivePath,
       stagingDir,
+      keptBackupsDir: NodePath.join(stagingDir, "..", "kept"),
       root: target,
       head: git(source, "rev-parse", "HEAD"),
       deletions: [],
@@ -488,6 +624,7 @@ it.live("transfers into one checkout apply one at a time", () =>
           return {
             archivePath: NodePath.join(dir, "work.tgz"),
             stagingDir: NodePath.join(dir, "staging"),
+            keptBackupsDir: NodePath.join(dir, "kept"),
             // The same checkout, named another way by every other send.
             root: index % 2 === 0 ? target : `${target}/.`,
             head,

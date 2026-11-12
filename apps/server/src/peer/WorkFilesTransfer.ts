@@ -336,6 +336,7 @@ const make = Effect.gen(function* () {
         const applied = yield* applyWorkFiles({
           archivePath,
           stagingDir,
+          keptBackupsDir: NodePath.join(config.stateDir, "work-files-backups"),
           root: ticket.entry.root,
           head: ticket.entry.head,
           deletions: ticket.entry.deletions,
