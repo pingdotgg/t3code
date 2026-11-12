@@ -642,21 +642,32 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const clearChapterReveal = useChatChapterStore((state) => state.clearReveal);
   // The store request is cleared once the scroll starts, but zen mode must keep the
   // target row visible afterwards, so the target is remembered here for this thread.
+  // It also notes the citation open when it arrived, which stays in the URL after it lands.
   const [revealedChapter, setRevealedChapter] = useState<{
     threadKey: string;
     messageId: MessageId;
+    nonce: number;
+    citationKey: string | null;
   } | null>(null);
   if (
     chapterReveal &&
     chapterReveal.threadKey === routeThreadKey &&
-    (revealedChapter?.threadKey !== routeThreadKey ||
-      revealedChapter.messageId !== chapterReveal.messageId)
+    (revealedChapter?.threadKey !== routeThreadKey || revealedChapter.nonce !== chapterReveal.nonce)
   ) {
-    setRevealedChapter({ threadKey: routeThreadKey, messageId: chapterReveal.messageId });
+    setRevealedChapter({
+      threadKey: routeThreadKey,
+      messageId: chapterReveal.messageId,
+      nonce: chapterReveal.nonce,
+      citationKey: citationRequest?.key ?? null,
+    });
   }
+  // The newer request wins: a chapter outranks the citation it found open, and a citation
+  // activated after the chapter outranks it.
+  const chapterTarget = revealedChapter?.threadKey === routeThreadKey ? revealedChapter : null;
   const revealedMessageId =
-    citationRequest?.citation.messageId ??
-    (revealedChapter?.threadKey === routeThreadKey ? revealedChapter.messageId : null);
+    citationRequest && citationRequest.key !== chapterTarget?.citationKey
+      ? citationRequest.citation.messageId
+      : (chapterTarget?.messageId ?? null);
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
