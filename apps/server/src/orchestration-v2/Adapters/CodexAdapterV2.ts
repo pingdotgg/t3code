@@ -1907,6 +1907,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        // Codex reports MCP startup on thread start, usually before the turn context exists.
+        const mcpStartupFailures = new Map<string, Map<string, string>>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
@@ -2158,6 +2160,45 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           yield* emitGoalUpdate(nativeThreadId);
         });
 
+        const emitMcpStartupFailures = Effect.fn("CodexAdapterV2.emitMcpStartupFailures")(
+          function* (context: ActiveCodexTurnContext) {
+            const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+            if (nativeThreadId == null) return;
+            const failures = mcpStartupFailures.get(nativeThreadId);
+            if (failures === undefined) return;
+            mcpStartupFailures.delete(nativeThreadId);
+            for (const [name, message] of failures) {
+              const nativeItemId = `mcp-startup-failed:${context.providerTurnId}:${name}`;
+              const { ordinal, startedAt } = yield* resolveItemPosition(context, nativeItemId);
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CODEX_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: context.projectionThreadId,
+                  runId: context.projectionRunId,
+                  nodeId: context.providerNodeId,
+                  providerThreadId: context.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: { ...codexNativeItemRef(nativeItemId), strength: "weak" },
+                  parentItemId: null,
+                  ordinal,
+                  type: "system_notice",
+                  status: "completed",
+                  title: `MCP server ${name} failed to start`,
+                  message,
+                  startedAt,
+                  completedAt: startedAt,
+                  updatedAt: startedAt,
+                },
+              });
+            }
+          },
+        );
+
         const releaseGoalUpdates = (nativeThreadId: string) =>
           Effect.suspend(() => {
             goalUpdatesHeld.delete(nativeThreadId);
@@ -2278,6 +2319,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             },
           });
           yield* rememberRootProviderThread(input.turnInput.providerThread);
+          yield* emitMcpStartupFailures(context);
           return context;
         });
 
@@ -4750,6 +4792,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             reroutedTurnModels.set(payload.turnId, payload.toModel);
             reroutedThreads.add(payload.threadId);
           }).pipe(Effect.andThen(updateSubagentSelection(payload.threadId, payload.toModel))),
+        );
+
+        yield* client.handleServerNotification("mcpServer/startupStatus/updated", (payload) =>
+          Effect.gen(function* () {
+            if (payload.threadId == null) return;
+            const failures = mcpStartupFailures.get(payload.threadId) ?? new Map<string, string>();
+            if (payload.status === "failed") {
+              failures.set(
+                payload.name,
+                payload.error?.trim() || `MCP server ${payload.name} failed to start.`,
+              );
+              mcpStartupFailures.set(payload.threadId, failures);
+            } else {
+              failures.delete(payload.name);
+              if (failures.size === 0) mcpStartupFailures.delete(payload.threadId);
+              return;
+            }
+            const context = yield* findActiveTurnByNativeThreadId(payload.threadId);
+            if (context !== undefined) yield* emitMcpStartupFailures(context);
+          }),
         );
 
         yield* client.handleServerNotification("hook/completed", (payload) =>
