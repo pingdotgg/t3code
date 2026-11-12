@@ -430,4 +430,12 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
 
   await marker().click();
   await expect.element(reply()).toHaveValue("Unsent");
+
+  // Collapsed by the reader while open, it folds once it is resolved.
+  await screen.rerender(withThread(false));
+  await card("Open").click();
+  await expect.element(card("Open")).toHaveAttribute("aria-expanded", "false");
+  await screen.rerender(withThread(true));
+  await expect.element(marker()).toBeVisible();
+  await expect.element(card("Resolved")).not.toBeInTheDocument();
 });

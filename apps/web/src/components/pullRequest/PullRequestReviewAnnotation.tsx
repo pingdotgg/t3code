@@ -165,12 +165,13 @@ function ResolvedThreadsMarker({
   );
 }
 
-/** How a conversation on a diff line folds away to its avatar marker. */
+/** A conversation on a diff line: its line owns whether it is expanded or folded to the marker. */
 export interface ReviewThreadFold {
+  readonly expanded: boolean;
   /** Folded cards stay mounted, so an unsent reply survives the fold. */
   readonly folded: boolean;
   readonly focusHeader: boolean;
-  readonly onCollapse: () => void;
+  readonly onToggle: () => void;
 }
 
 /** The conversations on one diff line. Resolved ones show as avatars until opened. */
@@ -181,15 +182,17 @@ export function InlineReviewThreads({
   threads: ReadonlyArray<PullRequestReviewThread>;
   renderThread: (thread: PullRequestReviewThread, fold: ReviewThreadFold) => ReactNode;
 }) {
-  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
+  const [choices, setChoices] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   // Folding swaps the focused control for another, so focus is handed to its replacement.
   const [focus, setFocus] = useState<"marker" | { readonly threadId: string } | null>(null);
-  // A conversation resolved while open stays open until the reader collapses it.
-  const seenOpen = threads.filter((thread) => !thread.isResolved && !opened.has(thread.id));
+  // A conversation seen open starts expanded, so resolving it does not fold it under the reader.
+  const seenOpen = threads.filter((thread) => !thread.isResolved && !choices.has(thread.id));
   if (seenOpen.length > 0) {
-    setOpened(new Set([...opened, ...seenOpen.map((thread) => thread.id)]));
+    setChoices(new Map([...choices, ...seenOpen.map((thread) => [thread.id, true] as const)]));
   }
-  const folded = threads.filter((thread) => thread.isResolved && !opened.has(thread.id));
+  const isExpanded = (thread: PullRequestReviewThread) =>
+    choices.get(thread.id) ?? !thread.isResolved;
+  const folded = threads.filter((thread) => thread.isResolved && !isExpanded(thread));
   return (
     <>
       {folded.length > 0 ? (
@@ -197,18 +200,22 @@ export function InlineReviewThreads({
           threads={folded}
           autoFocus={focus === "marker"}
           onOpen={() => {
-            setOpened(new Set([...opened, ...folded.map((thread) => thread.id)]));
+            setChoices(
+              new Map([...choices, ...folded.map((thread) => [thread.id, true] as const)]),
+            );
             setFocus(folded[0] ? { threadId: folded[0].id } : null);
           }}
         />
       ) : null}
       {threads.map((thread) =>
         renderThread(thread, {
+          expanded: isExpanded(thread),
           folded: folded.includes(thread),
           focusHeader: focus !== null && focus !== "marker" && focus.threadId === thread.id,
-          onCollapse: () => {
-            setOpened((current) => new Set([...current].filter((id) => id !== thread.id)));
-            setFocus("marker");
+          onToggle: () => {
+            const expanded = !isExpanded(thread);
+            setChoices(new Map(choices).set(thread.id, expanded));
+            if (!expanded && thread.isResolved) setFocus("marker");
           },
         }),
       )}
@@ -263,7 +270,8 @@ export function ReviewThreadCard({
   onReacted: () => void;
   fold?: ReviewThreadFold;
 }) {
-  const [expanded, setExpanded] = useState(fold !== undefined || !thread.isResolved);
+  const [ownExpanded, setOwnExpanded] = useState(!thread.isResolved);
+  const expanded = fold?.expanded ?? ownExpanded;
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -355,10 +363,7 @@ export function ReviewThreadCard({
           className="hover:text-foreground"
           aria-expanded={expanded}
           autoFocus={fold?.focusHeader === true}
-          onClick={() => {
-            if (expanded && thread.isResolved && fold) fold.onCollapse();
-            else setExpanded((current) => !current);
-          }}
+          onClick={() => (fold ? fold.onToggle() : setOwnExpanded((current) => !current))}
         >
           {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
           {commentCount === 1 ? "comment" : "comments"}
