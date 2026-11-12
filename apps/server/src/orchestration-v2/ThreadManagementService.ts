@@ -42,6 +42,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -328,6 +329,51 @@ export class ThreadManagementProviderInstanceDisabledError extends Schema.Tagged
   }
 }
 
+export class ThreadManagementMcpServerError extends Schema.TaggedError<ThreadManagementMcpServerError>()(
+  "ThreadManagementMcpServerError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals([
+      "unsupported",
+      "callback-unsupported",
+      "invalid-link",
+      "unavailable",
+      "failed",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "unsupported":
+        return "This provider cannot sign in to MCP servers for the agent.";
+      case "invalid-link":
+        return "The sign-in link was not an http(s) address, so it was not shown.";
+      case "callback-unsupported":
+        return "This provider finishes sign-in on its own; there is no callback URL to submit.";
+      case "unavailable":
+        return "This thread has no live provider session.";
+      case "failed":
+        return this.cause instanceof Error ? this.cause.message : "The MCP server request failed.";
+    }
+  }
+}
+
+export type ThreadManagementMcpServerRequest =
+  | { readonly action: "list" }
+  | { readonly action: "authenticate" | "reconnect"; readonly server: string }
+  | { readonly action: "callback"; readonly server: string; readonly callbackUrl: string };
+
+export type ThreadManagementMcpServerResult =
+  | {
+      readonly servers: ReadonlyArray<{
+        readonly name: string;
+        readonly status: ProviderAdapter.ProviderAdapterV2McpServerStatus;
+      }>;
+    }
+  | { readonly authorizationUrl?: string; readonly callbackExpected: boolean }
+  | Record<string, never>;
+
 export class ThreadManagementBackgroundWaitError extends Schema.TaggedError<ThreadManagementBackgroundWaitError>()(
   "ThreadManagementBackgroundWaitError",
   {
@@ -487,6 +533,9 @@ export interface ThreadManagementServiceShape {
     { readonly matched: ReadonlyArray<string>; readonly unmatched: ReadonlyArray<string> },
     ThreadManagementBackgroundWaitError
   >;
+  readonly manageMcpServer: (
+    input: { readonly threadId: ThreadId } & ThreadManagementMcpServerRequest,
+  ) => Effect.Effect<ThreadManagementMcpServerResult, ThreadManagementMcpServerError>;
   readonly stopDelegatedTasks: (input: {
     readonly remoteDispatch?: Orchestrator.OrchestratorV2["Service"]["dispatch"];
     readonly threadId: ThreadId;
@@ -1458,6 +1507,22 @@ const make = Effect.gen(function* () {
     (effect, input) => effect.pipe((effect) => threadDispatch.withLock(input.threadId, effect)),
   );
 
+  const findLiveRuntime = Effect.fn("ThreadManagementService.findLiveRuntime")(function* (
+    threadId: ThreadId,
+  ) {
+    const records = yield* orchestrator.getThreadRecords(threadId, ["providerThreads"]);
+    const providerThread = records.providerThreads.find(
+      (candidate) =>
+        candidate.id === records.thread.activeProviderThreadId &&
+        candidate.appThreadId === threadId,
+    );
+    if (records.thread.deletedAt !== null || providerThread?.providerSessionId == null) {
+      return Option.none();
+    }
+    const runtime = yield* sessions.get(providerThread.providerSessionId);
+    return Option.map(runtime, (live) => ({ providerThread, runtime: live }));
+  });
+
   const awaitBackgroundTasks: ThreadManagementServiceShape["awaitBackgroundTasks"] = Effect.fn(
     "ThreadManagementService.awaitBackgroundTasks",
   )(function* (input) {
@@ -1467,30 +1532,18 @@ const make = Effect.gen(function* () {
         reason: "unavailable",
         ...(cause === undefined ? {} : { cause }),
       });
-    const records = yield* orchestrator
-      .getThreadRecords(input.threadId, ["providerThreads"])
-      .pipe(Effect.mapError(unavailable));
-    const providerThread = records.providerThreads.find(
-      (candidate) =>
-        candidate.id === records.thread.activeProviderThreadId &&
-        candidate.appThreadId === input.threadId,
-    );
-    if (records.thread.deletedAt !== null || providerThread?.providerSessionId == null) {
+    const live = yield* findLiveRuntime(input.threadId).pipe(Effect.mapError(unavailable));
+    if (Option.isNone(live)) {
       return yield* unavailable();
     }
-    const runtime = yield* sessions
-      .get(providerThread.providerSessionId)
-      .pipe(Effect.mapError(unavailable));
-    if (Option.isNone(runtime)) {
-      return yield* unavailable();
-    }
-    if (runtime.value.awaitBackgroundTasks === undefined) {
+    const { providerThread, runtime } = live.value;
+    if (runtime.awaitBackgroundTasks === undefined) {
       return yield* new ThreadManagementBackgroundWaitError({
         threadId: input.threadId,
         reason: "unsupported",
       });
     }
-    const { matched } = yield* runtime.value
+    const { matched } = yield* runtime
       .awaitBackgroundTasks({ providerThread, taskIds: input.taskIds, awaited: input.awaited })
       .pipe(
         Effect.timeout("15 seconds"),
@@ -1505,6 +1558,60 @@ const make = Effect.gen(function* () {
       );
     const matchedIds = new Set(matched);
     return { matched, unmatched: input.taskIds.filter((taskId) => !matchedIds.has(taskId)) };
+  });
+
+  const manageMcpServer: ThreadManagementServiceShape["manageMcpServer"] = Effect.fn(
+    "ThreadManagementService.manageMcpServer",
+  )(function* (input) {
+    const error = (reason: ThreadManagementMcpServerError["reason"], cause?: unknown) =>
+      new ThreadManagementMcpServerError({
+        threadId: input.threadId,
+        reason,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const live = yield* findLiveRuntime(input.threadId).pipe(
+      Effect.mapError((cause) => error("unavailable", cause)),
+    );
+    if (Option.isNone(live)) return yield* error("unavailable");
+    const { providerThread, runtime } = live.value;
+    const auth = runtime.mcpServerAuth;
+    if (auth === undefined) return yield* error("unsupported");
+    const run = <A>(effect: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>) =>
+      effect.pipe(
+        Effect.timeout("30 seconds"),
+        Effect.mapError((cause) => error("failed", cause)),
+      );
+    switch (input.action) {
+      case "list":
+        return { servers: yield* run(auth.list({ providerThread })) };
+      case "authenticate": {
+        const result = yield* run(auth.authenticate({ providerThread, server: input.server }));
+        // The link comes from the MCP server's own OAuth metadata; only a browser link is safe to show.
+        if (result.authorizationUrl !== undefined) {
+          const link = URL.canParse(result.authorizationUrl)
+            ? new URL(result.authorizationUrl)
+            : null;
+          if (link === null || !/^https?:$/.test(link.protocol) || link.host === "") {
+            return yield* error("invalid-link");
+          }
+        }
+        return result;
+      }
+      case "callback": {
+        if (auth.submitCallback === undefined) return yield* error("callback-unsupported");
+        yield* run(
+          auth.submitCallback({
+            providerThread,
+            server: input.server,
+            callbackUrl: input.callbackUrl,
+          }),
+        );
+        return {};
+      }
+      case "reconnect":
+        yield* run(auth.reconnect({ providerThread, server: input.server }));
+        return {};
+    }
   });
 
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
@@ -1668,6 +1775,7 @@ const make = Effect.gen(function* () {
     stopWorkflow,
     forceStopThread,
     awaitBackgroundTasks,
+    manageMcpServer,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,
     cancelDelegatedTask: orchestrator.cancelDelegatedTask,

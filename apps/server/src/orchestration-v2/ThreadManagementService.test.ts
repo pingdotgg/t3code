@@ -462,40 +462,76 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
   }),
 );
 
+const liveRuntimeFixture = Effect.fn("liveRuntimeFixture")(function* (
+  name: string,
+  session: "live" | "no-session",
+  runtimeMembers: Record<string, unknown>,
+) {
+  const threadId = ThreadId.make(`thread:${name}`);
+  const providerThreadId = ProviderThreadId.make(`provider-thread:${name}`);
+  const providerSessionId = ProviderSessionId.make(`provider-session:${name}`);
+  const driver = ProviderDriverKind.make("claudeAgent");
+  const now = yield* DateTime.now;
+  const providerThread: OrchestrationV2ProviderThread = {
+    id: providerThreadId,
+    driver,
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    providerSessionId,
+    appThreadId: threadId,
+    ownerNodeId: null,
+    nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 1,
+    handoffIds: [],
+    forkedFrom: null,
+    pendingBackgroundTasks: [{ taskId: "tests", kind: "command" }],
+    contextUsage: null,
+    nativeMetadata: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const runtime = {
+    driver,
+    providerSessionId,
+    ...runtimeMembers,
+  } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, deletedAt: null, activeProviderThreadId: providerThreadId },
+              providerThreads: [providerThread],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          get: () =>
+            Effect.succeed(session === "no-session" ? Option.none() : Option.some(runtime)),
+        }),
+      ),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+  );
+  return {
+    threadId,
+    providerThreadId,
+    provide: Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)),
+  };
+});
+
 it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
   "marks background work awaited on the thread's active provider thread with state %s",
   (state) =>
     Effect.gen(function* () {
-      const threadId = ThreadId.make("thread:background-wait");
-      const providerThreadId = ProviderThreadId.make("provider-thread:background-wait");
-      const providerSessionId = ProviderSessionId.make("provider-session:background-wait");
-      const driver = ProviderDriverKind.make("claudeAgent");
-      const now = yield* DateTime.now;
-      const providerThread: OrchestrationV2ProviderThread = {
-        id: providerThreadId,
-        driver,
-        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-        providerSessionId,
-        appThreadId: threadId,
-        ownerNodeId: null,
-        nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
-        nativeConversationHeadRef: null,
-        status: "idle",
-        firstRunOrdinal: 1,
-        lastRunOrdinal: 1,
-        handoffIds: [],
-        forkedFrom: null,
-        pendingBackgroundTasks: [{ taskId: "tests", kind: "command" }],
-        contextUsage: null,
-        nativeMetadata: null,
-        createdAt: now,
-        updatedAt: now,
-      };
       const calls: Array<{ providerThreadId: ProviderThreadId; awaited: boolean }> = [];
-      const runtime = {
-        driver,
-        providerSessionId,
-        ...(state === "unsupported-runtime"
+      const { threadId, providerThreadId, provide } = yield* liveRuntimeFixture(
+        "background-wait",
+        state === "no-session" ? "no-session" : "live",
+        state === "unsupported-runtime"
           ? {}
           : {
               awaitBackgroundTasks: (input: {
@@ -510,37 +546,14 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
                   });
                   return { matched: input.taskIds.filter((taskId) => taskId === "tests") };
                 }),
-            }),
-      } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
-      const layerTest = ThreadManagementService.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.mock(Orchestrator.OrchestratorV2)({
-              getThreadRecords: () =>
-                Effect.succeed({
-                  thread: {
-                    id: threadId,
-                    deletedAt: null,
-                    activeProviderThreadId: providerThreadId,
-                  },
-                  providerThreads: [providerThread],
-                } as unknown as OrchestrationV2ThreadProjection),
-            }),
-            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-              get: () =>
-                Effect.succeed(state === "no-session" ? Option.none() : Option.some(runtime)),
-            }),
-          ),
-        ),
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(layerReceiptsTest),
+            },
       );
       const result = yield* Effect.gen(function* () {
         const service = yield* ThreadManagementService.ThreadManagementService;
         return yield* service
           .awaitBackgroundTasks({ threadId, taskIds: ["tests", "finished"], awaited: true })
           .pipe(Effect.result);
-      }).pipe(Effect.provide(Layer.merge(layerTest, ThreadCommandExecutor.layer)));
+      }).pipe(provide);
 
       if (state === "live") {
         expect(result).toMatchObject({
@@ -557,6 +570,125 @@ it.effect.each(["live", "no-session", "unsupported-runtime"] as const)(
         expect(calls).toEqual([]);
       }
     }),
+);
+
+it.effect.each([
+  { state: "no-session" as const, reason: "unavailable" },
+  { state: "unsupported-runtime" as const, reason: "unsupported" },
+  { state: "no-callback" as const, reason: "callback-unsupported" },
+])("manageMcpServer reports $reason when the runtime state is $state", ({ state, reason }) =>
+  Effect.gen(function* () {
+    const { threadId, provide } = yield* liveRuntimeFixture(
+      "mcp-server",
+      state === "no-session" ? "no-session" : "live",
+      state === "unsupported-runtime"
+        ? {}
+        : {
+            mcpServerAuth: {
+              list: () => Effect.succeed([]),
+              authenticate: () => Effect.die("unexpected authenticate"),
+              reconnect: () => Effect.die("unexpected reconnect"),
+            },
+          },
+    );
+    const result = yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      return yield* service
+        .manageMcpServer({
+          threadId,
+          action: "callback",
+          server: "linear",
+          callbackUrl: "http://localhost:1/callback?code=c",
+        })
+        .pipe(Effect.result);
+    }).pipe(provide);
+
+    expect(result).toMatchObject({
+      failure: { _tag: "ThreadManagementMcpServerError", reason },
+    });
+  }),
+);
+
+it.effect.each(["javascript:alert(1)", "https://", "not a link"])(
+  "manageMcpServer refuses the sign-in link %s",
+  (authorizationUrl) =>
+    Effect.gen(function* () {
+      const { threadId, provide } = yield* liveRuntimeFixture("mcp-server-link", "live", {
+        mcpServerAuth: {
+          list: () => Effect.succeed([]),
+          authenticate: () => Effect.succeed({ authorizationUrl, callbackExpected: false }),
+          reconnect: () => Effect.die("unexpected reconnect"),
+        },
+      });
+      const result = yield* Effect.gen(function* () {
+        const service = yield* ThreadManagementService.ThreadManagementService;
+        return yield* service
+          .manageMcpServer({ threadId, action: "authenticate", server: "linear" })
+          .pipe(Effect.result);
+      }).pipe(provide);
+      expect(result).toMatchObject({
+        failure: { _tag: "ThreadManagementMcpServerError", reason: "invalid-link" },
+      });
+    }),
+);
+
+it.effect("manageMcpServer routes each action to the thread's active provider thread", () =>
+  Effect.gen(function* () {
+    const calls: Array<unknown> = [];
+    const record =
+      <A>(label: string, value: A) =>
+      (input: { readonly providerThread: OrchestrationV2ProviderThread }) =>
+        Effect.sync(() => {
+          calls.push([label, input.providerThread.id, { ...input, providerThread: undefined }]);
+          return value;
+        });
+    const { threadId, providerThreadId, provide } = yield* liveRuntimeFixture(
+      "mcp-server-live",
+      "live",
+      {
+        mcpServerAuth: {
+          list: record("list", [{ name: "linear", status: "needs-auth" }]),
+          authenticate: record("authenticate", {
+            authorizationUrl: "https://linear.example/authorize",
+            callbackExpected: true,
+          }),
+          submitCallback: record("callback", undefined),
+          reconnect: record("reconnect", undefined),
+        },
+      },
+    );
+    const results = yield* Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      return [
+        yield* service.manageMcpServer({ threadId, action: "list" }),
+        yield* service.manageMcpServer({ threadId, action: "authenticate", server: "linear" }),
+        yield* service.manageMcpServer({
+          threadId,
+          action: "callback",
+          server: "linear",
+          callbackUrl: "http://localhost:1/callback?code=c",
+        }),
+        yield* service.manageMcpServer({ threadId, action: "reconnect", server: "linear" }),
+      ];
+    }).pipe(provide);
+
+    expect(results).toEqual([
+      { servers: [{ name: "linear", status: "needs-auth" }] },
+      { authorizationUrl: "https://linear.example/authorize", callbackExpected: true },
+      {},
+      {},
+    ]);
+    expect(calls).toEqual([
+      ["list", providerThreadId, {}],
+      ["authenticate", providerThreadId, { server: "linear" }],
+      [
+        "callback",
+        providerThreadId,
+        { server: "linear", callbackUrl: "http://localhost:1/callback?code=c" },
+      ],
+      ["reconnect", providerThreadId, { server: "linear" }],
+    ]);
+  }),
 );
 
 it.effect.each([

@@ -650,6 +650,45 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
+export type ProviderAdapterV2McpServerStatus =
+  | "connected"
+  | "needs-auth"
+  | "failed"
+  | "pending"
+  | "disabled";
+
+/** Sign-in for MCP servers the provider runs itself. The provider keeps the pending sign-in; T3 holds no tokens. */
+export interface ProviderAdapterV2McpServerAuth {
+  /** Name and status only: tool lists and error text can echo headers. */
+  readonly list: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<
+    ReadonlyArray<{ readonly name: string; readonly status: ProviderAdapterV2McpServerStatus }>,
+    ProviderAdapterV2Error
+  >;
+  /**
+   * No `authorizationUrl` means sign-in finished without the user.
+   * `callbackExpected`: the browser returns to a listener the user's browser may not reach; see `submitCallback`.
+   */
+  readonly authenticate: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<
+    { readonly authorizationUrl?: string; readonly callbackExpected: boolean },
+    ProviderAdapterV2Error
+  >;
+  /** Absent when the provider only completes sign-in through its own listener. */
+  readonly submitCallback?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+    readonly callbackUrl: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  readonly reconnect: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+}
+
 export type ProviderAdapterV2SubagentOutcome = {
   readonly status: "completed" | "failed" | "cancelled";
   readonly completedAt: NonNullable<OrchestrationV2Subagent["completedAt"]>;
@@ -749,6 +788,8 @@ export interface ProviderAdapterV2SessionRuntime {
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
   /** Absent means non-interactive apps with plain tool rows. */
   readonly mcpApps?: ProviderAdapterV2McpApps;
+  /** Absent means the provider cannot sign in to MCP servers for the agent. */
+  readonly mcpServerAuth?: ProviderAdapterV2McpServerAuth;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

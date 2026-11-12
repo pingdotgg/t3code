@@ -109,6 +109,16 @@ To show Claude task lists in the web and desktop apps, add
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step.
 
+## Sign in to MCP servers
+
+When an MCP server shows `needs-auth`, ask Claude to sign in to it. Claude
+replies with a link; open it and log in. If your browser runs on another machine
+than the T3 Code environment, copy the address it ends on after login and paste it
+back in the thread. There is no need to run `/mcp` in a terminal. Codex threads
+sign in the same way, but there is no address to paste back; see
+[Sign in to MCP servers](providers-codex.md#sign-in-to-mcp-servers) for remote
+access.
+
 ## Claude in Chrome
 
 Claude threads can use the Claude in Chrome extension, which works in your own

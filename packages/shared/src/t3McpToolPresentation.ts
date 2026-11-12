@@ -23,6 +23,7 @@ export type T3McpToolSummaryAction =
   | "thread-interrupt"
   | "workflow-stop"
   | "background-wait"
+  | "mcp-server"
   | "thread-configuration"
   | "thread-configure"
   | "thread-fork"
@@ -176,6 +177,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "background waits"],
     "background-wait",
   ),
+  t3_mcp_server: tool(["Manage", "Managing", "Managed", "MCP server sign-in"], "mcp-server"),
   t3_thread_interrupt: tool(
     ["Interrupt", "Interrupting", "Requested an interrupt of", "a T3 thread"],
     "thread-interrupt",

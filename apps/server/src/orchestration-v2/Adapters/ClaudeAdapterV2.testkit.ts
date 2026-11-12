@@ -47,6 +47,12 @@ import {
 } from "../testkit/ProviderReplayHarness.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 
+export const unexpectedClaudeMcpAuth = {
+  authenticate: () => Effect.die("unexpected MCP authenticate"),
+  submitCallback: () => Effect.die("unexpected MCP callback"),
+  reconnect: () => Effect.die("unexpected MCP reconnect"),
+} satisfies ClaudeAdapterV2.ClaudeAgentSdkQuerySession["mcpAuth"];
+
 export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as const;
 export const claudeBackgroundWakeResultLabel = (wakeNumber: number) =>
   `result:background-wake:${wakeNumber}`;
@@ -850,6 +856,7 @@ function makeReplayQueryRunner(
         mcpServerStatus: Effect.die("unexpected MCP server status in replay"),
         readMcpResource: () => Effect.die("unexpected MCP resource read in replay"),
         callMcpTool: () => Effect.die("unexpected MCP tool call in replay"),
+        mcpAuth: unexpectedClaudeMcpAuth,
         listPermissionRules: Effect.die("unexpected permission rules read in replay"),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });

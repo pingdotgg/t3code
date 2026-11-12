@@ -346,6 +346,31 @@ export const CodexProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+const CODEX_MCP_SERVER_LIST_MAX_PAGES = 20;
+
+export function codexMcpServerStatus(server: {
+  readonly authStatus: string;
+  readonly runtimeStatus?: string | null;
+  readonly toolsError?: string | null;
+}): ProviderAdapter.ProviderAdapterV2McpServerStatus {
+  switch (server.runtimeStatus) {
+    case "connected":
+      return "connected";
+    case "authenticationRequired":
+      return "needs-auth";
+    case "failed":
+    case "cancelled":
+      return "failed";
+    case "starting":
+    case "notStarted":
+      return "pending";
+    case "disabled":
+      return "disabled";
+  }
+  if (server.authStatus === "notLoggedIn") return "needs-auth";
+  return server.toolsError == null ? "connected" : "failed";
+}
+
 function toProtocolError(
   detail: string,
   payload?: unknown,
@@ -7517,6 +7542,61 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         };
 
+        const mcpServerAuthError = (action: string) => (cause: unknown) =>
+          new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CODEX_PROVIDER,
+            detail: `Codex could not ${action}`,
+            cause,
+          });
+        // Sign-in finishes in the app-server's own loopback listener, so there is no callback to submit.
+        const mcpServerAuth: ProviderAdapter.ProviderAdapterV2McpServerAuth = {
+          list: Effect.fn("CodexAdapterV2.listMcpServers")(
+            function* ({ providerThread }) {
+              const threadId = yield* getNativeThreadId(providerThread);
+              yield* ensureInitialized;
+              const servers: Array<{
+                readonly name: string;
+                readonly status: ProviderAdapter.ProviderAdapterV2McpServerStatus;
+              }> = [];
+              let cursor: string | undefined;
+              for (let page = 0; page < CODEX_MCP_SERVER_LIST_MAX_PAGES; page++) {
+                const response = yield* client.request("mcpServerStatus/list", {
+                  threadId,
+                  detail: "toolsAndAuthOnly",
+                  ...(cursor === undefined ? {} : { cursor }),
+                });
+                for (const server of response.data) {
+                  servers.push({ name: server.name, status: codexMcpServerStatus(server) });
+                }
+                if (response.nextCursor == null) break;
+                cursor = response.nextCursor;
+              }
+              return servers;
+            },
+            Effect.mapError(mcpServerAuthError("list MCP servers")),
+          ),
+          authenticate: Effect.fn("CodexAdapterV2.authenticateMcpServer")(
+            function* ({ providerThread, server }) {
+              const threadId = yield* getNativeThreadId(providerThread);
+              yield* ensureInitialized;
+              const { authorizationUrl } = yield* client.request("mcpServer/oauth/login", {
+                name: server,
+                threadId,
+              });
+              return { authorizationUrl, callbackExpected: false };
+            },
+            Effect.mapError(mcpServerAuthError("start MCP sign-in")),
+          ),
+          // Codex reloads every server's config on loaded threads for their next turn; it has no per-server reconnect.
+          reconnect: Effect.fn("CodexAdapterV2.reloadMcpServers")(
+            function* () {
+              yield* ensureInitialized;
+              yield* client.request("config/mcpServer/reload", undefined);
+            },
+            Effect.mapError(mcpServerAuthError("reload MCP servers")),
+          ),
+        };
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
@@ -8334,6 +8414,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           ),
           mcpApps,
+          mcpServerAuth,
           readThreadSnapshot: Effect.fn("CodexAdapterV2.readThreadSnapshot")(
             function* (threadInput) {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);

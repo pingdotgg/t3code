@@ -908,6 +908,71 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
     ),
 );
 
+it.effect("t3_mcp_server checks its input and returns the service result", () => {
+  const signInLink = "https://linear.example/authorize";
+  const requests: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (args: Record<string, unknown>) =>
+      server
+        .callTool({ name: "t3_mcp_server", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    expect(declaredFailure(yield* call({ action: "authenticate" }))).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(
+      declaredFailure(yield* call({ action: "callback", server: "linear", callbackUrl: "oops" })),
+    ).toMatchObject({ code: "invalid_request" });
+    expect(requests).toEqual([]);
+
+    expect((yield* call({ action: "list" })).structuredContent).toEqual({
+      servers: [{ name: "linear", status: "needs-auth" }],
+    });
+    expect((yield* call({ action: "authenticate", server: "linear" })).structuredContent).toEqual({
+      authorizationUrl: signInLink,
+      callbackExpected: true,
+    });
+    expect(requests).toEqual([
+      { threadId, action: "list" },
+      { threadId, action: "authenticate", server: "linear" },
+    ]);
+  }).pipe(
+    Effect.provide(
+      layerOrchestratorToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { runtimeMode: "auto" })),
+            manageMcpServer: (input) =>
+              Effect.sync(() => {
+                requests.push(input);
+                return input.action === "list"
+                  ? { servers: [{ name: "linear", status: "needs-auth" as const }] }
+                  : { authorizationUrl: signInLink, callbackExpected: true };
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+        Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+      ),
+    ),
+  );
+});
+
 it.effect("discovers workflow stop targets and requires orchestration capability", () => {
   const threadId = ThreadId.make("workflow-parent");
   const shell = McpToolAccessTestkit.liveThreadShell(threadId);

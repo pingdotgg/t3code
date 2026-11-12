@@ -89,6 +89,24 @@ const isProviderAdapterEventStreamError = Schema.is(
 );
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
+describe("CodexAdapterV2 MCP server status", () => {
+  it.each([
+    [{ authStatus: "oAuth", runtimeStatus: "connected" }, "connected"],
+    [{ authStatus: "oAuth", runtimeStatus: "authenticationRequired" }, "needs-auth"],
+    [{ authStatus: "notLoggedIn", runtimeStatus: "failed" }, "failed"],
+    [{ authStatus: "oAuth", runtimeStatus: "cancelled" }, "failed"],
+    [{ authStatus: "oAuth", runtimeStatus: "starting" }, "pending"],
+    [{ authStatus: "oAuth", runtimeStatus: "notStarted" }, "pending"],
+    [{ authStatus: "oAuth", runtimeStatus: "disabled" }, "disabled"],
+    // `toolsAndAuthOnly` may omit the runtime status; auth and the tool listing decide.
+    [{ authStatus: "notLoggedIn" }, "needs-auth"],
+    [{ authStatus: "oAuth", toolsError: "boom" }, "failed"],
+    [{ authStatus: "bearerToken", runtimeStatus: null }, "connected"],
+  ] as const)("maps %j to %s", (server, status) => {
+    assert.equal(CodexAdapterV2.codexMcpServerStatus(server), status);
+  });
+});
+
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
     const usage = CodexAdapterV2.codexProviderTurnTokenUsage(

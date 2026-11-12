@@ -44,6 +44,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { unexpectedClaudeMcpAuth } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
@@ -174,6 +175,7 @@ it.effect.each(deliveries)(
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                mcpAuth: unexpectedClaudeMcpAuth,
                 listPermissionRules: Effect.die("unexpected permission rules read"),
                 stopTask: () => Effect.void,
                 interrupt: Effect.die("automatic delivery must never interrupt"),

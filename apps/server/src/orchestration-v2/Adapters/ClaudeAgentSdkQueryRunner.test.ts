@@ -330,6 +330,60 @@ it.effect.each([
   ),
 );
 
+it.effect("sends MCP sign-in as the control requests the Claude CLI serves", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const requests: Array<unknown> = [];
+      const reconnectMcpServer = vi.fn(async () => undefined);
+      const querySpy = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            close: vi.fn(),
+            reconnectMcpServer,
+            request: async (request: { readonly serverName: string }) => {
+              requests.push(request);
+              return {
+                response:
+                  request.serverName === "signed-in"
+                    ? { requiresUserAction: false, callbackExpected: false }
+                    : { authUrl: "https://linear.example/authorize", callbackExpected: true },
+              };
+            },
+          }) as unknown as ClaudeSdk.Query,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+      const session = yield* runner.open({ ...resumedMcpQueryInput, options });
+      yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+
+      assert.deepEqual(yield* session.mcpAuth.authenticate("linear"), {
+        authUrl: "https://linear.example/authorize",
+        callbackExpected: true,
+      });
+      assert.deepEqual(yield* session.mcpAuth.authenticate("signed-in"), {
+        callbackExpected: false,
+      });
+      yield* session.mcpAuth.submitCallback({
+        server: "linear",
+        callbackUrl: "http://localhost:1/callback?code=c",
+      });
+      yield* session.mcpAuth.reconnect("linear");
+
+      assert.deepEqual(requests, [
+        { subtype: "mcp_authenticate", serverName: "linear" },
+        { subtype: "mcp_authenticate", serverName: "signed-in" },
+        {
+          subtype: "mcp_oauth_callback_url",
+          serverName: "linear",
+          callbackUrl: "http://localhost:1/callback?code=c",
+        },
+      ]);
+      assert.deepEqual(reconnectMcpServer.mock.calls, [["linear"]]);
+    }).pipe(Effect.provide(realQueryRunner)),
+  ),
+);
+
 it.effect.each([true, false])("only retries after confirmed process exit: %s", (exits) =>
   Effect.scoped(
     Effect.gen(function* () {
