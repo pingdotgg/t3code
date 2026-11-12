@@ -22,6 +22,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -374,7 +375,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             expect(yield* listCount).toBe(2);
           }),
       );
-    }),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("drops the requested model's options when falling back to another model", () =>
