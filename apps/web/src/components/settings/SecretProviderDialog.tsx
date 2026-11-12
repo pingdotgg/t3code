@@ -1,4 +1,11 @@
-import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import type {
+  EnvironmentId,
+  SecretProviderConfig,
+  SecretProviderConfigChoice,
+  SecretProviderId,
+} from "@t3tools/contracts";
+import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import * as Result from "effect/Result";
 import { useState } from "react";
 
@@ -25,10 +32,14 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import {
+  DRAFT_SECRET_PROVIDER_KIND,
   draftFromSecretProvider,
   secretProviderFromDraft,
   type SecretProviderDraft,
 } from "./SecretProviderDialog.logic";
+
+const ACCOUNT_FIELD = "account";
+const NO_CHOICES: ReadonlyArray<SecretProviderConfigChoice> = [];
 
 /** Mounted per open, so each open starts from a fresh draft. */
 export function SecretProviderDialog({
@@ -58,10 +69,23 @@ export function SecretProviderDialog({
   const nameError = submitted ? issues.name : undefined;
   const accountError = submitted ? issues.account : undefined;
 
-  const accounts = useEnvironmentQuery(
-    serverEnvironment.onePasswordAccounts({ environmentId, input: {} }),
+  const kind = existing?.config.kind ?? DRAFT_SECRET_PROVIDER_KIND;
+  const discoverable =
+    builtInSecretProviderDefinitions
+      .find(kind)
+      ?.discoverableConfigFields?.includes(ACCOUNT_FIELD) === true;
+  const canListChoices = useAtomValue(
+    serverEnvironment.listSecretProviderConfigChoices.permissionAtom(environmentId),
   );
-  const listedAccounts = accounts.data ?? [];
+  const choices = useEnvironmentQuery(
+    discoverable && canListChoices
+      ? serverEnvironment.secretProviderConfigChoices({
+          environmentId,
+          input: { kind, field: ACCOUNT_FIELD },
+        })
+      : null,
+  );
+  const listedAccounts = choices.data ?? NO_CHOICES;
 
   const update = (patch: Partial<SecretProviderDraft>) => setDraft({ ...draft, ...patch });
   const save = () => {
@@ -123,42 +147,57 @@ export function SecretProviderDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="secret-provider-account">Account</Label>
-              <Autocomplete
-                items={listedAccounts}
-                itemToStringValue={(item) => item.account}
-                mode="none"
-                openOnInputClick
-                value={draft.account}
-                onValueChange={(account) => update({ account })}
-              >
-                <AutocompleteInput
+              {discoverable ? (
+                <Autocomplete
+                  items={listedAccounts}
+                  itemToStringValue={(item) => item.value}
+                  mode="none"
+                  openOnInputClick
+                  value={draft.account}
+                  onValueChange={(account) => update({ account })}
+                >
+                  <AutocompleteInput
+                    id="secret-provider-account"
+                    placeholder="my.1password.com"
+                    maxLength={253}
+                    spellCheck={false}
+                    showTrigger={listedAccounts.length > 0}
+                    aria-invalid={accountError !== undefined}
+                    aria-describedby={
+                      accountError !== undefined ? "secret-provider-account-error" : undefined
+                    }
+                  />
+                  {listedAccounts.length > 0 ? (
+                    <AutocompletePopup className="w-(--anchor-width)">
+                      <AutocompleteList>
+                        {listedAccounts.map((item) => (
+                          <AutocompleteItem key={item.value} value={item}>
+                            <span className="min-w-0 max-w-2/3 truncate text-sm font-medium">
+                              {item.label}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                              {item.description}
+                            </span>
+                          </AutocompleteItem>
+                        ))}
+                      </AutocompleteList>
+                    </AutocompletePopup>
+                  ) : null}
+                </Autocomplete>
+              ) : (
+                <Input
                   id="secret-provider-account"
                   placeholder="my.1password.com"
+                  value={draft.account}
+                  onChange={(event) => update({ account: event.target.value })}
                   maxLength={253}
                   spellCheck={false}
-                  showTrigger={listedAccounts.length > 0}
                   aria-invalid={accountError !== undefined}
                   aria-describedby={
                     accountError !== undefined ? "secret-provider-account-error" : undefined
                   }
                 />
-                {listedAccounts.length > 0 ? (
-                  <AutocompletePopup className="w-(--anchor-width)">
-                    <AutocompleteList>
-                      {listedAccounts.map((item) => (
-                        <AutocompleteItem key={item.account} value={item}>
-                          <span className="min-w-0 max-w-2/3 truncate text-sm font-medium">
-                            {item.address}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                            {item.email}
-                          </span>
-                        </AutocompleteItem>
-                      ))}
-                    </AutocompleteList>
-                  </AutocompletePopup>
-                ) : null}
-              </Autocomplete>
+              )}
               {accountError !== undefined ? (
                 <p
                   id="secret-provider-account-error"
@@ -169,8 +208,9 @@ export function SecretProviderDialog({
                 </p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                Accounts the op CLI on that server knows are suggested. Type any other shorthand,
-                sign-in address without https://, or ID.
+                {discoverable
+                  ? "Accounts the op CLI on that server knows are suggested. Type any other shorthand, sign-in address without https://, or ID."
+                  : "The account shorthand, sign-in address without https://, or ID that op account list shows."}
               </p>
             </div>
           </form>
