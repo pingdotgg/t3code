@@ -233,6 +233,36 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("lists merge requests whose descriptions exceed the default output cap", () =>
+    Effect.gen(function* () {
+      const response = JSON.stringify(
+        JSON.parse(mergeRequests(2, 1)).map((row: object) => ({
+          ...row,
+          description: "release notes ".repeat(45_000),
+        })),
+      );
+      mockedExecute.mockImplementationOnce(({ maxOutputBytes }) => {
+        // VcsProcess truncates stdout at 1,000,000 bytes unless the caller raises the cap.
+        const ceiling = maxOutputBytes ?? 1_000_000;
+        return Effect.succeed(
+          ceiling >= response.length ? output(response) : output(response.slice(0, ceiling), true),
+        );
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const batch = yield* cli.listMergeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 25,
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
+    }),
+  );
+
   it.effect("walks pages at a fixed size, because GitLab pages by offset", () =>
     Effect.gen(function* () {
       mockedExecute
