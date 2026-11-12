@@ -1810,7 +1810,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectId: activeProjectId,
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
-    draftText: prompt,
     disabled: dictationDisabled,
     readDraft: () => {
       const snapshot = readComposerSnapshot();
