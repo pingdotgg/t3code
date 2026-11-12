@@ -14,7 +14,6 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 
-/** Glimmer throughout generation; pause while hidden, backgrounded, or motion is reduced. */
 export function GuideGeneratingHeading({
   rewriting = false,
   visible = true,
@@ -50,7 +49,7 @@ export function GuideGeneratingHeading({
     progress.set(0);
     if (reduceMotion || !active || !focused || !visible || !width) return;
     progress.set(
-      withRepeat(withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.ease) }), -1),
+      withRepeat(withTiming(1, { duration: 2400, easing: Easing.inOut(Easing.ease) }), 2),
     );
     return () => cancelAnimation(progress);
   }, [active, focused, progress, reduceMotion, visible, width]);

@@ -2616,7 +2616,7 @@ code {
   background-size: 200% 100%;
   background-clip: text;
   color: transparent;
-  animation: guide-status-glimmer 2.4s ease-in-out infinite;
+  animation: guide-status-glimmer 2.4s ease-in-out 2;
   animation-play-state: var(--visible-animation-state, paused);
 }
 
