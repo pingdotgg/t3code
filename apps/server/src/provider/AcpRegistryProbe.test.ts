@@ -435,6 +435,55 @@ describe("ACP Registry probe", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("asks Cursor for its parameterized model picker", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-probe-cursor-" });
+      const requestLogPath = NodePath.join(directory, "requests.ndjson");
+      const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+        search: () => Effect.die("unused search"),
+        prepare: () => Effect.die("unused prepare"),
+        inspect: () => Effect.die("unused inspect"),
+        uninstallManagedBinary: () => Effect.die("unused uninstall"),
+        resolve: () =>
+          Effect.succeed({
+            agent: {
+              id: "cursor",
+              name: "Cursor",
+              version: "1.0.0",
+              description: "Cursor over ACP",
+              distribution: { npx: { package: "cursor@1.0.0" } },
+            },
+            distribution: "npx" as const,
+            spawn: {
+              command: "node",
+              args: [mockAgentPath],
+              env: { ...process.env, T3_ACP_REQUEST_LOG_PATH: requestLogPath },
+            },
+          }),
+      });
+
+      const result = yield* probeAcpRegistryConfiguration({
+        instanceId: ProviderInstanceId.make("acpRegistry_cursor"),
+        settings: decodeSettings({ agentId: "cursor" }),
+        cwd: process.cwd(),
+        environment: process.env,
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+      const requests = (yield* fs.readFileString(requestLogPath))
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line));
+      expect(
+        requests.find((request) => request.method === "initialize")?.params.clientCapabilities
+          ._meta,
+      ).toEqual({ parameterizedModelPicker: true });
+      expect(result.probe.models.map((model) => model.id)).not.toContain(
+        "gpt-5.3-codex[reasoning=medium,fast=false]",
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it("distinguishes authentication failures from generic probe failures", () => {
     const advertised = normalizeAcpRegistryAuthMethods([
       { id: "grok-login", name: "Log in with Grok" },
