@@ -14,7 +14,6 @@ export interface CreateAdvertisedEndpointInput {
   readonly httpBaseUrl: string;
   readonly reachability: AdvertisedEndpointReachability;
   readonly hostedHttpsCompatibility?: AdvertisedEndpointHostedHttpsCompatibility;
-  readonly desktopCompatibility?: "compatible" | "unknown";
   readonly source: AdvertisedEndpointSource;
   readonly status?: AdvertisedEndpointStatus;
   readonly isDefault?: boolean;
@@ -68,7 +67,7 @@ export function createAdvertisedEndpoint(input: CreateAdvertisedEndpointInput): 
     compatibility: {
       hostedHttpsApp:
         input.hostedHttpsCompatibility ?? classifyHostedHttpsCompatibility(httpBaseUrl),
-      desktopApp: input.desktopCompatibility ?? "compatible",
+      desktopApp: "compatible",
     },
     source: input.source,
     status: input.status ?? "available",

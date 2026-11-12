@@ -4,6 +4,7 @@ import {
   isShowcaseThemeApplied,
   showcaseReadinessKey,
   showcaseSceneOnScreen,
+  shouldNavigateToShowcaseScene,
   type ShowcaseReadinessInput,
 } from "./showcaseCaptureModel";
 
@@ -82,5 +83,17 @@ describe("showcaseReadinessKey", () => {
     const firstDraw = showcaseReadinessKey({ ...drawn, renderReports: 1 });
     expect(firstDraw).not.toBeNull();
     expect(showcaseReadinessKey({ ...drawn, renderReports: 2 })).not.toBe(firstDraw);
+  });
+});
+
+describe("shouldNavigateToShowcaseScene", () => {
+  it("dispatches again when the thread shell changes while the scene is still not on screen", () => {
+    const shell = { id: "remote-command-center" };
+    const first = { requestedScene: "review", scene: "threads", thread: shell } as const;
+    expect(shouldNavigateToShowcaseScene(null, first)).toBe(true);
+    expect(shouldNavigateToShowcaseScene(first, { ...first })).toBe(false);
+    expect(shouldNavigateToShowcaseScene(first, { ...first, thread: { ...shell } })).toBe(true);
+    expect(shouldNavigateToShowcaseScene(first, { ...first, scene: "thread" })).toBe(true);
+    expect(shouldNavigateToShowcaseScene(first, { ...first, scene: "review" })).toBe(false);
   });
 });

@@ -1,11 +1,7 @@
-import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { describe, expect, it } from "vitest";
+import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import { buildFixture } from "./utils/build-fixture.ts";
-import {
-  getAsset,
-  getEntryChunk,
-  hasCloudflareModuleReferences,
-} from "./utils/output.ts";
+import { getAsset, getEntryChunk, hasCloudflareModuleReferences } from "./utils/output.ts";
 
 describe("additional modules", async () => {
   const built = await buildFixture({
@@ -37,9 +33,7 @@ describe("additional modules", async () => {
       compatibilityDate: "2025-07-01",
     });
 
-    expect(await miniflare.fetchText("/text2")).toBe(
-      "Example text content 2\n",
-    );
+    expect(await miniflare.fetchText("/text2")).toBe("Example text content 2\n");
   });
 
   it("supports subpath imports for text modules", async () => {
@@ -49,9 +43,7 @@ describe("additional modules", async () => {
 
     // Removed - see fixtures/additional-modules/index.ts for more details.
     // expect(await miniflare.fetchText("/subpath-html")).toBe("<h1>Hello world</h1>\n");
-    expect(await miniflare.fetchText("/subpath-html-with-ext")).toBe(
-      "<h1>Hello world</h1>\n",
-    );
+    expect(await miniflare.fetchText("/subpath-html-with-ext")).toBe("<h1>Hello world</h1>\n");
   });
 
   it("supports .wasm, .wasm?module, and .wasm?init imports", async () => {
@@ -62,14 +54,10 @@ describe("additional modules", async () => {
     expect(await miniflare.fetchJson<{ result: number }>("/wasm")).toEqual({
       result: 7,
     });
-    expect(
-      await miniflare.fetchJson<{ result: number }>("/wasm-with-module-param"),
-    ).toEqual({
+    expect(await miniflare.fetchJson<{ result: number }>("/wasm-with-module-param")).toEqual({
       result: 11,
     });
-    expect(
-      await miniflare.fetchJson<{ result: number }>("/wasm-with-init-param"),
-    ).toEqual({
+    expect(await miniflare.fetchJson<{ result: number }>("/wasm-with-init-param")).toEqual({
       result: 15,
     });
   });
