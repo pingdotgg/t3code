@@ -1011,6 +1011,48 @@ it.layer(
     }),
   );
 
+  // `vp env off` makes each shim run the next matching executable on PATH instead.
+  it.effect(
+    "does not update through vp when a system_first Vite+ shim delegates to a later install",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("vite-plus-system-first");
+        const vpHome = NodePath.join(tempDir, ".vite-plus");
+        NodeFS.mkdirSync(vpHome, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(vpHome, "config.json"),
+          JSON.stringify({ shimMode: "system_first" }),
+        );
+        const shim = NodePath.join(vpHome, "bin", "package-tool");
+        writeExecutable(shim);
+        const otherInstall = linkIntoPackage(NodePath.join(tempDir, "npm"), "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+
+        const capabilities = yield* packageToolUpdate
+          .resolve({
+            binaryPath: "package-tool",
+            resolvedCommandPath: shim,
+            realCommandPath: NodePath.join(vpHome, "current", "bin", "vp"),
+            env: {
+              VP_HOME: vpHome,
+              PATH: [NodePath.dirname(shim), NodePath.dirname(otherInstall)].join(":"),
+            },
+            platform: "linux",
+          })
+          .pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+            Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          );
+
+        expect(capabilities.update?.lockKey).not.toBe("vite-plus-global");
+      }),
+  );
+
   it.effect("keeps a project folder named vite-plus manual-only", () =>
     Effect.gen(function* () {
       const capabilities = yield* resolveInstall({
