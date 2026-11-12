@@ -24,17 +24,21 @@ function startProbe() {
     });
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  if (!probe) startProbe();
-  return () => listeners.delete(listener);
-}
+/** The store behind `useAppleSpeechAvailable`. */
+export const appleSpeechAvailability = {
+  subscribe(listener: () => void) {
+    listeners.add(listener);
+    if (!probe) startProbe();
+    return () => listeners.delete(listener);
+  },
+  getSnapshot: () => available,
+};
 
 /** Apple Speech runs only in the macOS 26 desktop app; the main process caches the answer. */
 export function useAppleSpeechAvailable() {
   return useSyncExternalStore(
-    subscribe,
-    () => available,
+    appleSpeechAvailability.subscribe,
+    appleSpeechAvailability.getSnapshot,
     () => false,
   );
 }
