@@ -21,7 +21,7 @@ import { LoadingStrip } from "../../components/ui/LoadingStrip";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import {
   type NativeReviewDiffViewProps,
-  resolveReadableReviewDiffView,
+  resolveNativeReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
 import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
 import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
@@ -31,7 +31,6 @@ import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences"
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useScreenReaderEnabled } from "../../lib/appState";
 import {
   buildNativeSourceTokens,
   NATIVE_SOURCE_CONTENT_WIDTH,
@@ -455,7 +454,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 }
 
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
-  const NativeView = resolveReadableReviewDiffView(useScreenReaderEnabled());
+  const NativeView = resolveNativeReviewDiffView();
   const { codeWordBreak } = useAppearanceCodeSurface();
   const surface =
     NativeView && !codeWordBreak && !props.selectable ? (
