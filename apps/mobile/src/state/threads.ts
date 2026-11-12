@@ -22,6 +22,7 @@ import {
   pendingThreadCreationOutcomesAtom,
   selectThreadCreationDetail,
 } from "./pending-thread-creation";
+import { orchestrationEnvironment } from "./orchestration";
 import { serverEnvironment } from "./server";
 import { environmentShell } from "./shell";
 import { threadOutboxManager } from "./thread-outbox";
@@ -46,6 +47,9 @@ export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
+  archivedSnapshotAtom: (environmentId) =>
+    orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: {} }),
+  shellStateAtom: environmentShell.stateAtom,
 });
 const steadyShells = createSteadyShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,

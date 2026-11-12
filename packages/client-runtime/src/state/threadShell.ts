@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  OrchestrationV2ArchivedShellSnapshot,
   OrchestrationV2ShellSnapshot,
   ProjectId,
   ScopedProjectRef,
@@ -12,10 +13,11 @@ import {
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
@@ -58,8 +60,8 @@ const isChildRunLive = (
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
  * subagent, a side chat, or a task a linked environment delegated here whose parent the
- * client lists (`delegatedUnderParent`, by thread key). A task whose parent
- * the client cannot list stays in the lists, so its work is never out of reach.
+ * client lists or has archived (`delegatedUnderParent`, by thread key). A task whose parent
+ * is gone stays in the lists, so its work is never out of reach.
  */
 export function isShownUnderParent(
   ref: ScopedThreadRef,
@@ -209,6 +211,14 @@ export function createEnvironmentThreadShellAtoms(input: {
   readonly hiddenThreadTagsAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<string> | null>;
+  /** Archived threads, which the live snapshot leaves out. */
+  readonly archivedSnapshotAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, unknown>>;
+  /** The shell state, whose removals tell a stale archive from one that lacks a thread. */
+  readonly shellStateAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
 }) {
   // Point reads and aggregate lists share values without keeping an atom alive
   // for every listed thread. Replaced source objects can be collected.
@@ -663,19 +673,74 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
+  // The archive has no live updates, and an answer cached or requested before this atom first read
+  // it may predate the parent's archive. The first read, a removal, and a new authoritative shell
+  // snapshot each reread it, and the answer from before counts as loading. Kept outside the family
+  // so a swept node still sees a change it missed.
+  const archiveReads = new Map<
+    EnvironmentId,
+    WeakMap<
+      AtomRegistry.AtomRegistry,
+      {
+        readonly generation: number;
+        readonly removedAt: ReadonlyMap<ThreadId, number>;
+        readonly stale: unknown;
+      }
+    >
+  >();
+  // Null while the archived page has not arrived. A failed read counts as empty and current.
+  const archivedThreadIdsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): { readonly ids: ReadonlySet<ThreadId>; readonly sequence: number } | null => {
+      const archiveAtom = input.archivedSnapshotAtom(environmentId);
+      const result = get(archiveAtom);
+      const shell = AsyncResult.getOrElse(get(input.shellStateAtom(environmentId)), () => null);
+      const reads = archiveReads.get(environmentId) ?? new WeakMap();
+      archiveReads.set(environmentId, reads);
+      const previous = reads.get(get.registry);
+      const generation = shell?.generation ?? previous?.generation ?? 0;
+      const removedAt = shell?.removedAt ?? previous?.removedAt ?? new Map();
+      if (
+        previous === undefined ||
+        previous.generation !== generation ||
+        previous.removedAt !== removedAt
+      ) {
+        reads.set(get.registry, { generation, removedAt, stale: result });
+        get.refresh(archiveAtom);
+        return null;
+      }
+      const stale = previous?.stale === result;
+      reads.set(get.registry, { generation, removedAt, stale: stale ? result : undefined });
+      if (stale) return null;
+      if (result.waiting || AsyncResult.isInitial(result)) return null;
+      if (!AsyncResult.isSuccess(result)) return { ids: new Set(), sequence: Infinity };
+      const { threads, snapshotSequence } = result.value;
+      return { ids: new Set(threads.map((t) => t.id)), sequence: snapshotSequence };
+    }).pipe(Atom.withLabel(`environment-archived-thread-ids:${environmentId}`)),
+  );
+
   let previousDelegatedUnderParent: ReadonlySet<string> = new Set();
   const delegatedUnderParentAtom = Atom.make((get) => {
     const environmentIds = new Set(enabledEnvironmentIds(get(input.catalogValueAtom)));
     const next = new Set<string>();
+    // An archived parent keeps its task, as it keeps a local subagent. The live snapshot drops
+    // archived threads, so a missing parent waits on an archived page read after its removal.
+    const parentKeepsTask = (parent: ScopedThreadRef) => {
+      if (get(environmentThreadIndexAtom(parent.environmentId)).has(parent.threadId)) return true;
+      const archived = get(archivedThreadIdsAtom(parent.environmentId));
+      if (archived === null || archived.ids.has(parent.threadId)) return true;
+      const shell = AsyncResult.getOrElse(
+        get(input.shellStateAtom(parent.environmentId)),
+        () => null,
+      );
+      return (shell?.removedAt.get(parent.threadId) ?? -1) > archived.sequence;
+    };
     for (const environmentId of environmentIds) {
       for (const thread of get(environmentThreadsAtom(environmentId))) {
         const parent = thread.delegatedFrom;
         if (
           parent !== undefined &&
           environmentIds.has(parent.environmentId) &&
-          // An archived parent leaves navigation; its task there stays listed on its own.
-          get(environmentThreadIndexAtom(parent.environmentId)).get(parent.threadId)?.archivedAt ===
-            null
+          parentKeepsTask(parent)
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
         }
