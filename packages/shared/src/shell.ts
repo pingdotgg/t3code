@@ -14,7 +14,8 @@ import * as Path from "effect/Path";
 import type { ShellEnvironmentPatch } from "@t3tools/contracts";
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
-const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
+// Lowercase names cover the conventional https_proxy family.
+const SHELL_ENV_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;

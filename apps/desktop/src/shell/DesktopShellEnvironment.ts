@@ -86,7 +86,20 @@ export class DesktopShellEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
+// Provider CLIs and the server reach their APIs through the user's shell proxy;
+// apps launched from the Dock never see it otherwise.
+const PROXY_ENDPOINT_ENV_NAMES = [
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+] as const;
+const PROXY_BYPASS_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const LOGIN_SHELL_ENV_NAMES = [
+  ...PROXY_ENDPOINT_ENV_NAMES,
+  ...PROXY_BYPASS_ENV_NAMES,
   "PATH",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
@@ -525,6 +538,21 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
+      }
+    }
+
+    // A bypass list alone is not a proxy configuration. Keep an inherited NO_PROXY but still
+    // take the endpoint from the login shell; an inherited endpoint keeps its own bypass list.
+    if (PROXY_ENDPOINT_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+      for (const name of PROXY_ENDPOINT_ENV_NAMES) {
+        const value = trimNonEmpty(shellEnvironment[name]);
+        if (Option.isSome(value)) config.env[name] = value.value;
+      }
+      if (PROXY_BYPASS_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+        for (const name of PROXY_BYPASS_ENV_NAMES) {
+          const value = trimNonEmpty(shellEnvironment[name]);
+          if (Option.isSome(value)) config.env[name] = value.value;
+        }
       }
     }
 
