@@ -576,6 +576,8 @@ const PREFLIGHT_PRIMARY_STATES = [
   "primary slow",
   "fallback slow",
   "both slow",
+  "cannot generate text",
+  "model cannot generate text",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -594,7 +596,9 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
     const needsFallback =
       exhausted ||
       primaryState.startsWith("not installed") ||
-      primaryState.startsWith("signed out");
+      primaryState.startsWith("signed out") ||
+      primaryState === "cannot generate text" ||
+      primaryState === "model cannot generate text";
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
     const projectId = ProjectId.make("project-a");
@@ -650,6 +654,22 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
             ? { status: "error", auth: { status: "unauthenticated" } }
             : {}),
           ...(fallbackFailed && instanceId !== primary ? { status: "error" } : {}),
+          ...(primaryState === "cannot generate text" && instanceId === primary
+            ? { supportsTextGeneration: false }
+            : {}),
+          ...(primaryState === "model cannot generate text" && instanceId === primary
+            ? {
+                models: [
+                  {
+                    slug: selection.model,
+                    name: selection.model,
+                    isCustom: false,
+                    supportsTextGeneration: false,
+                    capabilities: null,
+                  },
+                ],
+              }
+            : {}),
           ...((exhausted && instanceId === primary) ||
           (fallbackExhausted && instanceId === unrelated)
             ? {
