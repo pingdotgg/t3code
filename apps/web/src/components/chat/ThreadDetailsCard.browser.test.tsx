@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, createRef } from "react";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -8,6 +8,7 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
+import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import "../../index.css";
 
 const threadA: ScopedThreadRef = {
@@ -197,4 +198,24 @@ it("stays full while expanded server rows overflow", async () => {
   await expect
     .element(page.getByRole("region", { name: "Thread details" }))
     .toHaveAttribute("data-density", "full");
+});
+
+it("focuses the requested branch row when opening the details popover", async () => {
+  using fixture = setup();
+  const branch = createRef<HTMLButtonElement>();
+  await using _screen = await render(
+    <ThreadDetailsCard
+      threadRef={threadB}
+      anchor={fixture.anchor}
+      handle={fixture.handle}
+      onFocusRequest={() => {
+        branch.current?.focus();
+        return true;
+      }}
+    >
+      {() => <ThreadDetailsControl ref={branch}>feature/current</ThreadDetailsControl>}
+    </ThreadDetailsCard>,
+  );
+  await act(() => useRightPanelStore.getState().setThreadPanelOpen(threadB, "popover", true));
+  await expect.element(page.getByRole("button", { name: "feature/current" })).toHaveFocus();
 });

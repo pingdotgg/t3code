@@ -91,11 +91,13 @@ import { observeResize } from "~/lib/observeResize";
 
 export interface BranchToolbarHandle {
   openBranchPicker: () => void;
+  focusBranchPicker: () => void;
   usePreviousWorktree: () => void;
 }
 
 interface BranchToolbarProps {
   layout?: "composer" | "panel";
+  onOpenWorkspaceDetails?: (() => void) | undefined;
   panelSection?: "all" | "workspace" | "branch";
   forceNewWorktree?: boolean;
   ref?: Ref<BranchToolbarHandle>;
@@ -1149,6 +1151,7 @@ function useStripCompaction(): readonly [
 
 export const BranchToolbar = memo(function BranchToolbar({
   layout = "composer",
+  onOpenWorkspaceDetails,
   panelSection = "all",
   forceNewWorktree = false,
   ref,
@@ -1211,7 +1214,11 @@ export const BranchToolbar = memo(function BranchToolbar({
   useImperativeHandle(
     ref,
     () => ({
-      openBranchPicker: () => branchSelectorRef.current?.open(),
+      focusBranchPicker: () => branchSelectorRef.current?.focus(),
+      openBranchPicker: () => {
+        if (onOpenWorkspaceDetails) onOpenWorkspaceDetails();
+        else branchSelectorRef.current?.open();
+      },
       usePreviousWorktree: () => {
         if (!showGitControls || !canUsePreviousWorktree || !previousWorktreeSeed) return;
         onUsePreviousWorktree();
@@ -1220,6 +1227,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     }),
     [
       canUsePreviousWorktree,
+      onOpenWorkspaceDetails,
       onComposerFocusRequest,
       onUsePreviousWorktree,
       previousWorktreeSeed,
@@ -1280,6 +1288,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         {panelSection !== "workspace" ? (
           <BranchToolbarBranchSelector
             displayMode="panel"
+            ref={branchSelectorRef}
             className="w-full"
             environmentId={environmentId}
             threadId={threadId}
@@ -1331,13 +1340,6 @@ export const BranchToolbar = memo(function BranchToolbar({
       onAddToMachine={onAddToMachine}
     />
   ) : null;
-  // Without Git the workspace chip stands alone, so the machine chip leads it here.
-  const workspaceMenu = (
-    <>
-      {machineMenu}
-      <WorkspaceMenu {...workspaceMenuProps} />
-    </>
-  );
 
   return (
     <ComposerSurface.ContextStrip
@@ -1348,9 +1350,11 @@ export const BranchToolbar = memo(function BranchToolbar({
       {isScratchProject(activeProject, scratchWorkspaceRoot) ? (
         <NoProjectChip started={isServerThread} />
       ) : null}
-      {!showGitControls ? workspaceMenu : null}
-      {showGitControls ? machineMenu : null}
-      {showGitControls ? (
+      {machineMenu}
+      {!showGitControls && !onOpenWorkspaceDetails ? (
+        <WorkspaceMenu {...workspaceMenuProps} />
+      ) : null}
+      {showGitControls && !onOpenWorkspaceDetails ? (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
