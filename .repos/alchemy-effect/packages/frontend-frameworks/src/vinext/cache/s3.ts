@@ -19,13 +19,8 @@ export const DEFAULT_CACHE_BUCKET_ENV = "CACHE_BUCKET_NAME";
 export const DEFAULT_CACHE_PREFIX = "vinext-cache/";
 
 export const s3Adapter = (options?: S3AdapterOptions) => {
-  if (
-    options?.bucketEnv !== undefined &&
-    typeof options.bucketEnv !== "string"
-  ) {
-    throw new TypeError(
-      "[vinext] s3Adapter({ bucketEnv }) must be a string env var name.",
-    );
+  if (options?.bucketEnv !== undefined && typeof options.bucketEnv !== "string") {
+    throw new TypeError("[vinext] s3Adapter({ bucketEnv }) must be a string env var name.");
   }
   return {
     adapter: fileURLToPath(new URL("./s3-runtime.js", import.meta.url)),

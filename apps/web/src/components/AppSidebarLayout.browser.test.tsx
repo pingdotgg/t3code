@@ -18,7 +18,10 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () => [],
 }));
-vi.mock("../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("../state/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/server")>()),
+  primaryServerKeybindingsAtom: {},
+}));
 vi.mock("../hooks/showThreadUndoNotice", () => ({
   releaseThreadUndoShortcut: () => {},
   threadUndoClaimsShortcut: () => false,
@@ -28,6 +31,7 @@ vi.mock("../keybindings", () => ({
   isRichTextBoldShortcut: () => false,
   resolveShortcutCommand: () => null,
   shortcutLabelForCommand: () => null,
+  shouldShowThreadJumpHintsForModifiers: () => false,
 }));
 vi.mock("./Sidebar", () => ({ default: () => <div>Threads</div> }));
 vi.mock("./sidebar/mainAppLocation", () => ({ isAppModalPage: () => false }));
@@ -105,6 +109,31 @@ describe("main sidebar position", () => {
       expect(tools.right).toBeLessThanOrEqual(navigation().getBoundingClientRect().left);
       expect(main().getBoundingClientRect().right - panelTools().right).toBe(localControlInset);
     });
+    const rail = screen.getByRole("button", { name: "Resize Sidebar" }).element();
+    const railBounds = rail.getBoundingClientRect();
+    const initialWidth = navigation().getBoundingClientRect().width;
+    const pointer = {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      button: 0,
+      clientY: railBounds.top + 10,
+    };
+    rail.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: railBounds.left }));
+    rail.dispatchEvent(
+      new PointerEvent("pointermove", { ...pointer, clientX: railBounds.left - 48 }),
+    );
+    await vi.waitFor(() => {
+      expect(navigation().getBoundingClientRect().width).toBe(initialWidth + 48);
+      const tools = screen.getByRole("button", { name: "Chat tools" }).element();
+      expect(tools.getBoundingClientRect().right).toBeLessThanOrEqual(
+        navigation().getBoundingClientRect().left,
+      );
+      expect(main().getBoundingClientRect().right - panelTools().right).toBe(localControlInset);
+    });
+    rail.dispatchEvent(
+      new PointerEvent("pointerup", { ...pointer, clientX: railBounds.left - 48 }),
+    );
     await expect
       .element(screen.getByRole("textbox", { name: "Draft" }))
       .toHaveValue("Keep this draft");

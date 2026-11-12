@@ -1,0 +1,263 @@
+---
+title: Effect HTTP API on Cloud Run
+description: Build a schema-validated HTTP API with Effect's HttpApi module, deploy it to Cloud Run, and call it from a typed client.
+sidebar:
+  order: 2
+---
+
+`HttpApi` gives you real REST endpoints, with paths, query strings,
+and typed bodies, behind a typed client. Use it when the API's callers
+aren't all Effect, or aren't TypeScript. The concept lives at
+[Effect HTTP](/apis/effect-http). This page wires it onto Cloud Run.
+
+## Define the schema
+
+```typescript
+// src/Job.ts
+import * as Schema from "effect/Schema";
+
+export const JobId = Schema.String;
+
+export class Job extends Schema.Class<Job>("Job")({
+  id: JobId,
+  content: Schema.String,
+}) {}
+
+export class JobNotFound extends Schema.TaggedErrorClass<JobNotFound>()(
+  "JobNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {}
+```
+
+`httpApiStatus: 404` sets the status the error is sent with.
+
+## Declare the API
+
+```typescript
+// src/JobApi.ts
+import * as Schema from "effect/Schema";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import { Job, JobId, JobNotFound } from "./Job.ts";
+
+export const getJob = HttpApiEndpoint.get("getJob", "/", {
+  success: Job,
+  error: JobNotFound,
+  query: { jobId: JobId },
+});
+
+export const createJob = HttpApiEndpoint.post("createJob", "/", {
+  success: JobId,
+  payload: Schema.Struct({ content: Schema.String }),
+});
+
+export const JobApi = HttpApi.make("JobApi").add(
+  HttpApiGroup.make("Jobs").add(getJob, createJob),
+);
+```
+
+`JobApi` is a plain value. The server and the client both import it.
+
+## Implement it on Cloud Run
+
+Bind a Firestore database, implement the handlers, and turn the API
+into a `fetch` handler:
+
+```typescript
+// src/JobService.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { Job, JobNotFound } from "./Job.ts";
+import { JobApi } from "./JobApi.ts";
+
+export default class JobService extends GCP.Function<JobService>()(
+  "JobService",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const jobs = yield* GCP.Firestore.Database("Jobs", {
+      type: "FIRESTORE_NATIVE",
+    });
+    const db = yield* GCP.Firestore.ReadWriteDatabase(jobs);
+
+    const jobsGroup = HttpApiBuilder.group(JobApi, "Jobs", (handlers) =>
+      handlers
+        .handle("getJob", ({ query }) =>
+          db.get(`jobs/${query.jobId}`).pipe(
+            Effect.orDie,
+            Effect.flatMap((doc) =>
+              doc
+                ? Effect.succeed(
+                    new Job({
+                      id: query.jobId,
+                      content: String(doc.fields.content ?? ""),
+                    }),
+                  )
+                : Effect.fail(new JobNotFound({ id: query.jobId })),
+            ),
+          ),
+        )
+        .handle("createJob", ({ payload }) =>
+          Effect.gen(function* () {
+            const id = crypto.randomUUID();
+            yield* db.set(`jobs/${id}`, { content: payload.content });
+            return id;
+          }).pipe(Effect.orDie),
+        ),
+    );
+
+    return {
+      fetch: yield* HttpRouter.toHttpEffect(
+        HttpApiBuilder.layer(JobApi).pipe(Layer.provide(jobsGroup)),
+      ),
+    };
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        GCP.Firestore.ReadWriteDatabaseHttp,
+        HttpPlatform.layer,
+        Etag.layer,
+      ),
+    ),
+  ),
+) {}
+```
+
+Handlers get typed input and must return the declared types. Firestore
+errors become 500s through `Effect.orDie`. `JobNotFound` stays typed
+and is sent as a 404.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import JobService from "./src/JobService.ts";
+
+export default Alchemy.Stack(
+  "JobApi",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const service = yield* JobService;
+    return { url: service.uri };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+Invalid payloads get a 400 with the validation errors.
+
+## Call it from a typed test
+
+The same `JobApi` value builds a typed client:
+
+```typescript
+// test/api.test.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import Stack from "../alchemy.run.ts";
+import { JobApi } from "../src/JobApi.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: GCP.providers(),
+  state: GCP.state(),
+});
+
+const stack = beforeAll(deploy(Stack), { timeout: 600_000 });
+
+test(
+  "create and fetch a job",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const client = yield* HttpApiClient.make(JobApi, { baseUrl: url });
+
+    const jobId = yield* client.Jobs.createJob({
+      payload: { content: "Ship the docs" },
+    }).pipe(
+      Effect.retry({ schedule: Schedule.exponential("1 second"), times: 8 }),
+    );
+
+    const job = yield* client.Jobs.getJob({ query: { jobId } });
+    expect(job.content).toBe("Ship the docs");
+
+    const missing = yield* client.Jobs.getJob({
+      query: { jobId: "nope" },
+    }).pipe(Effect.flip);
+    expect(missing._tag).toBe("JobNotFound");
+  }),
+  { timeout: 120_000 },
+);
+```
+
+The first call retries while the new Firestore grant reaches the
+service.
+
+## Call it from another service
+
+Keep the API service private and call it from another Cloud Run
+service. `GCP.Run.InvokeService` with `api` returns a typed
+`HttpApiClient` whose requests carry an ID token:
+
+```typescript
+// inside the calling service's Effect
+const jobs = yield* GCP.Run.InvokeService(JobService, { api: JobApi });
+const job = yield* jobs.Jobs.getJob({ query: { jobId } });
+```
+
+`GCP.Run.ServeHttpApi` is a shorter way to serve the API. It adds the
+platform layers and builds the router once per instance:
+
+```typescript
+return { fetch: GCP.Run.ServeHttpApi(JobApi, jobsGroup) };
+```
+
+## Run it as a sidecar
+
+Declare the API as a `GCP.Run.Container` and bind it with
+`GCP.Run.bindContainer` to call it over `localhost`:
+
+```typescript
+// src/JobSidecar.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { JobApi } from "./JobApi.ts";
+import { jobsGroup } from "./handlers.ts";
+
+export default class JobSidecar extends GCP.Run.Container<JobSidecar>()(
+  "JobSidecar",
+  { main: import.meta.url, port: 3000, startupProbe: { tcpSocket: {} } },
+  Effect.gen(function* () {
+    return { fetch: GCP.Run.ServeHttpApi(JobApi, jobsGroup) };
+  }),
+) {}
+```
+
+```typescript
+// inside the calling service's Effect
+const jobs = yield* GCP.Run.bindContainer(JobSidecar, { api: JobApi });
+const job = yield* jobs.Jobs.getJob({ query: { jobId } });
+```
+
+## Where next
+
+- [Effect HTTP](/apis/effect-http) — endpoints, groups, and clients in
+  depth.
+- [Effect RPC on Cloud Run](/gcp/apis/effect-rpc) — when every caller
+  is Effect.
+- [Firestore](/gcp/data/firestore) — the client used above.

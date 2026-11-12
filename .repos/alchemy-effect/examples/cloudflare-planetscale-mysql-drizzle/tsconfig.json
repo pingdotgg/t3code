@@ -19,6 +19,9 @@
   "references": [
     {
       "path": "../../packages/alchemy/tsconfig.json"
-    }
+    },
+    { "path": "../../packages/cloudflare/tsconfig.json" },
+    { "path": "../../packages/planetscale/tsconfig.json" },
+    { "path": "../../packages/drizzle/tsconfig.json" }
   ]
 }

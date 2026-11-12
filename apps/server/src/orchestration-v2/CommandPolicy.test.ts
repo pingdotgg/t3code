@@ -247,6 +247,19 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
 const layer = it.layer(CommandPolicy.layer);
 
 layer("CommandPolicyV2", (it) => {
+  it.effect("steers a live Cursor turn in place", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      const result = yield* policy.decideSteeringExecution({
+        commandId,
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        capabilities: CursorProviderCapabilitiesV2,
+      });
+      assert.equal(result, "active_steering");
+    }),
+  );
+
   it.effect("falls back to portable context when Cursor cannot fork natively", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;
@@ -260,9 +273,31 @@ layer("CommandPolicyV2", (it) => {
         hasStrongNativeSource: true,
         sourceRunStatus: "completed",
         fromSpecificTurn: true,
+        sourceBusy: false,
       });
 
       assert.equal(result, "portable_context");
+    }),
+  );
+
+  it.effect("forks a busy source through portable context", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicy.CommandPolicyV2;
+      const decide = (sourceBusy: boolean) =>
+        policy.decideForkExecution({
+          commandId,
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: CodexProviderCapabilitiesV2,
+          sameProvider: true,
+          hasStrongNativeSource: true,
+          sourceRunStatus: "completed",
+          fromSpecificTurn: true,
+          sourceBusy,
+        });
+
+      assert.equal(yield* decide(false), "native_fork");
+      assert.equal(yield* decide(true), "portable_context");
     }),
   );
 });
