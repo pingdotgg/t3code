@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   MessageId,
   type OrchestrationV2Notification,
   type PullRequestActivity,
@@ -7,6 +8,7 @@ import {
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
+  type ThreadId,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import {
@@ -149,10 +151,12 @@ function planRead(
     return { detail: true, activity: true };
   }
   // Nothing on the host changes when the no-checks deadline passes, so it alone prompts a read.
+  // A passed watch whose checks answer a command cleared reads its head again, since it may have moved.
   const checksDue = group.targets.some(
     ({ watch }) =>
-      watch.checksAwaitedSince != null &&
-      now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS,
+      (watch.passed && watch.checksPending === undefined) ||
+      (watch.checksAwaitedSince != null &&
+        now - Date.parse(watch.checksAwaitedSince) >= PULL_REQUEST_WATCH_NO_CHECKS_MS),
   );
   if (fingerprint === null) {
     const read =
@@ -196,6 +200,8 @@ export class PullRequestWatchReactor extends Context.Service<
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly sweep: Effect.Effect<void>;
+    /** Forgets a thread's finished-checks answers, since its shell command may have pushed. */
+    readonly reopenChecks: (threadId: ThreadId) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/PullRequestWatchReactor") {}
 
@@ -705,6 +711,28 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("PullRequestWatchReactor.sweep"),
   );
 
+  // Under the read permit, so a read already in flight cannot save its old-head answer after this.
+  const reopenChecks = Effect.fn("PullRequestWatchReactor.reopenChecks")(
+    function* (threadId: ThreadId) {
+      const threads = yield* projections.getThreadsWithPullRequests(threadId);
+      const finished = threads.flatMap((thread) =>
+        visibleThreadPullRequests(thread.pullRequests ?? []).flatMap((link) =>
+          link.watch?.checksPending === false ? [{ thread, link, watch: link.watch }] : [],
+        ),
+      );
+      yield* Effect.forEach(
+        finished,
+        (target) => {
+          const { checksPending: _, ...watch } = target.watch;
+          return record(target, watch);
+        },
+        { discard: true },
+      );
+    },
+    passes.withPermit,
+    Effect.catchCause(logFailure("pull request watch checks reopen failed", {})),
+  );
+
   const pullRequestOf = (group: WatchGroup) => threadPullRequestKeyOf(group.targets[0]!.link);
 
   const readOnChange = (pullRequest: string) =>
@@ -738,6 +766,15 @@ export const make = Effect.gen(function* () {
       }
     });
     yield* forkParked(
+      Stream.runForEach(engine.streamDomainEvents, (event) =>
+        event.type === "turn-item.updated" &&
+        event.payload.type === "command_execution" &&
+        !isOrchestrationV2WorkActive(event.payload.status)
+          ? reopenChecks(event.threadId)
+          : Effect.void,
+      ).pipe(Effect.catchCause(logFailure("pull request watch command stream failed", {}))),
+    );
+    yield* forkParked(
       sweep.pipe(
         Effect.andThen(follow),
         Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)),
@@ -746,7 +783,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return { start, sweep } satisfies PullRequestWatchReactor["Service"];
+  return { start, sweep, reopenChecks } satisfies PullRequestWatchReactor["Service"];
 });
 
 export const layer = Layer.effect(PullRequestWatchReactor, make);

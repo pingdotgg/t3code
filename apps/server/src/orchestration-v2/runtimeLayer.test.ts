@@ -3925,6 +3925,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed"]);
 
+      // A shell command may have pushed, so the answer waits for the next read of the head.
+      const checksPending = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch?.checksPending,
+      );
+      assert.equal(yield* checksPending, false);
+      yield* reactor.reopenChecks(threadId);
+      assert.isUndefined(yield* checksPending);
+      yield* reactor.sweep;
+      assert.equal(yield* checksPending, false);
+      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+
       const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* restarted.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed"]);
