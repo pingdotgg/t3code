@@ -5,6 +5,11 @@ import * as NodePath from "node:path";
 import { expect, it, vi } from "vite-plus/test";
 import { flushTelemetry, observeSummaries, summarize } from "./telemetry.ts";
 
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, rmdirSync: vi.fn(fs.rmdirSync) };
+});
+
 const task = (result: unknown) => ({
   package_name: "@team/server",
   task_name: "typecheck",
@@ -155,6 +160,43 @@ it("drops revoked credentials and continues delivering other queued endpoints", 
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     await flushTelemetry(home, {});
     expect(request).toHaveBeenCalledTimes(2);
+    expect(NodeFS.readdirSync(queue)).toEqual([]);
+  } finally {
+    NodeFS.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("delivers an event queued while the previous flusher releases its lock", async () => {
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cache-handoff-"));
+  const endpoint = "https://cache.example/projects/t3code";
+  try {
+    const queue = NodePath.join(home, ".cache/t3-task-cache/telemetry");
+    const state = NodePath.join(home, ".config/t3-task-cache");
+    NodeFS.mkdirSync(queue, { recursive: true });
+    NodeFS.mkdirSync(state, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(state, "credentials.json"),
+      JSON.stringify({ [endpoint]: { name: "alice", token: "secret-token" } }),
+    );
+    using request = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    const rmdirSync = vi.mocked(NodeFS.rmdirSync);
+    const release = rmdirSync.getMockImplementation()!;
+    let competing: Promise<void> | undefined;
+    // The next command queues its event after this flusher's last scan, and its own flusher
+    // gives up because the lock is still held.
+    rmdirSync.mockImplementationOnce((path, options) => {
+      NodeFS.writeFileSync(
+        NodePath.join(queue, "late.json"),
+        JSON.stringify({ endpoint, event: { id: "late" } }),
+      );
+      competing = flushTelemetry(home, {});
+      release(path, options);
+    });
+    await flushTelemetry(home, {});
+    await competing;
+    expect(request).toHaveBeenCalledOnce();
     expect(NodeFS.readdirSync(queue)).toEqual([]);
   } finally {
     NodeFS.rmSync(home, { recursive: true, force: true });

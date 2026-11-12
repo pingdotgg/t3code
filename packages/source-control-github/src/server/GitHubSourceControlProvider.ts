@@ -1,5 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
-import * as Data from "effect/Data";
+import { requireSettingsSecretLiteral, SourceControlProviderKind } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,6 +26,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
@@ -212,6 +212,9 @@ export const makeDiscovery = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
+  const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+  const offerAppSignIn = <A extends SourceControlProviderDiscoveryItem>(item: A): A =>
+    appSignIn.enabled ? { ...item, appSignIn: true } : item;
 
   return {
     type: "managed-cli",
@@ -219,12 +222,12 @@ export const makeDiscovery = Effect.gen(function* () {
     label: discovery.label,
     installHint: discovery.installHint,
     probe: Effect.fn("GitHubSourceControlProvider.discovery")(function* (cwd: string) {
+      const current = yield* sourceControlHost.settings
+        .getWithSecrets(GitHubClient.definition.kind)
+        .pipe(Effect.orElseSucceed(() => undefined));
       const settings = readSourceControlHostSettings(
         GitHubClient.settings,
-        yield* sourceControlHost.settings.get.pipe(
-          Effect.map((current) => current.sourceControlHosts[GitHubClient.definition.kind]),
-          Effect.orElseSucceed(() => undefined),
-        ),
+        current?.sourceControlHosts[GitHubClient.definition.kind],
       );
       const cli = yield* probeSourceControlProvider({
         cwd,
@@ -233,10 +236,33 @@ export const makeDiscovery = Effect.gen(function* () {
         },
         spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
       });
-      const savedToken = (settings.tokens["github.com"] ?? "").trim() !== "";
+      const saved = yield* Effect.result(
+        requireSettingsSecretLiteral(settings.tokens["github.com"], current?.secretProviders ?? {}),
+      );
+      if (Result.isFailure(saved) && settings.hosts["github.com"]?.enabled !== false) {
+        return offerAppSignIn({
+          ...cli,
+          status: "available" as const,
+          auth: providerAuth({
+            status: "unauthenticated",
+            host: "github.com",
+            detail: saved.failure.message,
+          }),
+        });
+      }
+      const savedToken = Result.isSuccess(saved) && saved.success.trim() !== "";
+      const signedIn =
+        appSignIn.enabled && !savedToken && (settings.signIns["github.com"] ?? "").trim() !== "";
       const variable = environmentTokenVariable(environment);
-      const tokenSource = savedToken ? "the token saved in Settings" : variable;
-      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) return cli;
+      const appName = GitHubClient.APP_SIGN_IN.appName;
+      const tokenSource = savedToken
+        ? "the token saved in Settings"
+        : signedIn
+          ? `the ${appName} sign-in`
+          : variable;
+      if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) {
+        return offerAppSignIn(cli);
+      }
       const viewer = yield* api
         .rest({ host: "github.com", operation: "discovery", path: "user" })
         .pipe(Effect.result);
@@ -244,7 +270,7 @@ export const makeDiscovery = Effect.gen(function* () {
         ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
         : undefined;
       const accounts = cli.auth.accounts === undefined ? {} : { accounts: cli.auth.accounts };
-      return {
+      return offerAppSignIn({
         ...cli,
         status: "available" as const,
         auth: {
@@ -255,31 +281,36 @@ export const makeDiscovery = Effect.gen(function* () {
                 host: "github.com",
                 detail: savedToken
                   ? "Using the token saved in Settings; it overrides GH_TOKEN and the gh login."
-                  : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
+                  : signedIn
+                    ? `Signed in with ${appName}.`
+                    : `Using ${variable} from the server environment; it overrides the account chosen in Settings.`,
               })
             : Result.isFailure(viewer) && viewer.failure._tag !== "GitHubApiAuthenticationError"
               ? providerAuth({
                   status: "unknown",
                   host: "github.com",
-                  detail: `Could not check ${savedToken ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
+                  detail: `Could not check ${savedToken || signedIn ? tokenSource : `the token in ${tokenSource}`}: ${viewer.failure.message}`,
                 })
               : providerAuth({
                   status: "unauthenticated",
                   host: "github.com",
                   detail: savedToken
                     ? "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source Control."
-                    : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
+                    : signedIn
+                      ? `GitHub refused the ${appName} sign-in. Sign in again in Settings → Source Control.`
+                      : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
                 })),
           ...accounts,
         },
-      } satisfies SourceControlProviderDiscoveryItem;
+      } satisfies SourceControlProviderDiscoveryItem);
     }),
     // Claim disabled hosts so errors identify the setting.
     refineUnknownRemote: ({ context }) => {
       const url = URL.parse(context.provider.baseUrl);
       if (!url?.host) return Effect.succeed(null);
+      const host = gitHubApiHostForRemote(context.remoteUrl) ?? url.host;
       // A timeout or keyring failure propagates: the registry does not keep that answer.
-      return api.credential(url.host).pipe(
+      return api.credential(host).pipe(
         Effect.as(true),
         Effect.catchTags({
           GitHubCliMissingError: () => Effect.succeed(false),
@@ -290,8 +321,8 @@ export const makeDiscovery = Effect.gen(function* () {
           known
             ? ({
                 kind: SourceControlProviderKind.make("github"),
-                name: "GitHub Self-Hosted",
-                baseUrl: context.provider.baseUrl,
+                name: host === "github.com" ? "GitHub" : "GitHub Self-Hosted",
+                baseUrl: host === url.host ? context.provider.baseUrl : `https://${host}`,
               } as const)
             : null,
         ),
@@ -300,10 +331,10 @@ export const makeDiscovery = Effect.gen(function* () {
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
-class GitHubFailure extends Data.TaggedError("GitHubFailure")<{
-  readonly detail: string;
-  readonly cause: unknown;
-}> {}
+class GitHubFailure extends Schema.TaggedError<GitHubFailure>()("GitHubFailure", {
+  detail: Schema.String,
+  cause: Schema.Defect(),
+}) {}
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
@@ -322,6 +353,7 @@ function fromGitHubApiError(
       );
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
+    case "SettingsSecretUnresolvedError":
       return failure(error.message, error);
     case "GitHubApiAuthenticationError":
       return failure(
@@ -337,6 +369,7 @@ function fromGitHubApiError(
     case "GitHubApiNotFoundError":
       return failure(notFound, error);
     case "GitHubCliFailedError":
+    case "GitHubAppSessionError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
       return failure(error.message.trim() || "GitHub request failed.", error);
@@ -441,6 +474,18 @@ export const make = Effect.gen(function* () {
       timeoutMs: 5_000,
     });
 
+  const readRemotes = (cwd: string) =>
+    Effect.all([
+      gitRead(cwd, ["remote", "-v"]),
+      gitRead(cwd, ["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"]),
+    ]).pipe(
+      Effect.orElseSucceed(() => [null, null] as const),
+      Effect.map(([remotes, resolved]) => ({
+        remotes: remotes?.exitCode === 0 ? remotes.stdout : "",
+        resolved: resolved?.exitCode === 0 ? resolved.stdout : "",
+      })),
+    );
+
   const resolveRepository = Effect.fn("GitHubSourceControlProvider.resolveRepository")(
     function* (input: {
       readonly cwd: string;
@@ -454,13 +499,8 @@ export const make = Effect.gen(function* () {
         const locator = parseGitHubRepositorySelector(envRepository, defaultHost);
         if (locator !== null) return locator;
       }
-      const [remotes, resolved] = yield* Effect.all([
-        gitRead(input.cwd, ["remote", "-v"]),
-        gitRead(input.cwd, ["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"]),
-      ]).pipe(Effect.orElseSucceed(() => [null, null] as const));
       const { host, locator } = resolveGitHubRepository({
-        remotes: remotes?.exitCode === 0 ? remotes.stdout : "",
-        resolved: resolved?.exitCode === 0 ? resolved.stdout : "",
+        ...(yield* readRemotes(input.cwd)),
         hostHint,
         defaultHost,
       });
@@ -750,7 +790,9 @@ export const make = Effect.gen(function* () {
       );
 
       yield* Effect.gen(function* () {
-        if (!exists) yield* runGit(input.cwd, "branch", ["branch", "--", localBranch, target.ref]);
+        if (!exists) {
+          yield* git.createBranch({ cwd: input.cwd, branch: localBranch, startPoint: target.ref });
+        }
         yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
         if (exists) {
           yield* runGit(
@@ -839,6 +881,9 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
+    resolveRemoteWebHost: Effect.fn("GitHubSourceControlProvider.resolveRemoteWebHost")(
+      ({ context }) => Effect.succeed(gitHubApiHostForRemote(context.remoteUrl)),
+    ),
     // GitHub matches bare heads; read a full page to disambiguate forks by owner.
     headBranchProbe: ({ headSelectors }) => ({
       headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
@@ -850,8 +895,9 @@ export const make = Effect.gen(function* () {
       },
     ),
     // `createChangeRequest` targets what `resolveRepository` picks: GH_REPO when it parses, else
-    // the remote `gh repo set-default` marked (`gh-resolved`). An HTTPS remote keeps a
-    // non-default port in the context's host, and the mark is then ignored.
+    // gh's pick among the checkout's remotes, led by the one `gh repo set-default` marked
+    // (`gh-resolved`). An HTTPS remote keeps a non-default port in the context's host, and the
+    // mark is then ignored.
     createsChangeRequestsIn: Effect.fn("GitHubSourceControlProvider.createsChangeRequestsIn")(
       function* ({ cwd, context, repository }) {
         const host = URL.canParse(context.provider.baseUrl)
@@ -871,12 +917,8 @@ export const make = Effect.gen(function* () {
             `${owner}/${name}`.toLowerCase() === target
           );
         }
-        const mark = yield* git
-          .readConfigValue(cwd, `remote.${context.remoteName}.gh-resolved`)
-          .pipe(Effect.orElseSucceed(() => null));
         const { locator } = resolveGitHubRepository({
-          remotes: `${context.remoteName}\t${context.remoteUrl} (fetch)`,
-          resolved: mark === null ? "" : `remote.${context.remoteName}.gh-resolved ${mark}`,
+          ...(yield* readRemotes(cwd)),
           hostHint: host ?? undefined,
           defaultHost: host ?? "github.com",
         });
@@ -891,13 +933,8 @@ export const make = Effect.gen(function* () {
       baseBranch,
     }) {
       return git
-        .execute({
-          operation: "GitHubSourceControlProvider.recordBranchBase",
-          cwd,
-          args: ["config", `branch.${branch}.gh-merge-base`, baseBranch],
-        })
+        .writeConfigValue({ cwd, key: `branch.${branch}.gh-merge-base`, value: baseBranch })
         .pipe(
-          Effect.asVoid,
           Effect.catch((cause) =>
             Effect.logWarning("Could not record the branch base for gh", { cause }),
           ),
@@ -978,15 +1015,22 @@ export const make = Effect.gen(function* () {
     ),
     getRepositoryCloneUrls: Effect.fn("GitHubSourceControlProvider.getRepositoryCloneUrls")(
       function* (input) {
-        const fallbackHost = (yield* resolveRepository(input).pipe(
-          Effect.map((locator) => locator.host),
-          Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
-        )).toLowerCase();
+        const fallbackHost = (
+          input.host ??
+          (yield* resolveRepository(input).pipe(
+            Effect.map((locator) => locator.host),
+            Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
+          ))
+        ).toLowerCase();
         const bareName = input.repository.trim().replace(/\.git$/i, "");
         const locator =
           parseGitHubRepositorySelector(input.repository, fallbackHost) ??
           (/^[^/\s]+$/.test(bareName)
-            ? { host: fallbackHost, owner: yield* readViewerLogin(fallbackHost), name: bareName }
+            ? {
+                host: fallbackHost,
+                owner: yield* readViewerLogin(fallbackHost),
+                name: bareName,
+              }
             : null);
         if (locator === null) return yield* failure("Repositories are named owner/name.");
         return repositoryCloneUrls(yield* readRepository(locator));
@@ -994,7 +1038,9 @@ export const make = Effect.gen(function* () {
       (effect, input) =>
         effect.pipe(
           Effect.mapError(
-            providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
+            providerError("getRepositoryCloneUrls", input.cwd, {
+              repository: input.repository,
+            }),
           ),
         ),
     ),

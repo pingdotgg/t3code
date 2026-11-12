@@ -174,6 +174,7 @@ export const make = Effect.gen(function* () {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "ignore",
+          forceKillAfter: "1 second",
         },
       );
       const handle = yield* spawner.spawn(command);
@@ -260,15 +261,16 @@ export const make = Effect.gen(function* () {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "ignore",
+          forceKillAfter: "1 second",
         },
       );
       const handle = yield* spawner.spawn(command);
-      const exitCode = yield* handle.exitCode;
-      if ((exitCode as unknown as number) !== 0) {
+      const exitCode = yield* handle.exitCode.pipe(Effect.timeout("5 seconds"));
+      if (exitCode !== 0) {
         return yield* new DesktopLinuxUrlHandlerRegistrationError({
           step: "set-default-handler",
           scheme,
-          exitCode: Number(exitCode),
+          exitCode,
         });
       }
     }),
@@ -296,10 +298,11 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(png)) return;
       // The AppImage mount is temporary; the chooser needs the icon after exit.
       yield* fileSystem.makeDirectory(iconsDir, { recursive: true });
-      yield* fileSystem.copyFile(png.value, iconPath);
+      // Electron's copyFile from app.asar extracts to a temp file it never deletes.
+      yield* fileSystem.writeFile(iconPath, yield* fileSystem.readFile(png.value));
     }).pipe(
       Effect.catch((error) =>
-        logWarning("URL handler icon copy failed", { iconPath, category: error.reason._tag }),
+        logWarning("URL handler icon install failed", { iconPath, category: error.reason._tag }),
       ),
     );
 

@@ -5,8 +5,14 @@ import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { AlertTriangleIcon, CopyIcon, FolderOpenIcon, InfoIcon } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
+import {
+  AlertTriangleIcon,
+  CopyIcon,
+  FolderOpenIcon,
+  InfoIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+} from "lucide-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -20,6 +26,7 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
@@ -28,7 +35,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -48,19 +54,7 @@ function formatCount(value: number): string {
 
 function formatDuration(value: number): string {
   if (value < 1_000) return `${Math.round(value)} ms`;
-  return `${(value / 1_000).toFixed(value >= 10_000 ? 1 : 2)} s`;
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  const units = ["KB", "MB", "GB"] as const;
-  let unitIndex = -1;
-  let next = value;
-  do {
-    next /= 1024;
-    unitIndex += 1;
-  } while (next >= 1024 && unitIndex < units.length - 1);
-  return `${next.toFixed(next >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+  return `${(value / 1_000).toFixed(value >= 10_000 ? 1 : 2).replace(/\.0+$/, "")} s`;
 }
 
 function RelativeTimeNoWrap(props: { value: DateTime.Utc }) {
@@ -278,7 +272,11 @@ function ProcessNameCell({
           aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
           onClick={() => onToggle(process.pid)}
         >
-          <MorphIcon className="size-3.5" icon={isExpanded ? ChevronDown : ChevronRight} />
+          {isExpanded ? (
+            <ChevronDownIcon className="size-3.5" />
+          ) : (
+            <ChevronRightIcon className="size-3.5" />
+          )}
         </Button>
       ) : (
         <span className="size-5 shrink-0" aria-hidden="true" />
@@ -438,10 +436,10 @@ const RESOURCE_HISTORY_WINDOWS = [
 ] as const;
 
 function formatCpuTime(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
+  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2).replace(/\.0+$/, "")}s`;
   const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2)}m`;
-  return `${(minutes / 60).toFixed(2)}h`;
+  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2).replace(/\.0+$/, "")}m`;
+  return `${(minutes / 60).toFixed(2).replace(/\.0+$/, "")}h`;
 }
 
 function formatShortProcessName(command: string): string {

@@ -1,9 +1,12 @@
 import type { Root, RootContent } from "mdast";
-import { unified } from "unified";
+import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
+import { absoluteFilePathMatches, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
-const parser = unified().use(remarkParse).use(remarkGfm);
+const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
 
 interface MarkdownEdit {
@@ -32,7 +35,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
   return String.fromCodePoint(codePoint);
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
   return value.replace(
     /&(?:#(\d+)|#x([0-9a-f]+)|amp|apos|gt|lt|nbsp|quot);/gi,
     (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
@@ -123,7 +126,7 @@ function anchorMarkdown(tags: readonly string[]): AnchorState {
   return { pending: replacements, open: 0 };
 }
 
-function markdownHtmlTags(content: string): RegExpExecArray[] {
+export function markdownHtmlTags(content: string): RegExpExecArray[] {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
   const tags = [...content.matchAll(HTML_TAG)];
@@ -161,8 +164,10 @@ function markdownHtmlTags(content: string): RegExpExecArray[] {
       }
     }
     if (closingIndex === -1) {
-      if (fenced) codeRanges.push({ start: opening.index, end: content.length });
-      continue;
+      if (!fenced) continue;
+      // An unclosed fence runs to the end of the content, so no later opener matters.
+      codeRanges.push({ start: opening.index, end: content.length });
+      break;
     }
     const closing = delimiters[closingIndex]!;
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
@@ -225,8 +230,8 @@ function htmlTagMarkdown(
   const blockBreak = anchors.open === 0 ? "\n\n" : " ";
   if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
   if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
-  // A line break would end the table row, so a cell keeps its content on one line.
-  if (/^<br\b/i.test(tag)) return options.inTableCell ? " " : "  \n";
+  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? "&#10;" : "  \n";
   if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
   return "";
 }
@@ -275,9 +280,7 @@ export function markdownWithHtml(markdown: string): string {
     }
   };
   visit(parser.parse(markdown), false, false);
-  for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
-  return markdown;
+  return applyMarkdownEdits(markdown, edits);
 }
 
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
@@ -302,7 +305,8 @@ function transformNativeMarkdown(
       }
     }
   }
-  if (!linkFiles && !breakTables) return markdown;
+  const linkProseFiles = fileLink !== undefined && absoluteFilePathMatches(markdown).length > 0;
+  if (!linkFiles && !linkProseFiles && !breakTables) return markdown;
   const edits: MarkdownEdit[] = [];
   const fileEdits: MarkdownEdit[] = [];
   let rewritesPipe = false;
@@ -315,6 +319,7 @@ function transformNativeMarkdown(
         start !== undefined &&
         end !== undefined &&
         fileLink?.test(node.value) &&
+        parseMarkdownFileLink(node.value) !== null &&
         !/[<>]/.test(node.value)
       ) {
         const edit = {
@@ -325,6 +330,25 @@ function transformNativeMarkdown(
         edits.push(edit);
         fileEdits.push(edit);
         if (node.value.includes("|")) rewritesPipe = true;
+      }
+    } else if (
+      linkProseFiles &&
+      node.type === "text" &&
+      node.position?.start.offset !== undefined
+    ) {
+      const start = node.position.start.offset;
+      const raw = markdown.slice(start, node.position.end.offset);
+      for (const { index, path } of absoluteFilePathMatches(raw)) {
+        // Source offsets stay valid for paths whose own text needs no Markdown decoding.
+        if (raw !== node.value && /[\\&]/.test(path)) continue;
+        const escaped = path.replace(/[\\[\]&]/g, "\\$&");
+        const edit = {
+          start: start + index,
+          end: start + index + path.length,
+          content: `[${escaped}](<${escaped}>)`,
+        };
+        edits.push(edit);
+        fileEdits.push(edit);
       }
     } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
       node.children.forEach((child, index) => {
@@ -382,13 +406,62 @@ export function markdownWithTableBreaks(markdown: string): string {
   return transformNativeMarkdown(markdown, undefined, true);
 }
 
+// `>` covers a destination continued on a blockquote line.
+const WINDOWS_DESTINATION = /\](?:\(|:)[\s>]*<?(?:[A-Za-z]:[\\/]|\\\\)/;
+
+interface DestinationToken {
+  readonly start: { readonly offset: number };
+  readonly end: { readonly offset: number };
+}
+
+/**
+ * Markdown reads `C:\work\.t3` as `C:\work.t3`. Web keeps authored Windows destinations
+ * literally (see `remarkKeepWindowsPaths` in shared), so escape their backslashes to give
+ * both parsers here the same path. `\&` stays an escape, as `markdownWithHtml` emits it.
+ * Expects authored Markdown: already escaped output would be escaped twice.
+ */
+function markdownWithWindowsPathDestinations(markdown: string): string {
+  // Skips the extra parse for the common message that has no Windows destination.
+  if (!WINDOWS_DESTINATION.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  function record(
+    this: { resume(): string; sliceSerialize(token: DestinationToken): string },
+    token: DestinationToken,
+  ) {
+    this.resume();
+    const authored = this.sliceSerialize(token);
+    if (!isWindowsAbsolutePath(authored) || !authored.includes("\\") || /[<>]/.test(authored))
+      return;
+    const start = token.start.offset;
+    const end = token.end.offset;
+    const escaped = authored.replace(/\\(?!&)/g, "\\\\");
+    // A bare destination ends at an unescaped `)`, so wrap it to keep `\)` inside.
+    const angled = markdown[start - 1] === "<";
+    edits.push({ start, end, content: angled ? escaped : `<${escaped}>` });
+  }
+  unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(function (this: Processor) {
+      (this.data().fromMarkdownExtensions ??= []).push({
+        exit: { resourceDestinationString: record, definitionDestinationString: record },
+      });
+    })
+    .parse(markdown);
+  return applyMarkdownEdits(markdown, edits);
+}
+
+// HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
+export function markdownForNativeParsing(markdown: string): string {
+  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownWithHtml(markdown));
+  return parser.parse(markdownForNativeParsing(markdown));
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
-  return transformNativeMarkdown(markdownWithHtml(markdown), fileLink, true);
+  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */

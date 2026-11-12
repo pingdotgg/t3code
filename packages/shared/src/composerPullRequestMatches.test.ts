@@ -5,6 +5,7 @@ import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
+  withLinkedComposerPullRequestsFirst,
 } from "./composerPullRequestMatches.ts";
 
 const entry = (number: number, updatedAt: string) => ({
@@ -24,6 +25,17 @@ describe("filterComposerPullRequestMatches", () => {
       limit: 10,
     });
     expect(result.map((match) => match.number)).toEqual([123, 1234, 1230]);
+  });
+
+  it("orders by update instant when timestamps carry different UTC offsets", () => {
+    const result = filterComposerPullRequestMatches({
+      entries: [entry(401, "2026-10-25T02:50:00+02:00"), entry(499, "2026-10-25T02:10:00+01:00")],
+      projectId: "p1",
+      repository: "owner/repo",
+      query: "4",
+      limit: 1,
+    });
+    expect(result.map((match) => match.number)).toEqual([499]);
   });
 });
 
@@ -77,5 +89,31 @@ describe("linked pull requests", () => {
       limit: 10,
     });
     expect(result).toEqual([entry(4, "2026-01-03")]);
+  });
+
+  it("puts linked pull requests ahead of a text search, before and after it returns", () => {
+    const linked = composerPullRequestsFromLinks(
+      [
+        link("owner/repo", 7, {
+          snapshot: { ...link("owner/repo", 7).snapshot!, title: "Fix login" },
+        }),
+        link("owner/repo", 8),
+      ],
+      "p1",
+    );
+    const searching = withLinkedComposerPullRequestsFirst({
+      matches: [],
+      linked,
+      query: "fix",
+      limit: 10,
+    });
+    expect(searching.map((match) => match.number)).toEqual([7]);
+    const searched = withLinkedComposerPullRequestsFirst({
+      matches: [entry(9, "2026-01-05"), entry(8, "2026-01-03")],
+      linked,
+      query: "fix",
+      limit: 10,
+    });
+    expect(searched).toEqual([linked[0], entry(8, "2026-01-03"), entry(9, "2026-01-05")]);
   });
 });
