@@ -53,7 +53,8 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
               "--app-modal-sm-top": `max(1.5rem, ${nativeTitlebarHeight}px)`,
             } as CSSProperties
           }
-          className="fixed inset-0 z-50 flex items-center justify-center sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10"
+          // Electron drag regions ignore z-index, so without no-drag a click over a header drag strip never reaches the page.
+          className="fixed inset-0 z-50 flex items-center justify-center sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10 [-webkit-app-region:no-drag]"
           onPointerDown={(event) => {
             backdropPressRef.current = event.target === event.currentTarget;
           }}
