@@ -1,9 +1,16 @@
-import { BookmarkIcon } from "lucide-react";
+import { ArchiveIcon } from "lucide-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
-import { ComposerBanner } from "./ComposerBanner";
 
+import { Button } from "../ui/button";
+
+/**
+ * Filled "Stash 3" chip in the tray row, after the branch. Opens the stash menu.
+ * On save the chip gives one quiet acknowledgement: the count ticks over.
+ * `pulseKey` changes per stash, remounting the count so the transition replays
+ * without a continuous animation.
+ */
 export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
   menuOpen: boolean;
@@ -12,51 +19,30 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   onToggleMenu: () => void;
 }) {
   if (props.count === 0) return null;
-  const pulsed = props.pulseKey > 0;
-  const count = (
-    <ComposerBanner.Count
-      // Remounting the count per stash restarts its CSS pulse; no timer has to end it.
-      key={props.pulseKey}
-      className={cn(
-        "text-muted-foreground",
-        pulsed &&
-          "animate-stash-pulse-count transition-[opacity,translate] duration-180 ease-out starting:translate-y-0.5 starting:opacity-0 motion-reduce:transition-none",
-      )}
-    >
-      {props.count}
-    </ComposerBanner.Count>
-  );
 
   return (
-    <ComposerBanner.Root
-      density="comfortable"
-      width="content"
-      data-composer-shoulder-tab
-      className="ml-auto"
+    <Button
+      variant="ghost-muted"
+      size="micro"
+      data-prompt-stash-badge="true"
+      data-pressed={props.menuOpen ? "" : undefined}
+      aria-label={`Stashed prompts: ${props.count}. Open stash.`}
+      aria-expanded={props.menuOpen}
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={props.onToggleMenu}
     >
-      <ComposerBanner.Row
-        render={<button type="button" />}
-        data-prompt-stash-badge="true"
-        aria-label={`Stashed prompts: ${props.count}. Open stash.`}
-        aria-expanded={props.menuOpen}
+      <ArchiveIcon aria-hidden />
+      <span>Stash</span>
+      <span
+        key={props.pulseKey}
         className={cn(
-          "transition-colors duration-200",
-          props.menuOpen && "pointer-events-none",
-          props.menuOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-          // The button keeps its identity (focus, hover) across stashes. Swapping between two
-          // identical keyframes restarts the row's animation instead.
-          pulsed &&
-            (props.pulseKey % 2 === 0 ? "animate-stash-pulse-row-alt" : "animate-stash-pulse-row"),
+          "text-foreground tabular-nums",
+          props.pulseKey > 0 &&
+            "transition-[opacity,translate] duration-180 ease-out starting:translate-y-0.5 starting:opacity-0 motion-reduce:transition-none",
         )}
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={props.onToggleMenu}
       >
-        <ComposerBanner.Icon>
-          <BookmarkIcon />
-        </ComposerBanner.Icon>
-        <ComposerBanner.Content>Stash</ComposerBanner.Content>
-        <ComposerBanner.Actions>{count}</ComposerBanner.Actions>
-      </ComposerBanner.Row>
-    </ComposerBanner.Root>
+        {props.count}
+      </span>
+    </Button>
   );
 });
