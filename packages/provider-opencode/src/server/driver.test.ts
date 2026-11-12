@@ -537,6 +537,73 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("caches a cold OpenCode 2 directory's skills only after its scan ends", () =>
+    Effect.gen(function* () {
+      // OpenCode 2.2.7: touching a location lists it as loaded with built-in commands and skills
+      // at once, while provider.list waits for the scan that adds the project's skills.
+      const scanEnded = yield* Deferred.make<void>();
+      const builtinSkills = JSON.stringify({
+        location: { directory: "/work" },
+        data: (
+          JSON.parse(OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body).data as Array<{
+            id: string;
+          }>
+        ).filter((skill) => skill.id !== "plum"),
+      });
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        const json = (body: string) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(JSON.parse(body))));
+        const afterScan = (body: string) =>
+          Deferred.await(scanEnded).pipe(Effect.andThen(json(body)));
+        switch (path) {
+          case "/api/info":
+            return json(
+              JSON.stringify({
+                ...JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body),
+                version: "2.2.7",
+              }),
+            );
+          case "/api/event":
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(new ReadableStream(), {
+                  headers: { "content-type": "text/event-stream" },
+                }),
+              ),
+            );
+          case "/api/debug/location":
+            return json('[{"directory":"/work"}]');
+          case "/api/provider":
+          case "/api/model":
+            return afterScan('{"location":{"directory":"/work"},"data":[]}');
+          case "/api/command":
+            return json(OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body);
+          case "/api/skill":
+            return Deferred.isDone(scanEnded).pipe(
+              Effect.flatMap((done) =>
+                json(done ? OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body : builtinSkills),
+              ),
+            );
+          default:
+            return Effect.die(`Unexpected request: ${path}`);
+        }
+      });
+      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
+
+      const snapshot = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(scanEnded, undefined);
+      yield* TestClock.adjust("30 seconds");
+      const { skills } = yield* Fiber.join(snapshot);
+      assert.include(
+        skills.map((skill) => skill.name),
+        "plum",
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect.each(["probe", "error", "empty"] as const)(
     "recovers discovery without a manual refresh after %s",
     (initialCatalog) =>
