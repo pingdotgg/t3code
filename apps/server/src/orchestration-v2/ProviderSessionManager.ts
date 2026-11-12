@@ -2042,12 +2042,17 @@ export const layerWithOptions = (
                 isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
               ),
               Effect.flatMap((loaded) =>
-                loaded
+                loaded && input.providerThread.status !== "error"
                   ? Effect.succeed({
                       loaded: input.providerThread,
                       linkedEnvironments: undefined,
                     })
                   : loadNatively(runtime.resumeThread(input)),
+              ),
+              Effect.onError(() =>
+                input.providerThread.status === "error"
+                  ? scheduleThreadUnload(providerSessionId, input.providerThread.id)
+                  : Effect.void,
               ),
               Effect.tap(({ loaded: providerThread, linkedEnvironments }) =>
                 markProviderThreadLoaded({
