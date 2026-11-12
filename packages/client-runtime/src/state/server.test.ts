@@ -614,14 +614,16 @@ describe("server state projection", () => {
       const catalogs = yield* Queue.unbounded<ReadonlyArray<FetchedMachineCatalog>>();
       const instanceId = ProviderInstanceId.make("claudeAgent");
       const otherInstanceId = ProviderInstanceId.make("codex");
+      const thirdInstanceId = ProviderInstanceId.make("cursor");
       const slashCommands = [{ name: "compact" }];
       // What the server sends: a digest in place of the two lists.
-      const snapshot = () =>
+      const snapshot = (catalogDigest = "d1") =>
         snapshotEvent({
           ...CONFIG,
           providers: [
-            { instanceId, slashCommands: [], skills: [], catalogDigest: "d1" },
+            { instanceId, slashCommands: [], skills: [], catalogDigest },
             { instanceId: otherInstanceId, slashCommands: [], skills: [], catalogDigest: "c1" },
+            { instanceId: thirdInstanceId, slashCommands: [], skills: [], catalogDigest: "t1" },
           ],
         } as unknown as ServerConfig);
       yield* Effect.scoped(
@@ -667,6 +669,25 @@ describe("server state projection", () => {
           expect(Option.getOrThrow(settled)[0]).toMatchObject({
             slashCommands,
             loadedCatalogDigest: "d1",
+          });
+
+          // A reply for a newer catalog can land before the config names its digest. It is
+          // kept, and applies when the config does.
+          const newer = { instanceId, digest: "d2", slashCommands: [{ name: "new" }], skills: [] };
+          yield* Queue.offer(catalogs, [
+            newer,
+            { instanceId: thirdInstanceId, digest: "t1", slashCommands: [], skills: [] },
+          ]);
+          const kept = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers),
+            Stream.filter((providers) => providers[2]?.loadedCatalogDigest === "t1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(kept)[0]).toMatchObject({ loadedCatalogDigest: "d1" });
+          const advanced = yield* h.send(snapshot("d2"));
+          expect(advanced.config.providers[0]).toMatchObject({
+            slashCommands: newer.slashCommands,
+            loadedCatalogDigest: "d2",
           });
         }),
       );

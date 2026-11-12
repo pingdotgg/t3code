@@ -399,12 +399,12 @@ function withFetchedMachineCatalogs(
   let changed = false;
   const providers = projection.config.providers.map((provider) => {
     const catalog = catalogs.find((entry) => entry.instanceId === provider.instanceId);
+    // Only the lists of the live catalog apply. A reply for an older one is dropped, and a
+    // reply that lands before the config names its digest applies when the config does.
     if (
       catalog === undefined ||
-      provider.catalogDigest === undefined ||
-      provider.loadedCatalogDigest === catalog.digest ||
-      // The held lists match the live catalog, so a reply with another digest is an older one.
-      provider.loadedCatalogDigest === provider.catalogDigest
+      catalog.digest !== provider.catalogDigest ||
+      provider.loadedCatalogDigest === catalog.digest
     ) {
       return provider;
     }
@@ -541,6 +541,8 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     type Update = (
       current: Option.Option<ServerConfigProjection>,
     ) => Option.Option<ServerConfigProjection>;
+    // Written and read inside the one update loop below.
+    let fetchedCatalogs: ReadonlyArray<FetchedMachineCatalog> = [];
     const configUpdates = subscribe(WS_METHODS.subscribeServerConfig, {
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
@@ -552,15 +554,18 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       Stream.map(
         (event): Update =>
           (current) =>
-            applyServerConfigProjection(current, event),
+            Option.map(applyServerConfigProjection(current, event), (projection) =>
+              withFetchedMachineCatalogs(projection, fetchedCatalogs),
+            ),
       ),
     );
     const catalogUpdates = machineCatalogs.pipe(
-      Stream.map(
-        (catalogs): Update =>
-          (current) =>
-            Option.map(current, (projection) => withFetchedMachineCatalogs(projection, catalogs)),
-      ),
+      Stream.map((catalogs): Update => (current) => {
+        fetchedCatalogs = catalogs;
+        return Option.map(current, (projection) =>
+          withFetchedMachineCatalogs(projection, catalogs),
+        );
+      }),
     );
 
     // One loop for both sources, so a fetched catalog never overwrites a newer config event.
