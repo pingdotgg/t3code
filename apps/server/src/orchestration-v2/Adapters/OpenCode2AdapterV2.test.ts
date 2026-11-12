@@ -1482,10 +1482,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal(yield* Deferred.await(shellOwner), childProviderThreadId);
       const events = yield* Fiber.join(collected);
       const parent = events.at(-1);
-      assert.deepInclude(
+      assert.deepEqual(
         parent?.type === "provider_thread.updated"
-          ? parent.providerThread.pendingBackgroundTasks
-          : [],
+          ? parent.providerThread.pendingBackgroundTasks?.find((task) => task.taskId === id)
+          : undefined,
         {
           taskId: id,
           kind: "command",
