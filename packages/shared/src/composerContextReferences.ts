@@ -474,9 +474,9 @@ export function composerRecallContext(
   for (let index = references.length - 1; index >= 0; index--) {
     const reference = references[index]!;
     if (!ids.has(reference.contextId)) continue;
-    let { start, end } = reference;
+    const { start } = reference;
+    let { end } = reference;
     if (text[end] === " ") end += 1;
-    else if (text[start - 1] === " ") start -= 1;
     text = text.slice(0, start) + text.slice(end);
   }
   // Recompute rather than carrying provenance from a message being edited.

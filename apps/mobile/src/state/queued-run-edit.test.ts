@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { Atom } from "effect/reactivity";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  restoreAttachmentOnlyBootstrapPrompt,
+  recallComposerText,
 } from "@t3tools/shared/composerContextReferences";
 import {
   ChatAttachmentId,
@@ -133,6 +133,25 @@ describe("resolveQueuedEditPayload", () => {
 
     expect(payload.context).toEqual(recalled);
   });
+
+  it.each(["", "Ultrathink:"])(
+    "omits the generated bootstrap when an attachment remains after editing to %j",
+    (draftText) => {
+      const payload = resolveQueuedEditPayload({
+        edit: edit([image("kept")]),
+        text: draftText,
+        draftText,
+        draftContext: context(["kept"]),
+        draftAttachments: [],
+        uploaded: [],
+      });
+
+      expect(payload.text).toBe(
+        (draftText ? `${draftText}\n` : "") + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      );
+      expect(recallComposerText(payload.text, payload.context)).toBe(draftText);
+    },
+  );
 });
 
 describe("beginQueuedRunEdit", () => {
@@ -152,19 +171,17 @@ describe("beginQueuedRunEdit", () => {
       beginQueuedRunEdit(threadKey, original, runs);
       const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, original.runId));
       expect(draft.text).toBe(prefix.trimEnd());
-      expect(
-        restoreAttachmentOnlyBootstrapPrompt(draft.text, original.existingAttachments.length > 0),
-      ).toBe(original.originalText);
       const editing = getQueuedRunEdit(threadKey);
       if (editing === null) throw new Error("Expected an open queued edit");
       const payload = resolveQueuedEditPayload({
         edit: editing,
-        text: original.originalText,
+        text: draft.text.trim(),
         draftText: draft.text,
         draftContext: draft.context,
         draftAttachments: [],
         uploaded: [],
       });
+      expect(payload.text).toBe(original.originalText);
       expect(payload.context).toEqual(recall);
       appAtomRegistry.set(runs, [{ id: original.runId, status: "running" }]);
       expect(getQueuedRunEdit(threadKey)).toBeNull();

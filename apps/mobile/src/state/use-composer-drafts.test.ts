@@ -493,7 +493,22 @@ describe("mobile composer drafts", () => {
         schemaVersion: 1,
         drafts: { thread: { text, attachments: [], context } },
       }).drafts.thread!;
-      appAtomRegistry.set(composerDraftsAtom, { thread: restored });
+      const recovered = mergeComposerDraftContentState({}, "thread", restored);
+      const existing = {
+        text: "another draft",
+        context: { version: 1, records: [], composerRecall: " another draft " } as const,
+        attachments: [],
+      };
+      const combined = mergeComposerDraftContentState(
+        { thread: existing },
+        "thread",
+        restored,
+      ).thread!;
+      const combinedMessage = serializeComposerMessageForServer(combined.text, combined.context);
+      expect(recallComposerText(combinedMessage.text, combinedMessage.context)).toBe(
+        " another draft \n\n  original\n",
+      );
+      appAtomRegistry.set(composerDraftsAtom, recovered);
       setComposerDraftText("thread", text);
       const unchanged = getComposerDraftSnapshot("thread");
       expect(
@@ -504,8 +519,8 @@ describe("mobile composer drafts", () => {
         "  original\n",
       );
 
-      const editedAuthored = "  changed after recovery\n";
-      setComposerDraftText("thread", `${editedAuthored}${references}`);
+      const editedAuthored = "  changed after recovery\n ";
+      setComposerDraftText("thread", editedAuthored + referenceDraft.text);
       const edited = decodePersistedComposerState({
         schemaVersion: 1,
         drafts: { thread: getComposerDraftSnapshot("thread") },

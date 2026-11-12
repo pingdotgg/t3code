@@ -37,7 +37,9 @@ import { createComposerContextHistory, referencedComposerContext } from "../lib/
 import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   collectComposerContextReferences,
+  composerRecallContext,
   formatComposerContextReference,
+  recallComposerText,
   sanitizeComposerContextLabel,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
@@ -628,7 +630,18 @@ function restoreMissingComposerFileReferences(
     referenced.add(key);
     changed = true;
   }
-  return changed ? { ...draft, text, context: { version: 1, records } } : draft;
+  const composerRecall = draft.context?.composerRecall;
+  return changed
+    ? {
+        ...draft,
+        text,
+        context: {
+          version: 1,
+          records,
+          ...(composerRecall === undefined ? {} : { composerRecall }),
+        },
+      }
+    : draft;
 }
 
 function normalizeDraft(draft: ComposerDraft | undefined): ComposerDraft {
@@ -1287,12 +1300,7 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
           ? {
               ...draft,
               ...existing,
-              text: mergeComposerDraftText(existing.text, draft.text),
-              context: mergeReferencedComposerContext(
-                mergeComposerDraftText(existing.text, draft.text),
-                draft.context,
-                existing.context,
-              ),
+              ...mergeComposerDraftPrompt(existing, draft, { preferExistingRecords: true }),
               // A concurrent import must not lose files, even above the send limit.
               attachments: [
                 ...existing.attachments,
@@ -1710,15 +1718,41 @@ function mergeComposerDraftText(existing: string, incoming: string): string {
   return `${existing}\n\n${incoming}`;
 }
 
-function mergeReferencedComposerContext(
-  text: string,
-  first?: OrchestrationMessageContext,
-  second?: OrchestrationMessageContext,
+function mergeComposerDraftPrompt(
+  existing: Pick<ComposerDraft, "text" | "context">,
+  incoming: Pick<ComposerDraftContent, "text" | "context">,
+  options?: { readonly preferExistingRecords?: boolean },
 ) {
+  const text = mergeComposerDraftText(existing.text, incoming.text);
+  const [first, second] = options?.preferExistingRecords
+    ? [incoming.context, existing.context]
+    : [existing.context, incoming.context];
   const records = new Map((first?.records ?? []).map((record) => [record.contextId, record]));
   for (const record of second?.records ?? []) records.set(record.contextId, record);
-  if (records.size === 0) return undefined;
-  return referencedComposerContext(text, { version: 1, records: [...records.values()] });
+  const context =
+    records.size === 0
+      ? undefined
+      : referencedComposerContext(text, { version: 1, records: [...records.values()] });
+  if (
+    existing.context?.composerRecall === undefined &&
+    incoming.context?.composerRecall === undefined
+  ) {
+    return { text, context };
+  }
+
+  const previous = recallComposerText(existing.text, existing.context);
+  const added = recallComposerText(incoming.text, incoming.context);
+  // Keep recall aligned with the text merge, including a retried restoration of the same text.
+  let recalled = previous;
+  if (
+    text === incoming.text &&
+    (text !== existing.text || existing.context?.composerRecall === undefined)
+  ) {
+    recalled = added;
+  } else if (text !== existing.text) {
+    recalled = [previous, added].filter((part) => part.length > 0).join("\n\n");
+  }
+  return { text, context: composerRecallContext(text, recalled, context) };
 }
 
 export function mergeComposerDraftContentState(
@@ -1742,8 +1776,7 @@ export function mergeComposerDraftContentState(
     0,
     PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   );
-  const text = mergeComposerDraftText(existing.text, content.text);
-  const context = mergeReferencedComposerContext(text, existing.context, content.context);
+  const { text, context } = mergeComposerDraftPrompt(existing, content);
   const importedShareIds = content.sourceShareId
     ? [...(existing.importedShareIds ?? []), content.sourceShareId]
     : existing.importedShareIds;

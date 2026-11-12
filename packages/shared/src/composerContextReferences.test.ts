@@ -517,7 +517,7 @@ describe("composer recall provenance", () => {
     expect(recallComposerText(sent)).toBe(sent);
   });
 
-  it("excludes only references backed by actual context records", () => {
+  it.each([" ", ""])("keeps authored spacing around backed references (%j)", (suffix) => {
     const context: OrchestrationMessageContext = {
       version: 1,
       records: [
@@ -534,8 +534,7 @@ describe("composer recall provenance", () => {
         },
       ],
     };
-    const authored =
-      "Look at [Terminal](t3-context://v1/terminal/term) please\n[literal](t3-context://v1/terminal/missing)";
+    const authored = `Look at [Terminal](t3-context://v1/terminal/term)${suffix}please\n[literal](t3-context://v1/terminal/missing)`;
     expect(recallComposerText(authored, composerRecallContext(authored, authored, context))).toBe(
       "Look at please\n[literal](t3-context://v1/terminal/missing)",
     );

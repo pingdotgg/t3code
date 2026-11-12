@@ -6,14 +6,17 @@ import type {
   UploadChatAttachment,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { stripAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
+import {
+  composerRecallContext,
+  restoreAttachmentOnlyBootstrapPrompt,
+  stripAttachmentOnlyBootstrapPrompt,
+} from "@t3tools/shared/composerContextReferences";
 import {
   makeQueuedRunEditStore,
   resolveQueuedEditExit,
   type QueuedRunsAtom,
 } from "@t3tools/client-runtime/queued-run-edit";
 
-import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { uploadedComposerContext } from "../lib/composerContext";
 import { appAtomRegistry } from "./atom-registry";
 import { abortComposerDraftOperations } from "./composerDraftOperations";
@@ -161,21 +164,23 @@ export function resolveQueuedEditPayload(input: {
   readonly draftAttachments: ReadonlyArray<{ readonly id: string }>;
   readonly uploaded: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
 }): {
+  readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
   readonly context: OrchestrationMessageContext;
 } {
   const attachments = [...input.edit.existingAttachments, ...input.uploaded];
+  const text = restoreAttachmentOnlyBootstrapPrompt(input.text, attachments.length > 0);
   const rebound = uploadedComposerContext(
     input.draftContext,
     input.draftAttachments,
     input.uploaded,
   );
   const recall = (context: OrchestrationMessageContext | undefined) =>
-    composerRecallContext(input.text, input.draftText, context, input.edit.originalText) ?? {
+    composerRecallContext(text, input.draftText, context, input.edit.originalText) ?? {
       version: 1,
       records: [],
     };
-  if (rebound === undefined) return { attachments, context: recall(undefined) };
+  if (rebound === undefined) return { text, attachments, context: recall(undefined) };
   const liveIds = new Set(
     attachments.flatMap((attachment) =>
       "id" in attachment && attachment.id ? [attachment.id] : [],
@@ -185,6 +190,7 @@ export function resolveQueuedEditPayload(input: {
     (record) => !("attachmentId" in record) || liveIds.has(record.attachmentId),
   );
   return {
+    text,
     attachments,
     context: recall({ ...rebound, records }),
   };
