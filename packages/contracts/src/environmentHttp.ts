@@ -56,6 +56,7 @@ import {
   CloudSpeechModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
@@ -681,19 +682,19 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
-const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
   omitIdleSubagents: Schema.optionalKey(Schema.String),
   omitOlderSettled: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   deferWork: Schema.optionalKey(Schema.String),
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
   compactIds: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
   view: Schema.optional(Schema.Literals(["conversation", "activity", "work"])),
@@ -884,6 +885,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("removeModel", "/api/voice/models/remove", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("linkModels", "/api/voice/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
       success: EnvironmentSpeechModels,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
