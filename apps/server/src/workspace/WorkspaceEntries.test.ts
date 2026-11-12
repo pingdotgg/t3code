@@ -493,6 +493,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, "ignored.txt", "ignore me");
         yield* writeTextFile(cwd, ".convex/local-storage/data.json", "{}");
         yield* writeTextFile(cwd, "convex/UOoS-l/convex_local_storage/modules/data.json", "{}");
+        yield* writeTextFile(cwd, ".git/info/exclude", "info-excluded.txt\n");
+        yield* writeTextFile(cwd, "info-excluded.txt", "ignore me");
+        yield* writeTextFile(cwd, ".git/configured-excludes", "configured-excluded.txt\n");
+        yield* git(cwd, ["config", "core.excludesFile", ".git/configured-excludes"]);
+        yield* writeTextFile(cwd, "configured-excluded.txt", "ignore me");
 
         const result = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
         const paths = result.entries.map((entry) => entry.path);
@@ -500,6 +505,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths).toContain("src");
         expect(paths).toContain("src/keep.ts");
         expect(paths).not.toContain("ignored.txt");
+        expect(paths).not.toContain("info-excluded.txt");
+        expect(paths).not.toContain("configured-excluded.txt");
         expect(paths.some((entryPath) => entryPath.startsWith(".convex/"))).toBe(false);
         expect(paths.some((entryPath) => entryPath.startsWith("convex/"))).toBe(false);
       }),
@@ -591,6 +598,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, ".gitignore", "ignored.txt\n");
         yield* writeTextFile(cwd, "src/keep.ts", "square\nSquare\n");
         yield* writeTextFile(cwd, "ignored.txt", "Square\n");
+        yield* writeTextFile(cwd, ".git/info/exclude", "info-excluded.txt\n");
+        yield* writeTextFile(cwd, "info-excluded.txt", "Square\n");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const result = yield* workspaceEntries.searchContents({

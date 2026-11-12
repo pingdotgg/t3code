@@ -237,3 +237,81 @@ test("stable releases fail when no nightly is published", async () => {
   const { options } = nightlyCommitFixture({ releases: [nightly(1, { tagName: "v1.0.0" })] });
   await assert.rejects(resolveLatestNightlyCommit(options), /No published nightly found/);
 });
+
+const { readNightlyUpdateFeed } = require("./check-nightly-release.cjs");
+
+// GitHub percent-encodes tag names in the feed, and any tag in the repository takes a slot.
+const atomEntry = (tag) =>
+  `<entry><link rel="alternate" type="text/html" href="https://github.com/example/app/releases/tag/${encodeURIComponent(tag)}"/></entry>`;
+const atomFeed = (tags) => new Response(`<feed>${tags.map(atomEntry).join("")}</feed>`);
+const NEWEST = "v1.0.1-nightly.20260905.123";
+const OLDER = "v1.0.1-nightly.20260905.100";
+
+function updateFeedFixture({ feed, pointer }) {
+  const { options } = fixture({
+    releases: [nightly(1), nightly(0, { tagName: "v1.0.2-preview.1" })],
+  });
+  options.fetch = async (url) =>
+    url === "https://github.com/example/app/releases.atom"
+      ? feed
+      : url === "https://github.com/example/app/releases/download/update-feed/nightly.json"
+        ? pointer
+        : assert.fail(`unexpected fetch ${url}`);
+  return options;
+}
+
+const missing = () => new Response("Not Found", { status: 404 });
+// HTTP 200, then the connection drops before the body arrives.
+const brokenBody = () =>
+  new Response(new ReadableStream({ start: (controller) => controller.error(new Error("reset")) }));
+for (const [name, { feed, pointer }, expected] of [
+  [
+    "a nightly crowded out of the feed and a missing pointer",
+    { feed: atomFeed(["v1.0.2-preview.1", "mobile-android-build/2.3.0/abc"]), pointer: missing() },
+    { pointerTag: undefined, feedNightly: undefined },
+  ],
+  [
+    "the first nightly in the feed, which is the one older installs take",
+    { feed: atomFeed(["update-feed", OLDER, NEWEST]), pointer: Response.json({ tag_name: OLDER }) },
+    { pointerTag: OLDER, feedNightly: OLDER },
+  ],
+  [
+    "a malformed pointer as stale and an unreadable feed as naming nothing",
+    { feed: new Response("", { status: 503 }), pointer: Response.json(null) },
+    { pointerTag: undefined, feedNightly: undefined, unreadable: true },
+  ],
+  [
+    "an HTML page with release links as an unreadable feed",
+    {
+      feed: new Response(
+        `<html><feedback-form></feedback-form><a href="/example/app/releases/tag/${OLDER}">x</a></html>`,
+      ),
+      pointer: Response.json({ tag_name: NEWEST }),
+    },
+    { pointerTag: NEWEST, feedNightly: undefined, unreadable: true },
+  ],
+  [
+    "the pointer when the feed's body fails to arrive",
+    { feed: brokenBody(), pointer: Response.json({ tag_name: NEWEST }) },
+    { pointerTag: NEWEST, feedNightly: undefined, unreadable: true },
+  ],
+]) {
+  test(`update feed check reports ${name}`, async () => {
+    const { tag, pointerTag, feedNightly, feedTags } = await readNightlyUpdateFeed(
+      updateFeedFixture({ feed, pointer }),
+    );
+    const { unreadable = false, ...named } = expected;
+    assert.deepEqual({ tag, pointerTag, feedNightly }, { tag: NEWEST, ...named });
+    assert.equal(feedTags === undefined, unreadable);
+  });
+}
+
+for (const [name, pointer, error] of [
+  ["answers with an error", () => new Response("", { status: 503 }), /pointer answered HTTP 503/],
+  ["drops the connection", brokenBody, /reset/],
+]) {
+  test(`update feed check does not call a pointer stale when GitHub ${name}`, async () => {
+    const options = updateFeedFixture({ feed: atomFeed([NEWEST]), pointer: pointer() });
+    await assert.rejects(readNightlyUpdateFeed(options), error);
+  });
+}

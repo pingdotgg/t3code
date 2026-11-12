@@ -292,16 +292,22 @@ describe("projectThreadAwarenessV2", () => {
       }),
     ).toBeNull();
     const childUpdatedAt = "2026-09-04T12:02:00.000Z";
-    expect(
-      projectThreadAwarenessV2({
-        ...input,
-        thread: { ...input.thread, background: { ...background, reportedAt: NOW } },
-        pendingSubagentRequest: {
-          requestId: RuntimeRequestId.make("child-approval"),
-          updatedAt: DateTime.makeUnsafe(childUpdatedAt),
-        },
-      }),
-    ).toMatchObject({ phase: "waiting_for_approval", updatedAt: childUpdatedAt });
+    for (const waitsForInput of [false, true]) {
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: { ...input.thread, background: { ...background, reportedAt: NOW } },
+          pendingSubagentRequest: {
+            requestId: RuntimeRequestId.make("child-request"),
+            updatedAt: DateTime.makeUnsafe(childUpdatedAt),
+            waitsForInput,
+          },
+        }),
+      ).toMatchObject({
+        phase: waitsForInput ? "waiting_for_input" : "waiting_for_approval",
+        updatedAt: childUpdatedAt,
+      });
+    }
     for (const status of ["running", "idle"] as const) {
       const reportedAt = "2026-09-04T12:01:00.000Z";
       expect(
