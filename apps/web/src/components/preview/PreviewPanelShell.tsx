@@ -197,7 +197,7 @@ function PreviewPanelShellFrame(
       {isInline && !maximized ? (
         <RightPanelResizeHandle
           handlers={handlers}
-          className="md:left-1 md:any-pointer-coarse:left-0"
+          className="md:left-2 md:any-pointer-coarse:left-0"
         />
       ) : null}
       {/* Content stays pinned to the right edge, so closing uncovers the chat
