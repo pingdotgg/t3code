@@ -155,15 +155,21 @@ describe("TaskBoardPage", () => {
     const toggle = () => screen.getByRole("button", { name: "Collapse Working" }).element();
     (toggle() as HTMLElement).focus();
     await userEvent.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
-    expect(column("Working")).toBe(column("Needs you"));
-    expect(document.activeElement).toBe(toggle());
+    await vi.waitFor(() => {
+      expect(column("Working")).toBe(column("Needs you"));
+      expect(document.activeElement).toBe(toggle());
+    });
     await userEvent.keyboard("{Alt>}{ArrowUp}{/Alt}");
-    expect(
-      [...column("Working")!.querySelectorAll("section")].map((section) => section.ariaLabel),
-    ).toEqual(["Working", "Needs you"]);
+    await vi.waitFor(() =>
+      expect(
+        [...column("Working")!.querySelectorAll("section")].map((section) => section.ariaLabel),
+      ).toEqual(["Working", "Needs you"]),
+    );
     await userEvent.keyboard("{Alt>}{ArrowRight}{/Alt}");
-    expect(column("Working")).not.toBe(column("Needs you"));
-    expect(document.activeElement).toBe(toggle());
+    await vi.waitFor(() => {
+      expect(column("Working")).not.toBe(column("Needs you"));
+      expect(document.activeElement).toBe(toggle());
+    });
   });
 
   it("resizes stacked panels, keeps the split across remounts, and resets on double-click", async () => {
