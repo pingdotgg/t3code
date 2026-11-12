@@ -5004,6 +5004,35 @@ it("hides a lesson picture before an unanswered card until the card is answered"
       answeredCardAnswers: answeredCardAnswers([{ role: "user", text: answer }]),
     }).find((row) => row.id === "picture"),
   ).not.toMatchObject({ picturePending: true });
+
+  const answeredPicture = {
+    ...picture,
+    htmlRender: { ...picture.htmlRender, forCard: "old-card" },
+  };
+  expect(
+    deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries: [
+        ...input.timelineEntries.slice(0, 2),
+        answeredPicture,
+        ...input.timelineEntries.slice(3),
+      ],
+      answeredCardAnswers: new Map([["old-card", "A"]]),
+    }).find((row) => row.id === "picture"),
+  ).not.toMatchObject({ picturePending: true });
+  for (const forCard of ["card", undefined]) {
+    expect(
+      deriveMessagesTimelineRows({
+        ...input,
+        timelineEntries: [
+          ...input.timelineEntries.slice(0, 2),
+          { ...picture, htmlRender: { ...picture.htmlRender, ...(forCard ? { forCard } : {}) } },
+          ...input.timelineEntries.slice(3),
+        ],
+        answeredCardAnswers: new Map([["old-card", "A"]]),
+      }).find((row) => row.id === "picture"),
+    ).toMatchObject({ picturePending: true });
+  }
 });
 
 it("turns a question card into an unanswered quiz-card row", () => {

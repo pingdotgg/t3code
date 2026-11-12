@@ -4151,7 +4151,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 : (previousPage ??
                   (yield* mcpSessions.takeHtmlRender(context.input.threadId, input)));
               if (reportedPage === undefined && page !== undefined) {
-                output = { htmlRender: page };
+                output = {
+                  htmlRender: {
+                    ...page,
+                    ...(typeof input.forCard === "string" ? { forCard: input.forCard } : {}),
+                  },
+                };
                 context.tools.set(toolCall.toolCallId, {
                   ...toolCall,
                   data: { ...toolCall.data, rawOutput: output },

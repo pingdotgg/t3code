@@ -1620,6 +1620,9 @@ export function deriveThreadFeedPresentation(
   const feedWithPictureState = lesson
     ? sourceFeed.map((entry, index) => {
         if (entry.type !== "html-render" || entry.runId === null) return entry;
+        if (entry.render.forCard !== undefined && answeredCards.has(entry.render.forCard)) {
+          return entry;
+        }
         let pendingCardId: string | undefined;
         for (let next = index + 1; next < sourceFeed.length; next += 1) {
           const candidate = sourceFeed[next]!;

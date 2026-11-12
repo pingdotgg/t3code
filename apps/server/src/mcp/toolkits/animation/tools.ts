@@ -29,6 +29,12 @@ const AnimationRenderTool = Tool.make(ANIMATION_RENDER_TOOL_NAME, {
       Schema.isMinLength(1),
       Schema.isMaxLength(HTML_RENDER_MAX_TITLE_LENGTH),
     ),
+    forCard: Schema.optional(
+      Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)).annotate({
+        description:
+          "In a lesson, id from the learner's `(card <id>)` answer when this picture answers that card.",
+      }),
+    ),
   }).check(
     Schema.makeFilter((input) => input.code !== undefined || input.concept !== undefined, {
       expected: "code or concept",
@@ -40,6 +46,7 @@ const AnimationRenderTool = Tool.make(ANIMATION_RENDER_TOOL_NAME, {
       title: Schema.String,
       height: Schema.Number,
       heights: Schema.optional(Schema.Array(Schema.Tuple([Schema.Int, Schema.Int]))),
+      forCard: Schema.optional(Schema.String),
     }),
     message: Schema.String,
   }),

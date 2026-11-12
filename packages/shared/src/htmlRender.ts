@@ -21,6 +21,7 @@ export interface HtmlRenderReference {
   readonly title: string;
   readonly height: number;
   readonly heights?: ReadonlyArray<readonly [width: number, height: number]>;
+  readonly forCard?: string;
 }
 
 export const HTML_RENDER_MEASURE_WIDTHS = [320, 375, 430, 520, 640, 728, 860, 1000, 1144] as const;
@@ -51,7 +52,7 @@ function readMeasuredHeights(value: unknown) {
 
 export function readHtmlRenderReference(value: unknown): HtmlRenderReference | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { attachmentId, title, height, heights } = value as Record<string, unknown>;
+  const { attachmentId, title, height, heights, forCard } = value as Record<string, unknown>;
   if (
     typeof attachmentId !== "string" ||
     attachmentId.length === 0 ||
@@ -68,6 +69,9 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
     title: title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
+    ...(typeof forCard === "string" && forCard.length > 0 && forCard.length <= 256
+      ? { forCard }
+      : {}),
   };
 }
 

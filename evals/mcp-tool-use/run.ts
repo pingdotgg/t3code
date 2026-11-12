@@ -1388,7 +1388,12 @@ export const t3Default = (
       return { width: 728, contentHeight: 560, capturedHeight: 560, consoleMessages: [] };
     case "html_render":
       return {
-        htmlRender: { attachmentId: "att-1", title: input.title ?? "Visual", height: 560 },
+        htmlRender: {
+          attachmentId: "att-1",
+          title: input.title ?? "Visual",
+          height: 560,
+          ...(typeof input.forCard === "string" ? { forCard: input.forCard } : {}),
+        },
         message: HTML_RENDERED,
       };
     case "quiz_card":
