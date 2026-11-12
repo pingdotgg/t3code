@@ -504,8 +504,9 @@ jobs:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
           T3CODE_TRANSFER_BUDGET_SCENARIOS_PATH: ${{ runner.temp }}/thread-transfer-scenarios.json
+        # One process per file spends ~2s starting before its tests run; one file per vCPU overlaps that.
         run: >-
-          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+          vp run test:cached -- --shard ${{ matrix.shard }}/${{ strategy.job-total }} --concurrency 4
           --uncached apps/server/integration/transferBudgetV2.integration.test.ts
           --verify-hits 1 apps/server
 
