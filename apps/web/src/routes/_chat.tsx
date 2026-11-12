@@ -3,6 +3,7 @@ import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-r
 import { useState } from "react";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
+import { HiddenThreadContext } from "../components/chat/backgroundThread";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../threadRoutes";
@@ -22,25 +23,35 @@ function ChatRouteLayout() {
   const modalOpen = useMatches({
     select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
   });
-  // Settings and Usage render over the thread that opened them, so ChatView never remounts.
-  const [backgroundTarget, setBackgroundTarget] = useState(threadTarget);
-  if (!modalOpen && threadRouteTargetKey(backgroundTarget) !== threadRouteTargetKey(threadTarget)) {
-    setBackgroundTarget(threadTarget);
+  const pullRequestsOpen = useMatches({
+    select: (matches) => matches.some((match) => match.pathname === "/pull-requests"),
+  });
+  const [background, setBackground] = useState({ target: threadTarget, hidden: pullRequestsOpen });
+  const nextTarget = pullRequestsOpen ? background.target : threadTarget;
+  if (
+    !modalOpen &&
+    (background.hidden !== pullRequestsOpen ||
+      threadRouteTargetKey(background.target) !== threadRouteTargetKey(nextTarget))
+  ) {
+    setBackground({ target: nextTarget, hidden: pullRequestsOpen });
   }
-  const shownTarget = modalOpen ? backgroundTarget : threadTarget;
+  const shownTarget = modalOpen || pullRequestsOpen ? background.target : threadTarget;
+  const threadHidden = pullRequestsOpen || (modalOpen && background.hidden);
   return (
     <>
-      {shownTarget?.kind === "server" && !modalOpen ? (
+      {shownTarget?.kind === "server" && !modalOpen && !pullRequestsOpen ? (
         <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
       ) : null}
-      {shownTarget ? (
-        <ThreadRouteView target={shownTarget} background={modalOpen} />
-      ) : modalOpen ? (
-        <SidebarInset className="h-dvh" />
-      ) : (
-        <Outlet />
-      )}
-      {modalOpen ? <Outlet /> : null}
+      <div style={{ display: threadHidden ? "none" : "contents" }}>
+        <HiddenThreadContext value={threadHidden}>
+          {shownTarget ? (
+            <ThreadRouteView target={shownTarget} background={modalOpen || pullRequestsOpen} />
+          ) : modalOpen ? (
+            <SidebarInset className="h-dvh" />
+          ) : null}
+        </HiddenThreadContext>
+      </div>
+      {modalOpen || pullRequestsOpen || !shownTarget ? <Outlet /> : null}
     </>
   );
 }
