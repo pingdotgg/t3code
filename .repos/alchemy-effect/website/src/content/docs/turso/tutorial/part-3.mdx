@@ -1,0 +1,87 @@
+---
+title: "Part 3: Query Tenant Notes"
+description: Read and write a tenant's notes with Drizzle, then try it out.
+sidebar:
+  order: 3
+---
+
+Each request reads the tenant from the URL and only touches that tenant's database.
+
+## Install the driver
+
+```diff lang="sh"
++pnpm add @alchemy.run/drizzle drizzle-orm @effect/sql-libsql
+```
+
+## Connect to the tenant's database
+
+```diff lang="typescript"
++import * as Drizzle from "@alchemy.run/drizzle/LibSQL";
+
+if (resource === "notes") {
++  const db = yield* Drizzle.LibSQL(tenants.connect(tenant));
+}
+```
+
+`tenants.connect(tenant)` returns the database's URL and a token. The connection opens on the first query and closes when the request ends.
+
+## List notes
+
+```diff lang="typescript"
+case "GET": {
++  const notes = yield* db.select().from(Notes);
++  return yield* HttpServerResponse.json({ notes });
+}
+```
+
+## Add a note
+
+```diff lang="typescript"
+case "POST": {
++  const { body } = (yield* request.json) as { body: string };
++  const [note] = yield* db.insert(Notes).values({ body }).returning();
++  return yield* HttpServerResponse.json({ note });
+}
+```
+
+## Deploy
+
+```diff lang="sh"
++pnpm alchemy deploy
+```
+
+Alchemy prints the Worker's `url`.
+
+## Create two tenants
+
+```diff lang="sh"
++curl -X POST $URL/tenants/acme
++curl -X POST $URL/tenants/globex
+```
+
+Each call creates a database with the tenant's name. Names must be unique in your Turso organization.
+
+## Write a note
+
+```diff lang="sh"
++curl -X POST $URL/tenants/acme/notes -d '{"body":"hello from acme"}'
++curl $URL/tenants/acme/notes
+```
+
+`acme` sees its note. `globex` has its own database, still empty:
+
+```diff lang="sh"
++curl $URL/tenants/globex/notes
+```
+
+## Clean up
+
+```diff lang="sh"
++pnpm alchemy destroy
+```
+
+This deletes the `Tenants` group and every tenant database in it.
+
+:::note
+If you change the schema later, the template gets the new migration but existing tenants don't. See [Database per tenant](/turso/database-per-tenant#update-existing-tenants).
+:::

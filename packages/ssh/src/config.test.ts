@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverSshHosts, parseKnownHostsHostnames } from "./config.ts";
+import { discoverSshHosts, parseKnownHosts } from "./config.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -14,7 +14,7 @@ function makeTempHomeDir() {
 }
 
 describe("ssh config", () => {
-  it.effect("deduplicates hosts through quoted and escaped Include paths like OpenSSH", () =>
+  it.effect("deduplicates hosts through quoted, escaped, and Unicode Includes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -31,13 +31,25 @@ describe("ssh config", () => {
         path.join(homeDir, "escaped space.conf"),
         "Host escaped\n  HostName escaped.example.com\nHost *\n",
       );
+      const unicodeFiles = [
+        "\u00a0team\u00a0one.conf",
+        "team\u2003one.conf",
+        "team\u2028one.conf",
+        "team\u2029one.conf",
+      ].flatMap((file) => [file, `quoted-${file}`]);
+      for (const [index, file] of unicodeFiles.entries()) {
+        yield* fs.writeFileString(
+          path.join(sshDir, file),
+          `Host unicode-${index}\n  HostName unicode-${index}.example.com\nHost *\n`,
+        );
+      }
       yield* fs.writeFileString(
         path.join(sshDir, "config"),
         [
           `Include "${path.join(quotedDir, "team#1=a.conf")}" # comment`,
           `Include ${path.join(homeDir, "escaped space.conf").replaceAll(" ", "\\ ")}`,
-          "",
-        ].join("\n"),
+          `Include ${unicodeFiles.map((file, index) => (index % 2 === 0 ? file : `"${file}"`)).join("\t")}`,
+        ].join("\n") + "\r",
       );
 
       yield* fs.writeFileString(
@@ -51,12 +63,17 @@ describe("ssh config", () => {
         [
           ["escaped", "escaped.example.com", "ssh-config"],
           ["quoted", "quoted.example.com", "ssh-config"],
+          ...unicodeFiles.map((_, index) => [
+            `unicode-${index}`,
+            `unicode-${index}.example.com`,
+            "ssh-config",
+          ]),
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("skips directory Include matches without losing file aliases or known hosts", () =>
+  it.effect("skips directories and implicit dotfile Include matches but keeps explicit ones", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -66,11 +83,23 @@ describe("ssh config", () => {
       yield* fs.makeDirectory(path.join(sshDir, "explicit-directory"));
       yield* fs.writeFileString(
         path.join(sshDir, "config"),
-        "Include config.d/*\nInclude explicit-directory\nHost real\n  HostName real.example.com\n",
+        "Include config.d/*\nInclude config.d/.literal.conf\nInclude config.d/.enabled-*.conf\nInclude explicit-directory\nHost real\n  HostName real.example.com\n",
       );
       yield* fs.writeFileString(
         path.join(sshDir, "config.d", "team.conf"),
         "Host team\n  HostName team.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", ".backup.conf"),
+        "Host *\n  HostName obsolete.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", ".literal.conf"),
+        "Host literal\n  HostName literal.example.com\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config.d", ".enabled-one.conf"),
+        "Host enabled\n  HostName enabled.example.com\n",
       );
       yield* fs.writeFileString(
         path.join(sshDir, "known_hosts"),
@@ -81,7 +110,9 @@ describe("ssh config", () => {
       assert.deepEqual(
         hosts.map((host) => [host.alias, host.hostname, host.source]),
         [
+          ["enabled", "enabled.example.com", "ssh-config"],
           ["known.example.com", "known.example.com", "known-hosts"],
+          ["literal", "literal.example.com", "ssh-config"],
           ["real", "real.example.com", "ssh-config"],
           ["team", "team.example.com", "ssh-config"],
         ],
@@ -135,7 +166,7 @@ describe("ssh config", () => {
           alias: "bastion.example.com",
           hostname: "bastion.example.com",
           username: null,
-          port: null,
+          port: 2222,
           source: "known-hosts",
         },
         {
@@ -248,10 +279,37 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("keeps each explicit known_hosts port as its own destination", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(sshDir);
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        [
+          "[100.64.0.1]:2222 ssh-ed25519 AAAA",
+          "[100.64.0.1]:2223 ssh-ed25519 AAAA",
+          "[fd7a:115c:a1e0::1]:2222 ssh-ed25519 AAAA",
+          "",
+        ].join("\n"),
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts
+          .map((host) => `${host.hostname} ${host.port}`)
+          .toSorted((left, right) => left.localeCompare(right)),
+        ["100.64.0.1 2222", "100.64.0.1 2223", "fd7a:115c:a1e0::1 2222"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("parses known_hosts entries without returning hashed hosts", () =>
     Effect.sync(() => {
       assert.deepEqual(
-        parseKnownHostsHostnames(
+        parseKnownHosts(
           [
             "github.com ssh-ed25519 AAAA",
             "gitlab.com,gitlab-alias ssh-ed25519 BBBB",
@@ -265,13 +323,13 @@ describe("ssh config", () => {
           ].join("\n"),
         ),
         [
-          "::1",
-          "2001:db8::1",
-          "github.com",
-          "gitlab-alias",
-          "gitlab.com",
-          "port.example.com",
-          "ssh.example.com",
+          { hostname: "::1", port: null },
+          { hostname: "2001:db8::1", port: null },
+          { hostname: "github.com", port: null },
+          { hostname: "gitlab-alias", port: null },
+          { hostname: "gitlab.com", port: null },
+          { hostname: "port.example.com", port: null },
+          { hostname: "ssh.example.com", port: 2200 },
         ],
       );
     }),
