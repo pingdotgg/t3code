@@ -1244,6 +1244,34 @@ describe("relay environment unlink", () => {
     );
   });
 
+  it.effect("reports the unlink once revoked, even when Cloudflare refuses the tunnel delete", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(
+        layerRelayUnlinkTest({
+          getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+          revokeForUser: () => Effect.succeed(true),
+          deprovision: (input) =>
+            Effect.fail(
+              new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+                userId: input.userId,
+                environmentId: input.environmentId,
+                stage: "delete-tunnel",
+                tunnelId: "tunnel-1",
+                cause: new Error("Cannot delete tunnel because it has active connections"),
+              }),
+            ),
+        }),
+      ),
+    ),
+  );
+
   it.effect("retries deprovisioning after the link is already revoked", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {
