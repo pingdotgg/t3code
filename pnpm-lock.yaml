@@ -2461,6 +2461,9 @@ importers:
 
   packages/tailscale:
     dependencies:
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
