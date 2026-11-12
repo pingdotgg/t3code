@@ -91,6 +91,12 @@ describe("ignored command prefixes", () => {
     ]);
   });
 
+  it("keeps a quoted PowerShell program name when its own prefix cannot be removed", () => {
+    const command = "& 'C:\\Tools\\my''tool.exe' status";
+    expect(commandProgramName(command, [`"my'tool.exe"`])).toBe("my'tool.exe");
+    expect(commandDisplayText(command, [`"my'tool.exe"`])).toBe(command);
+  });
+
   it("only treats a nested multiword prefix as ignored when every token matches", () => {
     const prefixes = ["rtk", "git status"];
     expect(commandProgramName("rtk git diff", prefixes)).toBe("git");

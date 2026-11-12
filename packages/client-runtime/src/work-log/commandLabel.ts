@@ -5,6 +5,7 @@ type CommandLabelContext = {
   readonly ignoredPrefixes: ReadonlyArray<ReadonlyArray<string>>;
   displayCommand: string | null;
   unresolvedPrefix: boolean;
+  removedPrefix: boolean;
 };
 
 const MAX_COMMAND_SEGMENTS = 64;
@@ -1264,6 +1265,7 @@ function parseCommandProgramName(
         );
         if (program !== null && !labelContext.unresolvedPrefix) {
           if (rewriteDisplay) labelContext.displayCommand ??= displayCommand;
+          labelContext.removedPrefix = true;
           return program;
         }
       }
@@ -1466,18 +1468,18 @@ function commandProgramNameInternal(
   if (segmentsRemaining <= 0) return null;
   const calledProgram = powerShellCallOperatorProgramName(command);
   if (calledProgram !== undefined) {
-    // Reparsing loses PowerShell quoting, so only a called prefix may replace the literal name.
-    if (calledProgram && labelContext?.ignoredPrefixes.some(([first]) => first === calledProgram)) {
-      return (
-        parseCommandProgramName(
-          command.trimStart().slice(1).trimStart(),
-          depth + 1,
-          "exec",
-          segmentsRemaining,
-          labelContext,
-          allowDisplayRewrite,
-        ) ?? calledProgram
+    if (calledProgram && labelContext?.ignoredPrefixes.length) {
+      labelContext.removedPrefix = false;
+      const program = parseCommandProgramName(
+        command.trimStart().slice(1).trimStart(),
+        depth + 1,
+        "exec",
+        segmentsRemaining,
+        labelContext,
+        allowDisplayRewrite,
       );
+      // Reparsing loses PowerShell quoting, so only a removed prefix may replace the literal name.
+      if (program !== null && labelContext.removedPrefix) return program;
     }
     return calledProgram;
   }
@@ -1525,6 +1527,7 @@ function commandLabelContext(prefixes: ReadonlyArray<string>): CommandLabelConte
       .sort((left, right) => right.length - left.length),
     displayCommand: null,
     unresolvedPrefix: false,
+    removedPrefix: false,
   };
 }
 
