@@ -27,6 +27,7 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../../rightPanelLayout";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { deviceEnvironment } from "../../state/device";
+import { markTipDone } from "../../tips/tipsStorage";
 import { readEnvironmentSupportsServerBrowser } from "../../state/entities";
 import { environmentSummaries } from "../../state/presentation";
 
@@ -223,6 +224,13 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
     (result) => {
       const state = AsyncResult.getOrElse(result, () => null);
       if (state === null) return;
+      // Covers devices the user opens and devices an agent opens, dated by the oldest session.
+      const openedAt = Math.min(
+        ...state.sessions
+          .map((session) => Date.parse(session.openedAt))
+          .filter((at) => Number.isFinite(at)),
+      );
+      if (Number.isFinite(openedAt)) markTipDone("devices", { at: openedAt, on: environmentId });
       applyDeviceSnapshot(environmentId, state, {
         sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
         autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,

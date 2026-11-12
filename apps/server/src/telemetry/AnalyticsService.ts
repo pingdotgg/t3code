@@ -50,6 +50,8 @@ const SHUTDOWN_FLUSH_TIMEOUT = "1 second";
 // The waiting batch holds newer events back; `maxBufferedEvents` bounds them meanwhile.
 const MAX_BATCH_RETRY_MS = 30 * 60_000;
 const RETRY_BASE_DELAY_MS = 2_000;
+const MAX_CAPTURED_AGE_MS = 7 * 24 * 60 * 60_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Clients can report any number of owner ids; past this many per observer, new ones
 // are not sent. Each observer has its own cap, so client reports never crowd out the
 // server's own.
@@ -82,9 +84,15 @@ const TelemetryEnvConfig = Config.all({
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
+    /**
+     * `uuid` lets a caller that retries the same event reuse its id, so ingest keeps one copy;
+     * anything that is not a UUID is replaced. `capturedAt` (epoch ms) is when it happened; a
+     * time in the future or older than a week is replaced by now.
+     */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
+      options?: { readonly uuid?: string | undefined; readonly capturedAt?: number | undefined },
     ) => Effect.Effect<void>;
 
     readonly flush: Effect.Effect<void>;
@@ -168,16 +176,25 @@ export const make = Effect.gen(function* () {
     uuid: string,
     event: string,
     properties?: Readonly<Record<string, unknown>>,
+    capturedAt?: number,
   ) =>
     Effect.flatMap(DateTime.now, (now) =>
       Ref.modify(bufferRef, (current) => {
+        const nowMs = DateTime.toEpochMillis(now);
+        const at =
+          capturedAt !== undefined &&
+          Number.isFinite(capturedAt) &&
+          capturedAt <= nowMs &&
+          nowMs - capturedAt <= MAX_CAPTURED_AGE_MS
+            ? DateTime.makeUnsafe(capturedAt)
+            : now;
         const appended = [
           ...current,
           {
             uuid,
             event,
             ...(properties ? { properties } : {}),
-            capturedAt: DateTime.formatIso(now),
+            capturedAt: DateTime.formatIso(at),
           } satisfies BufferedAnalyticsEvent,
         ];
 
@@ -310,14 +327,23 @@ export const make = Effect.gen(function* () {
   });
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
-    function* (event, properties) {
+    function* (event, properties, options) {
       if (!(yield* telemetryEnabled) || !distinctId) return;
 
+      const given = options?.uuid;
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
-      const uuid = yield* Effect.exit(crypto.uuidV7());
+      const uuid =
+        given !== undefined && UUID_PATTERN.test(given)
+          ? Exit.succeed(given)
+          : yield* Effect.exit(crypto.uuidV7());
       if (Exit.isFailure(uuid)) return;
 
-      const enqueueResult = yield* enqueueBufferedEvent(uuid.value, event, properties);
+      const enqueueResult = yield* enqueueBufferedEvent(
+        uuid.value,
+        event,
+        properties,
+        options?.capturedAt,
+      );
       if (enqueueResult.dropped) {
         yield* Effect.logDebug("analytics buffer full; dropping oldest event", {
           size: enqueueResult.size,

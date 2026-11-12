@@ -63,6 +63,16 @@ export function useEnvironmentsWithScope(
   );
 }
 
+/**
+ * Whether every listed session has loaded or failed, and none is refetching: a reconnect keeps
+ * its old grants while new ones load.
+ */
+export function useEnvironmentSessionsSettled(ids: ReadonlyArray<EnvironmentId>): boolean {
+  return useAtomValue(environmentSessionStatesAtom(environmentIdsKey(ids)), (states) =>
+    states.every((result) => !result.waiting && result._tag !== "Initial"),
+  );
+}
+
 export function readEnvironmentScope(
   environmentId: EnvironmentId,
   scope: AuthEnvironmentScope,

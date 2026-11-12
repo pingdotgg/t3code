@@ -23,6 +23,7 @@ import {
   PanelsTopLeftIcon,
   KeyboardIcon,
   KeyRoundIcon,
+  LightbulbIcon,
   MicIcon,
   PaletteIcon,
   SearchIcon,
@@ -109,6 +110,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/secrets": KeyRoundIcon,
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
+  "/settings/tips": LightbulbIcon,
   "/settings/about": InfoIcon,
   "/settings/archived": ArchiveIcon,
 };
