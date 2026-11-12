@@ -116,7 +116,10 @@ export const definition = defineSourceControl({
       : null,
   parseChangeRequestUrl: (url) =>
     isTangledHost(url.hostname)
-      ? parseChangeRequestPath(url, /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u)
+      ? parseChangeRequestPath(
+          url,
+          /^\/(did:[a-z0-9]+:[a-z0-9]+|[^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/iu,
+        )
       : null,
   settings,
 });

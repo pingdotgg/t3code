@@ -245,7 +245,7 @@ export const make = Effect.gen(function* () {
         input.repository,
       ),
       body: detail.body ?? "",
-      commentCount: entry.pull.commentCount ?? 0,
+      commentCount: detail.commentCount ?? entry.pull.commentCount ?? 0,
     };
   });
 

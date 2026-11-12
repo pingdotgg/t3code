@@ -426,6 +426,11 @@ describe("appSignInTargetForRemote", () => {
     const kindOf = (url: string) => sourceControlClients.findByChangeRequestUrl(url)?.kind;
     expect(kindOf("https://tangled.org/acme.example/web/pulls/7")).toBe("tangled");
     expect(kindOf("https://knot1.tangled.sh/acme.example/web/pulls/7")).toBe("tangled");
+    expect(
+      sourceControlClients
+        .get("tangled")
+        .parseChangeRequestUrl(new URL("https://tangled.org/did:plc:abc123/pulls/7")),
+    ).toMatchObject({ repository: "did:plc:abc123", number: 7 });
     // A knot the appview does not serve still falls through to the host that claims any domain.
     expect(kindOf("https://forge.example/acme/web/pulls/7")).toBe("forgejo");
     // A checkout from a knot still owns the appview's links to its pull requests.

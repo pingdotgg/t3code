@@ -159,6 +159,7 @@ it.effect("reads a closed PR's activity and details through its list number and 
               JSON.stringify({
                 ...newest,
                 body: "Actual PR description",
+                commentCount: 3,
                 author: { did: "did:plc:alice", handle: "alice.example" },
               }),
             ),
@@ -193,7 +194,8 @@ it.effect("reads a closed PR's activity and details through its list number and 
     assert.match(failed.detail, /cannot be listed by number/u);
     const activity = yield* provider.getChangeRequestActivity(reference);
     assert.strictEqual(activity.author?.login, "alice.example");
-    assert.strictEqual(activity.commentCount, 2);
+    // The detail read is newer than the list it was found in.
+    assert.strictEqual(activity.commentCount, 3);
     assert.strictEqual(activity.commentsTruncated, true);
     const detail = yield* provider.getChangeRequest(reference);
     assert.strictEqual(detail.body, "Actual PR description");

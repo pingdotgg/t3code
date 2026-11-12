@@ -322,6 +322,28 @@ describe("createChangeRequest", () => {
     }).pipe(serve(tg));
   });
 
+  it.effect("names the fork it creates from with --source-repo", () => {
+    const tg = fakeTg({
+      "pr list alice.example/repo --state open": pullList([]),
+      "pr create --title Add a thing --body-file /tmp/body.md --base main --head feature --repo alice.example/repo --source-repo bob.example/repo":
+        { stdout: "" },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* TangledSourceControlProvider.make;
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        context: REMOTE,
+        target: { refName: "main", repository: "alice.example/repo" },
+        source: { refName: "feature", repository: "bob.example/repo" },
+        baseRefName: "main",
+        headSelector: "feature",
+        title: "Add a thing",
+        bodyFile: "/tmp/body.md",
+      });
+      assert.ok(tg.calls[1]?.includes("--source-repo"));
+    }).pipe(serve(tg));
+  });
+
   it.effect("reports what tg said when the pull request itself fails", () => {
     const tg = fakeTg({
       "pr list alice.example/repo --state open": pullList([]),

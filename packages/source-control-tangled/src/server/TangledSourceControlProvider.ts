@@ -393,6 +393,15 @@ export const make = Effect.gen(function* () {
         ];
         // `-repo` takes `handle/repo`; a repository DID is only ever resolved from the checkout.
         if (!isTangledRepositoryDid(address)) args.push("--repo", address);
+        // A fork names its source; without it `tg` takes the source from the checkout.
+        const sourceRepository = source?.repository;
+        if (
+          sourceRepository !== undefined &&
+          sourceRepository !== address &&
+          !isTangledRepositoryDid(sourceRepository)
+        ) {
+          args.push("--source-repo", sourceRepository);
+        }
         yield* cli
           .run({ cwd: input.cwd, args })
           .pipe(Effect.mapError((cause) => fail("createChangeRequest", input.cwd, cause)));
