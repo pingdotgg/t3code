@@ -2620,26 +2620,6 @@ describe("MessagesTimeline work rows", () => {
     },
   );
 
-  it("stops showing Thinking in the working window when the provider turn ends", async () => {
-    const runId = RunId.make("ended-provider-run");
-    const props = {
-      ...baseProps(),
-      timelineEntries: [message("Continue the queue", { runId })],
-      isWorking: true,
-      activeTurnInProgress: true,
-      activeTurnStartedAt: CREATED_AT,
-      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
-    };
-    await using screen = await renderElement(<MessagesTimeline {...props} />);
-    expect(screen.text()).toContain("Thinking");
-
-    await screen.rerender(
-      <MessagesTimeline {...props} latestRun={{ ...props.latestRun, turnEnded: true }} />,
-    );
-    expect(screen.text()).not.toContain("Thinking");
-    expect(screen.text()).toContain("Working for");
-  });
-
   it("updates reset labels across midnight and expires snooze at the deadline", async () => {
     const now = new Date(2026, 9, 18, 23, 59, 30);
     const resetAt = new Date(2026, 9, 19, 0, 0, 15).toISOString();

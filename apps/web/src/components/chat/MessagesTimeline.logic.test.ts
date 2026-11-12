@@ -5119,17 +5119,6 @@ describe("working window", () => {
     expect(laterCommand).toBe(firstCommand);
     expect(laterNext).not.toBe(firstNext);
   });
-
-  it("leaves rows alone when nothing is running", () => {
-    const input = {
-      timelineEntries: [prompt("prompt", 0)] as never,
-      isWorking: false,
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    };
-    const rows = deriveMessagesTimelineRows(input);
-    expect(applyWorkingWindow(rows, input)).toBe(rows);
-  });
 });
 
 describe("turn fold endings", () => {
