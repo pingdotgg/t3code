@@ -1666,6 +1666,91 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
   ),
 );
 
+it.effect("a usage-limits refresh reads the limit sources without probing providers", () =>
+  Effect.gen(function* () {
+    const responses = yield* Queue.unbounded<unknown>();
+    let providerProbes = 0;
+    let limitRefreshes = 0;
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([]),
+        refresh: () =>
+          Effect.sync((): ReadonlyArray<ServerProvider> => {
+            providerProbes += 1;
+            return [];
+          }),
+      }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({
+        current: Effect.succeed([]),
+        refresh: Effect.sync(() => {
+          limitRefreshes += 1;
+        }),
+      }),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        scratchRoot: Effect.succeedNone,
+        namedProjectsRoot: process.cwd(),
+      }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(WsServerRefreshProvidersRpc),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit" && response.exit._tag === "Success"
+            ? Queue.offer(responses, response.exit.value)
+            : response._tag === "Exit"
+              ? Queue.offer(responses, response.exit)
+              : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("usage-limits-test"),
+            subject: "usage-limits-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(Layer.provide(services)),
+      ),
+    );
+
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("limits"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { usageLimitsOnly: true },
+      headers: Headers.empty,
+    });
+    const refreshed = (yield* Queue.take(responses)) as {
+      readonly providers: ReadonlyArray<ServerProvider>;
+    };
+    assert.deepEqual(refreshed.providers, []);
+    assert.equal(limitRefreshes, 1, "the limit sources should be read again");
+    assert.equal(providerProbes, 0, "a limits refresh should not probe providers");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
 it.effect("a git action that fails partway still refreshes the repository status", () =>
   Effect.gen(function* () {
     const failure = new GitManagerError({ operation: "test", cwd: "/repo", detail: "push failed" });
