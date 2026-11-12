@@ -1,4 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - finding symlinks needs readdir file types, which FileSystem lacks.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 
 import type {
   DirItem,
@@ -27,6 +30,8 @@ import type {
 } from "@t3tools/contracts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
 const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
@@ -38,6 +43,7 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+const SYMLINK_SCAN_BATCH_SIZE = 64;
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -270,6 +276,86 @@ function isWholeWordRange(
   return leftIsBoundary && rightIsBoundary;
 }
 
+// fff leaves symlinks out of its index; list them beside it, without following directory links.
+async function scanSymlinkEntries(
+  cwd: string,
+  directories: ReadonlyArray<string>,
+): Promise<ProjectEntry[]> {
+  const root = await NodeFSP.realpath(cwd).catch(() => undefined);
+  if (root === undefined) return [];
+  const resolveKind = async (absolutePath: string) => {
+    const target = await NodeFSP.realpath(absolutePath).catch(() => undefined);
+    if (target === undefined) return undefined;
+    const relative = NodePath.relative(root, target);
+    if (
+      relative === ".." ||
+      relative.startsWith(`..${NodePath.sep}`) ||
+      NodePath.isAbsolute(relative) ||
+      relative.split(NodePath.sep).includes(".git")
+    ) {
+      return undefined;
+    }
+    const stat = await NodeFSP.stat(target).catch(() => undefined);
+    if (stat?.isFile()) return "file";
+    return stat?.isDirectory() ? "directory" : undefined;
+  };
+  const entries: ProjectEntry[] = [];
+  for (
+    let offset = 0;
+    offset < directories.length && entries.length < WORKSPACE_INDEX_MAX_ENTRIES;
+    offset += SYMLINK_SCAN_BATCH_SIZE
+  ) {
+    const batch = await Promise.all(
+      directories.slice(offset, offset + SYMLINK_SCAN_BATCH_SIZE).map(async (directory) => {
+        const children = await NodeFSP.readdir(NodePath.join(cwd, directory), {
+          withFileTypes: true,
+        }).catch(() => []);
+        return Promise.all(
+          children.map(async (child): Promise<ProjectEntry[]> => {
+            if (!child.isSymbolicLink() || child.name === ".git") return [];
+            const entryPath = directory ? `${directory}/${child.name}` : child.name;
+            const kind = await resolveKind(NodePath.join(cwd, entryPath));
+            return kind ? [{ path: entryPath, kind }] : [];
+          }),
+        );
+      }),
+    );
+    entries.push(...batch.flat(2));
+  }
+  return entries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
+}
+
+function withSymlinkMatches(
+  result: ProjectSearchEntriesResult,
+  links: ReadonlyArray<ProjectEntry>,
+  query: string,
+  limit: number,
+): ProjectSearchEntriesResult {
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = links.filter((link) =>
+    tokens.every((token) => link.path.toLowerCase().includes(token)),
+  );
+  if (matches.length === 0) return result;
+  // Links named by the query rank first; links matched only through their folders rank last.
+  const byName = (link: ProjectEntry) =>
+    tokens.length > 0 &&
+    tokens.every((token) =>
+      link.path
+        .slice(link.path.lastIndexOf("/") + 1)
+        .toLowerCase()
+        .includes(token),
+    );
+  const entries = [
+    ...matches.filter(byName),
+    ...result.entries,
+    ...matches.filter((link) => !byName(link)),
+  ];
+  return {
+    entries: entries.slice(0, limit),
+    truncated: result.truncated || entries.length > limit,
+  };
+}
+
 function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEntry[] {
   const entryByPath = new Map(entries.map((entry) => [entry.path, entry]));
   for (const entry of entries) {
@@ -339,6 +425,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
+  const vcsProcess = yield* VcsProcess.VcsProcess;
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -396,6 +483,56 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.value;
   });
 
+  const scanSymlinks = Effect.fn("WorkspaceSearchIndex.scanSymlinks")(function* () {
+    const directories = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "directorySearch", () =>
+      finder.directorySearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
+    );
+    const links = yield* Effect.promise(() =>
+      // directorySearch omits the workspace root.
+      scanSymlinkEntries(cwd, [
+        ...new Set([
+          "",
+          ...directories.items.map((item) =>
+            trimDirectorySeparator(toPosixPath(item.relativePath)),
+          ),
+        ]),
+      ]),
+    );
+    if (links.length === 0) return links;
+    // The index leaves out ignored paths; outside a git repository this check fails and keeps every link.
+    const result = yield* vcsProcess
+      .run({
+        operation: "WorkspaceSearchIndex.scanSymlinks",
+        command: "git",
+        args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
+        cwd,
+        stdin: `${links.map((link) => link.path).join("\0")}\0`,
+        allowNonZeroExit: true,
+        timeoutMs: 10_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      })
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (result?.exitCode !== 0) return links;
+    const ignored = new Set(result.stdout.split("\0"));
+    return links.filter((link) => !ignored.has(link.path));
+  });
+
+  let symlinkEntriesCache:
+    | Effect.Effect<ReadonlyArray<ProjectEntry>, WorkspaceSearchIndexSearchFailed>
+    | undefined;
+  const symlinkEntries = Effect.fn("WorkspaceSearchIndex.symlinkEntries")(function* () {
+    if (symlinkEntriesCache !== undefined) return yield* symlinkEntriesCache;
+    const scan = yield* Effect.cached(scanSymlinks());
+    if (!hasIncompleteInitialScan()) symlinkEntriesCache = scan;
+    return yield* scan.pipe(
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          if (symlinkEntriesCache === scan) symlinkEntriesCache = undefined;
+        }),
+      ),
+    );
+  });
+
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
@@ -426,6 +563,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
+    symlinkEntriesCache = undefined;
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
@@ -435,8 +573,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
       const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
-      const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
-        left.path.localeCompare(right.path),
+      const links = yield* symlinkEntries();
+      const sortedEntries = withDirectoryAncestors([...mapped.entries, ...links]).toSorted(
+        (left, right) => left.path.localeCompare(right.path),
       );
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
       return {
@@ -459,20 +598,39 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      const mapped = mapFileSearchResult(result, limit, imageOnly);
+      const links = (yield* symlinkEntries()).filter(
+        (link) => link.kind === "file" && (!imageOnly || isProjectFaviconPath(link.path)),
+      );
+      const mapped = withSymlinkMatches(
+        mapFileSearchResult(result, limit, imageOnly),
+        links,
+        query,
+        limit,
+      );
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      const mapped = mapDirectorySearchResult(result, limit);
+      const links = (yield* symlinkEntries()).filter((link) => link.kind === "directory");
+      const mapped = withSymlinkMatches(
+        mapDirectorySearchResult(result, limit),
+        links,
+        query,
+        limit,
+      );
       return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    const mapped = mapMixedSearchResult(result, limit);
+    const mapped = withSymlinkMatches(
+      mapMixedSearchResult(result, limit),
+      yield* symlinkEntries(),
+      query,
+      limit,
+    );
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
   });
 

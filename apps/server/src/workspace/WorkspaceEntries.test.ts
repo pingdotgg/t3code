@@ -475,16 +475,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlink-search-" });
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlink-search-", git: true });
         yield* writeTextFile(cwd, "src/index.ts", "export {};");
+        yield* writeTextFile(cwd, ".gitignore", "ignored-link\n");
         yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
         yield* fileSystem.symlink("src/index.ts", path.join(cwd, "index-link.ts"));
+        yield* fileSystem.symlink("src", path.join(cwd, "ignored-link"));
 
         const result = yield* searchWorkspaceEntries({ cwd, query: "link", limit: 100 });
         const paths = result.entries.map((entry) => entry.path);
 
         expect(paths).toContain("src-link");
         expect(paths).toContain("index-link.ts");
+        expect(paths).not.toContain("ignored-link");
       }),
     );
 
