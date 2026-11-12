@@ -1177,6 +1177,53 @@ it.effect.each(["stable", "upstream/release"])(
     ),
 );
 
+it.effect("starts a new worktree thread in a repository with no commits", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-unborn-" });
+    const cwd = `${directory}/repo`;
+    yield* fs.makeDirectory(cwd);
+    yield* git.execute({ operation: "launch-test", cwd, args: ["init", "-b", "main"] });
+
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        git
+          .execute({
+            operation: "launch-test",
+            cwd,
+            args: ["rev-parse", "--verify", `${refName}^{commit}`],
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: `${directory}/worktree` }, options),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:unborn",
+          thread: "thread:launch:unborn",
+          message: "Say hello",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-unborn-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("fetches the origin base from the remote it already resolved", () => {
   let fetchInput: Deferred.Deferred<unknown> | null = null;
   const harness = makeHarness({
