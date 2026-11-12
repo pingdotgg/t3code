@@ -94,6 +94,31 @@ function ShortcutTooltip(props: {
   );
 }
 
+export function ComposerSpeechCancelButton(props: {
+  state: VoiceInputState;
+  shortcutLabel?: string | null;
+  onCancel(): void;
+}) {
+  if (props.state.phase === "idle") return null;
+  const label = props.state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
+
+  return (
+    <ShortcutTooltip label={label} shortcut={props.shortcutLabel}>
+      <Button
+        type="button"
+        size="icon-sm-pill"
+        variant="ghost"
+        aria-label={label}
+        onPointerDown={keepFocus}
+        onClick={props.onCancel}
+        className="shrink-0"
+      >
+        <XIcon />
+      </Button>
+    </ShortcutTooltip>
+  );
+}
+
 // Each bar reads the level a sample apart, so the three never move in lockstep, and the
 // middle bar reaches highest so loud speech reads as a wave rather than a flat block.
 const SPEECH_BAR_SAMPLE_OFFSETS = [1, 0, 2] as const;
