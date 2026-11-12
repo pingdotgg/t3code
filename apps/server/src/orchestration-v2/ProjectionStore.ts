@@ -5096,6 +5096,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* (threadId, runIds) {
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
+          -- With many run ids SQLite prefers the ordinal index and walks the whole thread.
+          ${runIds === undefined ? sql`` : sql`INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx`}
           WHERE thread_id = ${threadId}
             AND type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')
