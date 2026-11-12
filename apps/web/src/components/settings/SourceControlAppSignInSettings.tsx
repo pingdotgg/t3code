@@ -6,11 +6,9 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
-import { Check, Copy } from "lucide";
-import { CheckIcon, ExternalLinkIcon } from "lucide-react";
+import { CheckIcon, ExternalLinkIcon, CopyIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { T3AppIcon } from "~/components/T3AppIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -171,7 +169,7 @@ export function SourceControlAppSignInSettings({
           />
         </span>
       ) : tokenOverrides ? (
-        "Signed in, but the token saved below is used until you remove it."
+        "Signed in, but the token saved below is used while it can be read."
       ) : (
         "Signed in"
       );
@@ -234,7 +232,7 @@ export function SourceControlAppSignInSettings({
               aria-label="Copy code"
               onClick={() => copyToClipboard(waiting.userCode, undefined)}
             >
-              <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+              {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
             </Button>
           </div>
           <div className="grid gap-2 sm:justify-items-end">

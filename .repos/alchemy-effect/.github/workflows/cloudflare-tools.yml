@@ -9,12 +9,12 @@ on:
       - "packages/cloudflare-test-tools/**"
       - "packages/frontend-frameworks/**"
       - "packages/node-utils/**"
-      - "scripts/copy-package-files.ts"
+      - "scripts/package-build.ts"
+      - "scripts/ensure-built.ts"
       - "patches/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
-      - "turbo.json"
       - "tsconfig.json"
       - ".github/workflows/cloudflare-tools.yml"
   pull_request:
@@ -25,12 +25,12 @@ on:
       - "packages/cloudflare-test-tools/**"
       - "packages/frontend-frameworks/**"
       - "packages/node-utils/**"
-      - "scripts/copy-package-files.ts"
+      - "scripts/package-build.ts"
+      - "scripts/ensure-built.ts"
       - "patches/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
-      - "turbo.json"
       - "tsconfig.json"
       - ".github/workflows/cloudflare-tools.yml"
   workflow_dispatch:
@@ -44,12 +44,6 @@ concurrency:
 
 jobs:
   test:
-    # GitHub does not expose repository secrets to fork pull requests. Keep
-    # the secret-backed test matrix on trusted refs while still running it for
-    # pushes, manual dispatches, and pull requests from this repository.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -66,15 +60,6 @@ jobs:
       - name: Checkout distilled
         run: git submodule update --init --depth=1 --checkout -- submodules/distilled
 
-      - name: Restore Turbo cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
-            turbo-${{ runner.os }}-${{ github.repository_id }}-
-
       - name: Setup pnpm, Node.js, Bun and install dependencies
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
@@ -82,17 +67,25 @@ jobs:
           install: true
           require-lockfile: true
 
-      - name: Typecheck
-        run: pnpm typecheck:cloudflare-packages
+      # The Browser Rendering suite launches the pinned Chrome build
+      # (BROWSER_VERSION), which it otherwise downloads (~145 MB) at test time
+      # into wrangler's cache. A stalled download times out every session test.
+      - name: Cache Chrome for the Browser Rendering binding
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/.wrangler/chrome
+            ~/Library/Caches/.wrangler/chrome
+            ~/AppData/Local/xdg.cache/.wrangler/chrome
+          key: browser-rendering-chrome-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/cloudflare-runtime/src/core/bindings/browser/BrowserOptions.shared.ts') }}
 
+      # Type checking is OS-independent and runs once in check.yml
+      # (`pnpm typecheck`). Test builds what it needs via ensure:built.
       - name: Test
-        run: pnpm test:cloudflare-packages ${{ runner.os == 'Windows' && '--concurrency=3' || runner.os == 'macOS' && '--concurrency=2' || '' }}
+        run: pnpm test:cloudflare-packages
         env:
-          TEST_MYSQL_URL: ${{ secrets.TEST_MYSQL_URL }}
-          TEST_POSTGRES_URL: ${{ secrets.TEST_POSTGRES_URL }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          TEST_KV_NAMESPACE_ID: ${{ secrets.TEST_KV_NAMESPACE_ID }}
-          TEST_R2_BUCKET_NAME: ${{ secrets.TEST_R2_BUCKET_NAME }}
-          TEST_D1_DATABASE_ID: ${{ secrets.TEST_D1_DATABASE_ID }}
-          TEST_SERVICE_WORKER_NAME: ${{ secrets.TEST_SERVICE_WORKER_NAME }}
+          # Limit concurrent package test runs on the smaller runners.
+          pnpm_config_workspace_concurrency: ${{ runner.os == 'Windows' && '3' || runner.os == 'macOS' && '2' || '' }}
+          # No Docker daemon for Linux images on these runners; the Linux job
+          # runs the container suites (see packages/cloudflare-runtime/vitest.config.ts).
+          ALCHEMY_TEST_EXCLUDE_LINUX_CONTAINERS: ${{ runner.os != 'Linux' && '1' || '' }}
