@@ -919,7 +919,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         readonly env?: Record<string, string>;
       }) =>
         resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
-          Effect.map(({ host, privateNetworkOnly }) => ({ host, privateNetworkOnly })),
+          Effect.map(({ host, privateNetworkOnly, loopbackFallback }) => ({
+            host,
+            privateNetworkOnly,
+            loopbackFallback,
+          })),
           Effect.provide(
             Layer.mergeAll(
               ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
@@ -944,25 +948,30 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(yield* resolveHost({ connected: true })).toEqual({
         host: "0.0.0.0",
         privateNetworkOnly: true,
+        loopbackFallback: true,
       });
       // `service.env` reaches the server as its environment.
       expect(yield* resolveHost({ connected: true, env: { T3CODE_HOST: "127.0.0.1" } })).toEqual({
         host: "127.0.0.1",
         privateNetworkOnly: undefined,
+        loopbackFallback: undefined,
       });
       expect(yield* resolveHost({ connected: true, env: { T3CODE_LAN: "false" } })).toEqual({
         host: undefined,
         privateNetworkOnly: undefined,
+        loopbackFallback: undefined,
       });
       expect(yield* resolveHost({ connected: false, env: { T3CODE_LAN: "true" } })).toEqual({
         host: "0.0.0.0",
         privateNetworkOnly: true,
+        loopbackFallback: undefined,
       });
       // Without the launcher's IPC channel the context was inherited, e.g. by
       // `t3 serve` started from an agent inside the service.
       expect(yield* resolveHost({ connected: false })).toEqual({
         host: undefined,
         privateNetworkOnly: undefined,
+        loopbackFallback: undefined,
       });
     }),
   );
