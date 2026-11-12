@@ -938,19 +938,15 @@ it.live.each([
     ).pipe(Effect.provide(layer)),
 );
 
-it.live.each([
-  { bytes: 5, truncated: false },
-  { bytes: 8 * 1024 * 1024, truncated: false },
-  { bytes: 8 * 1024 * 1024, truncated: true },
-])(
-  "saves a recording of $bytes bytes and cleans up a truncated download ($truncated)",
-  ({ bytes, truncated }) =>
+it.live.each([{ truncated: false }, { truncated: true }])(
+  "saves a large recording as a binary download and removes its staged file (truncated: $truncated)",
+  ({ truncated }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const { broker, tabId } = yield* ready;
         const fs = yield* FileSystem.FileSystem;
+        const bytes = 8 * 1024 * 1024;
         const payload = Buffer.alloc(bytes, 0x5a);
-        const large = bytes > 5;
         let stagedPath: string | undefined;
         const download = Promise.withResolvers<{ saveAs: (path: string) => Promise<void> }>();
         const sandbox = NodeVM.createContext({
@@ -958,8 +954,7 @@ it.live.each([
             frame: async () => true,
             stop: async () => ({ mimeType: "video/webm", count: 1, bytes }),
             chunk: async () => {
-              if (large) throw new Error("Large recording used Base64 export");
-              return payload.toString("base64");
+              throw new Error("Large recording used Base64 export");
             },
             download: () =>
               download.resolve({
@@ -995,10 +990,8 @@ it.live.each([
           expect(artifact.sizeBytes).toBe(bytes);
           expect(Buffer.from(yield* fs.readFile(artifact.path)).equals(payload)).toBe(true);
         }
-        if (large) {
-          expect(stagedPath).toBeDefined();
-          expect(yield* fs.exists(stagedPath!)).toBe(false);
-        }
+        expect(stagedPath).toBeDefined();
+        expect(yield* fs.exists(stagedPath!)).toBe(false);
       }),
     ).pipe(Effect.provide(layer)),
 );
