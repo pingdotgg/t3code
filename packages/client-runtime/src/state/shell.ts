@@ -114,12 +114,12 @@ function shellIdentity(
   };
 }
 
-/** Null for a server whose descriptor does not name its shell flags; only its config does. */
 function sameConnection(left: PreparedConnection, right: PreparedConnection): boolean {
   const keys = Object.keys({ ...left, ...right }) as Array<keyof PreparedConnection>;
   return keys.every((key) => key === "httpAuthorization" || left[key] === right[key]);
 }
 
+/** Null for a server whose descriptor does not name its shell flags; only its config does. */
 function descriptorShellIdentity(
   descriptor: ExecutionEnvironmentDescriptor | undefined,
 ): ShellOriginIdentity | null {
@@ -573,7 +573,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       }, Effect.uninterruptible),
     );
   yield* SubscriptionRef.changes(supervisor.prepared).pipe(
-    Stream.runForEach((prepared) => useEarlyLoad(Option.getOrNull(prepared), false)),
+    // Reads the connection of this moment: a change handled late must not start a load for a
+    // connection that ended, which would also drop the items of the session that replaced it.
+    Stream.runForEach(() =>
+      SubscriptionRef.get(supervisor.prepared).pipe(
+        Effect.flatMap((prepared) => useEarlyLoad(Option.getOrNull(prepared), false)),
+      ),
+    ),
     Effect.forkScoped,
   );
 

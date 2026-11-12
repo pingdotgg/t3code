@@ -1257,6 +1257,15 @@ describe("environment shell cold start", () => {
       httpLoads,
       loadOptions,
       releaseLoads: Deferred.succeed(loadsReleased, undefined),
+      // A connection attempt that ended, then the next one.
+      prepareAgain: SubscriptionRef.set(prepared, Option.none()).pipe(
+        Effect.andThen(
+          SubscriptionRef.set(
+            prepared,
+            Option.some({ ...PREPARED, descriptor: { ...FAMILY_DESCRIPTOR } }),
+          ),
+        ),
+      ),
       // Resolves `configRead` when the subscription reads the config, just before it claims the load.
       connect: (config: object, configRead?: Deferred.Deferred<void>) =>
         SubscriptionRef.set(
@@ -1448,6 +1457,29 @@ describe("environment shell cold start", () => {
       expect(subscribed.input).toMatchObject({ afterSequence: HTTP_SEQUENCE });
       expect(yield* Queue.size(h.loadOptions)).toBe(0);
       expect(yield* Ref.get(h.httpLoads)).toBe(1);
+    }),
+  );
+
+  it.effect("drops the load of a connection that ended and waits for the next one", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(undefined, { serverResumes: false, holdLoads: true });
+      yield* Queue.take(h.loadOptions);
+      yield* h.prepareAgain;
+      yield* Queue.take(h.loadOptions);
+
+      // The socket is ready while the second load is in flight.
+      yield* h.connect(FAMILY_CONFIG);
+      yield* h.releaseLoads;
+      const first = yield* Queue.take(h.subscriptions);
+      expect(first.input).toMatchObject({
+        afterSequence: HTTP_SEQUENCE,
+        knownProjectIdentities: "identities-1",
+      });
+      // The first load ended with its connection and never answered.
+      expect(yield* Ref.get(h.httpLoads)).toBe(1);
+
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* h.liveAt(HTTP_SEQUENCE);
     }),
   );
 
