@@ -19,7 +19,7 @@ function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string
     case "reconnecting":
       return `Reconnecting to ${environmentLabel}...`;
     case "unsupported":
-      return "Client not supported";
+      return `Can't connect to ${environmentLabel}`;
     case "error":
       return `${environmentLabel} is unavailable`;
     case "available":
