@@ -1819,6 +1819,15 @@ describe("ClaudeAdapterV2 resumeThread", () => {
               modelSelection: CLAUDE_TEST_MODEL_SELECTION,
               runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
             });
+            const errorUpdate = yield* runtime.events.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider_thread.updated" &&
+                  event.providerThread.status === "error",
+              ),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
             // An earlier turn was recorded for this id, but its transcript was never saved.
             yield* Effect.flip(
               runtime.startTurn(
@@ -1834,6 +1843,14 @@ describe("ClaudeAdapterV2 resumeThread", () => {
               ),
             );
             assert.deepStrictEqual(openedResume, [nativeId]);
+            // The session manager unloads the thread on this status, so the next start reaches resumeThread.
+            const update = Option.getOrThrow(yield* Fiber.join(errorUpdate));
+            assert.equal(
+              update.type === "provider_thread.updated"
+                ? update.providerThread.nativeThreadRef?.nativeId
+                : undefined,
+              nativeId,
+            );
             return providerThread;
           }),
         );

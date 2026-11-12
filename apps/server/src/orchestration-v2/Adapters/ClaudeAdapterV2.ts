@@ -12024,15 +12024,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
+                  const lostConversation =
+                    message.type === "result" &&
+                    "errors" in message &&
+                    message.errors.some((error) =>
+                      error.startsWith(CLAUDE_LOST_CONVERSATION_ERROR_PREFIX),
+                    );
                   if (message.type === "result") {
-                    if (
-                      "errors" in message &&
-                      message.errors.some((error) =>
-                        error.startsWith(CLAUDE_LOST_CONVERSATION_ERROR_PREFIX),
-                      )
-                    ) {
-                      lostNativeThreads.add(context.nativeThreadId);
-                    }
                     const ledger = claudeModelLedger(message.modelUsage);
                     const growth = claudeLedgerDelta(context.modelLedger, ledger);
                     if (growth !== undefined) resultLedgerUsage.set(message, growth);
@@ -12049,7 +12047,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       resultsReportingNewContextWindow.add(message);
                     }
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  if (!lostConversation) return handleSdkMessage({ query: querySession, message });
+                  lostNativeThreads.add(nativeThreadId);
+                  // The result can precede turn attachment; the error status unloads the
+                  // thread from the session manager so the next start resumes through resumeThread.
+                  return DateTime.now.pipe(
+                    Effect.flatMap((updatedAt) =>
+                      emitProviderEvent({
+                        type: "provider_thread.updated",
+                        driver: CLAUDE_PROVIDER,
+                        providerThread: {
+                          ...turnInput.providerThread,
+                          providerSessionId: session.id,
+                          status: "error",
+                          updatedAt,
+                        },
+                      }),
+                    ),
+                    Effect.andThen(handleSdkMessage({ query: querySession, message })),
+                  );
                 }),
               ),
             ),
