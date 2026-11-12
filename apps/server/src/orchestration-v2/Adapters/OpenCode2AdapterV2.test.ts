@@ -2771,7 +2771,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not report an answer to a form OpenCode already cancelled as delivered", () =>
+  it.effect("reports an answer to a form OpenCode already cancelled as closed, not delivered", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
@@ -2797,8 +2797,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const request = yield* Fiber.join(requested);
       const answered = yield* runtime
         .respondToRuntimeRequest({ requestId: request!.id, answers: { q0: "Red" } })
-        .pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(answered));
+        .pipe(Effect.flip);
+      assert.deepInclude(answered, { reason: "request_closed" });
     }).pipe(Effect.scoped),
   );
 

@@ -10632,9 +10632,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
-   * Respond resolves the request before delivery, and a failed delivery cannot
-   * tell whether the provider is still waiting, so the answer stays recorded and
-   * the timeline shows the failure instead of a run spinning with no question.
+   * Respond resolves the request before delivery. A failed delivery cannot tell whether
+   * the provider is still waiting, so the answer stays recorded and the timeline shows the
+   * failure. A request the provider closed first never got the answer, so it shows cancelled.
    */
   const dispatchRuntimeRequestDeliveryFail = Effect.fn(
     "Orchestrator.dispatchRuntimeRequestDeliveryFail",
@@ -10649,11 +10649,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .getThread(command.threadId)
       .pipe(mapDispatchError(command));
     if (thread.deletedAt !== null) return;
-    const node = (yield* projectionStore
+    const context = yield* projectionStore
       .getRuntimeResponseContext(command.threadId, command.requestId)
-      .pipe(mapDispatchError(command))).node;
+      .pipe(mapDispatchError(command));
+    const node = context.node;
     if (node === undefined) return;
     const now = yield* DateTime.now;
+    if (command.closed === true && context.request !== undefined) {
+      const {
+        answers: _answers,
+        decision: _decision,
+        feedback: _feedback,
+        ...request
+      } = context.request;
+      const emitEvent = emit(events, command);
+      const run = node.runId === null ? {} : { runId: node.runId };
+      yield* emitEvent({
+        type: "runtime-request.updated",
+        threadId: command.threadId,
+        ...run,
+        nodeId: node.id,
+        occurredAt: now,
+        payload: { ...request, status: "cancelled", resolvedAt: now },
+      });
+      yield* emitEvent({
+        type: "node.updated",
+        threadId: command.threadId,
+        ...run,
+        nodeId: node.id,
+        occurredAt: now,
+        payload: { ...node, status: "cancelled", completedAt: now },
+      });
+      const item = context.item;
+      if (item !== undefined) {
+        const { questionAnswer: _questionAnswer, ...question } =
+          item.type === "user_input_request" ? item : { ...item, questionAnswer: undefined };
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          ...run,
+          nodeId: node.id,
+          occurredAt: now,
+          payload: { ...question, status: "cancelled", completedAt: now, updatedAt: now },
+        });
+      }
+      return;
+    }
     yield* emit(
       events,
       command,

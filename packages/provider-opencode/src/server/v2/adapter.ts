@@ -4997,9 +4997,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           yield* forgetRequest(entry);
           if (!delivered) yield* abandonRequest(asker, "answer not delivered");
           if (formClosed) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            return yield* new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
               driver,
-              detail: `OpenCode closed question ${requestInput.requestId} before it received the answer`,
+              requestId: requestInput.requestId,
+              reason: "request_closed",
             });
           }
         },
