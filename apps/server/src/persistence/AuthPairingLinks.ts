@@ -16,6 +16,12 @@ import {
   PersistenceSqlError,
 } from "./Errors.ts";
 
+/**
+ * Subjects of codes that approve one agent sign-in at a set level, as `mcp-approval:<level>`.
+ * Only that sign-in may spend one, so every other use of a pairing code refuses them.
+ */
+export const MCP_APPROVAL_SUBJECT_PREFIX = "mcp-approval:";
+
 export const AuthPairingLinkRecord = Schema.Struct({
   id: Schema.String,
   credential: Schema.String,
@@ -49,6 +55,8 @@ export const ConsumeAuthPairingLinkInput = Schema.Struct({
   proofKeyThumbprint: Schema.NullOr(Schema.String),
   requestedScopes: Schema.optionalKey(AuthEnvironmentScopes),
   requiredScopes: Schema.optionalKey(AuthEnvironmentScopes),
+  /** Also spends a code with exactly this `mcp-approval:` subject. Others are always refused. */
+  mcpApprovalSubject: Schema.optionalKey(Schema.String),
   consumedAt: Schema.DateTimeUtcFromString,
   now: Schema.DateTimeUtcFromString,
 });
@@ -167,6 +175,7 @@ export const make = Effect.gen(function* () {
       proofKeyThumbprint,
       requestedScopes,
       requiredScopes,
+      mcpApprovalSubject,
       consumedAt,
       now,
     }) =>
@@ -177,6 +186,10 @@ export const make = Effect.gen(function* () {
           AND revoked_at IS NULL
           AND consumed_at IS NULL
           AND expires_at > ${now}
+          AND (
+            subject NOT LIKE ${`${MCP_APPROVAL_SUBJECT_PREFIX}%`}
+            OR subject = ${mcpApprovalSubject ?? null}
+          )
           AND (
             proof_key_thumbprint IS NULL
             OR proof_key_thumbprint = ${proofKeyThumbprint}

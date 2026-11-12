@@ -1,5 +1,6 @@
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -7,12 +8,13 @@ import type { Scope } from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { AlchemyContext } from "../AlchemyContext.ts";
 import { Artifacts, ArtifactStore, makeScopedArtifacts } from "../Artifacts.ts";
-import { InstanceId } from "../InstanceId.ts";
 import type { Platform } from "../Platform.ts";
 import * as Provider from "../Provider.ts";
 import type { ResourceClassLike, ResourceLike } from "../Resource.ts";
+import { ResourceContext } from "../ResourceContext.ts";
 import { Stack } from "../Stack.ts";
 import { Stage } from "../Stage.ts";
+import { LogAnnotation } from "../Util/LogAnnotation.ts";
 import { RpcProviderProxy } from "./RpcProviderProxy.ts";
 
 /**
@@ -206,36 +208,86 @@ export const effect = <
                 Predicate.hasProperty(args[0], "instanceId") &&
                   Predicate.isString(args[0].instanceId)
                   ? Layer.merge(
-                      layerFallback(InstanceId, args[0].instanceId),
-                      Layer.succeed(
-                        Artifacts,
-                        makeScopedArtifacts(store, args[0].instanceId),
-                      ),
+                      Predicate.hasProperty(args[0], "id") &&
+                        Predicate.isString(args[0].id) &&
+                        Predicate.hasProperty(args[0], "fqn") &&
+                        Predicate.isString(args[0].fqn)
+                        ? layerFallback(ResourceContext, {
+                            logicalId: args[0].id,
+                            fqn: args[0].fqn,
+                            instanceId: args[0].instanceId,
+                            type: cls.Type,
+                          })
+                        : Layer.empty,
+                      Layer.succeed(Artifacts, makeScopedArtifacts(store, args[0].instanceId)),
                     )
                   : Layer.empty,
               );
+              if (Stream.isStream(result)) return result.pipe(Stream.provide(services));
+              // In a sidecar the engine's per-resource annotation doesn't
+              // cross the RPC boundary: tag the call's logs here.
+              const fqn =
+                Predicate.hasProperty(args[0], "fqn") && Predicate.isString(args[0].fqn)
+                  ? args[0].fqn
+                  : undefined;
               return result.pipe(
-                Stream.isStream(result)
-                  ? Stream.provide(services)
-                  : Effect.provide(services),
+                Effect.provide(services),
+                fqn === undefined ? identity : Effect.annotateLogs(LogAnnotation.fqn, fqn),
               );
             };
           },
         });
       }
-      return withDefaultList(yield* client.value.get(providersUrl, cls.Type));
+      const remote = withDefaultList(yield* client.value.get(providersUrl, cls.Type));
+      // The sidecar session is keyed by the Stack seen when it was opened, and
+      // derives stack-scoped state (e.g. ownership tags) from it. A memoized
+      // provider layer can be reused by a different stack (a test's shared
+      // scratch stack), so resolve the remote provider for the calling stack.
+      const byStack = new Map<string, typeof remote>([[stackKey(stack), remote]]);
+      const forStack = (current: Stack["Service"]) =>
+        Effect.suspend(() => {
+          const cached = byStack.get(stackKey(current));
+          if (cached !== undefined) return Effect.succeed(cached);
+          return client.value.get(providersUrl, cls.Type).pipe(
+            Effect.map((provider) => {
+              const resolved = withDefaultList(provider);
+              byStack.set(stackKey(current), resolved);
+              return resolved;
+            }),
+            // The calling Stack must shadow the one captured in `context`.
+            Effect.provideService(Stack, current),
+            Effect.provide(Layer.succeedContext(context)),
+          );
+        });
+      const callingProvider = Effect.serviceOption(Stack).pipe(
+        Effect.flatMap((current) =>
+          Option.isNone(current) || stackKey(current.value) === stackKey(stack)
+            ? Effect.succeed(remote)
+            : forStack(current.value),
+        ),
+      );
+      return new Proxy(remote, {
+        get: (target, prop) => {
+          const value = (target as any)[prop];
+          if (!Predicate.isFunction(value)) return value;
+          return (...args: any[]) =>
+            prop === "tail"
+              ? Stream.unwrap(
+                  Effect.map(callingProvider, (provider) => (provider as any)[prop](...args)),
+                )
+              : Effect.flatMap(callingProvider, (provider) => (provider as any)[prop](...args));
+        },
+      });
     }),
   );
 
-const layerFallback = <I, S>(
-  service: Context.Key<I, S>,
-  defaultValue: NoInfer<S>,
-) =>
+const stackKey = (stack: { readonly name: string; readonly stage: string }) =>
+  `${stack.name}\u0000${stack.stage}`;
+
+const layerFallback = <I, S>(service: Context.Key<I, S>, defaultValue: NoInfer<S>) =>
   Layer.effect(
     service,
-    Effect.serviceOption(service).pipe(
-      Effect.map(Option.getOrElse(() => defaultValue)),
-    ),
+    Effect.serviceOption(service).pipe(Effect.map(Option.getOrElse(() => defaultValue))),
   );
 
 /**
@@ -247,8 +299,7 @@ const layerFallback = <I, S>(
  */
 export const providerServices = <ROut, E, RIn>(
   self: Layer.Layer<ROut, E, RIn>,
-): Layer.Layer<ROut, E, RIn | AlchemyContext> =>
-  providerServicesEffect(Effect.succeed(self));
+): Layer.Layer<ROut, E, RIn | AlchemyContext> => self.pipe(Effect.succeed, providerServicesEffect);
 
 /**
  * Conditionally constructs a layer for use by an RpcProvider.

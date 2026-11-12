@@ -288,6 +288,134 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       assert.deepStrictEqual(paths, ["github.com repos/acme/web"]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("reads clone URLs on the given host before the checkout's", () => {
+    const paths: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "https://github.com/acme/web.git"]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            paths.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "acme/web",
+              html_url: `https://${input.host}/acme/web`,
+              ssh_url: `git@${input.host}:acme/web.git`,
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const cloneUrls = yield* gh.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "acme/web",
+        host: "GitHub.Enterprise.test",
+      });
+      yield* gh.getRepositoryCloneUrls({ cwd: "/repo", repository: "acme/web" });
+      assert.strictEqual(cloneUrls.url, "https://github.enterprise.test/acme/web");
+      assert.deepStrictEqual(paths, [
+        "github.enterprise.test repos/acme/web",
+        "github.com repos/acme/web",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each([
+    ["github", "git@github:acme/web.git"],
+    ["github.com-scale", "git@github.com-scale:acme/web.git"],
+    ["github.com-scale", "ssh://git@github.com-scale:22/acme/web.git"],
+  ] as const)("reads an SSH alias on %s through github.com (%s)", ([host, remoteUrl]) => {
+    const hosts: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", remoteUrl]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            hosts.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "acme/web",
+              html_url: "https://github.com/acme/web",
+              ssh_url: "git@github.com:acme/web.git",
+              default_branch: "main",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const resolveWebHost = gh.resolveRemoteWebHost;
+      assert.ok(resolveWebHost);
+      assert.strictEqual(
+        yield* resolveWebHost({
+          cwd: "/repo",
+          context: { ...githubContext(host), remoteUrl },
+          resolveContext: () => Effect.succeed(null),
+        }),
+        "github.com",
+      );
+      yield* gh.getDefaultBranch({ cwd: "/repo" });
+      yield* gh.getDefaultBranch({
+        cwd: "/repo",
+        context: { ...githubContext(host), remoteUrl },
+      });
+      assert.deepStrictEqual(hosts, ["github.com repos/acme/web", "github.com repos/acme/web"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect.each(["sole", "upstream", "missing"])(
+    "preserves an HTTPS context host with %s remotes",
+    (mode) => {
+      const paths: string[] = [];
+      const remoteUrl = "https://github.com-scale/me/web.git";
+      const { layer } = harness({
+        remotes:
+          mode === "missing"
+            ? ""
+            : remotesOutput(
+                ["origin", remoteUrl],
+                ...(mode === "upstream"
+                  ? ([["upstream", "https://github.com/acme/web.git"]] as const)
+                  : []),
+              ),
+        api: {
+          rest: (input) =>
+            Effect.sync(() => {
+              paths.push(`${input.host} ${input.path}`);
+              return restResponse({
+                full_name: "me/web",
+                html_url: "https://github.com-scale/me/web",
+                ssh_url: "git@github.com-scale:me/web.git",
+                default_branch: "trunk",
+              });
+            }),
+        },
+      });
+      return Effect.gen(function* () {
+        const gh = yield* GitHubSourceControlProvider.make;
+        const resolveWebHost = gh.resolveRemoteWebHost;
+        assert.ok(resolveWebHost);
+        for (const url of [remoteUrl, "git@github.com-evil.example:me/web.git"]) {
+          assert.strictEqual(
+            yield* resolveWebHost({
+              cwd: "/repo",
+              context: { ...githubContext("github.com-scale"), remoteUrl: url },
+              resolveContext: () => Effect.succeed(null),
+            }),
+            url === remoteUrl ? "github.com-scale" : "github.com-evil.example",
+          );
+        }
+        assert.strictEqual(
+          yield* gh.getDefaultBranch({
+            cwd: "/repo",
+            context: { ...githubContext("github.com-scale"), remoteUrl },
+          }),
+          "trunk",
+        );
+        assert.deepStrictEqual(paths, ["github.com-scale repos/me/web"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describe("GitHubSourceControlProvider change request lookups by head", () => {
@@ -1062,6 +1190,10 @@ it.effect.each([
         `${host}/repos/${expected}`,
         `${host}/repos/${expected}/pulls`,
       ]);
+      assert.deepStrictEqual(
+        yield* provider.createsChangeRequestsIn!({ ...input, repository: "me/web" }),
+        expected === "me/web",
+      );
     }).pipe(
       Effect.provide(layer),
       Effect.provideService(HostProcess.Environment, { GH_REPO: envRepository }),
@@ -1070,30 +1202,33 @@ it.effect.each([
   },
 );
 
-it.effect("says a GH_REPO naming an unparseable host targets no remote rather than failing", () => {
-  const { layer } = harness({
-    remotes: remotesOutput(["upstream", "git@github.com:acme/web.git"]),
-    resolved: "",
-    api: {},
-  });
-  return Effect.gen(function* () {
-    const provider = yield* GitHubSourceControlProvider.make;
-    const targets = yield* provider.createsChangeRequestsIn!({
-      cwd: "/repo",
-      context: {
-        provider: {
-          kind: SourceControlProviderKind.make("github"),
-          name: "GitHub",
-          baseUrl: "https://github.com",
-        },
-        remoteName: "upstream",
-        remoteUrl: "git@github.com:acme/web.git",
-      },
-      repository: "acme/web",
+it.effect(
+  "says a GH_REPO naming an unparseable host falls back to the remotes, as creation does",
+  () => {
+    const { layer } = harness({
+      remotes: remotesOutput(["upstream", "git@github.com:acme/web.git"]),
+      resolved: "",
+      api: {},
     });
-    assert.isFalse(targets);
-  }).pipe(
-    Effect.provide(layer),
-    Effect.provideService(HostProcess.Environment, { GH_REPO: "bad host/acme/web" }),
-  );
-});
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const targets = yield* provider.createsChangeRequestsIn!({
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: SourceControlProviderKind.make("github"),
+            name: "GitHub",
+            baseUrl: "https://github.com",
+          },
+          remoteName: "upstream",
+          remoteUrl: "git@github.com:acme/web.git",
+        },
+        repository: "acme/web",
+      });
+      assert.isTrue(targets);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Environment, { GH_REPO: "bad host/acme/web" }),
+    );
+  },
+);

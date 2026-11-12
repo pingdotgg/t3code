@@ -25,9 +25,9 @@
     "tailwindcss": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
     "@alchemy.run/cloudflare-runtime": "workspace:*",
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
     "@effect/platform-node": "catalog:",
     "@playwright/test": "catalog:",
     "@tailwindcss/typography": "catalog:",

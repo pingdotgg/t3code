@@ -21,9 +21,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, layer } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import sharp from "sharp";
 import * as Images from "../../bindings/images/index.ts";
 import * as Docker from "../../Docker.ts";
@@ -35,11 +35,7 @@ import * as Runtime from "../../Runtime.ts";
 import * as RuntimeServices from "../../RuntimeServices.ts";
 import * as Workerd from "../../workerd/Workerd.ts";
 import type { TestWorker } from "../helpers/runtime.ts";
-import {
-  localRuntimeLayer,
-  makeTempDirectory,
-  startTestWorker,
-} from "../helpers/runtime.ts";
+import { localRuntimeLayer, makeTempDirectory, startTestWorker } from "../helpers/runtime.ts";
 
 // -----------------------------------------------------------------------------
 // Fixtures (checked-in, generated once with Sharp)
@@ -54,14 +50,12 @@ const JPEG_GREEN_8X4 =
   "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAEAAgDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAB//EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/ALoAfAr/2Q==";
 
 /** 4x4 solid blue GIF (used as an overlay for the draws-ignored case). */
-const GIF_BLUE_4X4 =
-  "R0lGODlhBAAEAIAAAExpcQAA/yH5BAUAAAAALAAAAAAEAAQAAAIEjI8ZBQA7";
+const GIF_BLUE_4X4 = "R0lGODlhBAAEAIAAAExpcQAA/yH5BAUAAAAALAAAAAAEAAQAAAIEjI8ZBQA7";
 
 /** Minimal SVG (SVG inputs report format only and are never transformed). */
 const SVG_FIXTURE = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>`;
 
-const decodeBase64 = (value: string) =>
-  Uint8Array.from(Buffer.from(value, "base64"));
+const decodeBase64 = (value: string) => Uint8Array.from(Buffer.from(value, "base64"));
 
 // The worker stores and retrieves bytes without validation, so hosted CRUD
 // cases don't need a real image (mirrors upstream).
@@ -186,11 +180,7 @@ interface CmdEnvelope<T> {
   error?: string;
 }
 
-const sendCmd = <T>(
-  worker: TestWorker,
-  op: string,
-  args: Record<string, unknown> = {},
-) =>
+const sendCmd = <T>(worker: TestWorker, op: string, args: Record<string, unknown> = {}) =>
   worker
     .fetchJson<CmdEnvelope<T>>("/cmd", {
       method: "POST",
@@ -199,31 +189,52 @@ const sendCmd = <T>(
     })
     .pipe(
       Effect.flatMap((data) =>
-        data.ok
-          ? Effect.succeed(data.result)
-          : Effect.die(new Error(data.error)),
+        data.ok ? Effect.succeed(data.result) : Effect.die(new Error(data.error)),
       ),
     );
 
-const upload = (
-  worker: TestWorker,
-  bytes: Uint8Array,
-  options?: Record<string, unknown>,
-) =>
+const upload = (worker: TestWorker, bytes: Uint8Array, options?: Record<string, unknown>) =>
   sendCmd<ImageMetadata>(worker, "upload", {
     bytes: Array.from(bytes),
     options,
   });
 
 /** POST raw image bytes to a transform/info route. */
-const postBytes = (
-  worker: TestWorker,
-  path: string,
-  bytes: Uint8Array | string,
-) => worker.fetch(path, { method: "POST", body: bytes });
+const postBytes = (worker: TestWorker, path: string, bytes: Uint8Array | string) =>
+  worker.fetch(path, { method: "POST", body: bytes });
 
-const metadataOf = (buffer: ArrayBuffer) =>
-  Effect.promise(() => sharp(buffer).metadata());
+const metadataOf = (buffer: ArrayBuffer) => Effect.promise(() => sharp(buffer).metadata());
+
+/**
+ * A 200x100 white-top/red-bottom JPEG tagged with EXIF orientation 6 ("rotate
+ * 90 degrees clockwise to display"), the layout phone cameras use for
+ * portrait photos. A production-matching transform bakes that rotation in,
+ * producing an upright 100x200 image with red on the left and white on the
+ * right.
+ */
+const exifRotatedJpeg = Effect.promise(async () => {
+  const red = await sharp({
+    create: { width: 200, height: 50, channels: 3, background: { r: 255, g: 0, b: 0 } },
+  })
+    .png()
+    .toBuffer();
+  const source = await sharp({
+    create: { width: 200, height: 100, channels: 3, background: { r: 255, g: 255, b: 255 } },
+  })
+    .composite([{ input: red, top: 50, left: 0 }])
+    .jpeg({ quality: 95 })
+    .withMetadata({ orientation: 6 })
+    .toBuffer();
+  expect((await sharp(source).metadata()).orientation).toBe(6);
+  return new Uint8Array(source);
+});
+
+const pixelAt = (body: Buffer, x: number, y: number) =>
+  Effect.promise(async () => {
+    const { data, info } = await sharp(body).raw().toBuffer({ resolveWithObject: true });
+    const offset = (y * info.width + x) * info.channels;
+    return { r: data[offset], g: data[offset + 1], b: data[offset + 2] };
+  });
 
 interface ImageMetadata {
   id: string;
@@ -241,465 +252,487 @@ interface ImageList {
   listComplete: boolean;
 }
 
-layer(localRuntimeLayer, { excludeTestServices: true })(
-  "Images binding",
-  (it) => {
-    // ---------------------------------------------------------------------------
-    // Transforms (Sharp over the loopback)
-    // ---------------------------------------------------------------------------
+layer(localRuntimeLayer, { excludeTestServices: true })("Images binding", (it) => {
+  // ---------------------------------------------------------------------------
+  // Transforms (Sharp over the loopback)
+  // ---------------------------------------------------------------------------
 
-    it.effect("resizes an image", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-resize");
-        const res = yield* postBytes(
-          worker,
-          "/transform?width=4&format=image/png",
-          decodeBase64(PNG_RED_8X4),
-        );
-        expect(res.status).toBe(200);
-        expect(res.headers.get("content-type")).toBe("image/png");
-        const metadata = yield* metadataOf(
-          yield* Effect.promise(() => res.arrayBuffer()),
-        );
-        expect(metadata.format).toBe("png");
-        // fit: "contain" preserves the 2:1 aspect ratio.
-        expect(metadata.width).toBe(4);
-        expect(metadata.height).toBe(2);
-      }),
-    );
+  it.effect("resizes an image", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-resize");
+      const res = yield* postBytes(
+        worker,
+        "/transform?width=4&format=image/png",
+        decodeBase64(PNG_RED_8X4),
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/png");
+      const metadata = yield* metadataOf(yield* Effect.promise(() => res.arrayBuffer()));
+      expect(metadata.format).toBe("png");
+      // fit: "contain" preserves the 2:1 aspect ratio.
+      expect(metadata.width).toBe(4);
+      expect(metadata.height).toBe(2);
+    }),
+  );
 
-    it.effect("rotates an image", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-rotate");
-        const res = yield* postBytes(
-          worker,
-          "/transform?rotate=90&format=image/png",
-          decodeBase64(PNG_RED_8X4),
-        );
-        expect(res.status).toBe(200);
-        const metadata = yield* metadataOf(
-          yield* Effect.promise(() => res.arrayBuffer()),
-        );
-        expect(metadata.width).toBe(4);
-        expect(metadata.height).toBe(8);
-      }),
-    );
+  it.effect("rotates an image", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-rotate");
+      const res = yield* postBytes(
+        worker,
+        "/transform?rotate=90&format=image/png",
+        decodeBase64(PNG_RED_8X4),
+      );
+      expect(res.status).toBe(200);
+      const metadata = yield* metadataOf(yield* Effect.promise(() => res.arrayBuffer()));
+      expect(metadata.width).toBe(4);
+      expect(metadata.height).toBe(8);
+    }),
+  );
 
-    it.effect("transcodes an image (PNG -> WebP, JPEG -> AVIF)", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-transcode");
-        const webpRes = yield* postBytes(
-          worker,
-          "/transform?format=image/webp",
-          decodeBase64(PNG_RED_8X4),
-        );
-        expect(webpRes.status).toBe(200);
-        expect(webpRes.headers.get("content-type")).toBe("image/webp");
-        const webp = yield* metadataOf(
-          yield* Effect.promise(() => webpRes.arrayBuffer()),
-        );
-        expect(webp.format).toBe("webp");
-        expect(webp.width).toBe(8);
-        expect(webp.height).toBe(4);
+  // Adapted from upstream `transform.spec.ts` (#16106): production applies
+  // EXIF orientation before any transforms.
+  it.effect("EXIF orientation is applied before transforms (matches production)", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-exif-orientation");
+      const res = yield* postBytes(worker, "/transform?format=image/png", yield* exifRotatedJpeg);
+      expect(res.status).toBe(200);
+      const body = Buffer.from(yield* Effect.promise(() => res.arrayBuffer()));
+      // Without auto-orientation the 200x100 source would pass through
+      // sideways as 200x100.
+      const metadata = yield* metadataOf(body.buffer);
+      expect(metadata.width).toBe(100);
+      expect(metadata.height).toBe(200);
 
-        const avifRes = yield* postBytes(
-          worker,
-          "/transform?format=image/avif",
-          decodeBase64(JPEG_GREEN_8X4),
-        );
-        expect(avifRes.status).toBe(200);
-        expect(avifRes.headers.get("content-type")).toBe("image/avif");
-        const avif = yield* metadataOf(
-          yield* Effect.promise(() => avifRes.arrayBuffer()),
-        );
-        expect(avif.format).toBe("heif");
-      }),
-    );
+      // After the 90 degrees clockwise rotation the source's red bottom half
+      // lands on the left and the white top half on the right. JPEG encoding
+      // is lossy, so sample deep inside each half and allow small artifacts.
+      const left = yield* pixelAt(body, 25, 100);
+      expect(left.r).toBeGreaterThan(240);
+      expect(left.g).toBeLessThan(15);
+      expect(left.b).toBeLessThan(15);
+      const right = yield* pixelAt(body, 75, 100);
+      expect(right.r).toBeGreaterThan(240);
+      expect(right.g).toBeGreaterThan(240);
+      expect(right.b).toBeGreaterThan(240);
+    }),
+  );
 
-    it.effect(
-      "GIF output fails with the documented local-mode 415 (code 9520)",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startImagesTestWorker("images-gif-415");
-          const body = yield* worker.fetchJson<{
-            error: true;
-            code: number;
-            message: string;
-          }>("/transform?format=image/gif", {
-            method: "POST",
-            body: decodeBase64(PNG_RED_8X4),
-          });
-          expect(body.error).toBe(true);
-          expect(body.code).toBe(9520);
-          expect(body.message).toContain(
-            "GIF output is not supported in local mode",
-          );
-        }),
-    );
+  it.effect("EXIF orientation composes with resize", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-exif-resize");
+      const res = yield* postBytes(
+        worker,
+        "/transform?width=50&format=image/png",
+        yield* exifRotatedJpeg,
+      );
+      expect(res.status).toBe(200);
+      // width applies to the upright (100x200) image, not the stored
+      // sideways (200x100) pixels.
+      const metadata = yield* metadataOf(yield* Effect.promise(() => res.arrayBuffer()));
+      expect(metadata.width).toBe(50);
+      expect(metadata.height).toBe(100);
+    }),
+  );
 
-    it.effect(
-      "RGB/RGBA output fails with the documented local-mode 415 (code 9520)",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startImagesTestWorker("images-rgb-415");
-          const body = yield* worker.fetchJson<{
-            error: true;
-            code: number;
-            message: string;
-          }>("/transform?format=rgba", {
-            method: "POST",
-            body: decodeBase64(PNG_RED_8X4),
-          });
-          expect(body.error).toBe(true);
-          expect(body.code).toBe(9520);
-          expect(body.message).toContain(
-            "RGB/RGBA output is not supported in local mode",
-          );
-        }),
-    );
+  it.effect("info() reports stored dimensions for an EXIF-rotated image", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-exif-info");
+      const body = yield* worker.fetchJson<{
+        ok: boolean;
+        info: { width: number; height: number };
+      }>("/info", { method: "POST", body: yield* exifRotatedJpeg });
+      expect(body.info).toMatchObject({ width: 200, height: 100 });
+    }),
+  );
 
-    it.effect("draws/overlays are ignored in local mode", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-draw-ignored");
-        const res = yield* postBytes(
-          worker,
-          "/draw",
-          decodeBase64(PNG_RED_8X4),
-        );
-        expect(res.status).toBe(200);
-        const buffer = yield* Effect.promise(() => res.arrayBuffer());
-        const metadata = yield* metadataOf(buffer);
-        // Only the root image's resize applied (8x4 -> 4x2); the 4x4 overlay
-        // was skipped entirely, so the output stays solid red.
-        expect(metadata.format).toBe("png");
-        expect(metadata.width).toBe(4);
-        expect(metadata.height).toBe(2);
-        const raw = yield* Effect.promise(() => sharp(buffer).raw().toBuffer());
-        expect([raw[0], raw[1], raw[2]]).toEqual([255, 0, 0]);
-      }),
-    );
+  it.effect("transcodes an image (PNG -> WebP, JPEG -> AVIF)", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-transcode");
+      const webpRes = yield* postBytes(
+        worker,
+        "/transform?format=image/webp",
+        decodeBase64(PNG_RED_8X4),
+      );
+      expect(webpRes.status).toBe(200);
+      expect(webpRes.headers.get("content-type")).toBe("image/webp");
+      const webp = yield* metadataOf(yield* Effect.promise(() => webpRes.arrayBuffer()));
+      expect(webp.format).toBe("webp");
+      expect(webp.width).toBe(8);
+      expect(webp.height).toBe(4);
 
-    it.effect("info() reports format and dimensions for bitmap input", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-info");
-        const body = yield* worker.fetchJson<{
-          ok: boolean;
-          info: {
-            format: string;
-            fileSize: number;
-            width: number;
-            height: number;
-          };
-        }>("/info", { method: "POST", body: decodeBase64(PNG_RED_8X4) });
-        expect(body.ok).toBe(true);
-        expect(body.info.format).toBe("image/png");
-        expect(body.info.width).toBe(8);
-        expect(body.info.height).toBe(4);
-        expect(body.info.fileSize).toBeGreaterThan(0);
-      }),
-    );
+      const avifRes = yield* postBytes(
+        worker,
+        "/transform?format=image/avif",
+        decodeBase64(JPEG_GREEN_8X4),
+      );
+      expect(avifRes.status).toBe(200);
+      expect(avifRes.headers.get("content-type")).toBe("image/avif");
+      const avif = yield* metadataOf(yield* Effect.promise(() => avifRes.arrayBuffer()));
+      expect(avif.format).toBe("heif");
+    }),
+  );
 
-    it.effect("info() reports format only for SVG input", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-info-svg");
-        const body = yield* worker.fetchJson<{
-          ok: boolean;
-          info: Record<string, unknown>;
-        }>("/info", { method: "POST", body: SVG_FIXTURE });
-        expect(body.ok).toBe(true);
-        expect(body.info).toEqual({ format: "image/svg+xml" });
-      }),
-    );
+  it.effect("GIF output fails with the documented local-mode 415 (code 9520)", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-gif-415");
+      const body = yield* worker.fetchJson<{
+        error: true;
+        code: number;
+        message: string;
+      }>("/transform?format=image/gif", {
+        method: "POST",
+        body: decodeBase64(PNG_RED_8X4),
+      });
+      expect(body.error).toBe(true);
+      expect(body.code).toBe(9520);
+      expect(body.message).toContain("GIF output is not supported in local mode");
+    }),
+  );
 
-    it.effect("info() reports image/avif for AVIF input", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-info-avif");
-        // libvips has no AVIF fixture format of its own here — transcode one
-        // first, then feed it back through info().
-        const avifRes = yield* postBytes(
-          worker,
-          "/transform?format=image/avif",
-          decodeBase64(JPEG_GREEN_8X4),
-        );
-        expect(avifRes.status).toBe(200);
-        const avif = new Uint8Array(
-          yield* Effect.promise(() => avifRes.arrayBuffer()),
-        );
+  it.effect("RGB/RGBA output fails with the documented local-mode 415 (code 9520)", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-rgb-415");
+      const body = yield* worker.fetchJson<{
+        error: true;
+        code: number;
+        message: string;
+      }>("/transform?format=rgba", {
+        method: "POST",
+        body: decodeBase64(PNG_RED_8X4),
+      });
+      expect(body.error).toBe(true);
+      expect(body.code).toBe(9520);
+      expect(body.message).toContain("RGB/RGBA output is not supported in local mode");
+    }),
+  );
 
-        const body = yield* worker.fetchJson<{
-          ok: boolean;
-          info: {
-            format: string;
-            fileSize: number;
-            width: number;
-            height: number;
-          };
-        }>("/info", { method: "POST", body: avif });
-        expect(body.ok).toBe(true);
-        // sharp reports AVIF as `heif` + compression `av1`.
-        expect(body.info.format).toBe("image/avif");
-        expect(body.info.width).toBe(8);
-        expect(body.info.height).toBe(4);
-        expect(body.info.fileSize).toBeGreaterThan(0);
-      }),
-    );
+  it.effect("draws/overlays are ignored in local mode", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-draw-ignored");
+      const res = yield* postBytes(worker, "/draw", decodeBase64(PNG_RED_8X4));
+      expect(res.status).toBe(200);
+      const buffer = yield* Effect.promise(() => res.arrayBuffer());
+      const metadata = yield* metadataOf(buffer);
+      // Only the root image's resize applied (8x4 -> 4x2); the 4x4 overlay
+      // was skipped entirely, so the output stays solid red.
+      expect(metadata.format).toBe("png");
+      expect(metadata.width).toBe(4);
+      expect(metadata.height).toBe(2);
+      const raw = yield* Effect.promise(() => sharp(buffer).raw().toBuffer());
+      expect([raw[0], raw[1], raw[2]]).toEqual([255, 0, 0]);
+    }),
+  );
 
-    // ---------------------------------------------------------------------------
-    // Local delivery (upstream "Images local delivery")
-    // ---------------------------------------------------------------------------
+  it.effect("info() reports format and dimensions for bitmap input", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-info");
+      const body = yield* worker.fetchJson<{
+        ok: boolean;
+        info: {
+          format: string;
+          fileSize: number;
+          width: number;
+          height: number;
+        };
+      }>("/info", { method: "POST", body: decodeBase64(PNG_RED_8X4) });
+      expect(body.ok).toBe(true);
+      expect(body.info.format).toBe("image/png");
+      expect(body.info.width).toBe(8);
+      expect(body.info.height).toBe(4);
+      expect(body.info.fileSize).toBeGreaterThan(0);
+    }),
+  );
 
-    it.effect(
-      "variant URLs are absolute and use /cdn-cgi/mf/imagedelivery/ path",
-      () =>
-        Effect.gen(function* () {
-          const worker = yield* startImagesTestWorker("images-variant-url");
-          const metadata = yield* upload(worker, TEST_IMAGE_BYTES, {
-            id: "variant-test",
-          });
-          expect(metadata.variants).toHaveLength(1);
-          expect(metadata.variants[0]).toBe(
-            `${worker.baseUrl.origin}/cdn-cgi/mf/imagedelivery/variant-test/public`,
-          );
-        }),
-    );
+  it.effect("info() reports format only for SVG input", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-info-svg");
+      const body = yield* worker.fetchJson<{
+        ok: boolean;
+        info: Record<string, unknown>;
+      }>("/info", { method: "POST", body: SVG_FIXTURE });
+      expect(body.ok).toBe(true);
+      expect(body.info).toEqual({ format: "image/svg+xml" });
+    }),
+  );
 
-    it.effect("image delivery endpoint serves image bytes", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-delivery");
-        yield* upload(worker, TEST_IMAGE_BYTES, { id: "delivery-test" });
+  it.effect("info() reports image/avif for AVIF input", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-info-avif");
+      // libvips has no AVIF fixture format of its own here — transcode one
+      // first, then feed it back through info().
+      const avifRes = yield* postBytes(
+        worker,
+        "/transform?format=image/avif",
+        decodeBase64(JPEG_GREEN_8X4),
+      );
+      expect(avifRes.status).toBe(200);
+      const avif = new Uint8Array(yield* Effect.promise(() => avifRes.arrayBuffer()));
 
-        const response = yield* worker.fetch(
-          "/cdn-cgi/mf/imagedelivery/delivery-test/public",
-        );
-        expect(response.status).toBe(200);
-        const data = new Uint8Array(
-          yield* Effect.promise(() => response.arrayBuffer()),
-        );
-        expect(data).toEqual(TEST_IMAGE_BYTES);
-      }),
-    );
+      const body = yield* worker.fetchJson<{
+        ok: boolean;
+        info: {
+          format: string;
+          fileSize: number;
+          width: number;
+          height: number;
+        };
+      }>("/info", { method: "POST", body: avif });
+      expect(body.ok).toBe(true);
+      // sharp reports AVIF as `heif` + compression `av1`.
+      expect(body.info.format).toBe("image/avif");
+      expect(body.info.width).toBe(8);
+      expect(body.info.height).toBe(4);
+      expect(body.info.fileSize).toBeGreaterThan(0);
+    }),
+  );
 
-    it.effect("delivered images carry the detected content type", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker(
-          "images-delivery-content-type",
-        );
-        yield* upload(worker, decodeBase64(PNG_RED_8X4), {
-          id: "content-type-test",
-        });
+  // ---------------------------------------------------------------------------
+  // Local delivery (upstream "Images local delivery")
+  // ---------------------------------------------------------------------------
 
-        const response = yield* worker.fetch(
-          "/cdn-cgi/mf/imagedelivery/content-type-test/public",
-        );
-        expect(response.status).toBe(200);
-        expect(response.headers.get("content-type")).toBe("image/png");
-        yield* Effect.promise(() => response.arrayBuffer());
-      }),
-    );
+  it.effect("variant URLs are absolute and use /__cf_local/imagedelivery/ path", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-variant-url");
+      const metadata = yield* upload(worker, TEST_IMAGE_BYTES, {
+        id: "variant-test",
+      });
+      expect(metadata.variants).toHaveLength(1);
+      expect(metadata.variants[0]).toBe(
+        `${worker.baseUrl.origin}/__cf_local/imagedelivery/variant-test/public`,
+      );
+    }),
+  );
 
-    it.effect("image delivery returns 404 for non-existent image", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-delivery-404");
-        const response = yield* worker.fetch(
-          "/cdn-cgi/mf/imagedelivery/does-not-exist/public",
-        );
-        expect(response.status).toBe(404);
-        yield* Effect.promise(() => response.arrayBuffer());
-      }),
-    );
+  it.effect("image delivery endpoint serves image bytes", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-delivery");
+      yield* upload(worker, TEST_IMAGE_BYTES, { id: "delivery-test" });
 
-    // ---------------------------------------------------------------------------
-    // Hosted CRUD (upstream "Images hosted CRUD")
-    // ---------------------------------------------------------------------------
+      const response = yield* worker.fetch("/__cf_local/imagedelivery/delivery-test/public");
+      expect(response.status).toBe(200);
+      const data = new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()));
+      expect(data).toEqual(TEST_IMAGE_BYTES);
+    }),
+  );
 
-    it.effect("upload and retrieve metadata", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-upload");
-        const metadata = yield* upload(worker, TEST_IMAGE_BYTES, {
-          id: "test-123",
-        });
-        expect(metadata.id).toBe("test-123");
-        expect(metadata.filename).toBe("uploaded.jpg");
-        expect(metadata.requireSignedURLs).toBe(false);
-      }),
-    );
+  // Miniflare's former delivery prefix keeps serving older variant URLs.
+  it.effect("image delivery still serves the /cdn-cgi/mf/imagedelivery prefix", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-delivery-legacy");
+      yield* upload(worker, TEST_IMAGE_BYTES, { id: "delivery-legacy" });
 
-    it.effect("upload and retrieve image data", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-bytes");
-        yield* upload(worker, TEST_IMAGE_BYTES, { id: "blob-test" });
-        const data = yield* sendCmd<Array<number>>(worker, "bytes", {
-          id: "blob-test",
-        });
-        expect(new Uint8Array(data)).toEqual(TEST_IMAGE_BYTES);
-      }),
-    );
+      const response = yield* worker.fetch("/cdn-cgi/mf/imagedelivery/delivery-legacy/public");
+      expect(response.status).toBe(200);
+      const data = new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()));
+      expect(data).toEqual(TEST_IMAGE_BYTES);
+    }),
+  );
 
-    it.effect("upload with base64 encoding", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-base64");
-        const base64String = btoa(String.fromCharCode(...TEST_IMAGE_BYTES));
-        const base64Bytes = new TextEncoder().encode(base64String);
+  it.effect("delivered images carry the detected content type", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-delivery-content-type");
+      yield* upload(worker, decodeBase64(PNG_RED_8X4), {
+        id: "content-type-test",
+      });
 
-        const metadata = yield* upload(worker, base64Bytes, {
-          id: "base64-test",
-          encoding: "base64",
-        });
-        expect(metadata.id).toBe("base64-test");
+      const response = yield* worker.fetch("/__cf_local/imagedelivery/content-type-test/public");
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      yield* Effect.promise(() => response.arrayBuffer());
+    }),
+  );
 
-        const data = yield* sendCmd<Array<number>>(worker, "bytes", {
-          id: "base64-test",
-        });
-        expect(new Uint8Array(data)).toEqual(TEST_IMAGE_BYTES);
-      }),
-    );
+  it.effect("image delivery returns 404 for non-existent image", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-delivery-404");
+      const response = yield* worker.fetch("/__cf_local/imagedelivery/does-not-exist/public");
+      expect(response.status).toBe(404);
+      yield* Effect.promise(() => response.arrayBuffer());
+    }),
+  );
 
-    it.effect("get details for non-existent image returns null", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-details-null");
-        const metadata = yield* sendCmd<ImageMetadata | null>(
-          worker,
-          "details",
-          {
-            id: "does-not-exist",
-          },
-        );
-        expect(metadata).toBe(null);
-      }),
-    );
+  // ---------------------------------------------------------------------------
+  // Hosted CRUD (upstream "Images hosted CRUD")
+  // ---------------------------------------------------------------------------
 
-    it.effect("get image data for non-existent image returns null", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-bytes-null");
-        const data = yield* sendCmd<Array<number> | null>(worker, "bytes", {
-          id: "does-not-exist",
-        });
-        expect(data).toBe(null);
-      }),
-    );
+  it.effect("upload and retrieve metadata", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-upload");
+      const metadata = yield* upload(worker, TEST_IMAGE_BYTES, {
+        id: "test-123",
+      });
+      expect(metadata.id).toBe("test-123");
+      expect(metadata.filename).toBe("uploaded.jpg");
+      expect(metadata.requireSignedURLs).toBe(false);
+    }),
+  );
 
-    it.effect("update image metadata", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-update");
-        yield* upload(worker, TEST_IMAGE_BYTES, { id: "update-test" });
-        const metadata = yield* sendCmd<ImageMetadata>(worker, "update", {
-          id: "update-test",
-          options: { requireSignedURLs: true },
-        });
-        expect(metadata.requireSignedURLs).toBe(true);
-      }),
-    );
+  it.effect("upload and retrieve image data", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-bytes");
+      yield* upload(worker, TEST_IMAGE_BYTES, { id: "blob-test" });
+      const data = yield* sendCmd<Array<number>>(worker, "bytes", {
+        id: "blob-test",
+      });
+      expect(new Uint8Array(data)).toEqual(TEST_IMAGE_BYTES);
+    }),
+  );
 
-    it.effect("delete image", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-delete");
-        yield* upload(worker, TEST_IMAGE_BYTES, { id: "delete-test" });
+  it.effect("upload with base64 encoding", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-base64");
+      const base64String = btoa(String.fromCharCode(...TEST_IMAGE_BYTES));
+      const base64Bytes = new TextEncoder().encode(base64String);
 
-        const deleted = yield* sendCmd<boolean>(worker, "delete", {
-          id: "delete-test",
-        });
-        expect(deleted).toBe(true);
+      const metadata = yield* upload(worker, base64Bytes, {
+        id: "base64-test",
+        encoding: "base64",
+      });
+      expect(metadata.id).toBe("base64-test");
 
-        const metadata = yield* sendCmd<ImageMetadata | null>(
-          worker,
-          "details",
-          {
-            id: "delete-test",
-          },
-        );
-        expect(metadata).toBe(null);
-      }),
-    );
+      const data = yield* sendCmd<Array<number>>(worker, "bytes", {
+        id: "base64-test",
+      });
+      expect(new Uint8Array(data)).toEqual(TEST_IMAGE_BYTES);
+    }),
+  );
 
-    it.effect("delete non-existent image returns false", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker(
-          "images-crud-delete-missing",
-        );
-        const deleted = yield* sendCmd<boolean>(worker, "delete", {
-          id: "does-not-exist",
-        });
-        expect(deleted).toBe(false);
-      }),
-    );
+  it.effect("get details for non-existent image returns null", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-details-null");
+      const metadata = yield* sendCmd<ImageMetadata | null>(worker, "details", {
+        id: "does-not-exist",
+      });
+      expect(metadata).toBe(null);
+    }),
+  );
 
-    // Upstream creates a fresh Miniflare per test; here every test shares one
-    // runtime (and so one hosted store), so the list cases scope their reads by
-    // a unique `creator` instead of asserting over the whole store.
-    it.effect("list images", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-list");
-        yield* upload(worker, TEST_IMAGE_BYTES, {
-          id: "list-1",
-          creator: "list-solo",
-        });
+  it.effect("get image data for non-existent image returns null", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-bytes-null");
+      const data = yield* sendCmd<Array<number> | null>(worker, "bytes", {
+        id: "does-not-exist",
+      });
+      expect(data).toBe(null);
+    }),
+  );
 
-        const list = yield* sendCmd<ImageList>(worker, "list", {
-          options: { creator: "list-solo" },
-        });
-        expect(list.listComplete).toBe(true);
-        expect(list.images).toHaveLength(1);
-        expect(list.images[0].id).toBe("list-1");
-      }),
-    );
+  it.effect("update image metadata", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-update");
+      yield* upload(worker, TEST_IMAGE_BYTES, { id: "update-test" });
+      const metadata = yield* sendCmd<ImageMetadata>(worker, "update", {
+        id: "update-test",
+        options: { requireSignedURLs: true },
+      });
+      expect(metadata.requireSignedURLs).toBe(true);
+    }),
+  );
 
-    it.effect("list images filtered by creator", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-list-creator");
-        yield* upload(worker, TEST_IMAGE_BYTES, {
-          id: "img1",
-          creator: "socrates",
-        });
-        yield* upload(worker, TEST_IMAGE_BYTES, {
-          id: "img2",
-          creator: "plato",
-        });
+  it.effect("delete image", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-delete");
+      yield* upload(worker, TEST_IMAGE_BYTES, { id: "delete-test" });
 
-        const list = yield* sendCmd<ImageList>(worker, "list", {
-          options: { creator: "plato" },
-        });
-        expect(list.images).toHaveLength(1);
-        expect(list.images[0].id).toBe("img2");
-      }),
-    );
+      const deleted = yield* sendCmd<boolean>(worker, "delete", {
+        id: "delete-test",
+      });
+      expect(deleted).toBe(true);
 
-    it.effect("list images with cursor pagination", () =>
-      Effect.gen(function* () {
-        const worker = yield* startImagesTestWorker("images-crud-list-cursor");
-        for (const id of ["page-1", "page-2", "page-3", "page-4", "page-5"]) {
-          yield* upload(worker, TEST_IMAGE_BYTES, { id, creator: "paginate" });
-        }
+      const metadata = yield* sendCmd<ImageMetadata | null>(worker, "details", {
+        id: "delete-test",
+      });
+      expect(metadata).toBe(null);
+    }),
+  );
 
-        const page1 = yield* sendCmd<ImageList>(worker, "list", {
-          options: { limit: 2, creator: "paginate" },
-        });
-        expect(page1.images).toHaveLength(2);
-        expect(page1.listComplete).toBe(false);
-        expect(page1.cursor).toBeDefined();
+  it.effect("delete non-existent image returns false", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-delete-missing");
+      const deleted = yield* sendCmd<boolean>(worker, "delete", {
+        id: "does-not-exist",
+      });
+      expect(deleted).toBe(false);
+    }),
+  );
 
-        const page2 = yield* sendCmd<ImageList>(worker, "list", {
-          options: { limit: 2, creator: "paginate", cursor: page1.cursor },
-        });
-        expect(page2.images).toHaveLength(2);
-        expect(page2.listComplete).toBe(false);
-        expect(page2.cursor).toBeDefined();
+  // Upstream creates a fresh Miniflare per test; here every test shares one
+  // runtime (and so one hosted store), so the list cases scope their reads by
+  // a unique `creator` instead of asserting over the whole store.
+  it.effect("list images", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-list");
+      yield* upload(worker, TEST_IMAGE_BYTES, {
+        id: "list-1",
+        creator: "list-solo",
+      });
 
-        const page3 = yield* sendCmd<ImageList>(worker, "list", {
-          options: { limit: 2, creator: "paginate", cursor: page2.cursor },
-        });
-        expect(page3.images).toHaveLength(1);
-        expect(page3.listComplete).toBe(true);
+      const list = yield* sendCmd<ImageList>(worker, "list", {
+        options: { creator: "list-solo" },
+      });
+      expect(list.listComplete).toBe(true);
+      expect(list.images).toHaveLength(1);
+      expect(list.images[0].id).toBe("list-1");
+    }),
+  );
 
-        const allIds = [
-          ...page1.images.map((i) => i.id),
-          ...page2.images.map((i) => i.id),
-          ...page3.images.map((i) => i.id),
-        ];
-        expect(new Set(allIds).size).toBe(5);
-      }),
-    );
-  },
-);
+  it.effect("list images filtered by creator", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-list-creator");
+      yield* upload(worker, TEST_IMAGE_BYTES, {
+        id: "img1",
+        creator: "socrates",
+      });
+      yield* upload(worker, TEST_IMAGE_BYTES, {
+        id: "img2",
+        creator: "plato",
+      });
+
+      const list = yield* sendCmd<ImageList>(worker, "list", {
+        options: { creator: "plato" },
+      });
+      expect(list.images).toHaveLength(1);
+      expect(list.images[0].id).toBe("img2");
+    }),
+  );
+
+  it.effect("list images with cursor pagination", () =>
+    Effect.gen(function* () {
+      const worker = yield* startImagesTestWorker("images-crud-list-cursor");
+      for (const id of ["page-1", "page-2", "page-3", "page-4", "page-5"]) {
+        yield* upload(worker, TEST_IMAGE_BYTES, { id, creator: "paginate" });
+      }
+
+      const page1 = yield* sendCmd<ImageList>(worker, "list", {
+        options: { limit: 2, creator: "paginate" },
+      });
+      expect(page1.images).toHaveLength(2);
+      expect(page1.listComplete).toBe(false);
+      expect(page1.cursor).toBeDefined();
+
+      const page2 = yield* sendCmd<ImageList>(worker, "list", {
+        options: { limit: 2, creator: "paginate", cursor: page1.cursor },
+      });
+      expect(page2.images).toHaveLength(2);
+      expect(page2.listComplete).toBe(false);
+      expect(page2.cursor).toBeDefined();
+
+      const page3 = yield* sendCmd<ImageList>(worker, "list", {
+        options: { limit: 2, creator: "paginate", cursor: page2.cursor },
+      });
+      expect(page3.images).toHaveLength(1);
+      expect(page3.listComplete).toBe(true);
+
+      const allIds = [
+        ...page1.images.map((i) => i.id),
+        ...page2.images.map((i) => i.id),
+        ...page3.images.map((i) => i.id),
+      ];
+      expect(new Set(allIds).size).toBe(5);
+    }),
+  );
+});
 
 // Every `layer(localRuntimeLayer)` block above shares one runtime; the CRUD
 // cases use unique image ids so the shared hosted store never collides.
@@ -728,9 +761,7 @@ describe("Images binding persistence", () => {
           Layer.provide(Paths.PathsLive),
           Layer.provide(Docker.DockerLive),
           Layer.provide(Workerd.WorkerdLive),
-          Layer.provideMerge(
-            Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer),
-          ),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         );
 
         const runAgainstStorage = Effect.fn(
@@ -739,15 +770,12 @@ describe("Images binding persistence", () => {
               name: "images-persist-test",
               compatibilityDate: "2025-04-01",
               compatibilityFlags: [],
-              modules: [
-                { name: "main.js", type: "ESModule", content: TEST_SCRIPT },
-              ],
+              modules: [{ name: "main.js", type: "ESModule", content: TEST_SCRIPT }],
               bindings: [Images.local({ binding: "IMAGES" })],
             });
             yield* run(worker);
           },
-          (self) =>
-            self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
+          (self) => self.pipe(Effect.provide(runtimeLayerTempDir), Effect.scoped),
         );
 
         yield* runAgainstStorage((worker) =>
