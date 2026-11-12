@@ -343,6 +343,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           for (const entryName of rewrittenEntries) {
             yield* writeTextFile(path.join(sharedHome, entryName), '{"owner":"shared"}\n');
           }
+          yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({
               homePath: sharedHome,
@@ -358,9 +359,33 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             yield* fileSystem.rename(temporaryPath, path.join(shadowHome, entryName));
           }
 
+          // Shared config.toml was saved after the shadow's rewrite, so the shared copy wins.
+          const staleShadowConfig = path.join(shadowHome, ".config.toml.tmp");
+          yield* fileSystem.writeFileString(staleShadowConfig, 'model = "shadow"\n');
+          yield* fileSystem.rename(staleShadowConfig, path.join(shadowHome, "config.toml"));
+          yield* fileSystem.utimes(path.join(shadowHome, "config.toml"), 0, 0);
+          for (const entryName of rewrittenEntries) {
+            yield* fileSystem.utimes(path.join(sharedHome, entryName), 0, 0);
+          }
+
           const result = yield* materializeCodexShadowHome(layout).pipe(Effect.result);
 
           expect(result._tag).toBe("Success");
+          for (const entryName of [...rewrittenEntries, "config.toml"]) {
+            expect(yield* fileSystem.readLink(path.join(shadowHome, entryName))).toBe(
+              path.join(sharedHome, entryName),
+            );
+          }
+          const readShared = (entryName: string) =>
+            fileSystem.readFileString(path.join(sharedHome, entryName));
+          const readBackup = (entryName: string) =>
+            fileSystem.readFileString(path.join(shadowHome, ".t3-shadow-conflicts", entryName));
+          for (const entryName of rewrittenEntries) {
+            expect(yield* readShared(entryName)).toBe('{"owner":"shadow"}\n');
+            expect(yield* readBackup(entryName)).toBe('{"owner":"shared"}\n');
+          }
+          expect(yield* readShared("config.toml")).toBe('model = "gpt-5-codex"\n');
+          expect(yield* readBackup("config.toml")).toBe('model = "shadow"\n');
         }),
     );
 
@@ -372,8 +397,8 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const sharedHome = yield* makeTempDir("t3code-codex-shared-");
           const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
           const shadowHome = path.join(shadowRoot, "shadow");
-          yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
-          yield* writeTextFile(path.join(shadowHome, "config.toml"), 'model = "local"\n');
+          yield* writeTextFile(path.join(sharedHome, "state_5.sqlite"), "shared");
+          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "local");
 
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({
@@ -388,12 +413,12 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(error).toMatchObject({
             sharedHomePath: sharedHome,
             effectiveHomePath: shadowHome,
-            entryName: "config.toml",
-            linkPath: path.join(shadowHome, "config.toml"),
-            targetPath: path.join(sharedHome, "config.toml"),
+            entryName: "state_5.sqlite",
+            linkPath: path.join(shadowHome, "state_5.sqlite"),
+            targetPath: path.join(sharedHome, "state_5.sqlite"),
           });
           expect(error.message).toBe(
-            `Cannot create Codex shadow home entry 'config.toml' because '${path.join(shadowHome, "config.toml")}' already exists and is not a symlink.`,
+            `Cannot create Codex shadow home entry 'state_5.sqlite' because '${path.join(shadowHome, "state_5.sqlite")}' already exists and is not a symlink.`,
           );
         }),
     );
