@@ -291,6 +291,7 @@ export function layerWithRegistry<Error>(
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
+  | EffectOutbox.EffectOutboxV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
@@ -327,6 +328,7 @@ export function layerWithRegistry<Error>(
       ),
     ),
   ).pipe(Layer.orDie);
+  const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const wrapProjectionStore = options.wrapProjectionStore;
   const layerProjectionStore =
     wrapProjectionStore === undefined
@@ -342,7 +344,7 @@ export function layerWithRegistry<Error>(
     layerProjectionStore,
     ProjectStore.layer,
     CommandReceiptStore.layer,
-    EffectOutbox.layer,
+    layerEffectOutboxProvided,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
@@ -427,6 +429,7 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );
@@ -553,6 +556,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
   const layerReplayRuntime = Layer.mergeAll(
+    layerEffectOutboxProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
