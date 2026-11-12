@@ -1268,6 +1268,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
+              <TitleRegenerationFeedback error={thread.titleRegenerationError} />
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1593,6 +1594,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
               {title}
+              <TitleRegenerationFeedback error={thread.titleRegenerationError} />
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1771,6 +1773,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               >
                 {thread.title}
               </span>
+              <TitleRegenerationFeedback error={thread.titleRegenerationError} />
               <span id={`${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
                   thread={thread}
@@ -1813,3 +1816,23 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     </li>
   );
 });
+
+function TitleRegenerationFeedback({ error }: { readonly error: string | null | undefined }) {
+  return error ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="status"
+            tabIndex={0}
+            className="flex shrink-0 items-center gap-1 text-xs text-destructive"
+          />
+        }
+      >
+        <CircleAlertIcon className="size-3" />
+        Title not updated
+      </TooltipTrigger>
+      <TooltipPopup>{error}</TooltipPopup>
+    </Tooltip>
+  ) : null;
+}

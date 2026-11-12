@@ -776,7 +776,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}${thread.titleRegenerationError ? `, ${thread.titleRegenerationError}` : ""}`;
+  const titleRegenerationFeedback = thread.titleRegenerationError ? (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Title regeneration failed. ${thread.titleRegenerationError}`}
+      onPress={() =>
+        Dialog.alert("Could not regenerate title", thread.titleRegenerationError ?? "")
+      }
+    >
+      <Text className="text-xs text-destructive">Title not updated</Text>
+    </Pressable>
+  ) : null;
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -1193,6 +1204,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         >
           {thread.title}
         </Text>
+        {titleRegenerationFeedback}
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
@@ -1501,6 +1513,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             >
               {thread.title}
             </Text>
+            {titleRegenerationFeedback}
             {providerNameLabel ? (
               <Text
                 className={cn(

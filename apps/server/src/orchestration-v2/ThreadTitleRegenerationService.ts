@@ -57,6 +57,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
     readonly title?: string;
+    readonly error?: string;
   }) =>
     threads
       .dispatch({
@@ -65,6 +66,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         requestId: input.requestId,
         ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.error === undefined ? {} : { error: input.error }),
       })
       .pipe(Effect.asVoid);
 
@@ -112,91 +114,118 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const outcome:
       | { readonly type: "stale" }
-      | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
-      const projection = yield* threads.getThreadRecords(
-        input.threadId,
-        ["messages"],
-        input.kind.type === "initial"
-          ? { messageIds: [input.kind.messageId] }
-          : { messageRoles: ["user", "assistant"] },
-      );
-      if (projection.thread.titleRegeneration?.requestId !== input.requestId) {
-        return { type: "stale" as const };
-      }
-
-      const project = yield* projects.get(projection.thread.projectId);
-      if (Option.isNone(project)) {
-        return { type: "complete" as const };
-      }
-
-      let context: {
-        readonly message: string;
-        readonly attachments: ReadonlyArray<ChatAttachment>;
-      };
-      if (input.kind.type === "initial") {
-        const messageId = input.kind.messageId;
-        const message = projection.messages.find(
-          (candidate) => candidate.id === messageId && !candidate.streaming,
+      | { readonly type: "complete"; readonly title?: string; readonly error?: string } =
+      yield* Effect.gen(function* () {
+        const projection = yield* threads.getThreadRecords(
+          input.threadId,
+          ["messages"],
+          input.kind.type === "initial"
+            ? { messageIds: [input.kind.messageId] }
+            : { messageRoles: ["user", "assistant"] },
         );
-        context =
-          message === undefined
-            ? { message: "", attachments: [] }
-            : {
-                message: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
-                attachments: message.attachments,
-              };
-      } else {
-        context = formatThreadTitleContext(
-          projection.messages.filter((message) => !message.streaming),
-        );
-      }
-      if (context.message.length === 0 && context.attachments.length === 0) {
-        return { type: "complete" as const };
-      }
+        if (projection.thread.titleRegeneration?.requestId !== input.requestId) {
+          return { type: "stale" as const };
+        }
 
-      // A deleted source should not cost the fork its title.
-      const inherited = yield* forkSource(projection.thread).pipe(
-        Effect.orElseSucceed(() => undefined),
+        const project = yield* projects.get(projection.thread.projectId);
+        if (Option.isNone(project)) {
+          return {
+            type: "complete" as const,
+            error: "Could not regenerate title because the project is unavailable.",
+          };
+        }
+
+        let context: {
+          readonly message: string;
+          readonly attachments: ReadonlyArray<ChatAttachment>;
+        };
+        if (input.kind.type === "initial") {
+          const messageId = input.kind.messageId;
+          const message = projection.messages.find(
+            (candidate) => candidate.id === messageId && !candidate.streaming,
+          );
+          context =
+            message === undefined
+              ? { message: "", attachments: [] }
+              : {
+                  message: isAttachmentOnlyBootstrapPrompt(message.text) ? "" : message.text,
+                  attachments: message.attachments,
+                };
+        } else {
+          context = formatThreadTitleContext(
+            projection.messages.filter((message) => !message.streaming),
+          );
+        }
+        if (context.message.length === 0 && context.attachments.length === 0) {
+          return {
+            type: "complete" as const,
+            error: "Send a message in this thread before regenerating its title.",
+          };
+        }
+
+        // A deleted source should not cost the fork its title.
+        const inherited = yield* forkSource(projection.thread).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        const settings = resolveProjectSettings(
+          yield* serverSettings.getSettings,
+          projection.thread.projectId,
+        ).settings;
+        // Storage cleanup removes worktrees but keeps the path; CLIs cannot spawn in a missing cwd.
+        const worktreePath = projection.thread.worktreePath;
+        const worktreeExists =
+          worktreePath !== null &&
+          (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
+        const result = yield* textGeneration.generateThreadTitle({
+          cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
+          message: context.message,
+          attachments: context.attachments,
+          ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
+          ...(inherited === undefined ? {} : { forkSource: inherited }),
+          instructions: settings.threadTitleInstructions,
+          modelSelection: settings.textGenerationModelSelection,
+          projectId: projection.thread.projectId,
+        });
+        const generatedTitle = result.title.trim();
+        return generatedTitle.length === 0 ||
+          generatedTitle === "New thread" ||
+          (input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim())
+          ? {
+              type: "complete" as const,
+              error:
+                "The model did not return a different title. Try again or rename the thread manually.",
+            }
+          : { type: "complete" as const, title: result.title };
+      }).pipe(
+        Effect.timeout("60 seconds"),
+        Effect.retry({
+          times: input.kind.type === "initial" ? 2 : 0,
+          schedule: Schedule.exponential("2 seconds"),
+        }),
+        Effect.catchTags({
+          TimeoutError: () =>
+            Effect.succeed({
+              type: "complete" as const,
+              error:
+                "Title regeneration timed out. Try again or choose another text generation model in Settings.",
+            }),
+        }),
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("Thread title generation failed", {
+                threadId: input.threadId,
+                requestId: input.requestId,
+                cause,
+              }).pipe(
+                Effect.as({
+                  type: "complete" as const,
+                  error:
+                    "Could not regenerate title. Check the text generation model in Settings and confirm its provider is signed in and has usage remaining on this environment.",
+                }),
+              ),
+        ),
       );
-      const settings = resolveProjectSettings(
-        yield* serverSettings.getSettings,
-        projection.thread.projectId,
-      ).settings;
-      // Storage cleanup removes worktrees but keeps the path; CLIs cannot spawn in a missing cwd.
-      const worktreePath = projection.thread.worktreePath;
-      const worktreeExists =
-        worktreePath !== null &&
-        (yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => false)));
-      const result = yield* textGeneration.generateThreadTitle({
-        cwd: worktreeExists ? worktreePath : project.value.workspaceRoot,
-        message: context.message,
-        attachments: context.attachments,
-        ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
-        ...(inherited === undefined ? {} : { forkSource: inherited }),
-        instructions: settings.threadTitleInstructions,
-        modelSelection: settings.textGenerationModelSelection,
-        projectId: projection.thread.projectId,
-      });
-      const generatedTitle = result.title.trim();
-      return generatedTitle === "New thread" ||
-        (input.kind.type === "regenerate" && generatedTitle === projection.thread.title.trim())
-        ? { type: "complete" as const }
-        : { type: "complete" as const, title: result.title };
-    }).pipe(
-      Effect.retry({
-        times: input.kind.type === "initial" ? 2 : 0,
-        schedule: Schedule.exponential("2 seconds"),
-      }),
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.logWarning("Thread title generation failed", {
-              threadId: input.threadId,
-              requestId: input.requestId,
-              cause,
-            }).pipe(Effect.as({ type: "complete" as const })),
-      ),
-    );
 
     if (outcome.type === "stale") {
       return;
@@ -204,6 +233,9 @@ const make = Effect.gen(function* () {
     yield* complete({
       ...input,
       ...(outcome.title === undefined ? {} : { title: outcome.title }),
+      ...(input.kind.type === "regenerate" && outcome.error !== undefined
+        ? { error: outcome.error }
+        : {}),
     });
   });
 

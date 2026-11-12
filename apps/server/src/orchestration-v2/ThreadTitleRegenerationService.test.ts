@@ -13,6 +13,9 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -540,7 +543,92 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        assert.propertyVal(
+          projection.thread,
+          "titleRegenerationError",
+          "Could not regenerate title. Check the text generation model in Settings and confirm its provider is signed in and has usage remaining on this environment.",
+        );
       }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+  it.effect("times out a stuck title request and allows a retry", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        generateTitle: () =>
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titles = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:timeout:create",
+          thread: "thread:timeout",
+        });
+        yield* dispatchUserMessage({
+          command: "command:timeout:message",
+          threadId,
+          text: "Some conversation",
+        });
+        const requestId = yield* armRegeneration({ command: "command:timeout:1", threadId });
+        const fiber = yield* titles
+          .execute({ threadId, requestId, kind: { type: "regenerate" } })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("60 seconds");
+        yield* Fiber.join(fiber);
+        const failed = yield* threads.getThreadProjection(threadId);
+        assert.isNotOk(failed.thread.titleRegeneration);
+        assert.equal(
+          failed.thread.titleRegenerationError,
+          "Title regeneration timed out. Try again or choose another text generation model in Settings.",
+        );
+        yield* armRegeneration({ command: "command:timeout:2", threadId });
+        const retry = yield* threads.getThreadProjection(threadId);
+        assert.isNotOk(retry.thread.titleRegenerationError);
+        assert.isOk(retry.thread.titleRegeneration);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+  it.effect("reports titles that cannot replace the current title", () =>
+    Effect.gen(function* () {
+      for (const [index, title] of ["Seed title", "New thread", "   "].entries()) {
+        const harness = makeHarness({ generateTitle: () => Effect.succeed({ title }) });
+        yield* Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const titles = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+          const threadId = yield* createThread({
+            command: `command:unchanged:${index}:create`,
+            thread: `thread:unchanged:${index}`,
+          });
+          yield* dispatchUserMessage({
+            command: `command:unchanged:${index}:message`,
+            threadId,
+            text: "Some conversation",
+          });
+          const requestId = yield* armRegeneration({
+            command: `command:unchanged:${index}:request`,
+            threadId,
+          });
+          yield* titles.execute({ threadId, requestId, kind: { type: "regenerate" } });
+          const result = yield* threads.getThreadProjection(threadId);
+          assert.equal(result.thread.title, "Seed title");
+          assert.isNotOk(result.thread.titleRegeneration);
+          assert.equal(
+            result.thread.titleRegenerationError,
+            "The model did not return a different title. Try again or rename the thread manually.",
+          );
+          yield* threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`command:unchanged:${index}:rename`),
+            threadId,
+            title: "Manual title",
+          });
+          assert.isNotOk(
+            (yield* threads.getThreadProjection(threadId)).thread.titleRegenerationError,
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }
     }),
   );
 });
