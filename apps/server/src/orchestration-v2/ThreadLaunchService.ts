@@ -22,6 +22,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -41,6 +42,7 @@ import {
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import { parseGitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -437,7 +439,7 @@ const make = Effect.gen(function* () {
         threadId,
         branch: input.workspaceStrategy.branch ?? null,
         baseRef: input.workspaceStrategy.baseRef,
-        stages: ["fetch", "checkout", "setup-script", "agent"],
+        stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
         fiber: yield* Effect.fiber,
       });
     } else if (reused !== undefined) {
@@ -552,6 +554,7 @@ const make = Effect.gen(function* () {
           branch = flattenTemporaryWorktreeBranchName(branch);
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        let submoduleProgressReportedAt = Number.NEGATIVE_INFINITY;
         const worktree = yield* git
           .createWorktree(
             {
@@ -570,6 +573,42 @@ const make = Effect.gen(function* () {
                   }),
                 onCheckoutProgress: (progress) =>
                   setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
+                onSubmodulesStarted: () =>
+                  setupTracker
+                    .stageStatus(threadId, "checkout", "done")
+                    .pipe(
+                      Effect.andThen(setupTracker.stageStatus(threadId, "submodules", "running")),
+                    ),
+                onSubmodulesDisabled: ({ source }) =>
+                  setupTracker.stageStatus(
+                    threadId,
+                    "submodules",
+                    "skipped",
+                    `disabled in ${source}`,
+                  ),
+                onSubmoduleLine: (line) => {
+                  // Paths may contain quotes; git closes the path with "': ".
+                  const submodulePath = /^\s*Submodule path '(.+)': /.exec(line)?.[1];
+                  if (submodulePath !== undefined) {
+                    return setupTracker.stage(threadId, "submodules", { detail: submodulePath });
+                  }
+                  if (parseGitCloneProgressLine(line) === null) return Effect.void;
+                  // Git redraws on every percent; hold the websocket to one update a second.
+                  return Effect.flatMap(Clock.currentTimeMillis, (now) => {
+                    if (now - submoduleProgressReportedAt < 1000) return Effect.void;
+                    submoduleProgressReportedAt = now;
+                    return setupTracker.stage(threadId, "submodules", {
+                      detail: line.trim().replace(/\s+/g, " "),
+                    });
+                  });
+                },
+                onSubmodulesFinished: ({ ok, detail }) =>
+                  setupTracker.stageStatus(
+                    threadId,
+                    "submodules",
+                    ok ? "done" : "warning",
+                    ok ? undefined : (detail ?? "submodule checkout failed"),
+                  ),
               },
             },
           )
@@ -578,7 +617,16 @@ const make = Effect.gen(function* () {
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
         createdBranch = branch;
-        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
+        yield* setupTracker.update(threadId, (snapshot) => ({
+          ...snapshot,
+          worktreePath,
+          branch,
+          stages: snapshot.stages.map((stage) =>
+            stage.id === "submodules" && stage.status === "pending"
+              ? { ...stage, status: "skipped", detail: "none" }
+              : stage,
+          ),
+        }));
         yield* setupTracker.stageStatus(threadId, "checkout", "done");
       }
 
