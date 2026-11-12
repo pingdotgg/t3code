@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -269,6 +270,51 @@ describe("DesktopLifecycle", () => {
 
       assert.deepEqual(options, { execPath: "/opt/T3 Code/t3code", args: ["--no-sandbox"] });
     }),
+  );
+
+  it.effect(
+    "relaunches an AppImage through its launcher, not the mount that unmounts on exit",
+    () =>
+      Effect.gen(function* () {
+        const relaunched = yield* Deferred.make<Electron.RelaunchOptions>();
+        const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+          platform: "linux",
+          isDevelopment: false,
+          appImagePath: Option.some("/home/user/Applications/T3-Code.AppImage"),
+        } as DesktopEnvironment.DesktopEnvironment["Service"]);
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(
+            layerElectronApp(
+              new Map(),
+              Effect.void,
+              () => Effect.void,
+              (options) => Deferred.succeed(relaunched, options).pipe(Effect.asVoid),
+            ),
+          ),
+          Layer.provideMerge(layerElectronTheme),
+          Layer.provideMerge(layerElectronWindow()),
+          Layer.provideMerge(layerDesktopWindow()),
+          Layer.provideMerge(layerEnvironment),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(DesktopState.layer),
+        );
+
+        const options = yield* Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* (yield* DesktopShutdown.DesktopShutdown).markComplete;
+          yield* lifecycle.relaunch("serverExposureMode=network-accessible");
+          return yield* Deferred.await(relaunched);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.provideService(HostProcess.ExecutablePath, "/tmp/.mount_T3-CodeAbc123/t3code"),
+          Effect.provideService(HostProcess.Arguments, [
+            "/tmp/.mount_T3-CodeAbc123/t3code",
+            "--no-sandbox",
+          ]),
+        );
+
+        assert.strictEqual(options.execPath, "/home/user/Applications/T3-Code.AppImage");
+      }),
   );
 
   it.effect("exits on a repeated quit only once shutdown has stalled", () =>
