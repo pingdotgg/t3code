@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileRoutePathSegments,
+  isAudioPreviewFile,
   isMarkdownPreviewFile,
   needsWorkspaceFileContents,
   resolveFileLinkPath,
@@ -60,11 +61,25 @@ describe("needsWorkspaceFileContents", () => {
   });
 });
 
-describe("isMarkdownPreviewFile", () => {
-  it.each(["README.md", "docs/guide.mdx", "CHANGELOG.markdown", "notes.MDOWN", "todo.mkd"])(
-    "previews %s as Markdown",
-    (path) => {
+describe("workspace preview classifiers", () => {
+  it("recognizes preview extensions with literal # and ? filename characters", () => {
+    for (const path of ["notes/clip#1.wav", "notes/clip?1.wav", "notes#old/clip.wav"]) {
+      expect(isAudioPreviewFile(path)).toBe(true);
+    }
+    for (const path of [
+      "README.md",
+      "docs/guide.mdx",
+      "CHANGELOG.markdown",
+      "notes.MDOWN",
+      "todo.mkd",
+      "docs/draft#1.md",
+      "docs/draft?1.md",
+      "docs#old/draft.md",
+      "docs/draft#1.markdown",
+      "docs/draft?1.mdown",
+      "docs#old/draft.mkd",
+    ]) {
       expect(isMarkdownPreviewFile(path)).toBe(true);
-    },
-  );
+    }
+  });
 });

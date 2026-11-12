@@ -17,10 +17,16 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import { ACP_REGISTRY_URL } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 
 const serverContents = "antigravity runtime\n";
 const harnessContents = "local harness\n";
@@ -121,8 +127,15 @@ interface HarnessOptions {
   readonly path?: string;
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
+  /** Served for the ACP Registry index. */
+  readonly registry?: unknown;
+  /** Served by URL instead of the pinned archive. */
+  readonly archives?: Readonly<Record<string, Uint8Array>>;
+  readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
+  readonly connectTimeout?: boolean;
 }
 
 const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
@@ -175,15 +188,48 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
             ),
         }),
   }).pipe(
+    options.spawner
+      ? Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner)
+      : (effect) => effect,
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
+    Effect.provideService(ModelManifest.ModelManifest, {
+      current: options.manifest ?? Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refreshOnDemand: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refreshInBackground: Effect.void,
+    }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           requests.push(request.url);
+          if (request.url === ACP_REGISTRY_URL) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                options.registry === undefined
+                  ? new Response(null, { status: 503 })
+                  : Response.json(options.registry),
+              ),
+            );
+          }
+          const served = options.archives?.[request.url];
+          if (served)
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(served)));
+          if (options.connectTimeout) {
+            return Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  cause: new Error("Connect Timeout Error (attempted address: dl.google.com:443)"),
+                }),
+              }),
+            );
+          }
           const response = HttpClientResponse.fromWeb(
             request,
             new Response(null, {
@@ -197,15 +243,17 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
               },
             }),
           );
-          return Object.defineProperty(response, "stream", {
-            value:
-              options.body ??
-              Stream.make(
-                archive.subarray(0, 31),
-                archive.subarray(31, 149),
-                archive.subarray(149),
-              ),
-          });
+          return Effect.succeed(
+            Object.defineProperty(response, "stream", {
+              value:
+                options.body ??
+                Stream.make(
+                  archive.subarray(0, 31),
+                  archive.subarray(31, 149),
+                  archive.subarray(149),
+                ),
+            }),
+          );
         }),
       ),
     ),
@@ -231,8 +279,45 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
     path.join(installation.managedDirectory, "versions", previousReleaseId),
   );
   expect(yield* fs.readFileString(resolved.executablePath)).toBe(serverContents);
-  expect(yield* fs.readFileString(resolved.harnessPath)).toBe(harnessContents);
+  expect(yield* fs.readFileString(resolved.harnessPath!)).toBe(harnessContents);
   expect((yield* installation.state).installedVersion).toBe(previousVersion);
+});
+
+// A zip comment changes the archive's hash without changing its members.
+const withZipComment = (archive: Buffer, comment: string) => {
+  const bytes = Buffer.concat([archive, Buffer.from(comment)]);
+  bytes.writeUInt16LE(Buffer.byteLength(comment), archive.byteLength - 2);
+  return bytes;
+};
+const upstreamArchive = withZipComment(completeArchive, "upstream");
+const upstreamUrl = "https://dl.google.com/agy-extensions/releases/test/agy-acp-server-1.4.1.zip";
+const registryListing = (archive = upstreamUrl) => ({
+  version: "1.0.0",
+  agents: [
+    { id: "other-agent", version: "9.9.9", distribution: { npx: { package: "other" } } },
+    {
+      id: "antigravity-acp",
+      version: "1.4.1",
+      distribution: {
+        binary: Object.fromEntries(
+          ["linux-x86_64", "windows-x86_64"].map((target) => [target, { archive, cmd: "./agy" }]),
+        ),
+      },
+    },
+  ],
+});
+const withdrawnManifest: ModelManifest.ModelManifestData = {
+  ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+  compatibility: [
+    {
+      driver: "antigravity",
+      t3CodeRange: ">=0.0.42",
+      ranges: [{ range: ">=1.4.0", status: "broken" }],
+    },
+  ],
+};
+const pinnedAsset = Effect.fn("test.pinnedAntigravityAsset")(function* () {
+  return { ...(yield* releaseAsset()), version: "1.3.0" };
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity installation", (it) => {
@@ -275,7 +360,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(validation?.version).toBe("fixture-new");
       if (!validation) return yield* Effect.die("Expected runtime validation.");
       expect(yield* fs.readFileString(validation.executable.executablePath)).toBe(serverContents);
-      expect(yield* fs.readFileString(validation.executable.harnessPath)).toBe(harnessContents);
+      expect(yield* fs.readFileString(validation.executable.harnessPath!)).toBe(harnessContents);
 
       yield* Deferred.succeed(finishValidation, undefined);
       expect(yield* terminalState(installation)).toMatchObject({
@@ -287,9 +372,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       yield* Deferred.await(stagingReleased);
       const selected = yield* installation.resolve();
       expect(selected).toMatchObject({ source: "managed", version: "fixture-new" });
-      expect(path.dirname(selected.harnessPath)).toBe(path.dirname(selected.executablePath));
+      expect(path.dirname(selected.harnessPath!)).toBe(path.dirname(selected.executablePath));
       expect(yield* fs.readFileString(selected.executablePath)).toBe(serverContents);
-      expect(yield* fs.readFileString(selected.harnessPath)).toBe(harnessContents);
+      expect(yield* fs.readFileString(selected.harnessPath!)).toBe(harnessContents);
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
         expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
       );
@@ -345,6 +430,73 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         [previousReleaseId],
       );
     }),
+  );
+
+  it.effect(
+    "names the connection failure instead of disk space when the download cannot connect",
+    () =>
+      Effect.gen(function* () {
+        const { installation, validations } = yield* makeHarness({ connectTimeout: true });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).not.toMatch(/disk space/i);
+        expect(state.message).toMatch(/connect|network|download/i);
+        expect(validations).toEqual([]);
+      }),
+  );
+
+  // The runtime's own abort is a real process; Windows has no POSIX sh.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "explains that the linux-arm64 runtime needs 4 KiB pages when it aborts on a 16 KiB kernel",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Google's linux-arm64 build aborts like this on Asahi and Raspberry Pi 5 kernels.
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) &&
+          String(command.command).endsWith(executableName)
+            ? realSpawner.spawn(
+                ChildProcess.make(
+                  "sh",
+                  [
+                    "-c",
+                    "echo 'F1111 11:50:12.383176 page-size.cc:19] Check failed: sysconf(_SC_PAGE_SIZE) == kPageSize (16384 vs. 4096) Compile-time page size does not match runtime page size' >&2; kill -ABRT $$",
+                  ],
+                  { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+                ),
+              )
+            : realSpawner.spawn(command),
+        );
+        const { installation } = yield* makeHarness({
+          arch: "arm64",
+          useDefaultValidation: true,
+          spawner,
+        });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/page/i);
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refuses a 16 KiB-page linux-arm64 kernel before downloading the runtime",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) && command.command === "getconf"
+            ? realSpawner.spawn(ChildProcess.make("sh", ["-c", "echo 16384"], command.options))
+            : realSpawner.spawn(command),
+        );
+        const { installation, requests } = yield* makeHarness({ arch: "arm64", spawner });
+        yield* installation.start;
+        const state = yield* terminalState(installation);
+        expect(state.phase).toBe("failed");
+        expect(state.message).toMatch(/4 KiB/);
+        expect(requests).toEqual([]);
+      }),
   );
 
   it.effect.each(["download", "extract", "active pointer"] as const)(
@@ -571,6 +723,125 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  // A simulated Mac install needs POSIX execute bits, which Windows files lack.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "re-signs the Intel Mac runtime ad hoc and records the signed sizes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const signed: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command))
+              return yield* Effect.die("Unexpected spawn.");
+            const args = command.args.map(String);
+            signed.push([String(command.command), ...args]);
+            // codesign rewrites the signature, which changes each file's size.
+            for (const file of args.slice(3)) {
+              yield* fs.writeFileString(file, "signature", { flag: "a" });
+            }
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(900_000_301),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }).pipe(Effect.orDie),
+        );
+        const { installation, validations } = yield* makeHarness({
+          platform: "darwin",
+          arch: "x64",
+          spawner,
+        });
+        yield* installation.start;
+        expect((yield* terminalState(installation)).phase).toBe("succeeded");
+        const validated = validations[0]?.executable;
+        expect(signed).toEqual([
+          [
+            "/usr/bin/codesign",
+            "--force",
+            "--sign",
+            "-",
+            validated?.executablePath,
+            validated?.harnessPath,
+          ],
+        ]);
+        const selected = yield* installation.resolve();
+        expect(yield* fs.readFileString(selected.executablePath)).toBe(
+          `${serverContents}signature`,
+        );
+      }),
+  );
+
+  // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "accepts the agy CLI without a harness sibling but still requires one for other binaries",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const cliDirectory = path.join(baseDir, "cli");
+        yield* fs.makeDirectory(cliDirectory);
+        const cli = path.join(cliDirectory, "antigravity");
+        const alias = path.join(cliDirectory, "agy");
+        const other = path.join(cliDirectory, "custom-acp");
+        yield* fs.writeFileString(cli, "cli", { mode: 0o755 });
+        yield* fs.symlink(cli, alias);
+        yield* fs.writeFileString(other, "other", { mode: 0o755 });
+        const { installation } = yield* makeHarness({ baseDir });
+
+        expect(yield* installation.resolve(cli)).toMatchObject({
+          executablePath: cli,
+          harnessPath: null,
+          source: "override",
+          version: null,
+        });
+        expect(yield* installation.resolve(alias)).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+        });
+        expect(yield* installation.resolve("agy", { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+        });
+        expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+
+        // Version-manager shims dispatch by their invoked name, so the shim path is what runs.
+        const shims = path.join(baseDir, "shims");
+        const mise = path.join(baseDir, "mise");
+        yield* fs.makeDirectory(shims);
+        yield* fs.writeFileString(mise, "mise", { mode: 0o755 });
+        yield* fs.symlink(mise, path.join(shims, "agy"));
+        expect(yield* installation.resolve("agy", { PATH: shims })).toMatchObject({
+          executablePath: path.join(shims, "agy"),
+          harnessPath: null,
+        });
+
+        const { installation: windows } = yield* makeHarness({ baseDir, platform: "win32" });
+        for (const name of ["agy.EXE", "agy.CMD"]) {
+          const windowsDirectory = path.join(baseDir, `windows-${name}`);
+          yield* fs.makeDirectory(windowsDirectory);
+          yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
+          expect(yield* windows.resolve("agy", { PATH: windowsDirectory })).toMatchObject({
+            executablePath: path.join(windowsDirectory, name),
+            harnessPath: null,
+          });
+        }
+      }),
+  );
+
   // The mocked Linux PATH walk needs POSIX paths; Windows temp paths contain colons.
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
@@ -605,6 +876,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(yield* installation.resolve(executableName)).toMatchObject({
           source: "override",
         });
+        expect(
+          yield* installation
+            .resolve(`~/external/${executableName}`)
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, baseDir)),
+        ).toMatchObject({ source: "override", executablePath: externalExecutable });
         yield* fs.remove(externalHarness);
         expect(yield* installation.resolve(externalExecutable).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
@@ -634,6 +910,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(
           yield* isolated.installation.resolve(executableName, { PATH: externalDirectory }),
         ).toMatchObject({ source: "override", executablePath: externalExecutable });
+
+        const incompleteDirectory = path.join(baseDir, "incomplete");
+        yield* fs.makeDirectory(incompleteDirectory);
+        yield* fs.writeFileString(path.join(incompleteDirectory, executableName), "no harness", {
+          mode: 0o755,
+        });
+        const shadowedPath = { PATH: `${incompleteDirectory}:${externalDirectory}` };
+        expect(yield* isolated.installation.resolve(undefined, shadowedPath)).toMatchObject({
+          source: "path",
+          executablePath: externalExecutable,
+        });
+        expect(yield* isolated.installation.resolve(executableName, shadowedPath)).toMatchObject({
+          source: "override",
+          executablePath: externalExecutable,
+        });
       }),
   );
 
@@ -662,7 +953,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       Effect.gen(function* () {
         const { installation, baseDir, fs, path } = yield* makeHarness({ previous: true });
         const previous = yield* installation.resolve();
-        yield* fs.remove(previous.harnessPath);
+        yield* fs.remove(previous.harnessPath!);
         const externalDirectory = path.join(baseDir, "external");
         yield* fs.makeDirectory(externalDirectory);
         yield* fs.writeFileString(path.join(externalDirectory, executableName), "external server", {
@@ -791,6 +1082,169 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       });
       expect(yield* installation.state).toMatchObject({ phase: "idle", operationId: null });
       expect(requests).toEqual([]);
+    }),
+  );
+
+  it.effect("updates past the pinned release to the registry release and never downgrades", () =>
+    Effect.gen(function* () {
+      const asset = yield* pinnedAsset();
+      const h = yield* makeHarness({
+        asset,
+        registry: registryListing(),
+        archives: { [upstreamUrl]: upstreamArchive },
+      });
+      yield* h.installation.checkForUpdate;
+      // A fresh install still gets the pinned release.
+      expect(yield* h.installation.state).toMatchObject({ version: "1.3.0" });
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.3.0",
+        version: "1.4.1",
+        totalBytes: null,
+      });
+
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.4.1",
+        version: "1.4.1",
+      });
+      expect(h.validations.at(-1)?.version).toBe("1.4.1");
+      expect(h.requests).toEqual([ACP_REGISTRY_URL, asset.url, upstreamUrl]);
+      const selected = yield* h.installation.resolve();
+      expect(selected.version).toBe("1.4.1");
+      expect(yield* h.fs.readFileString(selected.executablePath)).toBe(serverContents);
+
+      // Without registry information the older pin is not offered as a reinstall.
+      const restarted = yield* makeHarness({ baseDir: h.baseDir, asset });
+      expect(yield* restarted.installation.state).toMatchObject({
+        installedVersion: "1.4.1",
+        version: "1.4.1",
+      });
+      yield* restarted.installation.start;
+      expect(yield* terminalState(restarted.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.4.1",
+      });
+      expect(restarted.requests).toEqual([]);
+      expect(restarted.validations.map((entry) => entry.version)).toEqual(["1.4.1"]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "hosted outside Google's downloads",
+      registry: registryListing("https://example.com/agy.zip"),
+    },
+    {
+      name: "from an oversized registry index",
+      registry: { ...registryListing(), padding: "x".repeat(1024 * 1024) },
+    },
+    {
+      name: "escaping Google's releases path",
+      registry: registryListing(
+        "https://dl.google.com/agy-extensions/releases/%2e%2e/%2e%2e/other.zip",
+      ),
+    },
+    {
+      name: "withdrawn by the model manifest",
+      registry: registryListing(),
+      manifest: Effect.succeed(withdrawnManifest),
+    },
+  ])("does not offer a registry release $name", ({ registry, manifest }) =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        asset: yield* pinnedAsset(),
+        registry,
+        ...(manifest ? { manifest } : {}),
+      });
+      yield* h.installation.start;
+      yield* terminalState(h.installation);
+      yield* h.installation.checkForUpdate;
+      expect(yield* h.installation.state).toMatchObject({
+        installedVersion: "1.3.0",
+        version: "1.3.0",
+      });
+    }),
+  );
+
+  it.effect("does not retry a failed registry lookup within the hour", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.installation.checkForUpdate;
+      yield* h.installation.checkForUpdate;
+      expect(h.requests).toEqual([ACP_REGISTRY_URL]);
+      yield* TestClock.adjust("1 hour");
+      yield* h.installation.checkForUpdate;
+      expect(h.requests).toEqual([ACP_REGISTRY_URL, ACP_REGISTRY_URL]);
+    }),
+  );
+
+  it.effect.each(["update", "reinstall"] as const)(
+    "rejects withdrawal during $0 validation",
+    (operation) =>
+      Effect.gen(function* () {
+        let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+        let withdraw = operation === "update";
+        const h = yield* makeHarness({
+          asset: yield* pinnedAsset(),
+          registry: registryListing(),
+          archives: { [upstreamUrl]: upstreamArchive },
+          manifest: Effect.sync(() => manifest),
+          validate: (_executable, version) =>
+            Effect.sync(() => {
+              if (withdraw && version === "1.4.1") manifest = withdrawnManifest;
+            }),
+        });
+        yield* h.installation.start;
+        yield* terminalState(h.installation);
+        yield* h.installation.checkForUpdate;
+        if (operation === "reinstall") {
+          yield* h.installation.start;
+          expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+          withdraw = true;
+        }
+        yield* h.installation.start;
+        expect((yield* terminalState(h.installation)).phase).toBe("failed");
+        if (operation === "update") {
+          expect((yield* h.installation.resolve()).version).toBe("1.3.0");
+        } else {
+          expect((yield* h.installation.state).version).toBe("1.3.0");
+          yield* Effect.flip(h.installation.resolve());
+        }
+      }),
+  );
+
+  it.effect("returns an install the manifest withdraws to the pinned release", () =>
+    Effect.gen(function* () {
+      let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+      const h = yield* makeHarness({
+        asset: yield* pinnedAsset(),
+        registry: registryListing(),
+        archives: { [upstreamUrl]: upstreamArchive },
+        manifest: Effect.sync(() => manifest),
+      });
+      yield* h.installation.checkForUpdate;
+      yield* h.installation.start;
+      yield* terminalState(h.installation);
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({ installedVersion: "1.4.1" });
+
+      manifest = withdrawnManifest;
+      expect((yield* Effect.flip(h.installation.resolve())).detail).toContain("no longer works");
+      yield* h.installation.checkForUpdate;
+      expect(yield* h.installation.state).toMatchObject({
+        installedVersion: "1.4.1",
+        version: "1.3.0",
+      });
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.3.0",
+        version: "1.3.0",
+      });
+      expect((yield* h.installation.resolve()).version).toBe("1.3.0");
     }),
   );
 });
