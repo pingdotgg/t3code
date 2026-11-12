@@ -66,9 +66,10 @@ import {
 } from "./ConnectionsSettings.logic";
 
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
-// known_hosts can list one host on several ports; the port keeps each suggestion distinct.
+// known_hosts can list one host on several ports. Its own bracketed form keeps an IPv6
+// host's port separate from the address; no portless known_hosts entry has that form.
 const sshHostSuggestionValue = (target: DesktopDiscoveredSshHost) =>
-  target.port === null ? target.alias : `${target.alias}:${target.port}`;
+  target.port === null ? target.alias : `[${target.alias}]:${target.port}`;
 
 export function AddEnvironmentDialog({
   open,
