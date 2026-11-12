@@ -478,6 +478,18 @@ answer without taking owned work. On timeout, retry with the same
 is active, `t3_thread_interrupt` with the same `runId` (interrupt does not
 cancel a queued run).
 
+### `t3_thread_broadcast`
+
+Fans the same message out through `t3_thread_send`'s delivery path to many
+threads in one call. Without `threadIds`, it discovers unsettled project
+threads whose status is `queued`, `preparing`, `starting`, `running`, or
+`waiting` (excluding the caller and an optional `roomThreadId`). With
+`threadIds`, it messages those threads directly. Default delivery is `queue`;
+`auto` is also allowed. Optional `roomThreadId` receives one audit copy that
+lists the recipients, so a project can keep a shared room trail without a
+separate chat subsystem. Soft per-target failures land in `skipped`;
+`clientRequestId` keeps batch retries idempotent.
+
 ### `t3_thread_wait`
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,

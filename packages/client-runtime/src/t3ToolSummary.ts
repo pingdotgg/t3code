@@ -141,6 +141,24 @@ export function summarizeT3ToolCalls(
       label = phrase("Sent", "send", object);
       break;
     }
+    case "thread-broadcast": {
+      const deliveryIds: string[] = [];
+      const resultsKnown =
+        completed.length > 0 &&
+        completed.every((call) => {
+          if (!Array.isArray(call.output?.deliveries)) return false;
+          return call.output.deliveries.every((delivery) => {
+            const threadId = id(asRecord(delivery)?.threadId);
+            if (!threadId) return false;
+            deliveryIds.push(threadId);
+            return true;
+          });
+        });
+      label = resultsKnown
+        ? phrase("Broadcast", "broadcast", `to ${quantity(new Set(deliveryIds).size, "thread")}`)
+        : phrase("Broadcast", "broadcast", `to threads ${times}`);
+      break;
+    }
     case "thread-create": {
       const createdIds: string[] = [];
       const resultsKnown =

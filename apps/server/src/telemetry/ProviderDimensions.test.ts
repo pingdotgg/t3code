@@ -76,3 +76,17 @@ it("drops input strings outside the schema's literals, since rejected calls are 
     handoffSettings("t3_thread_launch", { workspaceStrategy: { type: "/home/me/secret" } }, {}),
   ).toEqual({ targetChosen: false, workspace: "root" });
 });
+
+it("records broadcast batch size without prompts or thread ids", () => {
+  expect(
+    handoffSettings(
+      "t3_thread_broadcast",
+      { message: "secret", threadIds: ["thread-a"] },
+      { deliveries: [{ threadId: "thread-a" }, { threadId: "thread-b" }] },
+    ),
+  ).toEqual({ batchSize: 2, targetChosen: true });
+  expect(handoffSettings("t3_thread_broadcast", { message: "secret" }, {})).toEqual({
+    batchSize: 0,
+    targetChosen: false,
+  });
+});

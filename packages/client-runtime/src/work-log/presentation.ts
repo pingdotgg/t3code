@@ -527,6 +527,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "task-cancel":
     case "thread-create":
     case "thread-send":
+    case "thread-broadcast":
     case "thread-interrupt":
     case "workflow-stop":
     case "background-wait":

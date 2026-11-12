@@ -4330,3 +4330,197 @@ describe("OrchestratorMcpService thread stop", () => {
     ),
   );
 });
+
+describe("OrchestratorMcpService thread broadcast", () => {
+  const parentThreadId = ThreadId.make("thread:broadcast-parent");
+  const agentA = ThreadId.make("thread:broadcast-a");
+  const agentB = ThreadId.make("thread:broadcast-b");
+  const idleAgent = ThreadId.make("thread:broadcast-idle");
+  const roomThreadId = ThreadId.make("thread:broadcast-room");
+  const projectId = ProjectId.make("project:mcp-test");
+  const instanceId = ProviderInstanceId.make("codex");
+  const scope: McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment:broadcast"),
+    requestNamespace: "client:broadcast",
+    thread: {
+      threadId: parentThreadId,
+      providerSessionId: "provider-session:broadcast",
+      providerInstanceId: instanceId,
+    },
+    client: undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+
+  const shell = (
+    id: ThreadId,
+    status: OrchestrationV2ThreadShell["status"] = "running",
+  ): OrchestrationV2ThreadShell => ({
+    ...liveThreadShell(id),
+    projectId,
+    status,
+    ...(status === "preparing" ||
+    status === "starting" ||
+    status === "running" ||
+    status === "waiting"
+      ? { activityRunStatus: status }
+      : {}),
+  });
+
+  const projectionFor = (id: ThreadId) => {
+    const base = idleThreadProjection(shell(id));
+    if (id !== parentThreadId) return base;
+    return {
+      ...base,
+      runs: [
+        {
+          id: RunId.make("run:broadcast-parent"),
+          status: "running",
+          ordinal: 1,
+          providerInstanceId: instanceId,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+  };
+
+  it.effect("fans out to selected threads and writes a room audit copy", () =>
+    Effect.gen(function* () {
+      const sent = yield* Ref.make<
+        ReadonlyArray<{
+          readonly threadId: ThreadId;
+          readonly text: string;
+          readonly mode: string;
+          readonly senderThreadId: ThreadId | undefined;
+        }>
+      >([]);
+      const layer = layerOrchestratorService.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
+              getThreadRecords: (threadId) => Effect.succeed(projectionFor(threadId)),
+              getProjectThreadRecords: ({ threadId }) => Effect.succeed(projectionFor(threadId)),
+              sendToThread: (input) =>
+                Ref.update(sent, (rows) => [
+                  ...rows,
+                  {
+                    threadId: input.threadId,
+                    text: input.text,
+                    mode: input.mode,
+                    senderThreadId: input.senderThreadId,
+                  },
+                ]).pipe(
+                  Effect.as({
+                    run: {
+                      id: RunId.make(`run:${input.threadId}`),
+                      status: "queued",
+                    },
+                    delivery: "queued",
+                  } as never),
+                ),
+            }),
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+              list: () => Effect.succeed([]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.broadcastToThreads(scope, {
+          message: "Stand down after the merge.",
+          threadIds: [agentA, agentB, parentThreadId],
+          roomThreadId,
+          clientRequestId: "broadcast-selected",
+        });
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(result.projectId, projectId);
+      assert.deepEqual(
+        result.deliveries.map((delivery) => delivery.threadId),
+        [agentA, agentB],
+      );
+      assert.deepEqual(result.skipped, [{ threadId: parentThreadId, reason: "self" }]);
+      assert.equal(result.room?.threadId, roomThreadId);
+      const rows = yield* Ref.get(sent);
+      assert.deepEqual(
+        rows.map((row) => [row.threadId, row.mode, row.senderThreadId]),
+        [
+          [agentA, "queue", parentThreadId],
+          [agentB, "queue", parentThreadId],
+          [roomThreadId, "queue", parentThreadId],
+        ],
+      );
+      assert.include(rows[2]!.text, "Broadcast to 2 thread(s)");
+      assert.include(rows[2]!.text, "Stand down after the merge.");
+    }),
+  );
+
+  it.effect("discovers active project agents and skips idle ones", () =>
+    Effect.gen(function* () {
+      const sent = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+      const layer = layerOrchestratorService.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: (threadId) => Effect.succeed(shell(threadId)),
+              getThreadRecords: (threadId) => Effect.succeed(projectionFor(threadId)),
+              getProjectThreadRecords: ({ threadId }) => Effect.succeed(projectionFor(threadId)),
+              listProjectThreads: () =>
+                Effect.succeed([
+                  shell(parentThreadId, "running"),
+                  shell(agentA, "running"),
+                  shell(agentB, "waiting"),
+                  shell(idleAgent, "completed"),
+                  shell(roomThreadId, "running"),
+                ]),
+              sendToThread: (input) =>
+                Ref.update(sent, (rows) => [...rows, input.threadId]).pipe(
+                  Effect.as({
+                    run: { id: RunId.make(`run:${input.threadId}`), status: "queued" },
+                    delivery: "queued",
+                  } as never),
+                ),
+            }),
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+              list: () => Effect.succeed([]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.broadcastToThreads(scope, {
+          message: "Sync on the shared plan.",
+          roomThreadId,
+          clientRequestId: "broadcast-active",
+        });
+      }).pipe(Effect.provide(layer));
+
+      assert.deepEqual(
+        result.deliveries.map((delivery) => delivery.threadId),
+        [agentA, agentB],
+      );
+      assert.equal(result.room?.threadId, roomThreadId);
+      assert.deepEqual(yield* Ref.get(sent), [agentA, agentB, roomThreadId]);
+    }),
+  );
+});

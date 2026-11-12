@@ -210,6 +210,15 @@ const handlers = {
         return yield* service.askThread(scope, input);
       }),
   ),
+  t3_thread_broadcast: McpToolAccess.writesThreads(
+    (input) => [...(input.threadIds ?? []), input.roomThreadId],
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.broadcastToThreads(scope, input);
+      }),
+  ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

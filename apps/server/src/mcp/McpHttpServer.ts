@@ -886,6 +886,7 @@ const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
   "t3_thread_launch",
   "t3_thread_send",
   "t3_thread_ask",
+  "t3_thread_broadcast",
   "t3_thread_send_attachments",
   "schedule_task",
   "run_scheduled_task_now",
@@ -920,6 +921,12 @@ const resultThreadIds = (content: unknown): ReadonlyArray<string> => {
   if (typeof content !== "object" || content === null) return [];
   const record = content as Readonly<Record<string, unknown>>;
   if (Array.isArray(record.threads)) return record.threads.flatMap(resultThreadIds);
+  if (Array.isArray(record.deliveries)) {
+    return [
+      ...record.deliveries.flatMap(resultThreadIds),
+      ...(record.room === undefined ? [] : resultThreadIds(record.room)),
+    ];
+  }
   const key = resultThreadKeys.find((candidate) => typeof record[candidate] === "string");
   return key === undefined ? [] : [record[key] as string];
 };

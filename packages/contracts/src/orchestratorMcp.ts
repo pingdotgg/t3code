@@ -663,6 +663,73 @@ export const OrchestratorMcpThreadAskResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadAskResult = typeof OrchestratorMcpThreadAskResult.Type;
 
+/** Max recipients for one broadcast, matching `create_threads` batch size. */
+export const ORCHESTRATOR_MCP_THREAD_BROADCAST_MAX_TARGETS = 20;
+
+export const OrchestratorMcpThreadBroadcastInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  message: OrchestratorMcpPrompt,
+  projectId: OrchestratorMcpProjectTarget,
+  threadIds: Schema.optional(
+    Schema.Array(ThreadId)
+      .check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(ORCHESTRATOR_MCP_THREAD_BROADCAST_MAX_TARGETS),
+      )
+      .annotate({
+        description:
+          "Threads to message. Omit to message every active unsettled agent in the project (excluding this thread).",
+      }),
+  ),
+  includeSubagents: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Include delegated child threads when discovering active agents. Default false.",
+    }),
+  ),
+  mode: Schema.optional(
+    Schema.Literals(["auto", "queue"]).annotate({
+      description:
+        "`queue` (default) starts a follow-up turn. `auto` steers a running turn when possible.",
+    }),
+  ),
+  roomThreadId: Schema.optional(
+    ThreadId.annotate({
+      description:
+        "Optional shared room thread that receives one audit copy naming the recipients.",
+    }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpThreadBroadcastInput = typeof OrchestratorMcpThreadBroadcastInput.Type;
+
+export const OrchestratorMcpThreadBroadcastDelivery = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  messageId: MessageId,
+  runId: RunId,
+  taskId: Schema.optional(NodeId),
+  status: OrchestrationV2RunStatus,
+  delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+});
+export type OrchestratorMcpThreadBroadcastDelivery =
+  typeof OrchestratorMcpThreadBroadcastDelivery.Type;
+
+export const OrchestratorMcpThreadBroadcastSkipped = Schema.Struct({
+  threadId: ThreadId,
+  reason: Schema.Literals(["self", "limit", "not_found", "send_failed"]),
+  message: Schema.optional(Schema.String),
+});
+export type OrchestratorMcpThreadBroadcastSkipped =
+  typeof OrchestratorMcpThreadBroadcastSkipped.Type;
+
+export const OrchestratorMcpThreadBroadcastResult = Schema.Struct({
+  projectId: ProjectId,
+  deliveries: Schema.Array(OrchestratorMcpThreadBroadcastDelivery),
+  skipped: Schema.Array(OrchestratorMcpThreadBroadcastSkipped),
+  room: Schema.optional(OrchestratorMcpThreadBroadcastDelivery),
+});
+export type OrchestratorMcpThreadBroadcastResult = typeof OrchestratorMcpThreadBroadcastResult.Type;
+
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,

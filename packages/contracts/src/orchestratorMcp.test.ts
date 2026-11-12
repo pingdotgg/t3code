@@ -4,10 +4,14 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpThreadBroadcastInput,
+  OrchestratorMcpThreadBroadcastResult,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeBroadcastInput = Schema.decodeUnknownSync(OrchestratorMcpThreadBroadcastInput);
+const decodeBroadcastResult = Schema.decodeUnknownSync(OrchestratorMcpThreadBroadcastResult);
 
 describe("orchestrator MCP contracts", () => {
   it("decodes cross-provider delegated task requests and durable results", () => {
@@ -65,5 +69,39 @@ describe("orchestrator MCP contracts", () => {
         pendingApproval: { ...pendingApproval, kind: "user_input" },
       }),
     ).toThrow();
+  });
+
+  it("decodes broadcast fan-out requests and delivery results", () => {
+    const request = decodeBroadcastInput({
+      message: "Ship notes to the team.",
+      threadIds: ["thread-a", "thread-b"],
+      mode: "queue",
+      roomThreadId: "thread-room",
+      clientRequestId: "broadcast-1",
+    });
+    expect(request.threadIds).toEqual(["thread-a", "thread-b"]);
+    expect(request.roomThreadId).toBe("thread-room");
+    expect(
+      decodeBroadcastResult({
+        projectId: "project-1",
+        deliveries: [
+          {
+            threadId: "thread-a",
+            messageId: "message-a",
+            runId: "run-a",
+            status: "queued",
+            delivery: "queued",
+          },
+        ],
+        skipped: [{ threadId: "thread-b", reason: "self" }],
+        room: {
+          threadId: "thread-room",
+          messageId: "message-room",
+          runId: "run-room",
+          status: "queued",
+          delivery: "queued",
+        },
+      }).deliveries,
+    ).toHaveLength(1);
   });
 });
