@@ -76,7 +76,22 @@ export interface AppearanceFontPreferences {
   readonly separate: boolean;
 }
 
-/** Interface size sets the root; prompt and code use pixels to avoid double scaling. */
+export function startAppearanceFontSync(root: HTMLElement) {
+  let current: AppearanceFontPreferences | undefined;
+  const refresh = () => {
+    if (current) applyAppearanceFontVariables(root, current);
+  };
+  document.fonts.addEventListener("loadingdone", refresh);
+  return {
+    apply: (preferences: AppearanceFontPreferences) => {
+      current = preferences;
+      refresh();
+    },
+    [Symbol.dispose]: () => document.fonts.removeEventListener("loadingdone", refresh),
+  };
+}
+
+/** Interface size sets the root; explicit prompt and code sizes use pixels to avoid double scaling. */
 export function applyAppearanceFontVariables(
   root: HTMLElement,
   preferences: AppearanceFontPreferences,
@@ -144,7 +159,7 @@ export function applyAppearanceFontVariables(
     preferences.separate
       ? `${clampPromptFontSize(preferences.sizePrompt)}px`
       : absolutely
-        ? "15px"
+        ? "0.9375rem"
         : "var(--text-sm)",
   );
   const code = clampCodeFontSize(preferences.sizeCode);
