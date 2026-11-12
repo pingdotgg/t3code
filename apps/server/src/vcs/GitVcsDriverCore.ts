@@ -3282,9 +3282,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const prepareUntrackedReviewIndex = (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
-    onlyPath?: string,
+    onlyPaths?: ReadonlySet<string>,
   ) =>
-    prepareUntrackedReviewIndexOrReason(cwd, pathArgs, onlyPath).pipe(
+    prepareUntrackedReviewIndexOrReason(cwd, pathArgs, onlyPaths).pipe(
       Effect.map((result) => ("unavailable" in result ? null : result)),
     );
 
