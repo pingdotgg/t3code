@@ -93,9 +93,8 @@ function parseRecoveredMarkdown(value: string, parser: MarkdownParser): Recovere
 function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): RecoveredMarkdown {
   const value = typeof node.value === "string" ? node.value.trim() : "";
   const recovered = parseRecoveredMarkdown(value, parser);
-  if (keepsOrderedListNumbers(parser)) {
-    for (const block of recovered.blocks) keepOrderedListNumbers(block, recovered.source);
-  }
+  const always = keepsOrderedListNumbers(parser);
+  for (const block of recovered.blocks) keepOrderedListNumbers(block, recovered.source, always);
   const first = recovered.blocks[0];
   return {
     ...recovered,
