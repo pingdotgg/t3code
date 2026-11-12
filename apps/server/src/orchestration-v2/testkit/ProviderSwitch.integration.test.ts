@@ -2896,6 +2896,131 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  // regression: #16000 thread setting changes must not end a Claude session's background work
+  it.live.each([
+    ["runtime mode", "runtime-mode"],
+    ["worktree", "worktree"],
+    ["provider instance", "instance"],
+  ] as const)("keeps background work alive when the %s changes on an idle thread", ([, change]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(`settings-background-${change}`);
+        const nextCwd = yield* checkpointWorkspace(`settings-background-${change}-next`);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const backgroundWork = yield* Ref.make(false);
+        const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const secondSelection: ModelSelection = {
+          ...CLAUDE_MODEL_SELECTION,
+          instanceId: ProviderInstanceId.make("claude-second-account"),
+        };
+        const threadId = ThreadId.make(`thread:settings-background-${change}`);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:settings-background-${change}:create`),
+            threadId,
+            projectId: ProjectId.make(`project:settings-background-${change}`),
+            title: "Settings change with background work",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:settings-background-${change}:send`),
+            threadId,
+            messageId: MessageId.make(`message:settings-background-${change}:send`),
+            text: "Start background work",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* worker.drain();
+          const afterFirst = yield* waitForIdle(threadId);
+          const session = afterFirst.providerSessions[0];
+          assert.equal(session?.status, "ready");
+          // The turn ended but a background subagent keeps running in the CLI process.
+          yield* Ref.set(backgroundWork, true);
+
+          const commandId = CommandId.make(`command:settings-background-${change}:change`);
+          yield* orchestrator
+            .dispatch(
+              change === "runtime-mode"
+                ? {
+                    type: "thread.runtime-mode.set",
+                    commandId,
+                    threadId,
+                    runtimeMode: "auto-accept-edits",
+                  }
+                : change === "worktree"
+                  ? { type: "thread.metadata.update", commandId, threadId, worktreePath: nextCwd }
+                  : {
+                      type: "thread.model-selection.set",
+                      commandId,
+                      threadId,
+                      modelSelection: secondSelection,
+                    },
+            )
+            .pipe(Effect.ignore);
+          yield* worker.drain();
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          // Refusing or deferring are both fine; closing the busy process is not.
+          assert.deepEqual(yield* Ref.get(closedSessions), []);
+          assert.deepEqual(
+            projection.providerSessions.map((candidate) => [candidate.id, candidate.status]),
+            [[session!.id, "ready"]],
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: `settings-background-${change}`,
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              ProviderAdapterRegistry.layerFromAdapters([
+                makeTestAdapter({
+                  instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                  driver: CLAUDE_DRIVER,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                  modelSelection: CLAUDE_MODEL_SELECTION,
+                  responseByRunOrdinal: { 1: "Background work started" },
+                  capturedTurns,
+                  backgroundWork,
+                  closedSessions,
+                }),
+                makeTestAdapter({
+                  instanceId: secondSelection.instanceId,
+                  driver: CLAUDE_DRIVER,
+                  capabilities: ClaudeProviderCapabilitiesV2,
+                  modelSelection: secondSelection,
+                  responseByRunOrdinal: {},
+                  capturedTurns,
+                }),
+              ]),
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["immediately", "behind a running turn"] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>
