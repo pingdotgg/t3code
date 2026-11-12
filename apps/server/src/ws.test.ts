@@ -1421,6 +1421,25 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
     );
     yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
 
+    // A changed description changes the digest, so the client loads the lists again.
+    yield* Queue.offer(providerChanges, [
+      {
+        ...heavy,
+        checkedAt: "2026-10-25T00:20:00.000Z",
+        skills: heavy.skills.map((skill, index) =>
+          index === 0 ? { ...skill, description: "changed" } : skill,
+        ),
+      },
+    ]);
+    yield* Queue.take(pulled);
+    yield* TestClock.adjust("1 second");
+    const redescribed = (yield* Queue.take(responses)) as ServerConfigStreamEvent;
+    if (redescribed.type !== "providerStatusDeltas") {
+      return yield* Effect.die("Expected provider deltas");
+    }
+    assert.notEqual(redescribed.payload.providers[0]?.catalogDigest, digest);
+    yield* server.write(0, { _tag: "Ack", requestId: lightRequest });
+
     // A caller that only waits for a machine refresh gets no provider list back.
     yield* server.write(0, {
       _tag: "Request",

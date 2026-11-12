@@ -613,12 +613,16 @@ describe("server state projection", () => {
       const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
       const catalogs = yield* Queue.unbounded<ReadonlyArray<FetchedMachineCatalog>>();
       const instanceId = ProviderInstanceId.make("claudeAgent");
+      const otherInstanceId = ProviderInstanceId.make("codex");
       const slashCommands = [{ name: "compact" }];
       // What the server sends: a digest in place of the two lists.
       const snapshot = () =>
         snapshotEvent({
           ...CONFIG,
-          providers: [{ instanceId, slashCommands: [], skills: [], catalogDigest: "d1" }],
+          providers: [
+            { instanceId, slashCommands: [], skills: [], catalogDigest: "d1" },
+            { instanceId: otherInstanceId, slashCommands: [], skills: [], catalogDigest: "c1" },
+          ],
         } as unknown as ServerConfig);
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -644,6 +648,23 @@ describe("server state projection", () => {
           // A reconnect sends the digest again, and the loaded lists stay.
           const reconnected = yield* h.send(snapshot());
           expect(reconnected.config.providers[0]).toMatchObject({
+            slashCommands,
+            loadedCatalogDigest: "d1",
+          });
+
+          // A reply for an older catalog that lands late does not replace the current lists.
+          const late = { instanceId, digest: "d0", slashCommands: [{ name: "old" }], skills: [] };
+          yield* Queue.offer(catalogs, [late]);
+          yield* Queue.offer(catalogs, [
+            late,
+            { instanceId: otherInstanceId, digest: "c1", slashCommands: [], skills: [] },
+          ]);
+          const settled = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers),
+            Stream.filter((providers) => providers[1]?.loadedCatalogDigest === "c1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(settled)[0]).toMatchObject({
             slashCommands,
             loadedCatalogDigest: "d1",
           });
