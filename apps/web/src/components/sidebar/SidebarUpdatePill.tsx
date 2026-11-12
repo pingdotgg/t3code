@@ -1,3 +1,4 @@
+import { i18n } from "../../i18nCore";
 import {
   type DesktopBridge,
   type DesktopUpdateState,
@@ -130,7 +131,7 @@ function SidebarUpdateArchitectureWarningContent() {
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertTitle>{i18n.t("sidebar:update.intelWarningTitle")}</AlertTitle>
       <AlertDescription>{description}</AlertDescription>
     </Alert>
   );
@@ -155,12 +156,12 @@ export async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) reportError("Could not download update", actionError);
+    if (actionError) reportError(i18n.t("sidebar:update.downloadFailed"), actionError);
     return result.completed;
   } catch (error) {
     reportError(
-      "Could not start update download",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      i18n.t("sidebar:update.downloadStartFailed"),
+      error instanceof Error ? error.message : i18n.t("sidebar:update.unexpectedError"),
     );
     return false;
   }
@@ -181,12 +182,12 @@ export async function installLocalUpdate(
       ? getDesktopUpdateActionError(result)
       : null;
     if (!actionError) return true;
-    reportError("Could not install update", actionError);
+    reportError(i18n.t("sidebar:update.installFailed"), actionError);
     return false;
   } catch (error) {
     reportError(
-      "Could not install update",
-      error instanceof Error ? error.message : "An unexpected error occurred.",
+      i18n.t("sidebar:update.installFailed"),
+      error instanceof Error ? error.message : i18n.t("sidebar:update.unexpectedError"),
     );
     return false;
   }
@@ -256,10 +257,10 @@ function SidebarUpdateControl() {
     : showUpdateDetails
       ? state
         ? getDesktopUpdateButtonTooltip(state)
-        : "Update available"
+        : i18n.t("sidebar:update.updateAvailable")
       : showCheckIcon
-        ? "Checking for updates…"
-        : (idleTooltip?.title ?? "Check for updates");
+        ? i18n.t("sidebar:update.checking")
+        : (idleTooltip?.title ?? i18n.t("sidebar:update.checkForUpdates"));
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -314,8 +315,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
+            title: i18n.t("sidebar:update.confirmFailed"),
+            description:
+              error instanceof Error
+                ? error.message
+                : i18n.t("sidebar:update.confirmFailedDescription"),
           }),
         );
         return;
@@ -339,11 +343,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
+            title: i18n.t("sidebar:update.checkFailed"),
             description:
               updatesDenial ??
               result.state.message ??
-              "Automatic updates are not available in this build.",
+              i18n.t("sidebar:update.autoUpdatesUnavailable"),
           }),
         );
       })
@@ -351,8 +355,11 @@ function SidebarUpdateControl() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
+            title: i18n.t("sidebar:update.checkFailed"),
+            description:
+              error instanceof Error
+                ? error.message
+                : i18n.t("sidebar:update.checkFailedDescription"),
           }),
         );
       });
@@ -383,8 +390,9 @@ function SidebarUpdateControl() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not update everything",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: i18n.t("sidebar:update.everythingFailed"),
+          description:
+            error instanceof Error ? error.message : i18n.t("sidebar:update.unexpectedError"),
         }),
       );
     }
@@ -561,7 +569,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label="Update release notes"
+            aria-label={i18n.t("sidebar:update.releaseNotes")}
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

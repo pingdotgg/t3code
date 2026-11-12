@@ -1,3 +1,4 @@
+import { i18n } from "../../i18nCore";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { SquarePenIcon, XIcon } from "lucide-react";
@@ -48,10 +49,10 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const preview =
     promptPreview.length > 0
       ? promptPreview
-      : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+      : i18n.t("sidebar:actions.attachments", { count: attachmentCount });
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
-    statusLabel: "Unsent draft",
+    statusLabel: i18n.t("sidebar:status.unsentDraft"),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -112,7 +113,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                   render={
                     <button
                       type="button"
-                      aria-label="Discard draft"
+                      aria-label={i18n.t("sidebar:actions.discardDraft")}
                       onClick={handleDiscard}
                       className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
                     >
@@ -120,7 +121,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                     </button>
                   }
                 />
-                <TooltipPopup side="top">Discard draft</TooltipPopup>
+                <TooltipPopup side="top">{i18n.t("sidebar:actions.discardDraft")}</TooltipPopup>
               </Tooltip>
             </span>
           </div>

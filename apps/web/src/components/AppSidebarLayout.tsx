@@ -1,3 +1,4 @@
+import { i18n } from "../i18nCore";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -392,12 +393,13 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
                   "pointer-events-auto",
                   isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
                 )}
-                aria-label="Toggle main sidebar"
+                aria-label={i18n.t("sidebar:header.toggleSidebar")}
               />
             }
           />
           <TooltipPopup side="bottom">
-            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+            {i18n.t("sidebar:header.toggleSidebar")}
+            {shortcutLabel ? ` (${shortcutLabel})` : ""}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -469,7 +471,7 @@ export function AppSidebarLayout({
               data-app-sidebar=""
               {...sidebarArea}
               role="navigation"
-              aria-label="Threads"
+              aria-label={i18n.t("sidebar:header.threads")}
               resizable={{
                 maxWidth: sidebarMaximumWidth,
                 minWidth: sidebarMinimumWidth,

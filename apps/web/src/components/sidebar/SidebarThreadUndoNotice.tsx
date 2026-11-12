@@ -1,4 +1,6 @@
+import { i18n } from "../../i18nCore";
 import { useAtomValue } from "@effect/atom-react";
+
 import { Undo2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -18,9 +20,10 @@ export function SidebarThreadUndoNotice() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   // Short enough to fit beside the utility icons; screen readers hear the full summary.
   const summary = notice
-    ? notice.count === 1
-      ? notice.action
-      : `${notice.action} ${notice.count}`
+    ? i18n.t("sidebar:undo.summaryCompact", {
+        action: notice.action,
+        count: notice.count,
+      })
     : null;
 
   // Keeps the last text on screen while it fades out, then unmounts on transitionend.
