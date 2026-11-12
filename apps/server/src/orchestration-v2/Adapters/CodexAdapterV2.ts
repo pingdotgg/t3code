@@ -7776,6 +7776,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
 
               const codexInput = yield* toCodexInput(turnInput);
+              const serviceTier = getCodexServiceTierOptionValue(turnInput.modelSelection);
+              // Goal continuations and subagents start native turns without a turn/start.
+              if (
+                turnInput.modelSelection !== undefined &&
+                adapterOptions.resolveRuntime === undefined &&
+                serviceTier !== getCodexServiceTierOptionValue(activeTurn.input.modelSelection)
+              ) {
+                yield* client.raw.request("thread/settings/update", {
+                  threadId,
+                  serviceTier: serviceTier ?? null,
+                });
+              }
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,
