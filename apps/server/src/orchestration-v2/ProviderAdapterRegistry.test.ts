@@ -116,6 +116,8 @@ it.effect(
         ),
       );
       const adapter = yield* registry.get(personalId);
+      // Sessions detect a rebuilt instance by adapter identity.
+      assert.strictEqual(yield* registry.get(personalId), adapter);
       const error = yield* adapter
         .openSession({
           threadId: ThreadId.make("new-thread"),

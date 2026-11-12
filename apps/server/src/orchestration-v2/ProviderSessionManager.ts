@@ -243,6 +243,8 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /** The adapter that opened the runtime; a different one in the registry means new settings. */
+  readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -1837,24 +1839,32 @@ export const layerWithOptions = (
         );
       });
 
-      /** An exclusive runtime configures MCP at open, so it reopens once nothing would be lost. */
-      const releaseForLinkedEnvironments = Effect.fn(
-        "ProviderSessionManager.releaseForLinkedEnvironments",
-      )(function* (entry: LiveSessionEntry) {
-        if (
-          entry.supportsMultipleProviderThreads ||
-          entry.runtime.canResumeAfterRestart === false ||
-          entry.openedWithLinkedEnvironments === undefined ||
-          entry.busyTurns.size > 0
-        ) {
-          return;
-        }
-        const linkedEnvironments = yield* readLinkedEnvironments;
-        if (
-          typeof linkedEnvironments !== "boolean" ||
-          linkedEnvironments === entry.openedWithLinkedEnvironments
-        ) {
-          return;
+      /**
+       * A runtime started from an instance's old settings, or an exclusive one whose MCP
+       * tools predate a Linked environments change, reopens once nothing would be lost.
+       */
+      const releaseIfStale = Effect.fn("ProviderSessionManager.releaseIfStale")(function* (
+        entry: LiveSessionEntry,
+      ) {
+        if (entry.runtime.canResumeAfterRestart === false || entry.busyTurns.size > 0) return;
+        const current = yield* registry
+          .get(entry.runtime.instanceId)
+          .pipe(Effect.orElseSucceed(() => entry.adapter));
+        const instanceRebuilt = current !== entry.adapter;
+        if (!instanceRebuilt) {
+          if (
+            entry.supportsMultipleProviderThreads ||
+            entry.openedWithLinkedEnvironments === undefined
+          ) {
+            return;
+          }
+          const linkedEnvironments = yield* readLinkedEnvironments;
+          if (
+            typeof linkedEnvironments !== "boolean" ||
+            linkedEnvironments === entry.openedWithLinkedEnvironments
+          ) {
+            return;
+          }
         }
         const providerSessionId = entry.runtime.providerSessionId;
         // Any activity during these reads bumps the generation and keeps the runtime.
@@ -1892,7 +1902,9 @@ export const layerWithOptions = (
         yield* releaseEntry({
           providerSessionId,
           reason: "idle_timeout",
-          detail: "Linked environments changed; reopening the provider session.",
+          detail: instanceRebuilt
+            ? "Provider settings changed; reopening the provider session."
+            : "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
           keepIf: hasUnfinishedRecords,
         }).pipe(logReleaseFailure(providerSessionId));
@@ -2625,7 +2637,7 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
-              if (live !== undefined) yield* releaseForLinkedEnvironments(live);
+              if (live !== undefined) yield* releaseIfStale(live);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -2741,6 +2753,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                adapter,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
