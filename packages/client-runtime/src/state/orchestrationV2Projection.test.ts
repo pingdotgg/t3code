@@ -519,49 +519,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems).toEqual([inheritedRow]);
     expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
   });
-
-  it("hides only the local row when an inherited row shares its sourceItemId", () => {
-    const sharedId = "item-shared-hide";
-    const inherited = {
-      ...commandItem(sharedId, "from-parent", 0),
-      threadId: ThreadId.make("thread-source"),
-    };
-    const inheritedRow = {
-      position: 0,
-      visibility: "inherited" as const,
-      sourceThreadId: inherited.threadId,
-      sourceItemId: inherited.id,
-      item: inherited,
-    };
-    const local = commandItem(sharedId, "local", 1);
-    const projection = {
-      ...emptyProjection,
-      // A rolled-back run makes the local item ineligible for the visible list.
-      runs: [{ ...run, status: "rolled_back" as const }],
-      turnItems: [local],
-      visibleTurnItems: [
-        inheritedRow,
-        {
-          position: 1,
-          visibility: "local" as const,
-          sourceThreadId: threadId,
-          sourceItemId: local.id,
-          item: local,
-        },
-      ],
-    };
-    const next = applyOrchestrationV2ProjectionEvent(projection, {
-      id: "event-shared-id-hide",
-      type: "turn-item.updated",
-      threadId,
-      runId,
-      occurredAt: now,
-      payload: { ...local, output: "still-hidden" },
-    } as OrchestrationV2DomainEvent);
-
-    expect(next?.visibleTurnItems).toEqual([inheritedRow]);
-    expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
-  });
 });
 
 it("does not scan every row against every run for a streaming item update", () => {

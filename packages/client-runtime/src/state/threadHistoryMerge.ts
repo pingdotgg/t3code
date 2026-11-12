@@ -43,34 +43,10 @@ function projectedItemKey(row: OrchestrationV2ProjectedTurnItem): string {
   return `${row.sourceThreadId}:${row.sourceItemId}`;
 }
 
-// Same order as the server's `ORDER BY ordinal, turn_item_id` (binary collation).
-function compareByOrdinalThenId(
-  left: OrchestrationV2ProjectedTurnItem,
-  right: OrchestrationV2ProjectedTurnItem,
-): number {
-  if (left.item.ordinal !== right.item.ordinal) return left.item.ordinal - right.item.ordinal;
-  return left.item.id < right.item.id ? -1 : left.item.id > right.item.id ? 1 : 0;
-}
-
 function renumberVisible(
   rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): OrchestrationV2ProjectedTurnItem[] {
   return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
-}
-
-// Inherited and local rows can share a sourceItemId; prefer the local row that owns deferred work.
-export function findDeferredWorkAnchorIndex(
-  projection: OrchestrationV2ThreadProjection,
-  anchorId: string,
-): number {
-  const rows = projection.visibleTurnItems;
-  const owns = (row: OrchestrationV2ProjectedTurnItem) =>
-    row.sourceItemId === anchorId && row.item.deferredWork !== undefined;
-  const local = rows.findIndex(
-    (row) =>
-      owns(row) && (row.visibility === "local" || row.sourceThreadId === projection.thread.id),
-  );
-  return local !== -1 ? local : rows.findIndex(owns);
 }
 
 export function mergeOlderHistoryIntoProjection(
@@ -82,7 +58,10 @@ export function mergeOlderHistoryIntoProjection(
     return projection;
   }
 
-  const start = work === undefined ? -1 : findDeferredWorkAnchorIndex(projection, work.anchorId);
+  const start =
+    work === undefined
+      ? -1
+      : projection.visibleTurnItems.findIndex((row) => row.sourceItemId === work.anchorId);
   const anchor = projection.visibleTurnItems[start];
   const deferred = anchor?.item.deferredWork;
   if (work !== undefined && deferred === undefined) return projection;
@@ -161,8 +140,8 @@ export function mergeOlderHistoryIntoProjection(
         .filter((row) => !pageKeys.has(projectedItemKey(row))),
     ];
     const ordered = section
-      .map((row) => (projectedItemKey(row) === projectedItemKey(updated) ? updated : row))
-      .sort(compareByOrdinalThenId);
+      .map((row) => (row.sourceItemId === anchor.sourceItemId ? updated : row))
+      .sort((left, right) => left.item.ordinal - right.item.ordinal);
     visible = [
       ...projection.visibleTurnItems.slice(0, start),
       ...ordered,

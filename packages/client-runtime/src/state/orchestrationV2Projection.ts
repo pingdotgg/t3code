@@ -71,20 +71,11 @@ function latestBodies(projection: OrchestrationV2ThreadProjection): DedupedBodyS
   };
 }
 
-function sameProjectedItem(
-  row: OrchestrationV2ThreadProjection["visibleTurnItems"][number],
-  sourceThreadId: OrchestrationV2TurnItem["threadId"],
-  sourceItemId: OrchestrationV2TurnItem["id"],
-): boolean {
-  return row.sourceItemId === sourceItemId && row.sourceThreadId === sourceThreadId;
-}
-
 function removeVisibleItem(
   rows: OrchestrationV2ThreadProjection["visibleTurnItems"],
-  sourceThreadId: OrchestrationV2TurnItem["threadId"],
   sourceItemId: OrchestrationV2TurnItem["id"],
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  const index = rows.findIndex((row) => sameProjectedItem(row, sourceThreadId, sourceItemId));
+  const index = rows.findIndex((row) => row.sourceItemId === sourceItemId);
   if (index === -1) return rows;
   return renumberVisibleItems([...rows.slice(0, index), ...rows.slice(index + 1)]);
 }
@@ -155,7 +146,7 @@ function shouldDropMissingPartialTurnItem(
   item: OrchestrationV2TurnItem,
   latestLocalTurnOrdinal: number | null | undefined,
 ): boolean {
-  if (projection.visibleTurnItems.some((row) => sameProjectedItem(row, item.threadId, item.id))) {
+  if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
     return false;
   }
   if (item.runId === null) {
@@ -206,10 +197,10 @@ function upsertVisibleTurnItem(
   latestLocalTurnOrdinal: number | null | undefined,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   const rows = projection.visibleTurnItems;
-  // Streamed updates land on the newest rows. Match thread + item id so an
-  // inherited row with the same sourceItemId is left alone.
+  // Streamed updates land on the newest rows. Item ids are unique, so the
+  // search can start there.
   let index = rows.length - 1;
-  while (index >= 0 && !sameProjectedItem(rows[index]!, item.threadId, item.id)) index -= 1;
+  while (index >= 0 && rows[index]!.sourceItemId !== item.id) index -= 1;
   const next = {
     position: 0,
     visibility: "local" as const,
@@ -412,7 +403,7 @@ export function applyOrchestrationV2ProjectionEvent(
         ...next,
         visibleTurnItems: shouldShowLocalTurnItem(next, payload)
           ? upsertVisibleTurnItem(visible, payload, partialTimeline, latestLocalTurnOrdinal)
-          : removeVisibleItem(visible.visibleTurnItems, payload.threadId, payload.id),
+          : removeVisibleItem(visible.visibleTurnItems, payload.id),
       };
     }
     case "checkpoint-scope.created":

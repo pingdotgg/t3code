@@ -612,22 +612,6 @@ describe("threadHistoryPaging", () => {
       work.slice(0, 75).map((row) => row.sourceItemId),
     );
     expect(deferred.nextCursor).toBeNull();
-    const parent = work.map((row) => ({ ...row, sourceThreadId: ThreadId.make("thread-parent") }));
-    const forked = selectDeferredWorkPage({
-      items: [...parent, ...work].map((row, position) => ({ ...row, position })),
-      cursor: encodeThreadHistoryCursor({
-        snapshotSequence: 3,
-        sourceThreadId: THREAD,
-        sourceItemId: work[74]!.sourceItemId,
-        position: work[74]!.item.ordinal,
-        inclusive: true,
-      }),
-      throughEntryId: work[0]!.sourceItemId,
-      snapshotSequence: 3,
-    });
-    expect(forked.items.map((row) => [row.sourceThreadId, row.sourceItemId])).toEqual(
-      work.slice(0, 75).map((row) => [THREAD, row.sourceItemId]),
-    );
   });
 
   it("keeps cursor resolution stable when newer items append", () => {

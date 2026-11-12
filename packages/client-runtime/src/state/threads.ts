@@ -43,7 +43,6 @@ import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
-import { findDeferredWorkAnchorIndex } from "./threadHistoryMerge.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import {
   applyHistoryPageMeta,
@@ -709,12 +708,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     throughEntryId?: string,
     workAnchorId?: string,
   ): Effect.fn.Return<ThreadHistoryController.ThreadHistoryLoadEarlierResult> {
-    const workCursor = (latest: EnvironmentThreadState) => {
-      const projection = Option.getOrNull(latest.data);
-      if (projection === null || workAnchorId === undefined) return null;
-      const index = findDeferredWorkAnchorIndex(projection, workAnchorId);
-      return projection.visibleTurnItems[index]?.item.deferredWork?.cursor ?? null;
-    };
+    const workCursor = (latest: EnvironmentThreadState) =>
+      Option.getOrNull(latest.data)?.visibleTurnItems.find(
+        (row) => row.sourceItemId === workAnchorId,
+      )?.item.deferredWork?.cursor ?? null;
     const current = yield* SubscriptionRef.get(state);
     const initialCursor =
       workAnchorId === undefined ? current.history.historyCursor : workCursor(current);
