@@ -59,6 +59,24 @@ describe("mergeProviderInstanceEnvironment", () => {
     }),
   );
 
+  it.effect.each([
+    { label: "no configured variables", environment: [] },
+    {
+      label: "configured variables",
+      environment: [{ name: "CUSTOM_VALUE", value: "1", sensitive: false }],
+    },
+  ])("drops the desktop's ELECTRON_RUN_AS_NODE with $label", ({ environment }) =>
+    Effect.gen(function* () {
+      const merged = yield* mergeProviderInstanceEnvironment(environment, {
+        ELECTRON_RUN_AS_NODE: "1",
+        PATH: "/bin",
+      });
+
+      expect(merged).not.toHaveProperty("ELECTRON_RUN_AS_NODE");
+      expect(merged.PATH).toBe("/bin");
+    }),
+  );
+
   it.effect("overrides inherited environment values and preserves empty strings", () =>
     Effect.gen(function* () {
       expect(
