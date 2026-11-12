@@ -462,8 +462,9 @@ Commit and Commit dialog commit only to the current layer. Publishing a stack pu
 from the bottom through the current layer, then creates any missing reviews in that order, each
 targeting its parent branch. Existing reviews are reused. Upper layers are rebased locally;
 their remote branches and reviews are left unchanged. Publish those layers when they are ready.
-Unambiguous local stacks are tracked automatically on their first publish. Regrouping existing
-commits defaults to the current layer's parent rather than the repository's default branch.
+Unambiguous local stacks are tracked automatically on their first publish. Rewriting commit
+messages or regrouping commits is restricted to the current layer. Its parent is a fixed boundary;
+selecting a range cannot include commits from lower layers.
 
 **Update stack** incorporates remote branch updates and removes merged layers from tracking before
 restacking and pushing the remaining branches. Enable **Include latest base** to also bring in new
