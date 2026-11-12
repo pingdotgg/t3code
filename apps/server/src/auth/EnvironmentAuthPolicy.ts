@@ -20,9 +20,9 @@ export class EnvironmentAuthPolicy extends Context.Service<
 
 /** The auth policy a server started with `config` runs under. */
 export function resolveServerAuthPolicy(
-  config: Pick<ServerConfig.ServerConfig["Service"], "mode" | "host">,
+  config: Pick<ServerConfig.ServerConfig["Service"], "mode" | "host" | "tailscaleServeEnabled">,
 ): ServerAuthPolicy {
-  if (isRemoteReachableHost(config.host)) return "remote-reachable";
+  if (config.tailscaleServeEnabled || isRemoteReachableHost(config.host)) return "remote-reachable";
   return config.mode === "desktop" ? "desktop-managed-local" : "loopback-browser";
 }
 
