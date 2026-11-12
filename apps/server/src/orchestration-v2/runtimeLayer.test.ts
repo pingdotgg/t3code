@@ -66,6 +66,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -7832,6 +7833,108 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(
         userItems.map((item) => item.messageId),
         keys.map(messageId),
+      );
+    }),
+  );
+
+  it.effect("moves a queued message ahead of a queued delegated completion", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("reorder-ahead-of-completion");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("reorder-ahead-of-completion-project"),
+        title: "Delegating parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/reorder-ahead-of-completion",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`active:${threadId}`),
+        threadId,
+        messageId: MessageId.make(`active:${threadId}`),
+        text: "Active run",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const activeRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const completionMessageId = MessageId.make(`completion:${threadId}`);
+      const taskIds = [NodeId.make("reorder-ahead-of-completion-task")];
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`completion-state:${threadId}`),
+            type: "run.updated",
+            threadId,
+            runId: activeRun.id,
+            occurredAt: now,
+            payload: {
+              ...activeRun,
+              delegatedCompletion: {
+                disposition: "open",
+                nextGeneration: 2,
+                delivery: { messageId: completionMessageId, generation: 1, taskIds },
+              },
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`completion:${threadId}`),
+        threadId,
+        messageId: completionMessageId,
+        text: "Delegated task finished",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: { parentRunId: activeRun.id, generation: 1, taskIds },
+      });
+      const correctionMessageId = MessageId.make(`correction:${threadId}`);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`correction:${threadId}`),
+        threadId,
+        messageId: correctionMessageId,
+        text: "Rule correction",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const queued = yield* orchestrator.getThreadProjection(threadId);
+      const completion = queued.runs.find((run) => run.userMessageId === completionMessageId)!;
+      const correction = queued.runs.find((run) => run.userMessageId === correctionMessageId)!;
+      assert.equal(completion.status, "queued");
+      assert.equal(correction.status, "queued");
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.reorder",
+        commandId: CommandId.make(`reorder:${threadId}`),
+        threadId,
+        runId: correction.id,
+        beforeRunId: completion.id,
+      });
+      assert.deepEqual(
+        queuedRunsInDeliveryOrder(yield* orchestrator.getThreadProjection(threadId)).map(
+          (run) => run.id,
+        ),
+        [correction.id, completion.id],
       );
     }),
   );
