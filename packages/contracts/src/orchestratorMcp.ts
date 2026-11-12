@@ -36,6 +36,12 @@ import { secretRequestPageUrl } from "./secretRequest.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
+  ThreadSpecialist,
+  ThreadSpecialistInstructions,
+  ThreadSpecialistKey,
+  ThreadSpecialistLabel,
+} from "./threadSpecialist.ts";
+import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
@@ -335,6 +341,80 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
   }),
 );
 
+/** Resume or create a project-scoped durable specialist thread (OpenRig-style named role). */
+export const OrchestratorMcpFindOrOpenSpecialistInput = Schema.Struct({
+  projectId: OrchestratorMcpProjectTarget,
+  key: ThreadSpecialistKey.annotate({
+    description: "Stable slug, e.g. `dev-ui`. Unique per project among non-deleted threads.",
+  }),
+  label: Schema.optional(
+    ThreadSpecialistLabel.annotate({
+      description: "Display name. Default: the key. Used when creating or rebinding.",
+    }),
+  ),
+  instructions: Schema.optional(
+    ThreadSpecialistInstructions.annotate({
+      description: "Domain brief stored on the binding. Applied when creating or rebinding.",
+    }),
+  ),
+  title: Schema.optional(
+    OrchestratorMcpTitle.annotate({
+      description: "Title for a newly created specialist thread. Default: the label.",
+    }),
+  ),
+  prompt: Schema.optional(
+    OrchestratorMcpPrompt.annotate({
+      description: "Optional first message when creating, or follow-up when resuming.",
+    }),
+  ),
+  target: Schema.optional(OrchestratorMcpTarget),
+  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
+  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpFindOrOpenSpecialistInput =
+  typeof OrchestratorMcpFindOrOpenSpecialistInput.Type;
+
+export const OrchestratorMcpFindOrOpenSpecialistResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  created: Schema.Boolean,
+  specialist: ThreadSpecialist,
+  runId: Schema.NullOr(RunId),
+  status: OrchestratorMcpThreadStatus,
+  title: Schema.String,
+});
+export type OrchestratorMcpFindOrOpenSpecialistResult =
+  typeof OrchestratorMcpFindOrOpenSpecialistResult.Type;
+
+/**
+ * Stop and archive a durable specialist seat without clearing its binding
+ * (OpenRig-style shrink). Reverse with `find_or_open_specialist`.
+ */
+export const OrchestratorMcpRetireSpecialistInput = Schema.Struct({
+  projectId: OrchestratorMcpProjectTarget,
+  key: ThreadSpecialistKey.annotate({
+    description: "Specialist key to stop and archive. Binding is kept for later restore.",
+  }),
+  reason: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(2_000)).annotate({
+      description: "Why this specialist is stepping down.",
+    }),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpRetireSpecialistInput = typeof OrchestratorMcpRetireSpecialistInput.Type;
+
+export const OrchestratorMcpRetireSpecialistResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  title: Schema.String,
+  specialist: ThreadSpecialist,
+  status: Schema.Literals(["retired", "already_archived"]),
+});
+export type OrchestratorMcpRetireSpecialistResult =
+  typeof OrchestratorMcpRetireSpecialistResult.Type;
+
 export const OrchestratorMcpThreadListInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
@@ -343,6 +423,11 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
     Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
   ),
   titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+  specialistKey: Schema.optional(
+    ThreadSpecialistKey.annotate({
+      description: "Only threads bound to this durable specialist key.",
+    }),
+  ),
   settled: Schema.optional(Schema.Boolean),
   snoozed: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
@@ -381,6 +466,7 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  specialist: Schema.optional(ThreadSpecialist),
   itemCount: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -459,6 +545,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  specialist: Schema.optional(ThreadSpecialist),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

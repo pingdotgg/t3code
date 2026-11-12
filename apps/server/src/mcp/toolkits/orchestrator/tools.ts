@@ -9,6 +9,10 @@ import {
   OrchestratorMcpEnvironmentUnlinkResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
+  OrchestratorMcpFindOrOpenSpecialistInput,
+  OrchestratorMcpFindOrOpenSpecialistResult,
+  OrchestratorMcpRetireSpecialistInput,
+  OrchestratorMcpRetireSpecialistResult,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpDeleteScheduledTaskInput,
@@ -229,6 +233,33 @@ const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const FindOrOpenSpecialistTool = Tool.make("find_or_open_specialist", {
+  description:
+    "Add or restore a durable specialist thread by stable `key` (e.g. `dev-ui`) in a project: resume an existing binding, unarchive a retired seat, or create one. Keeps context across days; not a turn-scoped `delegate_task`. Creating needs an active run. Pair with `retire_specialist` to stop-archive. In your reply, name it as its `link` verbatim.",
+  parameters: OrchestratorMcpFindOrOpenSpecialistInput,
+  success: OrchestratorMcpFindOrOpenSpecialistResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Find or open a durable specialist")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(Tool.Idempotent, true);
+
+const RetireSpecialistTool = Tool.make("retire_specialist", {
+  description:
+    "Stop and archive a durable specialist by `key` without clearing its binding (siblings keep running). Reverse with `find_or_open_specialist`. Not a team manager; membership stays the thread binding.",
+  parameters: OrchestratorMcpRetireSpecialistInput,
+  success: OrchestratorMcpRetireSpecialistResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Retire a durable specialist")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true);
+
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
     "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
@@ -368,6 +399,8 @@ export const OrchestratorToolkit = Toolkit.make(
   DeleteScheduledTaskTool,
   RequestSecretTool,
   CreateThreadsTool,
+  FindOrOpenSpecialistTool,
+  RetireSpecialistTool,
   ThreadListTool,
   ThreadReadTool,
   ThreadUpdateTool,

@@ -20,7 +20,12 @@ import {
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
+  type OrchestratorMcpFindOrOpenSpecialistInput,
+  type OrchestratorMcpFindOrOpenSpecialistResult,
+  type OrchestratorMcpRetireSpecialistInput,
+  type OrchestratorMcpRetireSpecialistResult,
   type OrchestratorMcpDelegateTaskInput,
+  type ThreadSpecialist,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
@@ -62,6 +67,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
+  isListedThreadLineage,
   isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
@@ -176,6 +182,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpCreateThreadsInput,
   ) => Effect.Effect<OrchestratorMcpCreateThreadsResult, OrchestratorMcpFailure>;
+  readonly findOrOpenSpecialist: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpFindOrOpenSpecialistInput,
+  ) => Effect.Effect<OrchestratorMcpFindOrOpenSpecialistResult, OrchestratorMcpFailure>;
+  readonly retireSpecialist: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpRetireSpecialistInput,
+  ) => Effect.Effect<OrchestratorMcpRetireSpecialistResult, OrchestratorMcpFailure>;
   readonly scheduleTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpScheduleTaskInput,
@@ -838,6 +852,7 @@ function listItemFromShell(
     ...threadSnooze(shell, nowMs),
     parentThreadId: shell.lineage.parentThreadId,
     relationshipToParent: shell.lineage.relationshipToParent,
+    ...(shell.specialist === undefined ? {} : { specialist: shell.specialist }),
     itemCount: shell.visibleItemCount,
     createdAt: DateTime.formatIso(shell.createdAt),
     updatedAt: DateTime.formatIso(shell.updatedAt),
@@ -889,6 +904,9 @@ function threadDetail(
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     ...threadSnooze(shell, nowMs),
+    ...(projection.thread.specialist === undefined
+      ? {}
+      : { specialist: projection.thread.specialist }),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
   };
@@ -2951,6 +2969,452 @@ const make = Effect.gen(function* () {
         return { threads: created };
       },
     ),
+    findOrOpenSpecialist: Effect.fn("OrchestratorMcpService.findOrOpenSpecialist")(
+      function* (callerScope, input) {
+        const { parent: listParent, limits } = yield* loadCaller(callerScope, ["runs"]);
+        const projectId = yield* resolveProjectTarget(
+          listParent,
+          input.projectId,
+          "Pass projectId: this MCP client is not running inside a T3 thread.",
+        );
+        const key = yield* requestKey(input.clientRequestId);
+        // Same identity as the create path so a retry cannot fall into resume and re-send.
+        const createCommandId = stableCommandId({
+          scope: callerScope,
+          requestKey: key,
+          operation: "create-specialist",
+        });
+        const createThreadId = stableThreadId({ scope: callerScope, requestKey: key, index: 0 });
+        const isCreateRetry = yield* threadManagement.hasReceipt(createCommandId);
+
+        const snapshot = yield* threadManagement
+          .getShellSnapshot({ projectId })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to look up specialists: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        const existing = [...snapshot.threads, ...snapshot.archivedThreads]
+          .filter(
+            (thread) =>
+              thread.deletedAt === null &&
+              thread.specialist?.key === input.key &&
+              isListedThreadLineage(thread.lineage),
+          )
+          .toSorted(
+            (left, right) =>
+              (left.archivedAt === null ? 0 : 1) - (right.archivedAt === null ? 0 : 1) ||
+              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+          )[0];
+
+        if (existing !== undefined && !(isCreateRetry && existing.id === createThreadId)) {
+          const prior = existing.specialist;
+          const specialist: ThreadSpecialist = {
+            key: input.key,
+            label: input.label ?? prior?.label ?? input.key,
+            ...(input.instructions !== undefined
+              ? { instructions: input.instructions }
+              : prior?.instructions !== undefined
+                ? { instructions: prior.instructions }
+                : {}),
+          };
+          const needsRebind =
+            prior?.label !== specialist.label || prior?.instructions !== specialist.instructions;
+          const prompt = input.prompt;
+          if (needsRebind || prompt !== undefined || existing.archivedAt !== null) {
+            const target = yield* loadTargetThread(existing.id);
+            yield* assertLiveCallerForOtherThread(callerScope, listParent, target);
+            yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
+            yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+          }
+          if (existing.archivedAt !== null) {
+            yield* threadManagement
+              .dispatch({
+                type: "thread.unarchive",
+                commandId: stableCommandId({
+                  scope: callerScope,
+                  requestKey: key,
+                  operation: "unarchive-specialist",
+                }),
+                threadId: existing.id,
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "orchestration_error",
+                    `Unable to reopen archived specialist: ${errorMessage(error)}`,
+                  ),
+                ),
+              );
+          }
+          if (needsRebind) {
+            yield* threadManagement
+              .dispatch({
+                type: "thread.specialist.set",
+                commandId: stableCommandId({
+                  scope: callerScope,
+                  requestKey: key,
+                  operation: "rebind-specialist",
+                }),
+                threadId: existing.id,
+                specialist,
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "orchestration_error",
+                    `Unable to update specialist binding: ${errorMessage(error)}`,
+                  ),
+                ),
+              );
+          }
+          let runId: RunId | null = existing.latestRunId;
+          let status: OrchestratorMcpFindOrOpenSpecialistResult["status"] =
+            existing.activityRunStatus ?? existing.status;
+          if (prompt !== undefined) {
+            const sent = yield* threadManagement
+              .sendToThread({
+                projectId,
+                commandId: stableCommandId({
+                  scope: callerScope,
+                  requestKey: key,
+                  operation: "specialist-send",
+                }),
+                threadId: existing.id,
+                ...(listParent === undefined ? {} : { senderThreadId: listParent.thread.id }),
+                messageId: stableOperationMessageId({
+                  scope: callerScope,
+                  requestKey: key,
+                  operation: "specialist-send",
+                }),
+                text: prompt,
+                attachments: [],
+                mode: "auto",
+                createdBy: "agent",
+                creationSource: "mcp",
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  isThreadManagementError(error)
+                    ? threadManagementFailure(error)
+                    : failure(
+                        "orchestration_error",
+                        `Unable to message specialist: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+                      ),
+                ),
+              );
+            runId = sent.run.id;
+            status = sent.run.status;
+          }
+          return {
+            threadId: existing.id,
+            link: threadLinkFor(callerScope, existing.id, existing.title),
+            created: false,
+            specialist,
+            runId,
+            status,
+            title: existing.title,
+          } satisfies OrchestratorMcpFindOrOpenSpecialistResult;
+        }
+
+        const specialist: ThreadSpecialist = {
+          key: input.key,
+          label: input.label ?? input.key,
+          ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+        };
+        const { scope, parent } = yield* loadThreadCaller(callerScope, "find_or_open_specialist");
+        yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+        const parentRun = ThreadManagementService.latestActiveRun(parent);
+        if (
+          parentRun === undefined ||
+          parentRun.rootNodeId === null ||
+          parentRun.providerInstanceId !== scope.thread.providerInstanceId
+        ) {
+          return yield* failure(
+            "parent_not_active",
+            "Creating a specialist requires an active run owned by this MCP provider session.",
+          );
+        }
+        if (parent.thread.projectId !== projectId) {
+          return yield* failure(
+            "target_required",
+            "Creating a specialist in another project is not supported yet; open or create it from a thread in that project.",
+          );
+        }
+        const providers = yield* loadProviders;
+        const committedThread = isCreateRetry
+          ? yield* threadManagement
+              .getThreadShell(createThreadId)
+              .pipe(Effect.mapError(threadManagementFailure))
+          : null;
+        const target = yield* resolveTargetRechecking({
+          parent,
+          target:
+            committedThread === null
+              ? input.target
+              : {
+                  ...input.target,
+                  providerInstanceId: committedThread.modelSelection.instanceId,
+                },
+          providers,
+          skipProjectEnablementFilter: isCreateRetry,
+        });
+        const runtimeMode = yield* resolveRuntimeMode(
+          parent.thread.runtimeMode,
+          input.runtimeMode,
+          target,
+        );
+        const interactionMode = yield* resolveInteractionMode(
+          parent.thread.interactionMode,
+          input.interactionMode,
+        );
+        yield* assertTargetEnabledForProject(parent, createCommandId, target);
+        const title = threadTitle({
+          parentTitle: parent.thread.title,
+          prompt: input.prompt,
+          title: input.title ?? specialist.label,
+          index: 0,
+        });
+        if (committedThread === null) {
+          yield* threadManagement
+            .dispatch({
+              type: "thread.create",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId: createCommandId,
+              threadId: createThreadId,
+              projectId,
+              title,
+              modelSelection: target.modelSelection,
+              runtimeMode,
+              interactionMode,
+              branch: parent.thread.branch,
+              worktreePath: parent.thread.worktreePath,
+              ...(parent.thread.linkOrigin === undefined
+                ? {}
+                : { linkOrigin: parent.thread.linkOrigin }),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to create specialist thread: ${errorMessage(error)}`,
+                ),
+              ),
+            );
+        }
+        yield* threadManagement
+          .dispatch({
+            type: "thread.specialist.set",
+            commandId: stableCommandId({
+              scope: callerScope,
+              requestKey: key,
+              operation: "bind-specialist",
+            }),
+            threadId: createThreadId,
+            specialist,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure("orchestration_error", `Unable to bind specialist: ${errorMessage(error)}`),
+            ),
+          );
+        const resolvedModelSelection = (yield* threadManagement
+          .getThreadRecords(createThreadId, [])
+          .pipe(Effect.mapError(threadManagementFailure))).thread.modelSelection;
+        if (input.prompt !== undefined) {
+          yield* threadManagement
+            .dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId: stableCommandId({
+                scope: callerScope,
+                requestKey: key,
+                operation: "dispatch-specialist",
+              }),
+              threadId: createThreadId,
+              senderThreadId: scope.thread.threadId,
+              messageId: stableMessageId({
+                scope: callerScope,
+                requestKey: key,
+                index: 0,
+              }),
+              text: input.prompt,
+              attachments: [],
+              modelSelection: resolvedModelSelection,
+              dispatchMode: { type: "start_immediately" },
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                error._tag === "ThreadManagementProviderInstanceDisabledError"
+                  ? threadManagementFailure(error)
+                  : failure(
+                      "orchestration_error",
+                      `Unable to start specialist: ${errorMessage(error)}`,
+                    ),
+              ),
+            );
+        }
+        const projection = yield* loadThreadRecords(createThreadId, ["runs"]);
+        const run = projection.runs.at(-1);
+        yield* threadManagement
+          .dispatch({
+            type: "thread.created.record",
+            commandId: stableCommandId({
+              scope: callerScope,
+              requestKey: key,
+              operation: "record-specialist",
+            }),
+            parentThreadId: scope.thread.threadId,
+            parentRunId: parentRun.id,
+            parentNodeId: parentRun.rootNodeId,
+            targetThreadId: createThreadId,
+            targetRunId: run?.id ?? null,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to record specialist in the parent timeline: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        return {
+          threadId: createThreadId,
+          link: formatThreadLink(
+            { environmentId: scope.environmentId, threadId: createThreadId },
+            projection.thread.title,
+          ),
+          created: true,
+          specialist,
+          runId: run?.id ?? null,
+          status: run?.status ?? "idle",
+          title: projection.thread.title,
+        } satisfies OrchestratorMcpFindOrOpenSpecialistResult;
+      },
+    ),
+    retireSpecialist: Effect.fn("OrchestratorMcpService.retireSpecialist")(
+      function* (callerScope, input) {
+        const { parent: listParent } = yield* loadCaller(callerScope, ["runs"]);
+        const projectId = yield* resolveProjectTarget(
+          listParent,
+          input.projectId,
+          "Pass projectId: this MCP client is not running inside a T3 thread.",
+        );
+        const key = yield* requestKey(input.clientRequestId);
+        const snapshot = yield* threadManagement
+          .getShellSnapshot({ projectId })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to look up specialists: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        const existing = [...snapshot.threads, ...snapshot.archivedThreads]
+          .filter(
+            (thread) =>
+              thread.deletedAt === null &&
+              thread.specialist?.key === input.key &&
+              isListedThreadLineage(thread.lineage),
+          )
+          .toSorted(
+            (left, right) =>
+              (left.archivedAt === null ? 0 : 1) - (right.archivedAt === null ? 0 : 1) ||
+              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+          )[0];
+        if (existing === undefined || existing.specialist === undefined) {
+          return yield* failure(
+            "invalid_request",
+            `No durable specialist with key '${input.key}' in this project.`,
+          );
+        }
+        const specialist = existing.specialist;
+        const link = threadLinkFor(callerScope, existing.id, existing.title);
+        if (existing.archivedAt !== null) {
+          return {
+            threadId: existing.id,
+            link,
+            title: existing.title,
+            specialist,
+            status: "already_archived",
+          } satisfies OrchestratorMcpRetireSpecialistResult;
+        }
+        if (listParent !== undefined && existing.id === listParent.thread.id) {
+          return yield* failure(
+            "invalid_request",
+            "Cannot retire the calling thread; retire another specialist seat.",
+          );
+        }
+        const target = yield* loadTargetThread(existing.id);
+        yield* assertLiveCallerForOtherThread(callerScope, listParent, target);
+        const stopCommandId = stableCommandId({
+          scope: callerScope,
+          requestKey: key,
+          operation: "retire-specialist-stop",
+        });
+        const stopFailed = (error: unknown) =>
+          Effect.logWarning("orchestrator-mcp.retire-specialist-stop-failed", {
+            threadId: existing.id,
+            error,
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                failure(
+                  "orchestration_error",
+                  `Unable to stop specialist ${existing.id} before retiring.`,
+                ),
+              ),
+            ),
+          );
+        // Stop only this seat and its own delegates; siblings and the caller keep running.
+        yield* threadManagement
+          .dispatch({
+            type: "thread.stop",
+            commandId: stopCommandId,
+            threadId: existing.id,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          })
+          .pipe(Effect.catch(stopFailed));
+        yield* threadManagement
+          .stopDelegatedTasks({
+            threadId: existing.id,
+            commandId: stopCommandId,
+            reason: input.reason,
+          })
+          .pipe(Effect.catch(stopFailed));
+        yield* threadManagement
+          .dispatch({
+            type: "thread.archive",
+            commandId: stableCommandId({
+              scope: callerScope,
+              requestKey: key,
+              operation: "retire-specialist-archive",
+            }),
+            threadId: existing.id,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to archive specialist ${existing.id}: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        return {
+          threadId: existing.id,
+          link,
+          title: existing.title,
+          specialist,
+          status: "retired",
+        } satisfies OrchestratorMcpRetireSpecialistResult;
+      },
+    ),
     listThreads: Effect.fn("OrchestratorMcpService.listThreads")(function* (scope, input) {
       const { parent } = yield* loadCaller(scope, []);
       const projectId = input.allProjects
@@ -2991,6 +3455,10 @@ const make = Effect.gen(function* () {
         .filter(
           (thread) =>
             titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
+        )
+        .filter(
+          (thread) =>
+            input.specialistKey === undefined || thread.specialist?.key === input.specialistKey,
         );
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
