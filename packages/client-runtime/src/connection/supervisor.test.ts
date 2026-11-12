@@ -490,6 +490,58 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("keeps backing off an unreachable host across repeated returns to the app", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: () => Effect.fail(transient("ssh: Could not resolve hostname")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const climbFromFirstRung = Effect.gen(function* () {
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === 1,
+        );
+        yield* TestClock.adjust("2 seconds");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === 2,
+        );
+        yield* TestClock.adjust("4 seconds");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === 3,
+        );
+      });
+
+      yield* climbFromFirstRung;
+      yield* harness.wake("application-active");
+      const afterFirstReturn = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt !== 3,
+      );
+      // One reset per return is acceptable; the second return must not reset again.
+      if (afterFirstReturn.attempt === 1) {
+        yield* climbFromFirstRung;
+      }
+      const beforeSecondReturn = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff",
+      );
+
+      // Seconds later, the user focuses the window again.
+      yield* harness.wake("application-active");
+      const afterSecondReturn = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt !== beforeSecondReturn.attempt,
+      );
+
+      expect(afterSecondReturn.attempt).toBeGreaterThan(beforeSecondReturn.attempt);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps blocked failures idle until an external signal requests another attempt", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
