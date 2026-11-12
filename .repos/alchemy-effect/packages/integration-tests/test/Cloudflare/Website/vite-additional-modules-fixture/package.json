@@ -1,0 +1,10 @@
+{
+  "name": "alchemy-vite-additional-modules-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#html": "./src/modules/html-example.html",
+    "#modules/html-example.html": "./src/modules/html-example.html"
+  }
+}

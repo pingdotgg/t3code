@@ -35,9 +35,7 @@ const base = (id: string): Omit<BaseRuntimeContext, "get" | "set"> => ({
  * Output referenced via `yield* output` into `captures`, keyed by the Output's
  * sanitized key, and returns deferred accessors.
  */
-export const makeCaptureContext = (
-  captures: Record<string, Output>,
-): BaseRuntimeContext => ({
+export const makeCaptureContext = (captures: Record<string, Output>): BaseRuntimeContext => ({
   ...base("capture"),
   set: (key, output) =>
     Effect.sync(() => {
@@ -50,18 +48,14 @@ export const makeCaptureContext = (
   // typed `Effect<Out, any, any>`) and satisfied by the resolve context, so
   // the accessor presents as `Effect<T | undefined>`.
   get: (<T>(key: string) =>
-    Effect.flatMap(RuntimeContext, (ctx) =>
-      ctx.get<T>(key),
-    )) as BaseRuntimeContext["get"],
+    Effect.flatMap(RuntimeContext, (ctx) => ctx.get<T>(key))) as BaseRuntimeContext["get"],
 });
 
 /**
  * Resolve context — provided around an Action body at apply time. `resolved`
  * maps each captured key to its value (already evaluated against the tracker).
  */
-export const makeResolveContext = (
-  resolved: Record<string, unknown>,
-): BaseRuntimeContext => ({
+export const makeResolveContext = (resolved: Record<string, unknown>): BaseRuntimeContext => ({
   ...base("resolve"),
   set: (key) => Effect.succeed(key),
   get: <T>(key: string) => Effect.succeed(resolved[key] as T | undefined),

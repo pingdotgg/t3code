@@ -1,17 +1,16 @@
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as run from "@distilled.cloud/gcp/run_v2";
 import * as secretmanager from "@distilled.cloud/gcp/secretmanager_v1";
 import * as sqladmin from "@distilled.cloud/gcp/sqladmin_v1";
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
-import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack, { providers } from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -24,19 +23,10 @@ const { getWhenReady } = Test;
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
 // Distilled routes the regional secret to its regional endpoint.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// The service is built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
+describe("gcp-cloud-sql-drizzle", () => {
   // Creating a Cloud SQL instance takes 5–10 minutes (and deleting one a
   // few more); everything else is bounded well below that.
   const stack = beforeAll(deploy(Stack), { timeout: 1_500_000 });
@@ -68,14 +58,12 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
         );
       expect(secret).toBe("gone");
 
-      const service = yield* run
-        .getProjectsLocationsServices({ name: outputs.serviceName })
-        .pipe(
-          Effect.map(() => "present" as const),
-          Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
-          Effect.orDie,
-          Effect.provide(GcpHttp),
-        );
+      const service = yield* run.getProjectsLocationsServices({ name: outputs.serviceName }).pipe(
+        Effect.map(() => "present" as const),
+        Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
+        Effect.orDie,
+        Effect.provide(GcpHttp),
+      );
       expect(service).toBe("gone");
     }),
     { timeout: 1_200_000 },
@@ -86,17 +74,11 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
     return url.replace(/\/+$/, "");
   };
 
-  const request = (
-    method: "GET" | "POST" | "PATCH" | "DELETE",
-    url: string,
-    body?: unknown,
-  ) =>
+  const request = (method: "GET" | "POST" | "PATCH" | "DELETE", url: string, body?: unknown) =>
     HttpClient.execute(
       body === undefined
         ? HttpClientRequest.make(method)(url)
-        : HttpClientRequest.make(method)(url).pipe(
-            HttpClientRequest.bodyJsonUnsafe(body),
-          ),
+        : HttpClientRequest.make(method)(url).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
     );
 
   /** Query the database directly through the Cloud SQL Data API. */
@@ -129,9 +111,7 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
             Object.fromEntries(
               columns.map((name, index) => [
                 name,
-                row.values?.[index]?.nullValue
-                  ? null
-                  : row.values?.[index]?.value,
+                row.values?.[index]?.nullValue ? null : row.values?.[index]?.value,
               ]),
             ),
           );
@@ -144,21 +124,14 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
     "applies the drizzle migration at deploy time",
     Effect.gen(function* () {
       const outputs = yield* stack;
-      const applied = yield* executeSql(
-        outputs,
-        "SELECT name FROM __alchemy_migrations",
-      );
+      const applied = yield* executeSql(outputs, "SELECT name FROM __alchemy_migrations");
       expect(applied).toHaveLength(1);
       expect(String(applied[0]?.name)).toMatch(/^\d{14}_/);
       const columns = yield* executeSql(
         outputs,
         "SELECT column_name FROM information_schema.columns WHERE table_name = 'todos' ORDER BY column_name",
       );
-      expect(columns.map((row) => row.column_name)).toEqual([
-        "done",
-        "id",
-        "title",
-      ]);
+      expect(columns.map((row) => row.column_name)).toEqual(["done", "id", "title"]);
     }),
     { timeout: 120_000 },
   );
@@ -188,18 +161,14 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
         title: "Ship the Cloud SQL guide",
       });
       expect(created.status).toBe(201);
-      expect(yield* created.json).toEqual([
-        { id, title: "Ship the Cloud SQL guide", done: false },
-      ]);
+      expect(yield* created.json).toEqual([{ id, title: "Ship the Cloud SQL guide", done: false }]);
 
       // The row is really in Cloud SQL.
       const rows = yield* executeSql(
         outputs,
         `SELECT id, title, done FROM todos WHERE id = '${id}'`,
       );
-      expect(rows).toEqual([
-        { id, title: "Ship the Cloud SQL guide", done: "false" },
-      ]);
+      expect(rows).toEqual([{ id, title: "Ship the Cloud SQL guide", done: "false" }]);
 
       const updated = yield* request("PATCH", `${baseUrl}/todos/${id}`, {
         done: true,
@@ -213,9 +182,7 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
 
       const listed = yield* request("GET", `${baseUrl}/todos`);
       expect(listed.status).toBe(200);
-      expect(yield* listed.json).toEqual([
-        { id, title: "Ship the Cloud SQL guide", done: true },
-      ]);
+      expect(yield* listed.json).toEqual([{ id, title: "Ship the Cloud SQL guide", done: true }]);
 
       const invalid = yield* request("POST", `${baseUrl}/todos`, {
         id: "not-a-uuid",
@@ -227,9 +194,7 @@ describe.skipIf(!dockerAvailable)("gcp-cloud-sql-drizzle", () => {
       expect(deleted.status).toBe(204);
       const gone = yield* request("GET", `${baseUrl}/todos/${id}`);
       expect(gone.status).toBe(404);
-      expect(
-        yield* executeSql(outputs, `SELECT id FROM todos WHERE id = '${id}'`),
-      ).toEqual([]);
+      expect(yield* executeSql(outputs, `SELECT id FROM todos WHERE id = '${id}'`)).toEqual([]);
     }),
     { timeout: 600_000 },
   );
