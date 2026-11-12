@@ -5840,6 +5840,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             : [
                 "rolled back",
                 "cancelled queued turn",
+                "held queued turn",
                 "replaced attempt",
                 "stopped",
                 "stopped",
@@ -5870,9 +5871,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                 ? "rolled_back"
                 : kind === "cancelled queued turn"
                   ? "cancelled"
-                  : kind === "short" && chance(0.5)
-                    ? "interrupted"
-                    : "completed";
+                  : kind === "held queued turn"
+                    ? "queued"
+                    : kind === "short" && chance(0.5)
+                      ? "interrupted"
+                      : "completed";
           runs.push({
             id: runId,
             threadId,
@@ -5951,7 +5954,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               ? run % 10 !== 0
               : kind !== "late wake" && (agentDriven ? run > 1 : chance(0.2));
           if (wakes) notification();
-          else userMessage(kind === "cancelled queued turn" ? "queued_turn" : "turn_start");
+          else
+            userMessage(
+              kind === "cancelled queued turn" || kind === "held queued turn"
+                ? "queued_turn"
+                : "turn_start",
+            );
           // A stopped run never folds, so it is long enough for page ends to fall inside it.
           const work =
             kind === "late wake"

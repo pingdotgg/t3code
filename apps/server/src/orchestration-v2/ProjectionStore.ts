@@ -6603,13 +6603,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         })),
       });
       // Only these runs can hide rows: every row of a rolled-back run, the queued turn of a
-      // cancelled run, and the stop result of a replaced attempt. So the hidden rows are found
-      // without reading the thread.
+      // queued or cancelled run, and the stop result of a replaced attempt. So the hidden rows
+      // are found without reading the thread.
       const stoppedRuns = new Set(stopRequests.map((row) => row.run_id));
-      const runsWithStatus = (status: "rolled_back" | "cancelled") =>
-        records.runs.flatMap((run) => (run.status === status ? [String(run.id)] : []));
+      const runsWithStatus = (...statuses: ReadonlyArray<OrchestrationV2Run["status"]>) =>
+        records.runs.flatMap((run) => (statuses.includes(run.status) ? [String(run.id)] : []));
       const rolledBack = runsWithStatus("rolled_back");
-      const cancelled = runsWithStatus("cancelled");
+      const heldInput = runsWithStatus("queued", "cancelled");
       const steered = [...new Set(superseded.map((attempt) => String(attempt.runId)))].filter(
         (runId) => !stoppedRuns.has(runId) && !rolledBack.includes(runId),
       );
@@ -6634,8 +6634,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
                 ON item.thread_id = ${threadId} AND item.run_id = wanted.value`,
         // The conversation index holds the type and run of these rows, so only the matches are
-        // fetched. Through the run index, every row of each cancelled run would be.
-        cancelled.length + steered.length === 0
+        // fetched. Through the run index, every row of each such run would be.
+        heldInput.length + steered.length === 0
           ? Effect.succeed([])
           : sql<HiddenCandidate>`
               SELECT ${candidateColumns}
@@ -6644,7 +6644,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE item.thread_id = ${threadId}
                 AND item.type NOT IN ${CONVERSATION_INDEX_EXCLUDED_TYPES}
                 AND ((item.type = 'user_message'
-                    AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(cancelled)})))
+                    AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(heldInput)})))
                   OR (item.type = 'run_interrupt_result'
                     AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(steered)}))))`,
       ]);
