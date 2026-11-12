@@ -3770,6 +3770,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           window.projection.visibleTurnItems.find((row) => row.item.deferredWork)?.item.ordinal,
           3,
         );
+        const pageRead = traceSqlStatements();
         const page = yield* historyPage(
           threadId,
           encodeThreadHistoryCursor({
@@ -3781,8 +3782,29 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           undefined,
           false,
           "deferred",
-        );
+        ).pipe(Effect.withTracer(pageRead.tracer));
         assert.isUndefined(page.items.find((row) => row.item.ordinal === 2)?.item.deferredWork);
+        // Tool payloads hold megabytes, so a page looks for inline output only in its own runs
+        // and indexes the thread without fetching a row or node per item.
+        const payloadScans = pageRead.statements.filter((statement) =>
+          statement.includes("LIKE '%htmlRender%'"),
+        );
+        assert.lengthOf(payloadScans, 1);
+        assert.include(payloadScans[0], "item.run_id = json_extract(wanted.value, '$.id')");
+        const indexRead = pageRead.statements.find((statement) =>
+          statement.includes("ORDER BY item.ordinal ASC, item.turn_item_id ASC"),
+        );
+        assert.isDefined(indexRead);
+        const indexPlan = yield* sql.unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${indexRead}`,
+        );
+        assert.includeMembers(
+          indexPlan.map((row) => row.detail),
+          [
+            "SEARCH item USING INDEX orchestration_v2_projection_turn_items_timeline_idx (thread_id=?)",
+            "SEARCH node USING COVERING INDEX orchestration_v2_projection_nodes_root_idx (node_id=?) LEFT-JOIN",
+          ],
+        );
       }
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
         payload_json = json_set(payload_json, '$.type', 'command_execution') WHERE thread_id = ${threadId} AND ordinal = 2`;

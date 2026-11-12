@@ -103,6 +103,7 @@ import {
   THREAD_HISTORY_MAX_RAW_TURNS,
   missingInterruptRequests,
   DEFERRED_WORK_ITEM_TYPES,
+  decodeThreadHistoryCursor,
   deferWorkHistoryRows,
   selectDeferredWorkPage,
   encodeThreadHistoryCursor,
@@ -6194,12 +6195,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const readTimelineIndex: (
       threadId: ThreadId,
       seen: ReadonlySet<ThreadId>,
-      includePersistentOutput?: boolean,
+      includeAttempts?: boolean,
     ) => Effect.Effect<TimelineIndex, ProjectionStoreV2Error> = Effect.fn(
       "ProjectionStore.readTimelineIndex",
     )(
-      function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>, includePersistentOutput = false) {
+      function* (threadId: ThreadId, seen: ReadonlySet<ThreadId>, includeAttempts = false) {
         const records = yield* getThreadRecords(threadId, ["runs", "attempts"]);
+        // SQLite does not pick the covering indexes of migration 086 by itself, and without them
+        // this read fetches every row of the thread. It reads a payload only for a message.
         const rows = yield* sql<{
           turn_item_id: string;
           run_id: string | null;
@@ -6211,22 +6214,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           message_id: string | null;
           status: OrchestrationV2TurnItem["status"];
           ordinal: number;
-          persistent_output: number;
           attempt_id: string | null;
           attempt_status: string | null;
         }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
-          ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
-          ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
-          ${
-            includePersistentOutput ? sql`CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END` : sql`0`
-          } AS persistent_output,
+          ${includeAttempts ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
+          ${includeAttempts ? sql`attempt.status` : sql`NULL`} AS attempt_status,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
           CASE WHEN item.type IN ('user_message', 'assistant_message') THEN json_extract(item.payload_json, '$.messageId') END AS message_id
         FROM orchestration_v2_projection_turn_items AS item
+          INDEXED BY orchestration_v2_projection_turn_items_timeline_idx
         ${
-          includePersistentOutput
-            ? sql`LEFT JOIN orchestration_v2_projection_nodes AS node ON node.node_id = item.node_id
+          includeAttempts
+            ? sql`LEFT JOIN orchestration_v2_projection_nodes AS node
+          INDEXED BY orchestration_v2_projection_nodes_root_idx ON node.node_id = item.node_id
         LEFT JOIN orchestration_v2_projection_run_attempts AS attempt ON attempt.attempt_id = (
           SELECT attempt_id FROM orchestration_v2_projection_run_attempts
           WHERE run_id = item.run_id AND root_node_id = COALESCE(node.root_node_id, item.node_id)
@@ -6249,7 +6250,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           runStatus: row.run_id === null ? undefined : runStatuses.get(row.run_id),
           attemptId: row.attempt_id,
           attemptStatus: row.attempt_status,
-          persistentOutput: row.persistent_output === 1,
           ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
           ...(row.created_by === null ? {} : { createdBy: row.created_by }),
           ...(row.message_id === null ? {} : { messageId: MessageId.make(row.message_id) }),
@@ -6272,7 +6272,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const source = yield* readTimelineIndex(
           fork.threadId,
           new Set([...seen, threadId]),
-          includePersistentOutput,
+          includeAttempts,
         );
         const sourceRun = source.records.runs.find((run) => run.id === fork.runId);
         let inherited: Array<TimelineIndexRow> = [];
@@ -6343,14 +6343,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
       );
     const readSnapshotTimelineIndex = Effect.fn("ProjectionStore.readSnapshotTimelineIndex")(
-      function* (threadId: ThreadId, includePersistentOutput: boolean) {
-        const key = `${includePersistentOutput ? "work" : "plain"}:${threadId}`;
+      function* (threadId: ThreadId, includeAttempts: boolean) {
+        const key = `${includeAttempts ? "work" : "plain"}:${threadId}`;
         const cached = timelineIndexes.get(key);
         const index =
           cached !== undefined &&
           (yield* latestThreadEventSequence(threadId, cached.index.threadIds)) === cached.sequence
             ? cached.index
-            : yield* readTimelineIndex(threadId, new Set(), includePersistentOutput);
+            : yield* readTimelineIndex(threadId, new Set(), includeAttempts);
         const sequence =
           index === cached?.index
             ? cached.sequence
@@ -6392,32 +6392,84 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               position,
               canonicalPosition: position,
             }));
-            const historyItems = workMode === "deferred" ? deferWorkHistoryRows(indexed) : indexed;
-            const selection = yield* Effect.try({
+            const { olderPolicy, cursorPosition } = yield* Effect.try({
               try: () => {
-                const policy = olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId });
-                const page =
+                const { st, si } = decodeThreadHistoryCursor(cursor);
+                return {
+                  olderPolicy: olderHistoryPagePolicy({ items: indexed, cursor, throughEntryId }),
+                  cursorPosition: indexed.findLastIndex(
+                    (row) => row.sourceThreadId === st && row.sourceItemId === si,
+                  ),
+                };
+              },
+              catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
+            });
+            const selectPage = (rows: typeof indexed) =>
+              Effect.try({
+                try: () =>
                   workMode === "work"
                     ? selectDeferredWorkPage({
-                        items: indexed,
+                        items: rows,
                         cursor,
                         throughEntryId,
                         snapshotSequence,
                         rowEncodedBytes: () => 0,
                       })
                     : selectHistoryPageFromCursor({
-                        items: historyItems,
+                        items: workMode === "deferred" ? deferWorkHistoryRows(rows) : rows,
                         cursor,
                         snapshotSequence,
                         rowEncodedBytes: () => 0,
-                        policy,
-                      });
-                return { policy, page };
-              },
-              catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
-            });
-            const { page } = selection;
-            const policy = workMode === "work" ? THREAD_HISTORY_PAGE_POLICY : selection.policy;
+                        policy: olderPolicy,
+                      }),
+                catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
+              });
+            let page = yield* selectPage(indexed);
+            // Inline output is found by scanning payloads, which costs a whole long thread several
+            // seconds. Scan only the runs the page spans, then select again with what they hold.
+            const scannedRuns = new Set<string>();
+            const persistentOutputs = new Set<string>();
+            while (workMode !== undefined && page.items.length > 0) {
+              const runs = new Map(
+                indexed
+                  .slice(
+                    page.items[0]!.canonicalPosition,
+                    Math.max(page.items.at(-1)!.canonicalPosition, cursorPosition) + 1,
+                  )
+                  .flatMap(({ sourceThreadId, item }) =>
+                    item.runId !== null &&
+                    (item.runStatus === "completed" || item.attemptStatus === "superseded") &&
+                    !scannedRuns.has(`${sourceThreadId}:${item.runId}`)
+                      ? [
+                          [
+                            `${sourceThreadId}:${item.runId}`,
+                            { threadId: sourceThreadId, id: item.runId },
+                          ] as const,
+                        ]
+                      : [],
+                  ),
+              );
+              if (runs.size === 0) break;
+              for (const run of runs.keys()) scannedRuns.add(run);
+              const found = yield* sql<{ thread_id: string; turn_item_id: string }>`
+          SELECT item.thread_id, item.turn_item_id
+          FROM json_each(${yield* encodeTimelineSources([...runs.values()])}) AS wanted
+          CROSS JOIN orchestration_v2_projection_turn_items AS item
+            ON item.thread_id = json_extract(wanted.value, '$.threadId')
+            AND item.run_id = json_extract(wanted.value, '$.id')
+          WHERE item.status = 'completed' AND ${inlineWorkOutput}`;
+              if (found.length === 0) break;
+              for (const row of found)
+                persistentOutputs.add(`${row.thread_id}:${row.turn_item_id}`);
+              page = yield* selectPage(
+                indexed.map((row) =>
+                  persistentOutputs.has(`${row.sourceThreadId}:${row.sourceItemId}`)
+                    ? { ...row, item: { ...row.item, persistentOutput: true } }
+                    : row,
+                ),
+              );
+            }
+            const policy = workMode === "work" ? THREAD_HISTORY_PAGE_POLICY : olderPolicy;
             const end = (page.items.at(-1)?.canonicalPosition ?? -1) + 1;
             const hasUserTurns = index.visible
               .slice(0, end)
