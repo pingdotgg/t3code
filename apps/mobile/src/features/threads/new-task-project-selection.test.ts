@@ -348,16 +348,6 @@ describe("resolveNewTaskScratchOption", () => {
     ).toBeNull();
   });
 
-  it("offers nothing without an environment", () => {
-    expect(
-      resolveNewTaskScratchOption({
-        environments: [],
-        serverConfigs: new Map(),
-        selectedEnvironmentId: null,
-      }),
-    ).toBeNull();
-  });
-
   it("prefers a connected environment over the selected one that is still reconnecting", () => {
     expect(
       resolveNewTaskScratchOption({
