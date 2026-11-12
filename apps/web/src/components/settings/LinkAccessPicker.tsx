@@ -40,7 +40,7 @@ export function LinkAccessPicker({
           {AuthMcpClientAccess.literals.map((option) => {
             const { label, description, icon: Icon } = accessConfig[option];
             return (
-              <SelectItem key={option} value={option} hideIndicator>
+              <SelectItem key={option} value={option}>
                 <span className="grid min-w-0 gap-0.5 py-0.5">
                   <span className="inline-flex items-center gap-1.5 text-label text-foreground">
                     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
