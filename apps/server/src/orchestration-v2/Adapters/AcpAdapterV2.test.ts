@@ -791,7 +791,7 @@ const makeAdvertisedCompactionHarness = Effect.fnUntraced(function* (
     flavor: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
-      compactCommand: "compact",
+      compactViaAdvertisedCommand: true,
       onAvailableCommandsUpdate: () => Deferred.succeed(commandsPublished, undefined),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
@@ -2191,31 +2191,17 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("refuses compaction when the agent does not advertise the compact command", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeAdvertisedCompactionHarness({
-        T3_ACP_AVAILABLE_COMMANDS: "plan",
-      });
-      const compacted = yield* harness.compact();
-      const error = Exit.isFailure(compacted) ? Cause.squash(compacted.cause) : undefined;
-      assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
-      assert.include(
-        (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
-        "does not advertise a /compact command",
-      );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
-
   it.live.each([
     { active: "plan", target: "compact", allowed: true },
     { active: "compact", target: "plan", allowed: false },
+    { active: "compact", target: undefined, allowed: false },
   ])(
     "validates the target session's compact command ($active -> $target)",
     ({ active, target, allowed }) =>
       Effect.gen(function* () {
         const harness = yield* makeAdvertisedCompactionHarness({
           T3_ACP_AVAILABLE_COMMANDS: active,
-          T3_ACP_LOADED_COMMANDS: target,
+          ...(target === undefined ? {} : { T3_ACP_LOADED_COMMANDS: target }),
         });
         const result = yield* harness.compact(true);
         assert.equal(Exit.isSuccess(result), allowed);
@@ -2228,6 +2214,10 @@ describe("AcpAdapterV2", () => {
         } else {
           const error = Exit.isFailure(result) ? Cause.squash(result.cause) : undefined;
           assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+          assert.instanceOf(
+            (error as ProviderAdapter.ProviderAdapterTurnStartError).cause,
+            ProviderAdapter.ProviderCompactionUnsupportedError,
+          );
         }
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

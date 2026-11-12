@@ -478,12 +478,8 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
   readonly supportsCompaction?: boolean;
-  /**
-   * Name of the slash command an agent runs natively to compact its own context
-   * (`compact` for agents that implement `/compact` as a prompt command).
-   * Turns `/compact` into an agent turn; rejected unless the agent advertises it.
-   */
-  readonly compactCommand?: string;
+  /** Sends `/compact` as a prompt, only to sessions whose advertised commands include `compact`. */
+  readonly compactViaAdvertisedCommand?: boolean;
   /**
    * Native steering: `send` queues a message into the running turn and returns the
    * agent's id for it, which `injectedSteerId` reads from the update that delivers it.
@@ -2011,16 +2007,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
-        // Commands each agent session advertised; `/compact` is only sent to agents that list it.
         const advertisedCommandNames = yield* Ref.make(new Map<string, ReadonlySet<string>>());
-        // Agents that run `/compact` themselves advertise it as a command, so they take part in
-        // T3 compaction even though ACP has no dedicated compact method.
-        const compactCommand = flavor.compactCommand?.trim().replace(/^\/+/u, "").toLowerCase();
-        const compactPromptText = `/${compactCommand ?? "compact"}`;
         const compactsContext =
           flavor.supportsCompaction === true ||
           flavor.compactSession !== undefined ||
-          compactCommand !== undefined;
+          flavor.compactViaAdvertisedCommand === true;
         const runtimeRestartRequired = yield* Ref.make(false);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
@@ -7761,8 +7752,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const now = yield* DateTime.now;
           if (
             compactsContext &&
-            context.input.message.text.trim().toLowerCase() === compactPromptText &&
-            context.input.message.attachments.length === 0 &&
+            isCompactionMessage(context.input.message) &&
             settledStatus === "completed" &&
             !context.tools.keys().some((id) => id.startsWith("acp-compaction:"))
           ) {
@@ -8226,17 +8216,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
               }
             }
+            // Checked after activation: a loaded session advertises its own commands.
             if (
-              compactCommand !== undefined &&
-              turnInput.message.text.trim().toLowerCase() === compactPromptText &&
-              turnInput.message.attachments.length === 0
+              flavor.compactViaAdvertisedCommand === true &&
+              isCompactionMessage(turnInput.message) &&
+              (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId)?.has("compact") !==
+                true
             ) {
-              const advertised = (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId);
-              if (advertised !== undefined && !advertised.has(compactCommand)) {
-                return yield* Effect.fail(
-                  `This agent does not advertise a /${compactCommand} command.`,
-                );
-              }
+              return yield* new ProviderAdapter.ProviderCompactionUnsupportedError({
+                driver,
+                providerThreadId: turnInput.providerThread.id,
+              });
             }
             yield* validateModelSelection(turnInput.modelSelection);
             yield* Ref.set(lastTurnRoute, {
@@ -8911,7 +8901,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ) {
                   return yield* startTurn({
                     ...turnInput,
-                    message: { ...turnInput.message, text: compactPromptText },
+                    message: { ...turnInput.message, text: "/compact" },
                   });
                 }),
               }
