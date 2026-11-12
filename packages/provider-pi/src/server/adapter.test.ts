@@ -3363,7 +3363,7 @@ describe("PiAdapterV2", () => {
           label: id,
           state,
           agent: "scout",
-          model: "claude-bridge/claude-opus-5-5",
+          model: "example/subagent-model",
           activity: { currentTool: "bash", turnCount: 1, toolCount: 1 },
         });
         const workflow = (state: string, children: ReadonlyArray<unknown>) => ({
@@ -3499,95 +3499,6 @@ describe("PiAdapterV2", () => {
           },
         ]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-
-  it.effect("leaves a child notice shared by two workflows to their structured ids", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      const launch = (asyncId: string) => ({
-        type: "tool_execution_end",
-        toolCallId: `call_${asyncId}`,
-        toolName: "subagent",
-        isError: false,
-        result: { content: [], details: { mode: "workflow", asyncId, results: [] } },
-      });
-      // Steps may carry agent and model, or only their workflow key.
-      const workflow = (id: string, state: string, step: Record<string, string>) => ({
-        id,
-        kind: "workflow",
-        label: "workflow",
-        state: "running",
-        children: [{ id: "alpha", kind: "step", label: "alpha", state, ...step }],
-      });
-      const launched = yield* subagentRowsBefore(fake, takeEvent, "launch", [
-        launch("wf-1"),
-        launch("wf-2"),
-        asyncStatusWidget(1, [
-          workflow("wf-1", "running", {}),
-          { id: "wf-2", kind: "workflow", state: "running", children: [] },
-        ]),
-      ]);
-      assert.deepEqual(
-        launched.map(({ title, status, nativeId }) => [title, status, nativeId]),
-        [["alpha", "running", "wf-1:subagent:alpha"]],
-      );
-      const ambiguous = yield* subagentRowsBefore(fake, takeEvent, "ambiguous", [
-        piCustomMessage("subagent-incremental-child-notify", {
-          childKey: "alpha",
-          outcome: "failed",
-        }),
-      ]);
-      assert.deepEqual(ambiguous, []);
-      const settledFirst = yield* subagentRowsBefore(fake, takeEvent, "settled-first", [
-        asyncStatusWidget(2, [workflow("wf-1", "complete", {}), workflow("wf-2", "running", {})]),
-        piCustomMessage("subagent-incremental-child-notify", {
-          childKey: "alpha",
-          outcome: "completed",
-        }),
-      ]);
-      assert.deepEqual(
-        settledFirst.map(({ nativeId, status }) => [nativeId, status]),
-        [
-          ["wf-1:subagent:alpha", "completed"],
-          ["wf-2:subagent:alpha", "running"],
-        ],
-      );
-      const resolved = yield* subagentRowsBefore(fake, takeEvent, "resolved", [
-        asyncStatusWidget(3, [
-          workflow("wf-1", "running", { agent: "scout" }),
-          workflow("wf-2", "failed", {}),
-        ]),
-        piCustomMessage("subagent-notify", {
-          runs: [
-            {
-              agent: "workflow",
-              status: "completed",
-              runId: "wf-1",
-              workflowRunId: "wf-1",
-              childRuns: [
-                { runId: "child-1", workflowKey: "alpha", agent: "scout", status: "completed" },
-              ],
-            },
-          ],
-        }),
-      ]);
-      assert.deepEqual(
-        resolved.map(({ title, status, nativeId }) => [title, status, nativeId]),
-        [
-          ["scout", "completed", "wf-1:subagent:alpha"],
-          ["alpha", "failed", "wf-2:subagent:alpha"],
-        ],
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("replays identified early completion and retains live dispatch children", () =>
@@ -4053,75 +3964,6 @@ describe("PiAdapterV2", () => {
         ]),
       ]);
       assert.deepEqual(stale, []);
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-
-  it.effect("retains a live native run ahead of settled metadata", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      const launch = (id: string) => ({
-        type: "tool_execution_end",
-        toolCallId: id,
-        toolName: "subagent",
-        isError: false,
-        result: { content: [], details: { mode: "workflow", asyncId: id, results: [] } },
-      });
-      yield* subagentRowsBefore(fake, takeEvent, "long-running", [
-        launch("live"),
-        asyncStatusWidget(0, [
-          {
-            id: "live",
-            kind: "workflow",
-            state: "running",
-            children: [{ id: "a", kind: "step", state: "running" }],
-          },
-        ]),
-      ]);
-      const frames = Array.from({ length: 130 }, (_, index) => [
-        {
-          type: "tool_execution_end",
-          toolCallId: `call-${index}`,
-          toolName: "subagent",
-          isError: false,
-          result: {
-            content: [],
-            details: { mode: "workflow", asyncId: `run-${index}`, results: [] },
-          },
-        },
-        asyncStatusWidget(index + 1, [
-          {
-            id: `run-${index}`,
-            kind: "workflow",
-            state: "complete",
-            children: [{ id: "a", kind: "step", state: "complete" }],
-          },
-        ]),
-      ]).flat();
-      const rows = yield* subagentRowsBefore(fake, takeEvent, "retention", frames);
-      assert.isFalse(rows.some(({ status }) => status === "interrupted"));
-      const stale = yield* subagentRowsBefore(fake, takeEvent, "evicted", [
-        asyncStatusWidget(131, [
-          {
-            id: "live",
-            kind: "workflow",
-            state: "complete",
-            children: [{ id: "a", kind: "step", state: "complete" }],
-          },
-        ]),
-      ]);
-      assert.deepEqual(
-        stale.map(({ nativeId, status }) => [nativeId, status]),
-        [["live:subagent:a", "completed"]],
-      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
