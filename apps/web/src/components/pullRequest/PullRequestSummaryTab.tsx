@@ -1,3 +1,4 @@
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import { pullRequestCommentPreview } from "./pullRequestMarkdown.logic";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
@@ -308,6 +309,7 @@ function CollapsedComment({
             {open ? resolveButton : null}
             {onAddToChat ? <AddToChatButton onClick={onAddToChat} /> : null}
             {reactionBar}
+            <PullRequestCommentActions body={comment.body} url={comment.url} />
           </div>
           <CommentLocation comment={comment} thread={thread} />
           {!open && body ? (
@@ -767,6 +769,7 @@ export function PullRequestSummaryTab({
             <AddToChatButton onClick={() => onAddToChat(chat)} />
           ) : null}
           {reactionBarFor(comment)}
+          <PullRequestCommentActions body={comment.body} url={comment.url} />
         </div>
         {reply ? null : (
           <div className="px-3">

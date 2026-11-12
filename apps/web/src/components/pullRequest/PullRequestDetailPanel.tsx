@@ -1827,8 +1827,10 @@ export function PullRequestDetailPanel({
                   detail={detail}
                   onRefresh={refreshDetail}
                   onOpenComment={openCommentInCode}
-                  onAddThreadCommentToComposer={addThreadCommentToComposer}
-                  onAddPendingToComposer={addPendingToComposer}
+                  onAddThreadCommentToComposer={
+                    attachTarget === null ? undefined : addThreadCommentToComposer
+                  }
+                  onAddPendingToComposer={attachTarget === null ? undefined : addPendingToComposer}
                 />
               </PullRequestMarkdownContext>
             </div>
@@ -2019,8 +2021,12 @@ export function PullRequestDetailPanel({
                     revealRequest={codeRevealRequest}
                     revealUrl={tab === "code" ? revealUrl : undefined}
                     onRevealSettled={settleReveal}
-                    onAddThreadCommentToComposer={addThreadCommentToComposer}
-                    onAddPendingToComposer={addPendingToComposer}
+                    onAddThreadCommentToComposer={
+                      attachTarget === null ? undefined : addThreadCommentToComposer
+                    }
+                    onAddPendingToComposer={
+                      attachTarget === null ? undefined : addPendingToComposer
+                    }
                   />
                 </Suspense>
               </div>
