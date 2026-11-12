@@ -281,7 +281,9 @@ export function selectDeferredWorkPage<Row extends HistoryRow>(input: {
 }): SelectTimelinePageResult<Row> {
   const cursor = decodeThreadHistoryCursor(input.cursor);
   const end = findCursorEndIndex(input.items, cursor);
-  const start = input.items.findIndex((row) => row.sourceItemId === input.throughEntryId);
+  const start = input.items.findIndex(
+    (row) => String(row.sourceThreadId) === cursor.st && row.sourceItemId === input.throughEntryId,
+  );
   if (start < 0 || start >= end) throw new InvalidThreadHistoryCursorError();
   const anchor = input.items[start]!;
   const items = input.items

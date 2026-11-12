@@ -180,6 +180,32 @@ describe("threadHistoryMerge", () => {
       sourceItemId: "item-1",
       item: inherited.item,
     });
+
+    const plainLocal = { ...local, item: { ...row(1).item } };
+    const parentRow = (index: number) => ({
+      ...row(index),
+      visibility: "inherited" as const,
+      sourceThreadId: "fork-source" as never,
+    });
+    const inheritedOwned = mergeOlderHistoryIntoProjection(
+      {
+        ...projection,
+        turnItems: [plainLocal.item],
+        visibleTurnItems: [
+          { ...inherited, item: { ...inherited.item, deferredWork: local.item.deferredWork } },
+          plainLocal,
+        ],
+      },
+      [parentRow(2)],
+      { anchorId: sharedId as never, nextCursor: null },
+    );
+    expect(
+      inheritedOwned.visibleTurnItems.map((entry) => [entry.sourceThreadId, entry.sourceItemId]),
+    ).toEqual([
+      ["fork-source", "item-1"],
+      ["fork-source", "item-2"],
+      [v2ThreadId, "item-1"],
+    ]);
   });
 
   it("orders equal-ordinal deferred rows by item id", () => {

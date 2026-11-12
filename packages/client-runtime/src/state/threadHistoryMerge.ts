@@ -58,18 +58,19 @@ function renumberVisible(
   return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
 }
 
-// Inherited and local rows can share a sourceItemId; the local row owns the deferred work.
+// Inherited and local rows can share a sourceItemId; prefer the local row that owns deferred work.
 export function findDeferredWorkAnchorIndex(
   projection: OrchestrationV2ThreadProjection,
   anchorId: string,
 ): number {
   const rows = projection.visibleTurnItems;
+  const owns = (row: OrchestrationV2ProjectedTurnItem) =>
+    row.sourceItemId === anchorId && row.item.deferredWork !== undefined;
   const local = rows.findIndex(
     (row) =>
-      row.sourceItemId === anchorId &&
-      (row.visibility === "local" || row.sourceThreadId === projection.thread.id),
+      owns(row) && (row.visibility === "local" || row.sourceThreadId === projection.thread.id),
   );
-  return local !== -1 ? local : rows.findIndex((row) => row.sourceItemId === anchorId);
+  return local !== -1 ? local : rows.findIndex(owns);
 }
 
 export function mergeOlderHistoryIntoProjection(
