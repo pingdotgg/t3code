@@ -50,6 +50,20 @@ bundle ID and signing environment. These options do not provision a deployment, 
 or grant access to another relay's accounts. Register the app again after switching relays. Never put
 the environment credential or APNs private key in the mobile build configuration.
 
+### Provision a background relay link
+
+Obtain the environment credential through your custom relay's authenticated linking flow:
+
+1. Sign in as the mobile app's Clerk user and request a challenge from the background relay's
+   `POST /v1/client/environment-link-challenges`, enabling notifications and Live Activities and
+   setting `managedTunnelsEnabled` to `false`.
+2. Send that challenge, the background relay issuer, and the environment's endpoint/origin to the
+   environment's authenticated `POST /api/connect/link-proof` endpoint to obtain its signed proof.
+3. Send the proof and the same capability flags to the background relay's
+   `POST /v1/client/environment-links`. The response's `environmentCredential` is the value to store
+   in the publishing server's secret configuration. Linking registers that environment's signing
+   key for the signed-in account; the primary relay's credential is not a substitute.
+
 ## CLI OAuth application
 
 In Clerk's OAuth applications settings:
