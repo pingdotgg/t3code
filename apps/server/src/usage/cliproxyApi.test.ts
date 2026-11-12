@@ -373,6 +373,44 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  const claudeHub = () => {
+    const state = { usageStatus: 200 };
+    const test = fixture({
+      accounts: [{ ...accounts[0]!, provider: "claude" }],
+      upstream: () => ({
+        status: state.usageStatus,
+        body: { five_hour: { utilization: 10, resets_at: null } },
+      }),
+    });
+    const usageProbes = () =>
+      test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")).length;
+    return { state, api: test.api, usageProbes };
+  };
+
+  it.effect("reuses a Claude reading taken seconds ago instead of probing again", () =>
+    Effect.gen(function* () {
+      const hub = claudeHub();
+      const api = yield* hub.api;
+      yield* api.readAccounts(config);
+      yield* TestClock.adjust("5 seconds");
+      yield* api.readAccounts(config);
+      expect(hub.usageProbes()).toBe(1);
+    }),
+  );
+
+  it.effect("keeps the last Claude reading when a later probe answers 429", () =>
+    Effect.gen(function* () {
+      const hub = claudeHub();
+      const api = yield* hub.api;
+      yield* api.readAccounts(config);
+      hub.state.usageStatus = 429;
+      yield* TestClock.adjust("2 minutes");
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits.unavailable).toBeUndefined();
+      expect(result[0]?.usageLimits.windows[0]?.usedPercent).toBe(10);
+    }),
+  );
+
   it.effect.each([
     {
       name: "spend budget",
