@@ -2053,6 +2053,37 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect.each(["application-active", "application-active-probe"] as const)(
+    "rechecks a backed-off route when the user returns to the app (%s)",
+    (reason) =>
+      Effect.gen(function* () {
+        const lanChecks = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          checkRoute: (route) =>
+            route.target._tag === "BearerConnectionTarget"
+              ? Ref.update(lanChecks, (count) => count + 1).pipe(Effect.as("silent" as const))
+              : Effect.succeed("unchecked"),
+          prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 1,
+        );
+        // Silent at 1, 3 and 7 minutes; the next periodic check is not due until minute 15.
+        for (let minute = 0; minute < 8; minute += 1) {
+          yield* TestClock.adjust("60 seconds");
+        }
+        const before = yield* Ref.get(lanChecks);
+
+        yield* harness.wake(reason);
+        yield* TestClock.adjust("5 seconds");
+        expect((yield* Ref.get(lanChecks)) - before).toBe(1);
+      }),
+  );
+
   it.effect("keeps checking a LAN route every minute when it answers but cannot be prepared", () =>
     Effect.gen(function* () {
       const lanPreflights = yield* Ref.make(0);
