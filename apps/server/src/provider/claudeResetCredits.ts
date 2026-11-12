@@ -284,10 +284,35 @@ export const claudeResetClaim = Effect.fn("claudeResetClaim")(function* (input: 
   };
 });
 
-/** Claude's answer to a claim, given its HTTP status and body text. */
+const ORGANIZATION_HEADER = "anthropic-organization-id";
+const ORGANIZATION_ID = /^[A-Za-z0-9-]{1,128}$/;
+
+/**
+ * The organization a Claude response names in its headers, matched by any case and as a string
+ * or an array of values: undefined when it names none, null when it names one unreadably.
+ */
+export function claudeOrganizationHeader(header: unknown): string | null | undefined {
+  if (typeof header !== "object" || header === null) return undefined;
+  const values = Object.entries(header)
+    .filter(([name]) => name.toLowerCase() === ORGANIZATION_HEADER)
+    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]));
+  if (values.length === 0) return undefined;
+  const [first] = values;
+  return typeof first === "string" &&
+    ORGANIZATION_ID.test(first) &&
+    values.every((value) => value === first)
+    ? first
+    : null;
+}
+
+/**
+ * Claude's answer to a claim, given its HTTP status and body text. An answer naming another
+ * organization than the claim's confirms nothing, so its request ID stays for a retry.
+ */
 export const claudeResetClaimOutcome = Effect.fn("claudeResetClaimOutcome")(function* (
   status: number,
   body: string,
+  receipt?: { readonly expected: string | undefined; readonly answeredFor: string | null | undefined },
 ) {
   if (status === 429) return yield* new ClaudeResetCreditError({ reason: "rateLimited" });
   if (status === 401 || status === 403) {
@@ -295,6 +320,9 @@ export const claudeResetClaimOutcome = Effect.fn("claudeResetClaimOutcome")(func
   }
   if (status < 200 || status >= 300) {
     return yield* new ClaudeResetCreditError({ reason: "requestFailed" });
+  }
+  if (receipt && receipt.answeredFor !== undefined && receipt.answeredFor !== receipt.expected) {
+    return yield* new ClaudeResetCreditError({ reason: "unconfirmed" });
   }
   const answer = yield* decodeClaimResponse(body).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "requestFailed", cause })),

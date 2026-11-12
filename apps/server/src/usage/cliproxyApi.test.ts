@@ -54,7 +54,7 @@ const decodeClaim = Schema.decodeUnknownSync(
   ),
 );
 
-type Upstream = { status: number; body: unknown };
+type Upstream = { status: number; body: unknown; header?: unknown };
 
 function fixture(
   options: {
@@ -120,7 +120,11 @@ function fixture(
       };
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+        Response.json({
+          status_code: upstream.status,
+          body: encodeJson(upstream.body),
+          ...("header" in upstream ? { header: upstream.header } : {}),
+        }),
       );
     }),
   );
@@ -384,7 +388,7 @@ describe("CLIProxyAPI built-in management API", () => {
   );
 
   it.effect(
-    "names every Claude account's verified organization, offering grants only under it, keeping windows",
+    "names each Claude account by the organization its usage answer names, offering grants only there",
     () =>
       Effect.gen(function* () {
         // Shaped like a hub answer of 12 Nov 2026: a weekly and a Fable grant, plus one not usable yet.
@@ -413,20 +417,27 @@ describe("CLIProxyAPI built-in management API", () => {
             { id: "blocked-grant", resets_left: 1, usable_now: false, blocking: ["seven_day"] },
           ],
         };
+        // As the hub relays Go's http.Header: canonical names and arrays of values.
+        const organizationHeaders: Record<string, unknown> = {
+          a: { "Anthropic-Organization-Id": ["org-a"], "Content-Type": ["application/json"] },
+          c: { "anthropic-organization-id": "org-c" },
+          d: { "Anthropic-Organization-Id": ["org-d"] },
+          e: { "Anthropic-Organization-Id": ["org-a", "org-e"] },
+        };
         const test = fixture({
-          accounts: ["a", "b", "c", "d"].map((auth_index) => ({
+          accounts: ["a", "b", "c", "d", "e"].map((auth_index) => ({
             id: `${auth_index}.json`,
             auth_index,
             provider: "claude",
             email: `${auth_index}@example.com`,
           })),
           upstream: (request) =>
+            // The hub swapped every login to org-b after the usage answers.
             request.url?.endsWith("/api/oauth/profile")
-              ? request.auth_index === "a" || request.auth_index === "d"
-                ? { status: 200, body: { organization: { uuid: `org-${request.auth_index}` } } }
-                : { status: 500, body: {} }
+              ? { status: 200, body: { organization: { uuid: "org-b" } } }
               : {
                   status: 200,
+                  header: organizationHeaders[request.auth_index],
                   body: {
                     seven_day: { utilization: 90, resets_at: null },
                     ...(request.auth_index === "d"
@@ -438,12 +449,12 @@ describe("CLIProxyAPI built-in management API", () => {
                   },
                 },
         });
-        const [first, unverified, malformed, withoutGrants] = yield* (yield* test.api).readAccounts(
-          config,
-        );
+        const [first, unnamed, malformed, withoutGrants, ambiguous] = yield* (yield* test.api)
+          .readAccounts(config);
         // Its organization is what joins an account to the same login elsewhere, grants or not.
         expect(withoutGrants?.workspaceId).toBe("org-d");
         expect(withoutGrants?.usageLimits.resetCredits).toBeUndefined();
+        expect(malformed?.workspaceId).toBe("org-c");
         expect(first?.workspaceId).toBe("org-a");
         expect(first?.usageLimits.resetCredits).toMatchObject({
           availableCount: 2,
@@ -459,11 +470,14 @@ describe("CLIProxyAPI built-in management API", () => {
           ["full-reset-2611", "Weekly reset", 1],
           ["launch-2610-fable", "Fable reset", 1],
         ]);
-        for (const account of [unverified, malformed]) {
+        for (const account of [unnamed, ambiguous]) {
           expect(account?.workspaceId).toBeUndefined();
+        }
+        for (const account of [unnamed, malformed, ambiguous]) {
           expect(account?.usageLimits.resetCredits).toBeUndefined();
           expect(account?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([90]);
         }
+        expect(test.requests.some((request) => request.body?.url?.includes("/profile"))).toBe(false);
         expect(test.requests[1]?.body?.url).toBe(
           "https://api.anthropic.com/api/oauth/usage?cedar_ember=1",
         );
@@ -580,6 +594,39 @@ describe("CLIProxyAPI built-in management API", () => {
         failure: { detail: expect.stringContaining("Claude login changed") },
       });
       expect(retry).toMatchObject({ _tag: "Success", success: { outcome: "reset" } });
+    }),
+  );
+
+  it.effect("never takes a Claude answer for another organization as the shown grant's reset", () =>
+    Effect.gen(function* () {
+      const answeredFor = ["org-b", "org-a"];
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? { status: 200, body: { organization: { uuid: "org-a" } } }
+            : {
+                status: 200,
+                header: { "Anthropic-Organization-Id": [answeredFor.shift()] },
+                body: { result: "reset" },
+              },
+      });
+      const api = yield* test.api;
+      const claim = api
+        .consume(config, "first.json", "full-reset-2611", "org-a")
+        .pipe(Effect.result);
+      const answers = [yield* claim, yield* claim];
+
+      const sent = test.requests
+        .filter((request) => request.body?.url?.includes("/reset_rate"))
+        .map((request) => [request.body?.url, decodeClaim(request.body?.data).request_id]);
+      const toOrgA = [
+        "https://api.anthropic.com/api/organizations/org-a/reset_rate_limits",
+        sent[0]?.[1],
+      ];
+      expect(sent).toEqual([toOrgA, toOrgA]);
+      expect(answers.map((answer) => answer._tag)).toEqual(["Failure", "Success"]);
+      expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(1);
     }),
   );
 

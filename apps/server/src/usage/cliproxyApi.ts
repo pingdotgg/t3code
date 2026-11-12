@@ -25,6 +25,7 @@ import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import {
   claudeResetClaim,
+  claudeOrganizationHeader,
   claudeResetClaimOutcome,
   claudeResetCreditsToContract,
   isSettledClaudeResetCreditFailure,
@@ -62,7 +63,12 @@ const AuthFile = Schema.Struct({
   ),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
-const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
+// `header` is the upstream response's, as Go's http.Header: canonical names, arrays of values.
+const ApiResponse = Schema.Struct({
+  status_code: Schema.Number,
+  body: Schema.String,
+  header: Schema.optional(Schema.Unknown),
+});
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
   reset_at: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -209,6 +215,7 @@ type HubCall = (
   url: string,
   data?: unknown,
 ) => Effect.Effect<string, UsageLimitSourceError | Schema.SchemaError>;
+type HubResponse = typeof ApiResponse.Type;
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
@@ -220,6 +227,10 @@ interface HubProvider {
   readonly read: (input: {
     readonly account: AuthFile;
     readonly call: HubCall;
+    /** As `call` for a GET, keeping the upstream response's headers. */
+    readonly respond: (
+      url: string,
+    ) => Effect.Effect<HubResponse, UsageLimitSourceError | Schema.SchemaError>;
     readonly checkedAt: string;
   }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError, Digest.Digest>;
 }
@@ -316,10 +327,9 @@ const CLAUDE_HUB: HubProvider = {
     // Usage can return 429 without a Claude Code user agent; older CLI versions get no reset grants.
     "User-Agent": "claude-cli/2.1.322 (external, cli)",
   }),
-  read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
-    const usage = yield* decodeClaudeUsage(
-      yield* call(`${CLAUDE_API}/api/oauth/usage?cedar_ember=1`),
-    );
+  read: Effect.fnUntraced(function* ({ account, respond, checkedAt }) {
+    const response = yield* respond(`${CLAUDE_API}/api/oauth/usage?cedar_ember=1`);
+    const usage = yield* decodeClaudeUsage(response.body);
     const model_scoped = (usage.limits ?? []).flatMap((limit) =>
       limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
         ? [
@@ -342,15 +352,15 @@ const CLAUDE_HUB: HubProvider = {
       checkedAt,
       response: { rate_limits_available: true, rate_limits: rateLimits },
     }).limits;
-    // The token's organization is the account's identity and where its grants are spent, so an
-    // account without a verified one gets no workspace and no grants.
-    const organization = yield* readClaudeOrganization(call).pipe(Effect.option);
-    const resetCredits = Option.isSome(organization)
+    // The hub may swap the login behind an auth index between calls, so only the organization
+    // Claude names in this answer identifies these grants; without one there are none to offer.
+    const organization = claudeOrganizationHeader(response.header);
+    const resetCredits = organization
       ? claudeResetCreditsToContract(usage.cedar_ember, Date.parse(checkedAt))
       : undefined;
     return {
       ...listedIdentity(account),
-      ...(Option.isSome(organization) ? { workspaceId: organization.value } : {}),
+      ...(organization ? { workspaceId: organization } : {}),
       plan: "Claude Subscription",
       usageLimits: resetCredits ? { ...limits, resetCredits } : limits,
     };
@@ -482,7 +492,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return yield* decodeApiResponse(raw);
   });
 
-  const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
+  const apiResponse = Effect.fn("CliproxyApi.apiResponse")(function* (
     hub: CliproxyHub,
     account: AuthFile,
     header: Record<string, string>,
@@ -495,8 +505,16 @@ export const makeCliproxyApi = Effect.gen(function* () {
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
       });
     }
-    return response.body;
+    return response;
   });
+
+  const apiCall = (
+    hub: CliproxyHub,
+    account: AuthFile,
+    header: Record<string, string>,
+    url: string,
+    data?: unknown,
+  ) => apiResponse(hub, account, header, url, data).pipe(Effect.map((response) => response.body));
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     hub: CliproxyHub,
@@ -504,9 +522,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     provider: HubProvider,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const call: HubCall = (url, data) =>
-      apiCall(hub, account, provider.header(account, platform, architecture), url, data);
-    const reading = yield* provider.read({ account, call, checkedAt }).pipe(
+    const header = provider.header(account, platform, architecture);
+    const call: HubCall = (url, data) => apiCall(hub, account, header, url, data);
+    const respond = (url: string) => apiResponse(hub, account, header, url);
+    const reading = yield* provider.read({ account, call, respond, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.orElseSucceed(() => ({
         ...listedIdentity(account),
@@ -592,7 +611,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
             requestId,
           });
           const response = yield* upstreamCall(hub, account, header, claim.url, claim.body);
-          return yield* claudeResetClaimOutcome(response.status_code, response.body);
+          return yield* claudeResetClaimOutcome(response.status_code, response.body, {
+            expected: expectedOrganization,
+            answeredFor: claudeOrganizationHeader(response.header),
+          });
         }),
       isSettledClaudeResetCreditFailure,
       `${expectedOrganization ?? ""}\n${grantId}`,

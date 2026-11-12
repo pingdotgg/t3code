@@ -1529,11 +1529,12 @@ describe("/usage-limits", () => {
 });
 
 describe("resetCreditChoices", () => {
-  it("offers each kind of hub reset under its own grant through the same hub account", () => {
+  it("offers each kind of hub reset under its own grant, naming the organization it is spent in", () => {
     const hub = {
       sourceId: UsageLimitSourceId.make("hub"),
       accountId: "claude.json",
       creditId: "full-reset-2611",
+      workspaceId: "org-a",
     };
     const option = (creditId: string, label: string) => ({
       creditId,
@@ -1556,6 +1557,17 @@ describe("resetCreditChoices", () => {
     expect(choices.map((choice) => choice.input)).toEqual([
       hub,
       { ...hub, creditId: "launch-2610-fable" },
+    ]);
+    // The same email can hold the same grant in another organization.
+    expect(choices.map(({ summary, confirmDescription }) => [summary, confirmDescription])).toEqual([
+      [
+        "Weekly reset · Organization org-a · 1 left",
+        "Weekly reset in organization org-a: Weekly reset. This cannot be undone.",
+      ],
+      [
+        "Fable reset · Organization org-a · 1 left",
+        "Fable reset in organization org-a: Fable reset. This cannot be undone.",
+      ],
     ]);
   });
 });
