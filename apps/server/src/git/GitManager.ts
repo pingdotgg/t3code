@@ -1809,11 +1809,10 @@ export const make = Effect.gen(function* () {
       timeoutMs: 5_000,
     });
     if (result.exitCode !== 0) return false;
-    const startPoint = result.stdout
-      .trimEnd()
-      .split("\n")
-      .at(-1)
-      ?.match(/^branch: Created from (.+)$/)?.[1];
+    const entries = result.stdout.trimEnd().split("\n");
+    // A rename or copy keeps the old name's creation entry, so it no longer says what this branch is.
+    if (entries.some((entry) => /^Branch: (renamed|copied) /.test(entry))) return false;
+    const startPoint = entries.at(-1)?.match(/^branch: Created from (.+)$/)?.[1];
     return (
       startPoint === upstreamRef ||
       startPoint === `remotes/${upstreamRef}` ||

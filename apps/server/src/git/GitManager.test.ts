@@ -2712,14 +2712,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     {
       name: "a published branch renamed locally",
       localBranch: "feature/local-review",
-      rename: true,
+      setup: "rename",
     },
     {
       name: "a same-repo PR checked out under another name",
       localBranch: "pulls/42",
-      rename: false,
+      setup: "pr-checkout",
     },
-  ] as const)("status finds the upstream's PR for $name", ({ localBranch, rename }) =>
+    {
+      name: "a branch checked out from its remote and renamed",
+      localBranch: "my-review",
+      setup: "track-rename",
+    },
+  ] as const)("status finds the upstream's PR for $name", ({ localBranch, setup }) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -2729,12 +2734,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["checkout", "-b", "feature/published"]);
       yield* runGit(repoDir, ["commit", "--allow-empty", "-m", "Feature"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/published"]);
-      if (rename) {
-        yield* runGit(repoDir, ["branch", "-m", localBranch]);
-      } else {
+      if (setup === "pr-checkout") {
         yield* runGit(repoDir, ["checkout", "-b", localBranch]);
         yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/published"]);
         yield* runGit(repoDir, ["branch", "-D", "feature/published"]);
+      } else {
+        if (setup === "track-rename") {
+          yield* runGit(repoDir, ["checkout", "main"]);
+          yield* runGit(repoDir, ["branch", "-D", "feature/published"]);
+          yield* runGit(repoDir, ["checkout", "feature/published"]);
+        }
+        yield* runGit(repoDir, ["branch", "-m", localBranch]);
       }
 
       const { manager } = yield* makeManager({
