@@ -1909,7 +1909,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       const selected = files.slice(1);
       yield* driver.commit(cwd, "selected", "", { stage: { filePaths: selected } });
       assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "selected");
-      assert.equal(yield* git(cwd, ["status", "--porcelain"]), ` M ${files[0]}`);
+      assert.equal(yield* git(cwd, ["status", "--porcelain"]), `M ${files[0]}`);
     }),
   );
   describe("structured errors", () => {
@@ -1942,6 +1942,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.notProperty(error, "args");
         assert.notProperty(error, "stderr");
         assert.notProperty(error, "reason");
+      }),
+    );
+
+    it.effect("fails with a GitCommandError when spawn throws", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        // Over the OS argument limit, Node's spawn throws E2BIG synchronously.
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.spawnThrow",
+            cwd,
+            args: ["status", "x".repeat(4 * 1024 * 1024)],
+          })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.test.spawnThrow",
+          detail: "Failed to spawn Git process.",
+        });
       }),
     );
 
