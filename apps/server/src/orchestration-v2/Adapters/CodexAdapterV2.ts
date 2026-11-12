@@ -7082,7 +7082,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* classifyHeldTurnStart({
                 turnId: payload.turn.id,
                 isCompactionItem: false,
-              }).pipe(Effect.orDie);
+              }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1));
             }
             const compacted = yield* Ref.modify(threadsAwaitingContextRestore, (current) => {
               if (!current.has(payload.threadId)) return [false, current] as const;
@@ -7750,21 +7750,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* Ref.update(pendingCompactions, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
-              // Clear on failure; a late compaction item must not be adopted after
-              // a failed start, and held turns go back to normal. The interruption
-              // error is the exception: the compaction item still decides.
+              // On failure or interruption, a late compaction item must not be adopted
+              // and held turns go back to normal. Codex's interrupted reply is not a
+              // failure: the compaction item still decides.
               yield* client.request("thread/compact/start", { threadId }).pipe(
-                Effect.catch((cause) =>
-                  isCompactionInterruptedError(cause)
-                    ? Effect.void
-                    : Ref.update(pendingCompactions, (current) => {
-                        const next = new Map(current);
-                        next.delete(threadId);
-                        return next;
-                      }).pipe(
-                        Effect.andThen(releaseHeldTurnStarts(threadId)),
-                        Effect.andThen(Effect.fail(cause)),
-                      ),
+                Effect.asVoid,
+                Effect.catchIf(isCompactionInterruptedError, () => Effect.void),
+                Effect.onError(() =>
+                  Ref.update(pendingCompactions, (current) => {
+                    const next = new Map(current);
+                    next.delete(threadId);
+                    return next;
+                  }).pipe(
+                    Effect.andThen(releaseHeldTurnStarts(threadId)),
+                    Effect.orDie,
+                    turnTerminalizationPermit.withPermits(1),
+                  ),
                 ),
               );
             },
