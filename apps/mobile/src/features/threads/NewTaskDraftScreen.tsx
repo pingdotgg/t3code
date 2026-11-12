@@ -999,6 +999,7 @@ export function NewTaskDraftScreen(props: NewTaskDraftScreenProps) {
               onPress={() => {
                 flow.armHeavyReady();
                 setDraftLive(true);
+                requestAnimationFrame(() => promptInputRef.current?.focus());
               }}
               className="min-h-16 justify-center rounded-2xl bg-grouped-card px-4 py-3"
             >

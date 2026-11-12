@@ -82,8 +82,8 @@ export function useSelectedThreadGitActions(options?: { readonly enabled?: boole
   const cwd = enabled ? selectedThreadCwd : null;
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
-      environmentId: activeThread?.environmentId ?? null,
-      cwd,
+      environmentId: selectedThread?.environmentId ?? null,
+      cwd: selectedThreadCwd,
     }),
     { reportFailure: false },
   );

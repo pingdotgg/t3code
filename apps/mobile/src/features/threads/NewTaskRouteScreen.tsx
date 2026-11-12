@@ -144,7 +144,7 @@ function NewTaskHeader(props: {
           value: props.searchText,
           onChangeText: props.onSearchTextChange,
           placeholder: "Search projects",
-          mode: "inline",
+          mode: Platform.OS === "android" ? "collapsible" : "inline",
           compactToolbar: true,
         }}
       />

@@ -5,10 +5,12 @@ import { threadDetailBodyFingerprint } from "./thread-detail-body-fingerprint";
 
 function fingerprintWithResume(
   onResumeQueue: ThreadDetailScreenProps["onResumeQueue"],
+  compactBeforeSend?: ThreadDetailScreenProps["compactBeforeSend"],
 ): readonly unknown[] {
-  // Partial fixture: this case only asserts Resume nullness remounts the body.
+  // Partial fixture: only conditional controls are exercised.
   return threadDetailBodyFingerprint({
     onResumeQueue,
+    compactBeforeSend,
     canStopThread: true,
     selectedThread: {
       id: "thread",
@@ -32,11 +34,17 @@ function fingerprintWithResume(
 }
 
 describe("threadDetailBodyFingerprint", () => {
-  it("changes when Resume becomes available or disappears", () => {
+  it("changes when Resume or the compaction notice changes", () => {
     const hidden = fingerprintWithResume(null);
     const visible = fingerprintWithResume(async () => undefined);
     expect(hidden).not.toEqual(visible);
     expect(fingerprintWithResume(null)).toEqual(hidden);
     expect(fingerprintWithResume(async () => undefined)).toEqual(visible);
+    const notice = { tokens: 1000, keepFullHistory: () => undefined };
+    expect(fingerprintWithResume(null, notice)).not.toEqual(hidden);
+    expect(fingerprintWithResume(null, { ...notice, tokens: 2000 })).not.toEqual(
+      fingerprintWithResume(null, notice),
+    );
+    expect(fingerprintWithResume(null, null)).toEqual(hidden);
   });
 });

@@ -31,6 +31,7 @@ export function threadDetailBodyFingerprint(props: ThreadDetailScreenProps): rea
     props.providerSubagentStatus,
     props.extensionStatuses,
     props.isCompacting,
+    props.compactBeforeSend?.tokens,
     props.creationState,
     props.activePendingApproval,
     props.activePendingApprovals,
