@@ -3131,6 +3131,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const prepareReviewIndex = Effect.fn("prepareReviewIndex")(function* (
     cwd: string,
     untrackedPaths: ReadonlyArray<string>,
+    maxBytes?: number,
   ) {
     const [stagedDeletionsStdout, indexValue] = yield* Effect.all(
       [
@@ -3160,6 +3161,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const stagedDeletions = new Set(stagedDeletionsStdout.split("\0").filter(Boolean));
     const pathsToAdd = untrackedPaths.filter((relativePath) => !stagedDeletions.has(relativePath));
     if (pathsToAdd.length === 0) return undefined;
+    if (maxBytes !== undefined) {
+      const sizes = yield* Effect.forEach(
+        pathsToAdd,
+        (relativePath) =>
+          fileSystem.lstat(path.resolve(cwd, relativePath)).pipe(
+            Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
+            Effect.orElseSucceed(() => 0),
+          ),
+        { concurrency: 16 },
+      );
+      // null: over the byte budget, so the caller reports totals as unavailable.
+      if (sizes.reduce((total, size) => total + size, 0) > maxBytes) return null;
+    }
 
     const indexPath = path.isAbsolute(indexValue.trim())
       ? indexValue.trim()
@@ -3251,20 +3265,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (paths.length === 0) return { env: undefined };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES)
       return { unavailable: "Too many untracked files to count." };
-    if (maxBytes !== undefined) {
-      const sizes = yield* Effect.forEach(
-        paths,
-        (relativePath) =>
-          fileSystem.lstat(path.resolve(cwd, relativePath)).pipe(
-            Effect.map((info) => (info.type === "File" ? Number(info.size) : 0)),
-            Effect.orElseSucceed(() => 0),
-          ),
-        { concurrency: 16 },
-      );
-      if (sizes.reduce((total, size) => total + size, 0) > maxBytes)
-        return { unavailable: "Untracked files are too large to count." };
-    }
-    const env = yield* prepareReviewIndex(cwd, paths).pipe(
+    const env = yield* prepareReviewIndex(cwd, paths, maxBytes).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           Effect.fail(
@@ -3278,6 +3279,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
       }),
     );
+    if (env === null) return { unavailable: "Untracked files are too large to count." };
     return { env };
   });
   const prepareUntrackedReviewIndex = (
