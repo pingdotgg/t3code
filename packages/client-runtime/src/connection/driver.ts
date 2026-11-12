@@ -89,6 +89,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   let blocked: ConnectionAttemptError | undefined;
   // Each route gets its own scope so a half-open session closes before the next try.
   const attempt = Effect.fnUntraced(function* (route: ConnectionRoute) {
+    // An earlier route may have opened its socket; this route starts over.
+    yield* reportProgress({ stage: "preparing" });
     const routeScope = yield* Scope.fork(attemptScope);
     const result = yield* connectRoute(route).pipe(
       Scope.provide(routeScope),
@@ -98,8 +100,6 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
       else blocked ??= result.failure;
-      // The failed route may have opened its socket; the next route starts over.
-      yield* reportProgress({ stage: "preparing" });
     }
     return result;
   });
@@ -204,7 +204,6 @@ export const make = Effect.gen(function* () {
       entry,
       (route) => checkRoute(entry, route),
       Effect.fnUntraced(function* (route) {
-        yield* reportProgress({ stage: "preparing" });
         const prepared = yield* resolver.prepare(routeEntry(entry, route));
         yield* reportProgress({ stage: "opening", prepared });
         const session = yield* sessions.connect(prepared);
