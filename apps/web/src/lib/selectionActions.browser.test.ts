@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers } from "../../test/render";
-import {
-  advanceTerminalSelectionClickSequence,
-  type TerminalSelectionClickSequence,
-} from "../terminal/ghostty/surface";
 import { observeSelectionActions, SELECTION_MULTI_CLICK_INTERVAL_MS } from "./selectionActions";
 
 function click(element: HTMLElement, detail: number) {
@@ -38,33 +34,26 @@ describe("observeSelectionActions", () => {
     });
   });
 
-  it("waits after a caller's cycling word click even when the browser detail is 3", () => {
+  it("waits after a triple-click where clicks cycle, so a fourth click reaches the terminal", () => {
     using stack = new DisposableStack();
     const element = stack.adopt(document.body.appendChild(document.createElement("p")), (node) =>
       node.remove(),
     );
     stack.use(fakeTimers());
-    let sequence: TerminalSelectionClickSequence | null = null;
     const onSelection = vi.fn();
     const actions = observeSelectionActions({
       element,
-      getClickCount: () => sequence?.count ?? 0,
+      multiClickCycles: true,
       onSelection,
       onDismiss: () => {},
     });
     stack.defer(() => actions.dispose());
 
-    for (let clicks = 1; clicks <= 5; clicks++) {
-      sequence = advanceTerminalSelectionClickSequence(sequence, {
-        clientX: 10,
-        clientY: 20,
-        timeStamp: clicks * 100,
-      });
-      click(element, Math.min(clicks, 3));
-    }
-    expect(sequence?.count).toBe(2);
+    click(element, 1);
+    click(element, 2);
+    click(element, 3);
     vi.advanceTimersToNextFrame();
-    expect(onSelection, "a sixth click can still grow the word").not.toHaveBeenCalled();
+    expect(onSelection, "a fourth click can still cycle the selection").not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(SELECTION_MULTI_CLICK_INTERVAL_MS);
     vi.advanceTimersToNextFrame();

@@ -1118,7 +1118,7 @@ function TerminalSessionViewport({
 
       selectionActions = observeSelectionActions({
         element: mount,
-        getClickCount: (event) => terminalRef.current?.selectionClickCount ?? event.detail,
+        multiClickCycles: true,
         onSelection: (pointer) => {
           void showSelectionAction(pointer);
         },

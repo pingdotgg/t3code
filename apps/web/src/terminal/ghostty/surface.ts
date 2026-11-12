@@ -999,10 +999,6 @@ export class GhosttyTerminalSurface {
     return this.core.selectionText();
   }
 
-  get selectionClickCount(): number {
-    return this.selectionClickSequence?.count ?? 0;
-  }
-
   /** An upper bound on the selection's size, read without formatting its text. */
   getSelectionCellCount(): number {
     const range = this.core.selectionRange();
