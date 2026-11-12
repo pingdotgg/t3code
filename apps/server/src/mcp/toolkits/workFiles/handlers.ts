@@ -7,7 +7,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import { WorkFilesToolkit } from "./tools.ts";
 
 export const layer = McpToolAccess.toLayer(WorkFilesToolkit, {
-  // The same access a launch from a link needs: no read-only link, no stopped caller.
+  // Receiving files edits the checkout: no link below auto-accept-edits, no stopped caller.
   t3_work_files_receive: McpToolAccess.writes(
     (request) =>
       Effect.gen(function* () {
@@ -17,6 +17,10 @@ export const layer = McpToolAccess.toLayer(WorkFilesToolkit, {
             code: "capability_denied",
             message: "Only a linked environment can send work files here.",
           });
+        }
+        const refusal = WorkFilesTransfer.receiveAccessRefusal(scope.client.access);
+        if (refusal !== null) {
+          return yield* new OrchestratorMcpFailure({ code: "capability_denied", message: refusal });
         }
         const transfer = yield* WorkFilesTransfer.WorkFilesTransfer;
         return yield* transfer.issueReceive({ request, sessionId: scope.client.sessionId });

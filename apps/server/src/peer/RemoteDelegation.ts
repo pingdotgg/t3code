@@ -30,6 +30,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -344,7 +345,24 @@ const make = Effect.gen(function* () {
         parent.thread.projectId,
         target.projectId,
       );
-      if (input.workFiles === "transfer") {
+      // One key for the launch there and the record here, so a retry finds both.
+      // Both are scoped to the provider session, as every key a caller passes is:
+      // the forwarder scopes the launch's, and the record's names it.
+      const key = input.clientRequestId ?? (yield* random.uuidV4());
+      const commandId = CommandId.make(
+        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
+      );
+      // A retry of a recorded task launched it already, and its files went first.
+      const recordedBefore =
+        input.clientRequestId !== undefined &&
+        (yield* threads.getThreadRecords(scope.thread.threadId, ["subagents"]).pipe(
+          Effect.map(({ subagents }) => {
+            const taskId = IdAllocator.derive.delegatedTaskNode({ commandId });
+            return subagents.some((task) => task.id === taskId);
+          }),
+          Effect.orElseSucceed(() => false),
+        ));
+      if (input.workFiles === "transfer" && !recordedBefore) {
         const here = yield* projects.getById(parent.thread.projectId).pipe(
           Effect.map(Option.getOrUndefined),
           Effect.orElseSucceed(() => undefined),
@@ -375,10 +393,6 @@ const make = Effect.gen(function* () {
             ),
           );
       }
-      // One key for the launch there and the record here, so a retry finds both.
-      // Both are scoped to the provider session, as every key a caller passes is:
-      // the forwarder scopes the launch's, and the record's names it.
-      const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
       const title = input.title ?? parent.thread.title;
       const launched = yield* forwarding.call(
@@ -404,9 +418,6 @@ const make = Effect.gen(function* () {
       const link = yield* links.get(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
-      );
-      const commandId = CommandId.make(
-        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
       );
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,

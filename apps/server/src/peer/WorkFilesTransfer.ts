@@ -1,10 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the received archive is written and removed with plain filesystem calls.
-import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
+  type AuthMcpClientAccess,
   type EnvironmentId,
+  isRuntimeModeAbove,
   OrchestratorMcpFailure,
   type ProjectId,
   WorkFilesApplied,
@@ -92,6 +93,14 @@ export const summaryOf = (selection: WorkFilesSelection): WorkFilesSummary => ({
   refusal: selection.refusal,
 });
 
+/** Receiving files edits the checkout, so a link needs at least auto-accept-edits; null when it has it. */
+export const receiveAccessRefusal = (access: AuthMcpClientAccess) =>
+  access === "read-only" || isRuntimeModeAbove("auto-accept-edits", access)
+    ? `This link has ${access} access, which cannot change files here; sending work files needs auto-accept-edits access or broader.`
+    : null;
+
+const receiveFailed = (message: string) => new WorkFilesError({ reason: "failed", message });
+
 const transferFailure = (message: string) =>
   new OrchestratorMcpFailure({ code: "orchestration_error", message });
 
@@ -133,10 +142,16 @@ export class WorkFilesTransfer extends Context.Service<
   }
 >()("t3/peer/WorkFilesTransfer") {}
 
-/** Streams `body` into `path`; false when it passes `maxBytes`, without reading the rest. */
+/**
+ * Streams `body` into `path`; false when it passes `maxBytes`, without reading
+ * the rest. A file that cannot be created or written fails with a refusal.
+ */
 const writeCapped = (body: Stream.Stream<Uint8Array, Error>, path: string, maxBytes: number) =>
   Effect.acquireUseRelease(
-    Effect.sync(() => NodeFS.createWriteStream(path, { flags: "wx" })),
+    Effect.tryPromise({
+      try: () => NodeFSP.open(path, "wx"),
+      catch: () => receiveFailed("Could not store the archive here."),
+    }),
     (file) =>
       Effect.gen(function* () {
         let received = 0;
@@ -148,19 +163,15 @@ const writeCapped = (body: Stream.Stream<Uint8Array, Error>, path: string, maxBy
             return !over;
           }),
           Stream.runForEach((chunk) =>
-            Effect.callback<void, Error>((resume) => {
-              file.write(chunk, (error) => {
-                resume(error ? Effect.fail(error) : Effect.void);
-              });
+            Effect.tryPromise({
+              try: () => file.write(chunk),
+              catch: () => receiveFailed("Could not store the archive here."),
             }),
           ),
         );
         return !over;
       }),
-    (file) =>
-      Effect.callback<void>((resume) => {
-        file.end(() => resume(Effect.void));
-      }),
+    (file) => Effect.promise(() => file.close().catch(() => undefined)),
   );
 
 const make = Effect.gen(function* () {
@@ -355,7 +366,7 @@ export const layer = Layer.effect(WorkFilesTransfer, make);
 
 /**
  * `POST /api/work-files/receive/<token>`: a linked environment's upload,
- * authorized by its link session with operate access and the one-time token
+ * authorized by its link session with edit access and the one-time token
  * that session was issued.
  */
 export const layerReceiveRoute = Layer.unwrap(
@@ -370,9 +381,11 @@ export const layerReceiveRoute = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const client = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
         if (Option.isNone(client)) return HttpServerResponse.text("Unauthorized", { status: 401 });
-        if (!client.value.peerLink || client.value.access === "read-only") {
+        if (!client.value.peerLink) {
           return HttpServerResponse.text("This link cannot change files here.", { status: 403 });
         }
+        const refusal = receiveAccessRefusal(client.value.access);
+        if (refusal !== null) return HttpServerResponse.text(refusal, { status: 403 });
         const path = request.url.split("?", 1)[0] ?? "";
         const token = path.slice(`${WORK_FILES_RECEIVE_ROUTE_PREFIX}/`.length);
         // Keep the request stream in the route scope until the response is sent.

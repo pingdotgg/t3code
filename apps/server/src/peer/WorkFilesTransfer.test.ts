@@ -190,6 +190,26 @@ it.live("a refusal there changes nothing and still removes the archive and stagi
   }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.live("a receive folder the box cannot write to refuses the files and keeps it running", () =>
+  Effect.gen(function* () {
+    const { source, target } = yield* checkouts;
+    const { peer, receiveDir } = yield* serveBox(target);
+    NodeFS.mkdirSync(receiveDir, { recursive: true });
+    NodeFS.chmodSync(receiveDir, 0o500);
+    yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.chmodSync(receiveDir, 0o700)));
+    write(source, "app.ts", "v2");
+
+    const send = yield* laptopSending(peer, source, "auto");
+    const refused = yield* send.pipe(Effect.flip);
+    expect(refused.message).toContain("The linked environment refused the work files");
+    expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("v1");
+
+    // The box still answers, and a writable folder takes the same work.
+    NodeFS.chmodSync(receiveDir, 0o700);
+    expect(yield* send).toEqual({ files: 1, deletions: 0 });
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.live("refuses before sending anything when the box is on another commit", () =>
   Effect.gen(function* () {
     const { source, target } = yield* checkouts;
@@ -207,17 +227,20 @@ it.live("refuses before sending anything when the box is on another commit", () 
   }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.live("a read-only link cannot send files", () =>
-  Effect.gen(function* () {
-    const { source, target } = yield* checkouts;
-    const { peer } = yield* serveBox(target);
-    write(source, "app.ts", "v2");
+it.live.each(["read-only", "approval-required"] as const)(
+  "refuses files from a link with %s access",
+  (access) =>
+    Effect.gen(function* () {
+      const { source, target } = yield* checkouts;
+      const { peer } = yield* serveBox(target);
+      write(source, "app.ts", "v2");
 
-    const send = yield* laptopSending(peer, source, "read-only");
-    const refused = yield* send.pipe(Effect.flip);
-    expect(refused.code).toBe("capability_denied");
-    expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("v1");
-  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
+      const send = yield* laptopSending(peer, source, access);
+      const refused = yield* send.pipe(Effect.flip);
+      expect(refused.code).toBe("capability_denied");
+      if (access !== "read-only") expect(refused.message).toContain(access);
+      expect(NodeFS.readFileSync(NodePath.join(target, "app.ts"), "utf8")).toBe("v1");
+    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.live("the upload route takes nothing without a link session and its own token", () =>
@@ -231,6 +254,22 @@ it.live("the upload route takes nothing without a link session and its own token
       ).pipe(HttpClientRequest.setBody(HttpBody.text("x"))),
     );
     expect(anonymous.status).toBe(401);
+
+    // A supervised link may read, but receiving files edits the checkout.
+    const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+    const links = Context.get(linking, PeerLinks.PeerLinks);
+    yield* linkTo(links, peer, "approval-required");
+    const resolved = yield* links.resolve(box.environmentId);
+    const supervised = yield* client.execute(
+      HttpClientRequest.post(
+        `${resolved.url}${WorkFilesTransfer.WORK_FILES_RECEIVE_ROUTE_PREFIX}/forged.token`,
+      ).pipe(
+        HttpClientRequest.setHeaders({ authorization: `Bearer ${resolved.token}` }),
+        HttpClientRequest.setBody(HttpBody.text("x")),
+      ),
+    );
+    expect(supervised.status).toBe(403);
+    expect(yield* supervised.text).toContain("approval-required");
   }).pipe(
     Effect.scoped,
     Effect.provide(Layer.merge(NodeHttpServer.layerTest, FetchHttpClient.layer)),

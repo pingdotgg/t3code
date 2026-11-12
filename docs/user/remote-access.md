@@ -377,6 +377,8 @@ for the same with `workFiles: "transfer"` on `delegate_task`.
   this machine.
 - Nothing is changed there if any of those files has its own local changes
   there. The transfer is at most 100 MiB and 5,000 files.
+- The link to the other machine needs Auto-accept edits access or broader.
+  A Read only or Supervised link cannot change files there.
 
 ## Manage or revoke access
 

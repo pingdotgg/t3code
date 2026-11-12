@@ -1325,6 +1325,7 @@ it.effect("sends the work files before launching there, and launches nothing whe
         task: "Run the suite on the box with my edits.",
         target: { environmentId: box.environmentId },
         workFiles: "transfer",
+        clientRequestId: "suite-with-edits",
       });
 
       const refused = yield* delegate;
@@ -1344,6 +1345,11 @@ it.effect("sends the work files before launching there, and launches nothing whe
         { cwd: "/home/me/app", projectId: boxProject, launchedFirst: false },
         { cwd: "/home/me/app", projectId: boxProject, launchedFirst: false },
       ]);
+      // A retry of the launched task finds it and sends nothing again.
+      const retried = yield* delegate;
+      expect(retried.isError, JSON.stringify(retried.content)).toBe(false);
+      expect(retried.structuredContent).toEqual(accepted.structuredContent);
+      expect(sent).toHaveLength(2);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
