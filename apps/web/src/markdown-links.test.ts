@@ -55,6 +55,12 @@ describe("rewriteMarkdownFileUriHref", () => {
 
 describe("relative links inside a rendered host file", () => {
   it("anchor to the file's directory while workspace membership follows cwd", () => {
+    expect(resolveMarkdownFileLinkMeta("~/notes.md", "/mnt/c/project")).toMatchObject({
+      sourcePath: "~/notes.md",
+    });
+    expect(resolveMarkdownFileLinkMeta("docs/", "/mnt/c/project")).toMatchObject({
+      sourcePath: "docs/",
+    });
     const meta = resolveMarkdownFileLinkMeta("appendix.md", "/repo", "/tmp/report");
     expect(meta).toMatchObject({
       filePath: "/tmp/report/appendix.md",

@@ -44,4 +44,15 @@ it("opens a relative WSL file at its specified position", () => {
       column: 3,
     }),
   ).toBe("vscode://vscode-remote/wsl+Ubuntu/opt/pkg/file.ts:12:3");
+  expect(
+    buildWslMarkdownFileUrl({
+      editor: "vscode",
+      distro: "Ubuntu",
+      path: "/mnt/c/project/docs/",
+      cwd: "/mnt/c/project",
+      line: undefined,
+      column: undefined,
+      isDirectory: true,
+    }),
+  ).toBe("vscode://vscode-remote/wsl+Ubuntu/mnt/c/project/docs");
 });

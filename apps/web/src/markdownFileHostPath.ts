@@ -55,6 +55,7 @@ export function buildWslMarkdownFileUrl(input: {
   cwd: string | undefined;
   line: number | undefined;
   column: number | undefined;
+  isDirectory?: boolean;
 }) {
   const path = input.cwd ? resolvePathLinkTarget(input.path, input.cwd) : input.path;
   const segments: string[] = [];
@@ -68,7 +69,7 @@ export function buildWslMarkdownFileUrl(input: {
     editor: input.editor,
     distro: input.distro,
     absolutePath: path.startsWith("/") && !path.includes("\\") ? `/${segments.join("/")}` : path,
-    isFile: true,
+    isFile: !input.isDirectory,
     ...(input.line !== undefined ? { line: input.line } : {}),
     ...(input.column !== undefined ? { column: input.column } : {}),
   });

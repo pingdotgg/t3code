@@ -859,10 +859,16 @@ function useChatMarkdownState({
             }
             let path = (await resolveHostPath()).absolutePath;
             const absolutePath = cwd ? resolvePathLinkTarget(path, cwd) : path;
-            if (absolutePath.split("/").includes("..")) {
+            const homePath = fileLinkMeta.sourcePath?.startsWith("~/")
+              ? fileLinkMeta.sourcePath
+              : undefined;
+            if (homePath || absolutePath.split("/").includes("..")) {
+              if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+                throw new Error("This connection cannot read files on this environment.");
+              }
               const metadata = await getFilesystemMetadata({
                 environmentId,
-                input: { paths: [absolutePath], resolveRealPath: true },
+                input: { paths: [homePath ?? absolutePath], resolveRealPath: true },
               });
               const realPath =
                 metadata._tag === "Success" ? metadata.value.entries[0]?.realPath : undefined;
@@ -877,6 +883,7 @@ function useChatMarkdownState({
               cwd,
               line: fileLinkMeta.line,
               column: fileLinkMeta.column,
+              isDirectory: (fileLinkMeta.sourcePath ?? fileLinkMeta.filePath).endsWith("/"),
             });
             if (!url || !(await openRemoteEditorUrl(url)))
               throw new Error(
