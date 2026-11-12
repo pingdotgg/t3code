@@ -1191,6 +1191,7 @@ export const layer: Layer.Layer<
                 ...(sourceProviderTurn === undefined
                   ? {}
                   : { providerTurnId: sourceProviderTurn.id }),
+                ...(projection.thread.lineage.sideChat === true ? { sideChat: true } : {}),
               }),
             );
             if (forked._tag === "Success") return forked.success;

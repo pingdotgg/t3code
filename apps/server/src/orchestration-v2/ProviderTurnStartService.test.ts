@@ -1358,6 +1358,19 @@ effectIt.effect.each([
     }),
 );
 
+effectIt.effect("marks a native side chat fork as a side chat for the provider", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "do we support feature X? Check README.md.",
+      sideChat: { contextRun: "current", nativeForkFrom: "idle" },
+    });
+
+    yield* harness.start;
+
+    expect(harness.forkThread).toHaveBeenCalledWith(expect.objectContaining({ sideChat: true }));
+  }),
+);
+
 effectIt.effect.each([false, true])(
   "OpenCode goal prompts defer switched-provider history only with native support: %s",
   (nativeGoals) =>

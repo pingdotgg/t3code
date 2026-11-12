@@ -605,6 +605,7 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly ownerNodeId?: NodeId;
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+  readonly sideChat?: boolean;
 }
 
 export interface ProviderAdapterV2EventSubscription {
