@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import { threadHasCaughtUpTo } from "@t3tools/client-runtime/state/threads";
 import type { AcknowledgedThreadMessage, QueuedThreadMessage } from "./thread-outbox-model";
@@ -48,6 +49,21 @@ export function retainAcknowledgedThreadMessage(message: AcknowledgedThreadMessa
     current.some((entry) => entry.messageId === message.messageId)
       ? current
       : [...current, message],
+  );
+}
+
+// A bounded window later pages the message out and a remount restarts at sequence 0, so
+// rows must leave as soon as their thread has caught up, not at the next write.
+export function pruneCaughtUpAcknowledgedThreadMessages(
+  threadKey: string,
+  thread: Parameters<typeof threadHasCaughtUpTo>[1],
+) {
+  writeAcknowledgedThreadMessages((current) =>
+    current.filter(
+      (entry) =>
+        scopedThreadKey(entry.environmentId, entry.threadId) !== threadKey ||
+        !threadHasCaughtUpTo(entry, thread),
+    ),
   );
 }
 

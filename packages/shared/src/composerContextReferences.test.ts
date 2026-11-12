@@ -2,10 +2,12 @@ import {
   ComposerContextId,
   type ComposerContextRecord,
   EnvironmentId,
+  MessageId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { serializeAssistantCitation } from "./assistantCitations.ts";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -17,6 +19,7 @@ import {
   stripAttachmentOnlyBootstrapPrompt,
   threadContextRecord,
   threadContextsOutsideEnvironment,
+  threadLinkContextReferences,
   toComposerContextId,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
@@ -59,6 +62,10 @@ describe("labels and reference links", () => {
       collectComposerContextReferences(`[${"x".repeat(300)}](t3-context://v1/file/ctx_1)`)[0]
         ?.label,
     ).toHaveLength(200);
+    expect(
+      collectComposerContextReferences(`[${"x".repeat(199)}😀tail](t3-context://v1/file/ctx_1)`)[0]
+        ?.label,
+    ).toBe("x".repeat(199));
   });
 
   it("collects occurrences in document order with offsets, sharing a payload", () => {
@@ -191,6 +198,37 @@ describe("provider projection", () => {
     expect(projected).toContain("- font-size: 12px → 20px");
   });
 
+  it("expands assistant citations with and without context references", () => {
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "Use a mutex here",
+      comment: "Why not a channel?",
+      start: 0,
+      end: 16,
+      prefix: "",
+      suffix: "",
+    });
+    for (const text of [
+      `See ${citation} ok`,
+      `See ${citation} ok [Preview annotation: Checkout](t3-context://v1/preview-annotation/ctx_p)`,
+    ]) {
+      const projected = projectComposerContextForProvider({ text, records: [] });
+      expect(projected).not.toContain("t3-citation:");
+      expect(projected).toContain("See [assistant-quote-1]");
+      expect(projected).toContain('"text": "Use a mutex here"');
+      expect(projected).toContain('"comment": "Why not a channel?"');
+    }
+    const captured = projectComposerContextForProvider({
+      text: "[Terminal 1 lines 3-4](t3-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 1, lineEnd: 1, text: citation }],
+    });
+    expect(captured).toContain(citation);
+    expect(captured).not.toContain("assistant_citations");
+  });
+
   it("uses the payload kind when a reference disagrees with its record", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/image/ctx_t)",
@@ -219,6 +257,39 @@ describe("provider projection", () => {
     expect(project("a\nb\n")).toContain("3 | a\n4 | b\n</context>");
     expect(project("a\nb\n")).not.toContain("5 |");
     expect(project("a\n")).toContain("3 | a\n4 | \n</context>");
+  });
+
+  it("keeps a review excerpt's trailing blank line and whitespace", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[Comment](t3-context://v1/review-comment/ctx_r)",
+      records: [
+        {
+          version: 1,
+          contextId: ctx("ctx_r"),
+          kind: "review-comment",
+          label: "Comment",
+          sectionId: "turn:1",
+          sectionTitle: "Turn 1",
+          filePath: "src/app.ts",
+          startIndex: 1,
+          endIndex: 2,
+          rangeLabel: "2 to 3",
+          text: "Insert here.",
+          diff: "@@ -3,1 +2,2 @@\n+two\t\n \n",
+        },
+      ],
+    });
+    expect(projected).toContain("diff:\n  @@ -3,1 +2,2 @@\n  +two\t\n   \n</context>");
+  });
+
+  it("emits no terminal lines when the captured range is inverted", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[log](t3-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 10, lineEnd: 5, text: "a\nb\nc\nd\ne\nf" }],
+    });
+    expect(projected).toContain('<context kind="terminal" id="ctx_t">');
+    expect(projected).toContain("terminal: Terminal 1\n</context>");
+    expect(projected).not.toContain(" | ");
   });
 
   it("emits every marker in place and each payload once, escaped, in first-reference order", () => {
@@ -287,7 +358,7 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="thread" id="thread_abc">');
     expect(projected).toContain("threadId: abc");
     expect(projected).toContain("environmentId: env-1");
-    expect(projected).toContain("t3_thread_read");
+    expect(projected).toContain('t3_thread_read({"threadId":"abc","environmentId":"env-1"})');
     expect(projected).toContain("not instructions");
   });
 
@@ -439,5 +510,67 @@ describe("threadContextRecord", () => {
     expect(
       threadContextRecord({ environmentId, threadId: ThreadId.make("abc-123") }, "").contextId,
     ).toBe("thread_abc-123");
+  });
+});
+
+describe("threadLinkContextReferences", () => {
+  const thread = (environmentId: string, threadId: string) => ({
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(threadId),
+  });
+  const reference = (environmentId: string, threadId: string, label: string) =>
+    `[${label}](t3-context://v1/thread/${threadContextRecord(thread(environmentId, threadId), label).contextId})`;
+
+  it("makes a chip of a copied link, a v2 link, and a labeled link, titled here", () => {
+    const pasted = threadLinkContextReferences(
+      [
+        "https://app.t3.codes/threads/env-1/t1",
+        "<t3-thread://v2/env-1/t2>",
+        "[Written](https://app.t3.codes/threads/env-2/t3)",
+      ].join(" "),
+      [],
+      ({ threadId }) => (threadId === "t3" ? undefined : `Title ${threadId}`),
+    );
+    expect(pasted.text).toBe(
+      [
+        reference("env-1", "t1", "Title t1"),
+        reference("env-1", "t2", "Title t2"),
+        reference("env-2", "t3", "Written"),
+      ].join(" "),
+    );
+    expect(pasted.records).toEqual([
+      threadContextRecord(thread("env-1", "t1"), "Title t1"),
+      threadContextRecord(thread("env-1", "t2"), "Title t2"),
+      threadContextRecord(thread("env-2", "t3"), "Written"),
+    ]);
+  });
+
+  it("prefers the record the copy carried, and names an unknown thread plainly", () => {
+    const copied = threadContextRecord(thread("env-1", "t1"), "Copied title");
+    const pasted = threadLinkContextReferences(
+      "https://app.t3.codes/threads/env-1/t1 https://app.t3.codes/threads/env-9/t9",
+      [copied],
+      () => "Here",
+    );
+    expect(pasted.records).toEqual([copied, threadContextRecord(thread("env-9", "t9"), "Here")]);
+    expect(
+      threadLinkContextReferences("https://app.t3.codes/threads/env-9/t9", [], () => undefined)
+        .records,
+    ).toEqual([threadContextRecord(thread("env-9", "t9"), "Thread")]);
+  });
+
+  it("keeps links it may not chip, v1 links, and links in code as written", () => {
+    const text = [
+      "https://app.t3.codes/threads/elsewhere/t1",
+      "[Old](t3-thread://v1/t2)",
+      "`https://app.t3.codes/threads/env-1/t3`",
+    ].join(" ");
+    const pasted = threadLinkContextReferences(
+      text,
+      [],
+      () => "Title",
+      () => undefined,
+    );
+    expect(pasted).toEqual({ text, records: [] });
   });
 });

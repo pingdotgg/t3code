@@ -1,4 +1,5 @@
 import {
+  latestExecutedRun,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -12,17 +13,27 @@ import {
   type OrchestrationV2NotificationSource,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
+  type OrchestrationV2ProviderSession,
+  type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2LimitRecovery,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
+  type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { getProviderOptionCurrentLabel, getProviderOptionStatedValue } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentLabel,
+  getProviderOptionStatedValue,
+  resolveSelectableModel,
+  withLegacyUltracodeEffort,
+} from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -32,11 +43,52 @@ import {
   type ThreadRuntimeSummary,
   type ThreadStructure,
   type ThreadStructureRuntime,
+  type ThreadStructureTurnItem,
 } from "./models.ts";
+import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
+
+const EMPTY_EXTENSION_STATUSES: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]> =
+  [];
+
+/** Only the selected provider's current session can supply transient extension status. */
+export function deriveProviderExtensionStatuses(
+  projection:
+    | (Pick<ThreadStructure, "thread"> & {
+        readonly providerThreads: ReadonlyArray<
+          Pick<
+            ThreadStructure["providerThreads"][number],
+            "id" | "providerSessionId" | "providerInstanceId"
+          >
+        >;
+        readonly providerSessions: ReadonlyArray<
+          Pick<
+            OrchestrationV2ProviderSession,
+            "id" | "providerInstanceId" | "status" | "extensionStatuses"
+          >
+        >;
+      })
+    | null,
+) {
+  if (projection === null) return EMPTY_EXTENSION_STATUSES;
+  const instanceId = projection.thread.modelSelection.instanceId;
+  const activeThread = projection.providerThreads.find(
+    (thread) => thread.id === projection.thread.activeProviderThreadId,
+  );
+  if (activeThread !== undefined && activeThread.providerInstanceId !== instanceId)
+    return EMPTY_EXTENSION_STATUSES;
+  const session = projection.providerSessions.findLast(
+    (session) =>
+      session.providerInstanceId === instanceId &&
+      (activeThread === undefined || session.id === activeThread.providerSessionId),
+  );
+  return session === undefined || session.status === "stopped"
+    ? EMPTY_EXTENSION_STATUSES
+    : (session.extensionStatuses ?? EMPTY_EXTENSION_STATUSES);
+}
 
 function latestMatchingRun(
   projection: ThreadStructure,
@@ -161,21 +213,45 @@ export function formatModelSelectionEffort(
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
+  const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
+  const current = options ? { ...selection, options } : selection;
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
-    const value = getProviderOptionStatedValue(id, selection, reportedSelection);
+    const value = getProviderOptionStatedValue(id, current, reportedSelection);
     if (value === undefined && id !== "variant") continue;
     if (typeof value === "boolean") continue;
     // Bypass picker normalization so an obsolete choice cannot become a catalog default.
     const label = getProviderOptionCurrentLabel(
       { ...descriptor, currentValue: value },
-      selection,
+      current,
       reportedSelection,
     );
     if (label) return label;
   }
   return null;
+}
+
+/** A reported model the picker catalog does not know, such as `claude-opus-5[1m]`, keeps its raw effort. */
+export function formatSubagentEffort(input: {
+  readonly modelSlug: string | null;
+  readonly modelSelection: ModelSelection | undefined;
+  readonly provider: Pick<ServerProvider, "driver" | "models"> | undefined;
+}): string | null {
+  const { modelSlug, modelSelection: selection, provider } = input;
+  if (!provider || !selection || !modelSlug) return null;
+  const selectionSlug =
+    resolveSelectableModel(provider.driver, selection.model, provider.models) ??
+    selection.model.trim();
+  if (selectionSlug !== modelSlug) return null;
+  if (provider.models.some((model) => model.slug === modelSlug)) {
+    return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+  }
+  return (
+    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
+      Boolean,
+    ) ?? null
+  );
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
@@ -207,6 +283,20 @@ export function formatProviderSubagentStatus(
   if (!Number.isFinite(start) || !Number.isFinite(end)) return label;
   const elapsed = formatDuration(Math.max(1_000, Math.floor((end - start) / 1_000) * 1_000));
   return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
+}
+
+/** The run a manual continuation resumes; the server holds the queue until it does. */
+export function deriveResumableRunId(
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+  runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
+): RunId | null {
+  const run = latestExecutedRun(projection.runs);
+  if (run?.status === "interrupted") return run.id;
+  return run?.status === "failed" &&
+    runtime?.lastErrorClass === "usage_limit" &&
+    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
+    ? run.id
+    : null;
 }
 
 export function deriveThreadRuntime(
@@ -270,6 +360,100 @@ export function deriveThreadStructureRuntime(
       providerSession?.lastError ?? null,
     ),
   };
+}
+
+export interface UsageLimitNoticeRows {
+  readonly itemIds: ReadonlySet<ThreadStructureTurnItem["id"]>;
+  /** Hidden only when its text reads as the provider's limit message; see PROVIDER_LIMIT_NOTICE. */
+  readonly providerNoticeItemId: ThreadStructureTurnItem["id"] | null;
+}
+
+// Claude Code's own limit messages, such as "You've hit your 5-hour limit · resets 7:10am".
+const PROVIDER_LIMIT_NOTICE =
+  /^(?:You[’']ve hit your (?:(?:5-hour|session|weekly|usage) )?limit|You[’']re out of extra usage|Claude AI usage limit reached)(?: · resets (?:[1-9]|1[0-2])(?::[0-5]\d)?(?:am|pm)(?: \([A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)*\))?)?\.?$/i;
+
+/**
+ * The timeline rows that repeat a usage-limit pause while its recovery notice shows: the run's
+ * limit failure, Claude's pause notices, and the provider's own limit message. They return to
+ * history once another run executes.
+ */
+export function deriveUsageLimitNoticeRows(
+  projection: ThreadStructure,
+): UsageLimitNoticeRows | null {
+  const runtime = deriveThreadStructureRuntime(projection);
+  const run = presentedLatestRun(projection);
+  if (runtime?.status !== "failed" || runtime.lastErrorClass !== "usage_limit" || run === null) {
+    return null;
+  }
+  const failure = latestRootProviderFailure(run, projection.turnItems);
+  const itemIds = new Set<ThreadStructureTurnItem["id"]>();
+  let failedProviderTurnId: ThreadStructureTurnItem["providerTurnId"] = null;
+  for (const item of projection.turnItems) {
+    if (item.runId !== run.id) continue;
+    if (
+      item.type === "error" &&
+      item.status === "failed" &&
+      item.nodeId === run.rootNodeId &&
+      item.failure.class === "usage_limit"
+    ) {
+      itemIds.add(item.id);
+      if (item.failure === failure) failedProviderTurnId = item.providerTurnId;
+    }
+  }
+  let providerNotice: ThreadStructureTurnItem | null = null;
+  if (failedProviderTurnId !== null) {
+    for (const item of projection.turnItems) {
+      if (item.runId !== run.id || item.providerTurnId !== failedProviderTurnId) continue;
+      if (
+        item.type === "system_notice" &&
+        item.nodeId === run.rootNodeId &&
+        item.parentItemId === null &&
+        item.nativeItemRef?.driver === "claudeAgent" &&
+        item.nativeItemRef.nativeId?.startsWith(`usage-limit:${failedProviderTurnId}:`) === true
+      ) {
+        itemIds.add(item.id);
+      }
+      if (
+        item.type === "assistant_message" &&
+        item.parentItemId === null &&
+        (providerNotice === null || item.ordinal > providerNotice.ordinal)
+      ) {
+        providerNotice = item;
+      }
+    }
+  }
+  return { itemIds, providerNoticeItemId: providerNotice?.id ?? null };
+}
+
+export function withoutUsageLimitNoticeRows<
+  Row extends OrchestrationV2ThreadProjection["visibleTurnItems"][number],
+>(rows: ReadonlyArray<Row>, notice: UsageLimitNoticeRows | null): ReadonlyArray<Row> {
+  if (notice === null) return rows;
+  const hidden = ({ item }: Row) =>
+    notice.itemIds.has(item.id) ||
+    (item.id === notice.providerNoticeItemId &&
+      item.type === "assistant_message" &&
+      PROVIDER_LIMIT_NOTICE.test(item.text.trim()));
+  return rows.some(hidden) ? rows.filter((row) => !hidden(row)) : rows;
+}
+
+/** Whether a usage-limit recovery holds the thread's snooze, so its notice offers Wake now. */
+export function limitRecoveryOwnsSnooze(input: {
+  readonly runId: RunId | null | undefined;
+  readonly resetAt: string | null | undefined;
+  readonly recovery: OrchestrationV2LimitRecovery | null | undefined;
+  readonly snoozedUntil: string | null | undefined;
+}): boolean {
+  const { runId, resetAt, recovery, snoozedUntil } = input;
+  return (
+    recovery?.snooze === true &&
+    runId != null &&
+    recovery.runId === runId &&
+    resetAt != null &&
+    recovery.resetAt === resetAt &&
+    snoozedUntil != null &&
+    Date.parse(snoozedUntil) === Date.parse(resetAt)
+  );
 }
 
 export function threadRuntimeHasInterruptibleRun(
@@ -361,6 +545,26 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
+// The Claude adapter forces a stuck query closed after 10 seconds.
+export const BACKGROUND_WORK_STOP_RETRY_AFTER_MS = 10_000;
+
+export interface BackgroundWorkStopRequest {
+  readonly threadKey: string;
+  readonly taskIds: ReadonlyArray<string>;
+  readonly retryAt: number | null;
+}
+
+/** Acceptance does not end the tasks, so an accepted Stop stays pending while they are listed. */
+export function isBackgroundWorkStopPending(
+  request: BackgroundWorkStopRequest | null,
+  threadKey: string,
+  tasks: ReadonlyArray<Pick<OrchestrationV2PendingBackgroundTask, "taskId">>,
+  retryExpired: boolean,
+): boolean {
+  if (request === null || request.threadKey !== threadKey || retryExpired) return false;
+  return request.retryAt === null || tasks.some((task) => request.taskIds.includes(task.taskId));
+}
+
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
@@ -370,9 +574,13 @@ export function presentPendingBackgroundWork(
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
       const label =
-        task.kind === "subagent" && description !== undefined
-          ? formatSubagentDisplayTitle(description).trim()
-          : description;
+        description === undefined
+          ? undefined
+          : task.kind === "subagent"
+            ? formatSubagentDisplayTitle(description).trim()
+            : task.kind === "command" || task.kind === "monitor"
+              ? commandDisplayText(description)
+              : description;
       return {
         taskId: task.taskId,
         kind: task.kind,
@@ -392,12 +600,10 @@ export function presentPendingBackgroundWork(
   if (items.length === 1 && only !== undefined) {
     const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
     const named = only.label !== noun;
-    const title = waiting
-      ? named
-        ? `${only.kind === "monitor" ? "" : `Waiting on ${noun} `}${only.label}`
-        : `Waiting on a ${noun}`
-      : named
-        ? `Running: ${only.label}`
+    const title = named
+      ? `${waiting ? "Waiting" : "Running"} · ${only.label}`
+      : waiting
+        ? `Waiting on a ${noun}`
         : `Running a ${noun}`;
     return { title, items, waiting };
   }
