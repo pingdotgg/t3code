@@ -7740,6 +7740,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
+              // Archive also unloads, inline and without thread/closed; resumeNativeThread
+              // unarchives it on the next turn.
+              if (unloadInput.archive === true) {
+                yield* client.request("thread/archive", { threadId: nativeThreadId });
+                return;
+              }
               // A resume may already wait on the pending entry; replacing it would strand that wait.
               if (!threadClosings.has(nativeThreadId)) {
                 threadClosings.set(nativeThreadId, yield* Deferred.make<void>());

@@ -448,6 +448,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly startTurn?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly unloads?: Queue.Queue<string>;
+    readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
   } = {},
@@ -457,7 +459,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     Ref.update(state, (current) => ({
       ...current,
       closeCount: current.closeCount + 1,
-    })),
+    })).pipe(
+      Effect.andThen(
+        options.unloads === undefined ? Effect.void : Queue.offer(options.unloads, "close"),
+      ),
+    ),
   );
   // Register after countClose to wedge teardown before its finalizer, matching a provider stream that never yields.
   const hangClose = Effect.addFinalizer(() =>
@@ -563,7 +569,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               ...current,
               interruptCount: current.interruptCount + 1,
             })).pipe(Effect.andThen(options.interruptTurn ?? Effect.void)),
-          unloadThread: ({ providerThread }) =>
+          unloadThread: ({ providerThread, archive }) =>
             (options.beforeUnload ?? Effect.void).pipe(
               Effect.andThen(
                 Ref.update(state, (current) => ({
@@ -574,6 +580,15 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                   ],
                 })),
               ),
+              Effect.andThen(
+                options.unloads === undefined
+                  ? Effect.void
+                  : Queue.offer(
+                      options.unloads,
+                      `${archive === true ? "archive" : "unload"}:${providerThread.nativeThreadRef?.nativeId}`,
+                    ),
+              ),
+              Effect.andThen(archive === true ? (options.archive ?? Effect.void) : Effect.void),
             ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
@@ -614,6 +629,8 @@ function layerTest(input: {
   readonly startTurn?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly unloads?: Queue.Queue<string>;
+  readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
@@ -657,6 +674,8 @@ function layerTest(input: {
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
+      ...(input.archive === undefined ? {} : { archive: input.archive }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
         ? {}
@@ -4703,6 +4722,169 @@ it.effect(
 
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-child-thread"]);
       }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })), Effect.scoped);
+    }),
+);
+
+it.effect.each([
+  { keptOpen: true, archive: "succeeds" },
+  { keptOpen: false, archive: "succeeds" },
+  { keptOpen: false, archive: "fails" },
+  { keptOpen: false, archive: "hangs" },
+] as const)(
+  "ProviderSessionManagerV2 archives an idle delegated child once its parent has the result (session kept open: $keptOpen, archive $archive)",
+  ({ keptOpen, archive }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread-provider-session-manager-archive-parent");
+        const parentRunId = idAllocator.derive.run({ threadId: parentThreadId, ordinal: 1 });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: parentThreadId, now })],
+        });
+        let deliverPending: OrchestrationV2DomainEvent | undefined;
+        for (const delivery of ["pending", "delivered"] as const) {
+          const threadId = ThreadId.make(`thread-provider-session-manager-archive-${delivery}`);
+          const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+          const taskId = idAllocator.derive.rootNode({ runId });
+          const providerThread = makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: `native-${delivery}`,
+          });
+          const created = yield* makeThreadCreatedEvent({
+            idAllocator,
+            threadId,
+            now,
+            delegatedBy: parentThreadId,
+          });
+          const taskEvent = (state: "pending" | "delivered") =>
+            Effect.gen(function* () {
+              return {
+                id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+                type: "subagent.updated",
+                threadId: parentThreadId,
+                nodeId: taskId,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: {
+                  id: taskId,
+                  threadId: parentThreadId,
+                  runId: parentRunId,
+                  parentNodeId: idAllocator.derive.rootNode({ runId: parentRunId }),
+                  origin: "app_owned",
+                  createdBy: "agent",
+                  driver: CODEX_DRIVER,
+                  providerInstanceId: modelSelection.instanceId,
+                  providerThreadId: null,
+                  childThreadId: threadId,
+                  nativeTaskRef: null,
+                  prompt: "Delegated work",
+                  title: null,
+                  model: null,
+                  completionDelivery: { state, observedByRunId: null },
+                  status: "completed",
+                  result: "Done.",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              } satisfies OrchestrationV2DomainEvent;
+            });
+          if (delivery === "pending") deliverPending = yield* taskEvent("delivered");
+          yield* eventSink.write({
+            events: [
+              {
+                ...created,
+                payload: { ...created.payload, forkedFrom: { type: "node", nodeId: taskId } },
+              },
+              yield* taskEvent(delivery),
+            ],
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* runtime.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread,
+            message: {
+              createdBy: "agent",
+              creationSource: "server",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "Delegated work",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          });
+          // The pump marks the thread idle before subscribers see its terminal.
+          const subscription = yield* runtime.subscribeEvents!;
+          yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+            type: "turn.terminal",
+            driver: CODEX_DRIVER,
+            providerThreadId: providerThread.id,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId: `native-turn-${delivery}`,
+            }),
+            runOrdinal: 1,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* subscription.events.pipe(Stream.runHead);
+        }
+
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* Queue.take(unloads), "archive:native-delivered");
+        if (archive !== "succeeds") {
+          if (archive === "hangs") yield* TestClock.adjust("10 seconds");
+          // An archive that never finished may have left the thread loaded.
+          assert.equal(yield* Queue.take(unloads), "unload:native-delivered");
+          return;
+        }
+        // The pending child stays loaded, and keeps the session open, until its parent takes the result.
+        yield* eventSink.write({ events: [deliverPending!] });
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* Queue.take(unloads), "archive:native-pending");
+        if (!keptOpen) assert.equal(yield* Queue.take(unloads), "close");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            unloads,
+            ...(archive === "fails"
+              ? { archive: unimplemented("archive refused") }
+              : archive === "hangs"
+                ? { archive: Effect.never }
+                : {}),
+            // Another thread's work keeps the shared session open past the children's idle unloads.
+            hasPendingBackgroundWork: Effect.succeed(keptOpen),
+          }),
+        ),
+      );
     }),
 );
 
