@@ -109,6 +109,37 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         }),
       ).toBe("sudo /opt/t3/t3 browser setup");
 
+      // A standalone executable started directly (systemd, no launcher) is still this install.
+      expect(
+        yield* rootCommand({
+          node: "/opt/t3/t3",
+          entry: "/opt/t3/t3",
+          executable: true,
+          path: yield* pathWithT3,
+        }),
+      ).toBe("sudo /opt/t3/t3 browser setup");
+
+      // A global npm launcher runs the downloaded executable; PATH's `t3` is that launcher.
+      const prefix = path.join(home, "npm");
+      const npmLauncher = path.join(prefix, "lib/node_modules/t3/bin/t3.mjs");
+      yield* fs.makeDirectory(path.dirname(npmLauncher), { recursive: true });
+      yield* fs.makeDirectory(path.join(prefix, "bin"));
+      yield* fs.writeFileString(npmLauncher, "", { mode: 0o755 });
+      yield* fs.writeFileString(
+        path.join(prefix, "lib/node_modules/t3/package.json"),
+        `{"name":"t3","version":"${packageJson.version}"}`,
+      );
+      yield* fs.symlink(npmLauncher, path.join(prefix, "bin/t3"));
+      expect(
+        yield* rootCommand({
+          node: "/home/theo/.t3/runtime/versions/1.0.0/t3",
+          entry: "/home/theo/.t3/runtime/versions/1.0.0/t3",
+          executable: true,
+          path: path.join(prefix, "bin"),
+          env: { T3CODE_NPM_LAUNCHER_PATH: npmLauncher },
+        }),
+      ).toBe('sudo env "PATH=$PATH" t3 browser setup');
+
       expect(
         yield* rootCommand({ ...desktop, env: { T3CODE_CLI_PATH: path.join(home, "gone") } }),
       ).toBe('sudo env "PATH=$PATH" t3 browser setup');
