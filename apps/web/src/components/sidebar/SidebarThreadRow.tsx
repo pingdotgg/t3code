@@ -1354,6 +1354,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     ) : inFolder && topStatus ? (
                       // Folder rows have no status line, so the status takes the time slot.
                       <span
+                        aria-hidden
                         className={cn(
                           "inline-flex items-center gap-1 text-xs font-medium",
                           topStatus.className,
@@ -1486,6 +1487,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {pinIndicator}
               {props.projectDisplayName ? (
                 <span
+                  aria-hidden
                   className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
                 >
                   {props.projectDisplayName}
@@ -1535,6 +1537,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         </Tooltip>
                       ) : (
                         <span
+                          aria-hidden
                           className={cn(
                             "inline-flex items-center gap-1 font-medium",
                             topStatus.className,

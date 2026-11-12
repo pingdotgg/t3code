@@ -105,7 +105,10 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+            <span
+              aria-hidden
+              className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label"
+            >
               {props.projectDisplayName}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
