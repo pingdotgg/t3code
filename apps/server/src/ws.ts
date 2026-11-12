@@ -3443,13 +3443,28 @@ export const layerWsRpc = (
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           Stream.unwrap(
             Effect.gen(function* () {
+              const liveBuffer = yield* Queue.unbounded<
+                PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
+              >();
+              // Each store subscribes only when consumed, so start both before the snapshot read.
+              yield* Effect.forkScoped(
+                Stream.runForEach(bootstrapCredentials.streamChanges, (change) =>
+                  Queue.offer(liveBuffer, change),
+                ),
+                { startImmediately: true },
+              );
+              yield* Effect.forkScoped(
+                Stream.runForEach(sessions.streamChanges, (change) =>
+                  Queue.offer(liveBuffer, change),
+                ),
+                { startImmediately: true },
+              );
               const initialSnapshot = yield* loadAuthAccessSnapshot();
               const revisionRef = yield* Ref.make(1);
-              const accessChanges: Stream.Stream<
-                PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
-              > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
 
-              const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
+              const liveEvents: Stream.Stream<AuthAccessStreamEvent> = Stream.fromQueue(
+                liveBuffer,
+              ).pipe(
                 Stream.mapEffect((change) =>
                   Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
                     Effect.map((revision) =>
