@@ -9,10 +9,23 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
+import {
+  HttpClient,
+  HttpClientResponse,
+  HttpServer,
+  HttpServerRequest,
+  type HttpClientRequest,
+} from "effect/http";
+import { RELAY_LINK_PROOF_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import * as NetAddress from "effect/net/NetAddress";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  type AuthEnvironmentScope,
+  EnvironmentAuthenticatedPrincipal,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -28,7 +41,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
-import { RelayManagedEndpointRecoveryRegistrationRequest } from "@t3tools/contracts/relay";
+import {
+  RelayEnvironmentLinkProofPayload,
+  RelayManagedEndpointRecoveryRegistrationRequest,
+} from "@t3tools/contracts/relay";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
@@ -142,6 +158,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
     readonly latestReachability?: ConnectReachability.ConnectReachability["Service"]["latest"];
+    readonly connector?: ManagedEndpointRuntime.ConnectorFacts;
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -185,7 +202,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
-            getDescriptor: Effect.die("unused"),
+            getDescriptor: Effect.succeed({
+              environmentId: EnvironmentId.make("env_123"),
+              label: "Test environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            }),
           }),
         ),
         Effect.provideService(
@@ -208,7 +231,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             requestRecovery: () => Effect.void,
             restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
-            inspectConnector: Effect.succeed(null),
+            inspectConnector: Effect.succeed(harness.connector ?? null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
@@ -250,6 +273,84 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         Effect.scoped,
       );
+
+  it.effect.each([
+    { direction: "ahead", skewSeconds: 600 },
+    { direction: "behind", skewSeconds: -600 },
+  ])(
+    "signs a link proof accepted at relay time when the host clock is $direction",
+    ({ skewSeconds }) => {
+      const { store } = makeMemorySecretStore();
+
+      return Effect.gen(function* () {
+        const relayNow = 1_800_000_000;
+        const relayIssuer = "https://relay.example.test";
+        const relayKeys = yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(
+          makeMemorySecretStore().store,
+        );
+        const challenge = yield* signRelayJwt({
+          privateKey: relayKeys.privateKey,
+          typ: "t3-link-challenge+jwt",
+          payload: {
+            kind: "environment_link_challenge",
+            iss: relayIssuer,
+            aud: relayIssuer,
+            sub: "user-123",
+            jti: "challenge-jti",
+            iat: relayNow,
+            exp: relayNow + 300,
+            notificationsEnabled: true,
+            liveActivitiesEnabled: false,
+            managedTunnelsEnabled: false,
+          },
+        });
+        yield* TestClock.setTime((relayNow + skewSeconds) * 1_000);
+        const link = yield* CloudLink.CloudLink;
+        const proof = yield* link
+          .linkProof(
+            {
+              challenge,
+              relayIssuer,
+              endpoint: {
+                httpBaseUrl: "http://127.0.0.1:3773",
+                wsBaseUrl: "ws://127.0.0.1:3773",
+                providerKind: "manual",
+              },
+              origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+            },
+            HttpServerRequest.fromWeb(
+              new Request("http://127.0.0.1:3773/api/t3-connect/link-proof"),
+            ),
+          )
+          .pipe(
+            Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+              sessionId: AuthSessionId.make("test-session"),
+              subject: "test",
+              method: "bearer-access-token",
+              scopes: new Set<AuthEnvironmentScope>(),
+            }),
+          );
+        const environmentKeys =
+          yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(store);
+        yield* TestClock.setTime(relayNow * 1_000);
+        const verified = yield* verifyRelayJwt(RelayEnvironmentLinkProofPayload, {
+          publicKey: environmentKeys.publicKey,
+          token: proof,
+          typ: RELAY_LINK_PROOF_TYP,
+          issuer: "t3-env:env_123",
+          audience: relayIssuer,
+        });
+
+        expect(verified).toMatchObject({
+          iat: relayNow,
+          exp: relayNow + 300,
+          challenge,
+          environmentId: "env_123",
+          scopes: ["agent_activity_notifications"],
+        });
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+    },
+  );
 
   const managedLinkSecrets = [
     [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
@@ -1079,12 +1180,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(state.reachability?.status === "unreachable" && state.reachability.cause).not.toBe(
         "not_linked",
       );
+      // The address shows before any check passes.
+      expect(state.tunnelHostname).toBe("prod-abc.t3coderelay.com");
     }).pipe(
       provideReleaseHarness({
         store,
         applyConfigCalls: [],
         requests: [],
         latestReachability: Effect.succeedSome(notLinked),
+        connector: {
+          pid: 123,
+          readyConnections: 0,
+          hostname: "prod-abc.t3coderelay.com",
+          protocol: null,
+        },
       }),
     );
   });

@@ -72,3 +72,91 @@ describe("Sidebar", () => {
     expect(onResize).toHaveBeenCalledTimes(1);
   });
 });
+
+it("restores collapsed and expanded desktop state after remounting", async () => {
+  await page.viewport(1280, 800);
+  const storageKey = "sidebar_persistence_test";
+  localStorage.removeItem(storageKey);
+  const layout = () => (
+    <SidebarProvider storageKey={storageKey}>
+      <SidebarTrigger />
+    </SidebarProvider>
+  );
+  {
+    await using screen = await render(layout(), { router: false /* no routes involved */ });
+    const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(trigger);
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
+  }
+  {
+    await using screen = await render(layout(), { router: false /* no routes involved */ });
+    const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(trigger);
+  }
+  await using screen = await render(layout(), { router: false /* no routes involved */ });
+  await expect
+    .element(screen.getByRole("button", { name: "Toggle Sidebar" }))
+    .toHaveAttribute("aria-pressed", "true");
+  localStorage.removeItem(storageKey);
+});
+
+it("keeps the mobile sheet closed and leaves the saved desktop state alone", async () => {
+  await page.viewport(390, 844);
+  const storageKey = "sidebar_mobile_persistence_test";
+  localStorage.setItem(storageKey, "false");
+  {
+    await using screen = await render(
+      <SidebarProvider storageKey={storageKey}>
+        <SidebarTrigger />
+      </SidebarProvider>,
+      { router: false /* no routes involved */ },
+    );
+    const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(trigger);
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem(storageKey)).toBe("false");
+  }
+  await using screen = await render(
+    <SidebarProvider storageKey={storageKey}>
+      <SidebarTrigger />
+    </SidebarProvider>,
+    { router: false /* no routes involved */ },
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Toggle Sidebar" }))
+    .toHaveAttribute("aria-pressed", "false");
+  localStorage.removeItem(storageKey);
+});
+
+function MobileSheetMountedProbe() {
+  const { mobileSheetMounted } = useSidebar();
+  return <output aria-label="Sheet mounted">{String(mobileSheetMounted)}</output>;
+}
+
+it("keeps closed mobile sheet contents mounted and reports the sheet only while it shows", async () => {
+  await page.viewport(390, 844);
+  await using screen = await render(
+    <SidebarProvider>
+      <Sidebar>
+        <span>Sheet contents</span>
+      </Sidebar>
+      <SidebarTrigger />
+      <MobileSheetMountedProbe />
+    </SidebarProvider>,
+    { router: false /* no routes involved */ },
+  );
+  const sheetMounted = screen.getByLabelText("Sheet mounted");
+  // Window shortcuts registered by sidebar children only work while they stay mounted.
+  expect(document.querySelector('[data-mobile="true"]')?.textContent).toContain("Sheet contents");
+  await expect.element(sheetMounted).toHaveTextContent("false");
+
+  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await expect.element(sheetMounted).toHaveTextContent("true");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(sheetMounted).toHaveTextContent("false");
+  expect(document.querySelector('[data-mobile="true"]')?.textContent).toContain("Sheet contents");
+});
