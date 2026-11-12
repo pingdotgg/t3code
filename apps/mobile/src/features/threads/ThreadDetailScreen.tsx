@@ -1862,6 +1862,10 @@ function ThreadDetailBody(
                     <>
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
+                        replyingToApproval={
+                          props.activePendingApprovals.length > 0 &&
+                          props.activePendingUserInput === null
+                        }
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
@@ -1885,6 +1889,7 @@ function ThreadDetailBody(
                               onFreshSession: () => setFreshSessionPending(selectedThreadKey, true),
                             }
                           : {})}
+                        sideChatAvailable={props.offersSideChat}
                         offersSideChat={
                           props.offersSideChat &&
                           !props.draftMode &&
