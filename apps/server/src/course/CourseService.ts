@@ -660,16 +660,19 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
             };
             const references = yield* readReferences(path.join(root, course.id), number);
             const referencesNote =
-              references === undefined || references.length === 0
-                ? "No published solution was found online. A reference is a check, not the truth. If your worked answer differs from a reference, say \"the posted solution disagrees; here's why mine differs\" and grade the learner against your own working. When a reference's numbers differ from the problem's own numbers, treat it as a likely transcription misread, never claim the author used wrong numbers. In every verdict, name the source you checked as a markdown link, or say no published solution was found online."
-                : "The published solution references are checks, not the truth. A reference is a check, not the truth. If your worked answer differs from a reference, say \"the posted solution disagrees; here's why mine differs\" and grade the learner against your own working. When a reference's numbers differ from the problem's own numbers, treat it as a likely transcription misread, never claim the author used wrong numbers. In every verdict, name the source you checked as a markdown link.";
+              references === undefined
+                ? ""
+                : references.length === 0
+                  ? "No published solution was found online; say so in every verdict. "
+                  : "Published references (hidden from the learner until their final answer) are a check, not the truth: in every verdict, name the one you checked as a markdown link. If your worked answer differs, say \"the posted solution disagrees; here's why mine differs\" and grade against your own working, never the reference. If a reference's numbers differ from the problem's own, treat it as a likely transcription misread; never say its author used wrong numbers. ";
             if ((!input.reveal && !input.skip) || input.pset === undefined) {
               if (input.pset === undefined && input.unit === undefined) return item;
               return {
                 ...item,
                 text: yield* fs.readFileString(psetFile(path.join(root, course.id), number)),
-                ...(references !== undefined ? { references } : {}),
-                note: `References are hidden from the learner until their final answer; they are a check, not the truth. ${referencesNote}`,
+                ...(input.pset !== undefined && references !== undefined
+                  ? { references, note: referencesNote.trim() }
+                  : {}),
               };
             }
             const text = yield* fs.readFileString(psetFile(path.join(root, course.id), number));
@@ -687,12 +690,13 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
               text,
               solution,
               ...(references !== undefined ? { references } : {}),
-              note: `${input.skip ? "The learner asked for the answer, so this problem is skipped; the visible reply must begin with the line **Skipped, not graded.**, then the final answer, then every step of the working. Name the reference checked as a markdown link, or say no published solution was found. Do not ask the learner to answer this part again. " : ""}${solution === null ? `No official solution exists; work the problem yourself and check against the listed worked-example units where they match (${examples || "none listed"}). Say plainly where your work disagrees. ` : ""}${referencesNote}`,
+              note: `${input.skip ? "The learner asked for the answer, so this problem is skipped; the visible reply must begin with the line **Skipped, not graded.**, then the final answer, then every step of the working. Do not ask the learner to answer this part again. " : ""}${solution === null ? `No official solution exists; work the problem yourself and check against the listed worked-example units where they match (${examples || "none listed"}). Say plainly where your work disagrees, and tell the learner: graded against my own worked solution, not MIT's. ` : ""}${referencesNote}`.trim(),
             };
           }),
         );
         const needsPublishedSearch =
           !input.reveal &&
+          !input.skip &&
           course.solutionSearchedAt === undefined &&
           selected.some((pset) => !pset.hasSolution && pset.references === undefined);
         return {

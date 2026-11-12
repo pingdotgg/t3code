@@ -1,3 +1,5 @@
+import * as DateTime from "effect/DateTime";
+
 export const QUIZ_CARD_TOOL_NAME = "quiz_card" as const;
 export const QUESTION_CARD_TOOL_NAME = "question_card" as const;
 export const MIN_CARD_REPLY_CHARS = 250;
@@ -401,6 +403,13 @@ export function withoutCardAnswerTag(text: string) {
   return text.replace(CARD_ANSWER_TAG, "");
 }
 
+function epochMillis(value: unknown) {
+  if (DateTime.isDateTime(value)) return DateTime.toEpochMillis(value);
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "string") return Date.parse(value) || 0;
+  return 0;
+}
+
 export function answeredCardAnswers(
   messages: Iterable<{
     readonly role: string;
@@ -409,27 +418,12 @@ export function answeredCardAnswers(
     readonly createdAt?: unknown;
   }>,
 ): ReadonlyMap<string, string> {
-  const ordered = [...messages].map((message, index) => ({ message, index }));
-  ordered.sort((left, right) => {
-    const leftTime =
-      left.message.createdAt instanceof Date
-        ? left.message.createdAt.getTime()
-        : typeof left.message.createdAt === "string"
-          ? Date.parse(left.message.createdAt)
-          : Number.NaN;
-    const rightTime =
-      right.message.createdAt instanceof Date
-        ? right.message.createdAt.getTime()
-        : typeof right.message.createdAt === "string"
-          ? Date.parse(right.message.createdAt)
-          : Number.NaN;
-    if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) {
-      return left.index - right.index;
-    }
-    return leftTime - rightTime || left.index - right.index;
-  });
+  // Card replies are appended to the projection last, so restore time order.
+  const chronological = [...messages]
+    .map((message, index) => ({ message, index, at: epochMillis(message.createdAt) }))
+    .sort((left, right) => left.at - right.at || left.index - right.index)
+    .map(({ message }) => message);
   const answers = new Map<string, string>();
-  const chronological = ordered.map(({ message }) => message);
   const cards = chronological.flatMap((message, index) =>
     message.role === "assistant" && message.id?.endsWith(":reply")
       ? [{ id: message.id.slice(0, -":reply".length), index }]
@@ -441,15 +435,12 @@ export function answeredCardAnswers(
     if (match === null) continue;
     answers.set(match[1]!, message.text.slice(0, match.index));
   }
+  // A newer card posted after the learner spoke closes older cards they left open.
+  const lastCard = cards.at(-1)?.index ?? 0;
   for (const card of cards) {
     if (answers.has(card.id)) continue;
-    const superseded = chronological.some(
-      (laterMessage, laterIndex) =>
-        laterIndex > card.index &&
-        laterMessage.role === "user" &&
-        cards.some((newerCard) => newerCard.index > laterIndex && newerCard.index > card.index),
-    );
-    if (superseded) answers.set(card.id, "Skipped.");
+    if (chronological.slice(card.index + 1, lastCard).some((message) => message.role === "user"))
+      answers.set(card.id, "Skipped.");
   }
   return answers;
 }

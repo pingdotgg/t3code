@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import {
   answeredCardAnswers,
   cardReplyProblem,
@@ -56,9 +57,19 @@ describe("quiz cards", () => {
 
   it("orders out-of-order projection replies by creation time", () => {
     const replies = answeredCardAnswers([
-      { role: "assistant", id: "new:reply", text: "new", createdAt: "2026-01-01T00:02:00Z" },
-      { role: "user", text: "next", createdAt: "2026-01-01T00:01:00Z" },
-      { role: "assistant", id: "old:reply", text: "old", createdAt: "2026-01-01T00:00:00Z" },
+      {
+        role: "assistant",
+        id: "new:reply",
+        text: "new",
+        createdAt: DateTime.makeUnsafe("2026-01-01T00:02:00Z"),
+      },
+      { role: "user", text: "next", createdAt: DateTime.makeUnsafe("2026-01-01T00:01:00Z") },
+      {
+        role: "assistant",
+        id: "old:reply",
+        text: "old",
+        createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+      },
     ]);
     expect(replies.get("old")).toBe("Skipped.");
     expect(replies.has("new")).toBe(false);
