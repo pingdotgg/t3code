@@ -899,7 +899,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return path.resolve(physicalCwd, gitCommonDir);
   });
 
-  // --verify prints HEAD after the paths; --quiet leaves only paths for an unborn HEAD.
+  // --verify prints HEAD's branch (or "HEAD" when detached) after the paths; --quiet leaves only
+  // paths for an unborn HEAD.
   const resolveCaptureRepository = Effect.fn("GitVcsDriver.resolveCaptureRepository")(function* (
     cwd: string,
   ) {
@@ -915,6 +916,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "--show-prefix",
         "--verify",
         "--quiet",
+        "--symbolic-full-name",
         "HEAD",
       ],
       allowNonZeroExit: true,
@@ -922,13 +924,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     const headExists = result.exitCode === 0;
     const headChecked = headExists || result.exitCode === 1;
     const lines = result.stdout.split("\n");
-    const [gitCommonDir = "", indexPath = "", prefix = ""] = lines;
+    const [gitCommonDir = "", indexPath = "", prefix = "", head = ""] = lines;
     if (headChecked && lines.length === (headExists ? 5 : 4) && lines.at(-1) === "") {
       return {
         gitCommonDir: gitCommonDir.trim(),
         indexPath: indexPath.trim(),
         prefix,
         headExists,
+        branch: head.startsWith("refs/heads/") ? head : undefined,
       };
     }
     // Git before 2.31 echoes --path-format, and a path containing a newline spans lines.
@@ -944,6 +947,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       indexPath: undefined,
       prefix: prefixResult.stdout.replace(/\n$/, ""),
       headExists: headChecked ? headExists : yield* hasHeadCommit(cwd),
+      branch: undefined,
     };
   });
 
@@ -979,9 +983,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
-      const { gitCommonDir, indexPath, prefix, headExists } = yield* resolveCaptureRepository(
-        input.cwd,
-      );
+      const { gitCommonDir, indexPath, prefix, headExists, branch } =
+        yield* resolveCaptureRepository(input.cwd);
       const indexId = yield* random.uuidV4();
       const tempIndexPath = path.join(gitCommonDir, `t3-checkpoint-index-${indexId}`);
       const hostEnv = yield* HostProcess.Environment;
@@ -1332,7 +1335,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        // listAuthoredPaths compares the branch recorded here to spot a turn that switched branches.
+        const message = `t3 checkpoint ref=${input.checkpointRef}${
+          branch === undefined ? "" : ` branch=${branch}`
+        }`;
         // HEAD is the parent so listAuthoredPaths can see how HEAD moved between checkpoints.
         const commitTreeResult = yield* execute({
           operation,
@@ -1575,7 +1581,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         args: [
           "log",
           "--no-walk=unsorted",
-          "--format=%P %ct",
+          "--format=%P %ct %s",
           `${input.fromCheckpointRef}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
         ],
@@ -1583,6 +1589,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const [fromLine = "", toLine = ""] = heads.stdout.trimEnd().split("\n");
       const [startHead = "", capturedAt = ""] = fromLine.split(" ");
       const [endHead = ""] = toLine.split(" ");
+      const branchOf = (line: string) =>
+        line
+          .split(" ")
+          .find((token) => token.startsWith("branch="))
+          ?.slice("branch=".length);
+      const startBranch = branchOf(fromLine);
+      const endBranch = branchOf(toLine);
+      // The departed branch's commits were left, not undone, when the turn switched branches.
+      const switchedBranches =
+        startBranch !== undefined && endBranch !== undefined && startBranch !== endBranch;
       if (startHead === "" || endHead === "" || startHead === endHead) {
         return null;
       }
@@ -1606,19 +1622,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
-      // Commits left behind count as undone unless the current branch never pointed at
-      // startHead: then the turn switched branches instead of resetting or rebasing this one.
-      const branchReflog = yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["log", "--walk-reflogs", "--format=%H", "@{0}"],
-        allowNonZeroExit: true,
-      });
-      const branchHeads = branchReflog.stdout.split("\n");
-      const switchedBranches =
-        branchReflog.exitCode === 0 &&
-        branchHeads.includes(endHead) &&
-        !branchHeads.includes(startHead);
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
       const pathLists = yield* Effect.all(
         [

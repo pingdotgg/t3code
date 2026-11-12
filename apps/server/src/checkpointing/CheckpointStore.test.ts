@@ -578,6 +578,11 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
 
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["x.txt"]));
+
+        yield* git(tmp, ["checkout", "-b", "pr-branch"]);
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["x.txt"]));
+        yield* git(tmp, ["checkout", "b"]);
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["x.txt"]));
       }),
     );
 
