@@ -15,6 +15,7 @@ import { render } from "../../../test/render";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
 it("typesets math in option labels and descriptions like the question", async () => {
+  const deeplyNested = "> ".repeat(12000) + "$";
   await using screen = await render(
     <ComposerPendingUserInputPanel
       pendingUserInputs={[
@@ -31,6 +32,7 @@ it("typesets math in option labels and descriptions like the question", async ()
               options: [
                 { label: "$1$", description: "Converges to $1$" },
                 { label: "$\\frac{1}{2}$", description: "Half of $1$" },
+                { label: deeplyNested, description: "Nested deeper than the call stack" },
                 {
                   label: "Edit `apps/web/src/index.ts` for Array<T>, priced $5",
                   description: "Keeps `$x$` and <div> as written",
@@ -65,4 +67,5 @@ it("typesets math in option labels and descriptions like the question", async ()
   await expect
     .element(screen.getByText("Keeps `$x$` and <div> as written", { exact: true }))
     .toBeVisible();
+  await expect.element(screen.getByText(deeplyNested.trim(), { exact: true })).toBeVisible();
 });

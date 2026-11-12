@@ -14,19 +14,23 @@ type Segment = string | { tex: string; display: boolean };
 function plainTextMathSegments(text: string): Segment[] {
   const segments: Segment[] = [];
   let cursor = 0;
-  const visit = (node: Nodes) => {
+  // An explicit stack: nesting depth is unbounded (`> > > …`) and recursion would overflow.
+  const stack: Nodes[] = [mathParser.runSync(mathParser.parse(text)) as Nodes];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
     if (node.type === "math" || node.type === "inlineMath") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
-      if (start === undefined || end === undefined) return;
+      if (start === undefined || end === undefined) continue;
       if (start > cursor) segments.push(text.slice(cursor, start));
       segments.push({ tex: node.value, display: node.type === "math" });
       cursor = end;
-      return;
+    } else if ("children" in node) {
+      for (let index = node.children.length - 1; index >= 0; index--) {
+        stack.push(node.children[index]!);
+      }
     }
-    if ("children" in node) node.children.forEach(visit);
-  };
-  visit(mathParser.runSync(mathParser.parse(text)) as Nodes);
+  }
   if (cursor < text.length) segments.push(text.slice(cursor));
   return segments;
 }
