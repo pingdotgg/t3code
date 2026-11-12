@@ -83,7 +83,7 @@ export function retireReviewDraftComments(
 }
 
 export function setReviewDraftBusy(params: ReviewDraftScope, busy: boolean) {
-  if (busy && !isCurrentReviewDraftScope(params)) return false;
+  if (busy && !params.viewer?.trim()) return false;
   const key = pullRequestReviewKey(params, params.viewer);
   const current = appAtomRegistry.get(operations);
   if (busy && current.has(key)) return false;
@@ -161,10 +161,15 @@ async function persist() {
 function updateReviewDraft(
   params: ReviewDraftScope,
   transform: (current: ReviewDraft) => ReviewDraft,
+  completingOperation = false,
 ) {
   const key = pullRequestReviewKey(params, params.viewer);
   const current = appAtomRegistry.get(state);
-  if (!current.ready || !isCurrentReviewDraftScope(params)) return;
+  // A mutation can invalidate strict identity before its captured owner's completion arrives.
+  const authorized = completingOperation
+    ? Boolean(params.viewer?.trim()) && appAtomRegistry.get(operations).has(key)
+    : isCurrentReviewDraftScope(params);
+  if (!current.ready || !authorized) return;
   appAtomRegistry.set(state, {
     ...current,
     drafts: { ...current.drafts, [key]: transform(current.drafts[key] ?? EMPTY_REVIEW_DRAFT) },
@@ -234,8 +239,8 @@ export function usePullRequestReviewDraftCommands(params: ReviewDraftScope) {
     ready: snapshot.ready && Boolean(viewer) && viewer === params.viewer?.trim().toLowerCase(),
     isReady: () => appAtomRegistry.get(state).ready && isCurrentReviewDraftScope(params),
     busy: busyOperations.has(pullRequestReviewKey(params, params.viewer)),
-    update: (transform: (current: ReviewDraft) => ReviewDraft) =>
-      updateReviewDraft(params, transform),
+    complete: (transform: (current: ReviewDraft) => ReviewDraft) =>
+      updateReviewDraft(params, transform, true),
     flush: persist,
   };
 }
@@ -308,6 +313,8 @@ export function usePullRequestReviewDraft(params: PullRequestParams) {
     isReady: () => appAtomRegistry.get(state).ready && isCurrentReviewDraftScope(scope),
     error: snapshot.error,
     update,
+    complete: (transform: (current: ReviewDraft) => ReviewDraft) =>
+      updateReviewDraft(scope, transform, true),
     flush: persist,
   };
 }

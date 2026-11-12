@@ -1,5 +1,6 @@
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import type { PendingReviewComment, ReviewDraft } from "./pullRequestReviewDrafts";
 import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   goBack: vi.fn(),
   alert: vi.fn(),
   update: vi.fn(),
+  discard: vi.fn(),
+  comments: null as readonly PendingReviewComment[] | null,
   save: vi.fn().mockResolvedValue({ _tag: "Success", value: {} }),
   buttons: new Map<string, { disabled: boolean; onPress: () => void }>(),
   form: null as { value: string; onChangeText: (text: string) => void } | null,
@@ -56,7 +59,9 @@ vi.mock("./PullRequestPendingComment", () => ({
   PullRequestPendingBadge: () => null,
   PullRequestPendingCommentActions: () => null,
 }));
-vi.mock("./usePendingReviewCommentActions", () => ({ usePendingReviewCommentActions: () => ({}) }));
+vi.mock("./usePendingReviewCommentActions", () => ({
+  usePendingReviewCommentActions: () => ({ discard: mocks.discard }),
+}));
 vi.mock("./usePullRequestThreads", () => ({
   pendingCommentComposerContext: () => null,
   usePullRequestThreads: () => ({ canAddToComposer: false }),
@@ -95,8 +100,11 @@ vi.mock("./usePullRequestReviewDraft", () => ({
     busy: false,
     error: null,
     update: mocks.update,
+    complete: mocks.update,
     flush: mocks.flush,
-    comments: mocks.viewer === "alice" ? [{ id: "draft", body: "Alice's private feedback" }] : [],
+    comments:
+      mocks.comments ??
+      (mocks.viewer === "alice" ? [{ id: "draft", body: "Alice's private feedback" }] : []),
   }),
 }));
 import { PullRequestInlineCommentScreen } from "./PullRequestInlineCommentScreen";
@@ -105,7 +113,9 @@ function setup() {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.viewer = "alice";
   mocks.ready = true;
-  mocks.update.mockClear();
+  mocks.update.mockReset();
+  mocks.discard.mockReset();
+  mocks.comments = null;
   mocks.save.mockClear();
   mocks.flush.mockReset().mockResolvedValue(true);
   mocks.goBack.mockClear();
@@ -207,4 +217,63 @@ it("waits for settled ownership before showing or editing text and capturing the
       }),
     }),
   );
+});
+
+it("keeps a moved hosted draft locally while identity refreshes and does not start another hosted save", async () => {
+  setup();
+  mocks.comments = [
+    {
+      id: "draft",
+      path: "a.ts",
+      headSha: "old",
+      code: "old line",
+      body: "Alice's feedback",
+      position: { kind: "added", newLine: 1 },
+      hostedComment: { reviewId: "review", commentId: "hosted", url: "https://host/comment" },
+    },
+  ];
+  mocks.update.mockImplementation((transform: (draft: ReviewDraft) => ReviewDraft) => {
+    mocks.comments = transform({
+      summary: "",
+      comment: "",
+      comments: mocks.comments ?? [],
+    }).comments;
+  });
+  mocks.discard.mockImplementation(async () => {
+    mocks.ready = false;
+    mocks.comments = [];
+    return true;
+  });
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const route = {
+    params: {
+      environmentId: "env",
+      projectId: "project",
+      repository: "owner/repo",
+      number: 1,
+      draftId: "draft",
+      path: "a.ts",
+      position: { kind: "added" as const, newLine: 2 },
+      headSha: "head",
+      code: "new line",
+    },
+  };
+  act(() => root.render(<PullRequestInlineCommentScreen route={route} />));
+  await act(async () => mocks.buttons.get("Save")!.onPress());
+  expect(mocks.comments).toMatchObject([
+    { headSha: "head", position: { kind: "added", newLine: 2 }, body: "Alice's feedback" },
+  ]);
+  expect(mocks.comments[0]?.hostedComment).toBeUndefined();
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(mocks.goBack).not.toHaveBeenCalled();
+  expect(mocks.alert).toHaveBeenCalledWith(
+    "Could not save the review comment",
+    expect.stringContaining("save again"),
+  );
+  mocks.viewer = "bob";
+  mocks.ready = true;
+  act(() => root.render(<PullRequestInlineCommentScreen route={route} />));
+  await act(async () => mocks.buttons.get("Save")!.onPress());
+  expect(mocks.save).not.toHaveBeenCalled();
 });

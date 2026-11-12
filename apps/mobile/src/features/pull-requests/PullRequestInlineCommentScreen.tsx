@@ -129,18 +129,22 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         body,
         ...(hostedComment ? { hostedComment } : {}),
       };
-      store.update((draft) => ({
+      store.complete((draft) => ({
         ...draft,
         comments: [...draft.comments.filter((comment) => comment.id !== commentId), comment],
       }));
       if (!(await store.flush())) throw new Error("Could not save the draft on this device.");
       if (!hostedComment && detail.data?.capabilities.review.draftComment === true) {
+        if (!store.isReady())
+          throw new Error(
+            "Your comment is saved on this device. Wait for the account refresh, then save again.",
+          );
         const result = await saveDraftComment({
           ...target,
           input: { ...target.input, comment },
         });
         if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-        store.update((draft) => ({
+        store.complete((draft) => ({
           ...draft,
           comments: draft.comments.map((entry) =>
             entry.id === comment.id ? { ...entry, hostedComment: result.value } : entry,
