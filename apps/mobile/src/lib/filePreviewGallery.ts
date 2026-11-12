@@ -1,4 +1,4 @@
-import type { FilePreviewItem, FilePreviewSource } from "../components/FilePreviewModal.types";
+import type { FilePreviewItem, FilePreviewSource } from "../components/ui/FilePreviewModal.types";
 
 export function filePreviewKey(source: FilePreviewItem): string {
   if ("resource" in source)

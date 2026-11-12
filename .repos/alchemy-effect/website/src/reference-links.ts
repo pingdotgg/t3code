@@ -18,9 +18,7 @@ export function referenceDestination(href: string): string | undefined {
 
 /** Rewrite authored links without rewriting the hand-maintained guide sources. */
 export function rewriteReferenceLinks(source: string): string {
-  return source.replace(
-    /(?:href=["']|\]\()(\/providers\/[^\s"'<>)]*)/g,
-    (match, href: string) =>
-      match.replace(href, referenceDestination(href) ?? href),
+  return source.replace(/(?:href=["']|\]\()(\/providers\/[^\s"'<>)]*)/g, (match, href: string) =>
+    match.replace(href, referenceDestination(href) ?? href),
   );
 }

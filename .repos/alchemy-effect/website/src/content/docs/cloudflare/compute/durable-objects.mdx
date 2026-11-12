@@ -31,7 +31,7 @@ public API, no state yet:
 
 ```typescript
 // src/counter.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default class Counter extends Cloudflare.DurableObject<Counter>()(
@@ -47,10 +47,11 @@ export default class Counter extends Cloudflare.DurableObject<Counter>()(
 ) {}
 ```
 
-:::tip[Why `Counter<Counter>()(...)` ?]
-The empty `()` after `Counter<Counter>` lets TypeScript capture the
-class identity for the typed RPC stub. It's a one-time bit of
-ceremony — the rest of your DO code looks completely normal.
+:::tip[Why `Cloudflare.DurableObject<Counter>()(...)` ?]
+The empty `()` after `Cloudflare.DurableObject<Counter>` lets
+TypeScript capture the class identity for the typed RPC stub. It's a
+one-time bit of ceremony — the rest of your DO code looks completely
+normal.
 :::
 
 ## Persist the count
@@ -140,7 +141,7 @@ namespace handle:
 
 ```diff lang="typescript"
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 +import Counter from "./counter.ts";
@@ -161,7 +162,7 @@ export default Cloudflare.Worker(
 ```
 
 `yield* Counter` in the constructor registers the DO with the Worker
-(binding + class-migration metadata) and hands you the namespace.
+(binding + Durable Object `exports` metadata) and hands you the namespace.
 
 ## Call the DO from `fetch`
 
@@ -171,7 +172,7 @@ by calling `getByName(...)` to obtain a typed stub, then invoking
 
 ```diff lang="typescript"
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 +import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -220,8 +221,8 @@ own stateful instance:
 
 ```diff lang="typescript"
 // test/integ.test.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -266,7 +267,7 @@ Add `tick` to `src/counter.ts`:
 
 ```diff lang="typescript"
 // src/counter.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 +import * as Schedule from "effect/Schedule";
 +import * as Stream from "effect/Stream";
@@ -302,7 +303,7 @@ Forward the stream from the Worker's `fetch` handler. Use
 
 ```diff lang="typescript"
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 +import * as Stream from "effect/Stream";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
@@ -347,8 +348,8 @@ Add the test:
 
 ```diff lang="typescript"
 // test/integ.test.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
 import { expect } from "bun:test";
 import * as Effect from "effect/Effect";
 +import * as Stream from "effect/Stream";
@@ -465,6 +466,19 @@ hinted region, which may not be inside it. Under `alchemy dev` there is
 only one location to place anything in, so hints are accepted and
 ignored — placement is only observable once deployed.
 
+## Keep an instance inside a jurisdiction
+
+A `locationHint` is best-effort. When data must stay inside a region for
+compliance, address the object through `jurisdiction()` instead:
+
+```typescript
+const room = rooms.jurisdiction("eu").getByName(roomId);
+```
+
+Cloudflare creates and stores that object only inside the jurisdiction.
+The same name addresses a different object than it does without
+`jurisdiction()`, so pick one form per name and keep using it.
+
 ## Call scope vs isolate scope
 
 A Durable Object shares its isolate's layer build with the Worker
@@ -497,7 +511,7 @@ body and schedule a revision snapshot:
 
 ```typescript
 // src/document.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default class Document extends Cloudflare.DurableObject<Document>()(
@@ -523,7 +537,7 @@ returning the public methods:
 ```diff lang="typescript"
 // src/document.ts
 +import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 // Inside Document's outer Effect:
@@ -670,12 +684,73 @@ renaming a handler does not migrate those jobs. TypeScript payload types
 do not validate data stored by an earlier deployment, so decode evolving
 payloads explicitly with a schema when needed.
 
+## Adopt a Worker deployed by Wrangler
+
+Alchemy deploys Durable Object classes with Cloudflare's declarative
+[`exports`](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/)
+map, the same flow Wrangler uses since 4.107. An
+[adopted](/infrastructure-as-code/resource-lifecycle#adoption) Worker
+keeps every namespace it already has, with its data and storage backend:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  name: "my-existing-worker",
+  main: "./src/worker.ts",
+  env: { Counter: Cloudflare.DurableObject("Counter") },
+}).pipe(adopt(true));
+```
+
+A namespace whose class is no longer exported by your code stops the
+deploy instead of being deleted. Export the class again to keep it.
+
+:::caution
+Cloudflare doesn't allow a Worker to go back to the older `migrations`
+flow once it has deployed with `exports`. Alchemy releases from before
+this change can no longer deploy a Worker after its first deploy with a
+newer release.
+:::
+
+## Run containers
+
+A Durable Object can start a container. Declare one Container per image
+with `schedulingPolicy: "durable_object"`, and bind each one the Durable
+Object can run.
+
+An Effect-native Durable Object `yield*`s its Containers:
+
+```typescript
+export class Agent extends Cloudflare.DurableObject<Agent>()(
+  "Agent",
+  Effect.gen(function* () {
+    const node = yield* Node;
+    const python = yield* Python;
+    return Effect.succeed({
+      start: () => node.start({ enableInternet: false }),
+    });
+  }),
+) {}
+```
+
+An async Worker lists them on the Durable Object binding:
+
+```typescript
+env: {
+  AGENT: Cloudflare.DurableObject("Agent", { containers: [Node, Python] }),
+}
+```
+
+An object runs one container at a time. See
+[Several images in one Durable Object](/cloudflare/compute/containers#several-images-in-one-durable-object)
+and [on an async Worker](/cloudflare/compute/containers#several-images-on-an-async-worker).
+
 ## Where next
 
 Guides that build on Durable Objects:
 
 - [Accept WebSockets](/cloudflare/compute/hibernatable-websockets) —
   WebSocket connections that survive hibernation.
+- [Code updates](/cloudflare/compute/code-updates) — when running
+  objects pick up new code after a deploy, and how to test it.
 - [Bind to another Worker's Durable Object](/cloudflare/compute/cross-worker-durable-object)
   — one Worker hosts the DO, others get a typed stub; also covers
   moving the host to a different Worker with the data intact.

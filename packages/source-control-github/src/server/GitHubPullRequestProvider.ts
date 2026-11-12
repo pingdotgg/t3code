@@ -41,6 +41,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  mentions: true,
+  referenceSigils: ["#"],
   viewedFiles: "host",
   review: {
     inlineComment: true,
@@ -49,7 +51,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: true },
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
@@ -111,6 +113,7 @@ function gitHubProviderFailure(
       return { reason: "missing-tool" };
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
+    case "SettingsSecretUnresolvedError":
     case "GitHubApiAuthenticationError":
       return { reason: "unauthenticated" };
     case "GitHubApiRateLimitError":
@@ -158,6 +161,9 @@ function withAvatar(
   return avatarUrl === null ? actor : { ...actor, avatarUrl };
 }
 
+const workflowRunIdOf = (url: string | null) =>
+  url?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1] ?? null;
+
 function withWorkflowApprovals(
   checks: ReadonlyArray<PullRequestCheck>,
   runs: ReadonlyArray<GitHubWorkflowRunApproval>,
@@ -166,8 +172,8 @@ function withWorkflowApprovals(
   const representedRunIds = new Set<number>();
   for (const check of checks) {
     if (check.status !== "action-required" || check.url === null) continue;
-    const id = check.url.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
-    if (id !== undefined) representedRunIds.add(Number(id));
+    const id = workflowRunIdOf(check.url);
+    if (id !== null) representedRunIds.add(Number(id));
   }
   const approvalChecks = runs
     .filter((run) => !representedRunIds.has(run.id))
@@ -187,9 +193,34 @@ function withWorkflowApprovals(
             status: "action-required" as const,
             description: "GitHub could not determine whether workflows are awaiting approval.",
             url: null,
+            placeholder: true,
           },
         ]
       : []),
+  ];
+}
+
+// GitHub adds a run's check runs only as its jobs start, so a queued run can have none yet.
+function withUnfinishedWorkflowRuns(
+  checks: ReadonlyArray<PullRequestCheck>,
+  runs: ReadonlyArray<GitHubWorkflowRunApproval>,
+): ReadonlyArray<PullRequestCheck> {
+  const runningRunIds = new Set<number>();
+  for (const check of checks) {
+    if (check.status !== "pending" && check.status !== "action-required") continue;
+    const id = workflowRunIdOf(check.url);
+    if (id !== null) runningRunIds.add(Number(id));
+  }
+  return [
+    ...checks,
+    ...runs
+      .filter((run) => !runningRunIds.has(run.id))
+      .map((run): PullRequestCheck => ({
+        name: run.name,
+        status: "pending",
+        description: "This workflow run has not finished.",
+        url: run.url,
+      })),
   ];
 }
 
@@ -334,11 +365,24 @@ export const make = Effect.gen(function* () {
                   }),
                 )
         ).pipe(
-          Effect.map((workflowApprovals) => ({
+          Effect.zip(
+            pullRequest.state !== "open" || pullRequest.headSha == null
+              ? Effect.succeed([] as ReadonlyArray<GitHubWorkflowRunApproval>)
+              : cli.listUnfinishedWorkflowRuns({ ...input, headSha: pullRequest.headSha }).pipe(
+                  Effect.catchIf(
+                    (error) =>
+                      error._tag !== "GitHubApiRateLimitError" &&
+                      error._tag !== "SourceControlRateLimitPausedError",
+                    () => Effect.succeed([] as ReadonlyArray<GitHubWorkflowRunApproval>),
+                  ),
+                ),
+            { concurrent: true },
+          ),
+          Effect.map(([workflowApprovals, unfinishedRuns]) => ({
             ...pullRequest,
             author: withAvatar(pullRequest.author, new Map(), input.host),
             checks: withWorkflowApprovals(
-              pullRequest.checks,
+              withUnfinishedWorkflowRuns(pullRequest.checks, unfinishedRuns),
               workflowApprovals.runs,
               workflowApprovals.unavailable,
             ),
@@ -448,6 +492,8 @@ export const make = Effect.gen(function* () {
       cli
         .getPullRequestWatchFingerprint(input)
         .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
+
+    changeRequestEvents: (input) => cli.pullRequestEvents(input),
 
     getChangeRequestPreview: (input) =>
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
@@ -654,6 +700,11 @@ export const make = Effect.gen(function* () {
 
     searchRepositoryAuthors: (input) =>
       cli.searchRepositoryAuthors(input).pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchRepositoryReferences(input)
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
 
     setLabels: (input) =>
       cli
