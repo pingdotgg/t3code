@@ -45,9 +45,10 @@ export function evaluatePullRequestWatch(
   now: number,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
-  // Azure DevOps omits the head when its iteration read fails; that is not a push.
+  // A read without a head says nothing about pushes, so it keeps the last known one.
   const headSha = detail.headSha ?? watch.headSha;
-  const headMoved = headSha !== watch.headSha;
+  const headMoved = watch.headSha !== null && headSha !== watch.headSha;
+  const checksBaseline = watch.awaitingBaseline !== undefined && !headMoved;
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
@@ -63,9 +64,11 @@ export function evaluatePullRequestWatch(
   const awaiting = checks.filter((check) => check.status === "action-required");
   if (checks.length > 0) {
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
+    if (!checksBaseline && newlyFailed.length > 0) {
+      changes.push({ kind: "checks-failed", failed: newlyFailed });
+    }
     if (!approvalAnnounced && awaiting.length > 0) {
-      changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
+      if (!checksBaseline) changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
       approvalAnnounced = true;
     }
     failedChecks = failed.map((check) => check.name);
@@ -125,7 +128,9 @@ export function evaluatePullRequestWatch(
       checks.every((check) => check.status !== "pending");
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
-      changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      if (!checksBaseline) {
+        changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+      }
       owedChecks =
         required.length > 0
           ? checks
@@ -146,9 +151,10 @@ export function evaluatePullRequestWatch(
   // repository runs no checks at all, nothing waits.
   let checksAwaitedSince = watch.checksAwaitedSince;
   if (detail.capabilities.checksAlwaysReport === true) {
-    const awaitedBefore = headMoved
-      ? DateTime.formatIso(DateTime.makeUnsafe(now))
-      : (watch.checksAwaitedSince ?? null);
+    const awaitedBefore =
+      headMoved || watch.awaitingBaseline === "all"
+        ? DateTime.formatIso(DateTime.makeUnsafe(now))
+        : (watch.checksAwaitedSince ?? null);
     checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
     const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
     if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
@@ -179,7 +185,7 @@ export function evaluatePullRequestWatch(
 
   // Like a failed check, a conflict a push did not resolve is news for the new head.
   const toldConflict = !headMoved && watch.conflicting;
-  if (detail.mergeability === "conflicting" && !toldConflict) {
+  if (watch.awaitingBaseline !== "all" && detail.mergeability === "conflicting" && !toldConflict) {
     changes.push({ kind: "conflicting" });
   }
   // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
@@ -204,6 +210,11 @@ export function evaluatePullRequestWatch(
       remarkIds,
       conflicting,
       wakes,
+      // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
+      ...(checksBaseline &&
+        (unread || (detail.headSha === undefined && checks.length === 0)) && {
+          awaitingBaseline: "checks" as const,
+        }),
       checksAwaitedSince,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
@@ -279,6 +290,43 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   conflicting: "merge conflict",
 };
 
+const WATCHING_CLOSING =
+  "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.";
+const WATCHING_CLOSING_PLURAL =
+  "Look into each item and act on it as your task requires. Each PR T3 Code still watches stays linked and watched, so do not link, watch, or list them again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request for each first so the thread returns to their inbox.";
+
+export interface PullRequestWatchWake {
+  readonly text: string;
+  readonly notification: OrchestrationV2Notification;
+}
+
+/** One wake for news on several pull requests, with the closing instructions said once. */
+export function combinePullRequestWatchWakes(
+  wakes: readonly [PullRequestWatchWake, ...ReadonlyArray<PullRequestWatchWake>],
+): PullRequestWatchWake {
+  if (wakes.length === 1) return wakes[0];
+  const closing = `\n\n${WATCHING_CLOSING}`;
+  const watching = wakes.some((wake) => wake.text.endsWith(closing));
+  const outcomes = wakes.map((wake) => wake.notification.outcome);
+  return {
+    text: [
+      ...wakes.map((wake) =>
+        wake.text.endsWith(closing) ? wake.text.slice(0, -closing.length) : wake.text,
+      ),
+      ...(watching ? [WATCHING_CLOSING_PLURAL] : []),
+    ].join("\n\n"),
+    notification: {
+      source: { kind: "monitor" },
+      outcome: outcomes.includes("failed")
+        ? "failed"
+        : outcomes.every((outcome) => outcome === "completed")
+          ? "completed"
+          : "updated",
+      summary: wakes.map((wake) => wake.notification.summary).join("; "),
+    },
+  };
+}
+
 export function pullRequestWatchMessage(input: {
   readonly number: number;
   readonly url: string;
@@ -297,7 +345,7 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
+      : WATCHING_CLOSING,
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",

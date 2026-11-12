@@ -8,6 +8,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
@@ -22,6 +23,7 @@ import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
@@ -56,6 +58,7 @@ import {
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./v2/OpenCode2Client.ts";
 import * as OpenCode2Server from "./v2/OpenCode2Server.ts";
+import { replaceOutdatedService } from "./v2/OpenCode2Service.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -267,6 +270,7 @@ export const OpenCodeDriver: ProviderDriver<
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
+    const agentScope = yield* AgentScope;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const digest = yield* Digest.Digest;
@@ -435,6 +439,8 @@ export const OpenCodeDriver: ProviderDriver<
                   Effect.timeout("2 seconds"),
                   Effect.orElseSucceed(() => true),
                 ),
+            // OpenCode answers provider.list for a location only once its skill scan has ended.
+            client.provider.list({ location }).pipe(Effect.timeout("10 seconds"), Effect.ignore),
           );
         }).pipe(Effect.scoped),
       );
@@ -454,7 +460,7 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     );
 
-    const checkUsageLimits = readOpenCodeGoUsageLimits({
+    const legacyUsageLimits = readOpenCodeGoUsageLimits({
       enabled: effectiveConfig.enabled,
       serverUrl: effectiveConfig.serverUrl,
       environment: processEnv,
@@ -463,6 +469,30 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(Path.Path, pathService),
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(Digest.Digest, digest),
+    );
+    let unsupportedUsageVersion: string | undefined;
+    const checkUsageLimits = Effect.gen(function* () {
+      if (!effectiveConfig.enabled) return yield* legacyUsageLimits;
+      const runtime = yield* runtimeProbe.get;
+      if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
+        return yield* legacyUsageLimits;
+      const limits = yield* openCode2Server.withConnection((connection) =>
+        connection.usageLimits(host.paths.cwd),
+      );
+      if (limits === undefined) unsupportedUsageVersion = runtime.version;
+      return limits ?? (yield* legacyUsageLimits);
+    }).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.catch(() =>
+        Effect.map(DateTime.now, (now) => ({
+          checkedAt: DateTime.formatIso(now),
+          windows: [],
+          unavailable: {
+            reason: "probeFailed" as const,
+            message: "OpenCode could not read workspace usage.",
+          },
+        })),
+      ),
     );
     const checkProvider = Effect.all(
       {
@@ -576,6 +606,31 @@ export const OpenCodeDriver: ProviderDriver<
               }),
             ),
           );
+
+    const serverUrl = effectiveConfig.serverUrl.trim();
+    const afterUpdate =
+      serverUrl.length > 0
+        ? replaceOutdatedService({
+            binaryPath: effectiveConfig.binaryPath,
+            serverUrl,
+            environment: processEnv,
+          }).pipe(
+            Effect.ensuring(openCode2Server.forget),
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Failed to replace the OpenCode service after an update.",
+                  cause,
+                }),
+            ),
+            Effect.provideService(AgentScope, agentScope),
+            Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+          )
+        : Effect.void;
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>({
@@ -709,6 +764,8 @@ export const OpenCodeDriver: ProviderDriver<
                 }),
               ),
             ),
+      invalidateCaches: openCode2Server.forget,
+      afterUpdate,
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;
