@@ -6,7 +6,7 @@ import type { OpenCode2Model } from "./status.ts";
 
 // Cold catalogs take seconds; model reads already retry empty catalogs.
 const PROVIDER_NAME_TIMEOUT = "3 seconds";
-// Bounds the request alone; a cold server start before it has its own bounds.
+// Bounds the request alone (server start has its own bounds); a slow list reads as not listed yet.
 const MODEL_LIST_TIMEOUT = "5 seconds";
 
 const listProviders = (client: OpenCodeClient, directory: string) =>
@@ -22,16 +22,17 @@ const readCatalog = <E>(
 ): Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError> =>
   Effect.all(
     {
-      models: client.model
-        .list({ location: { directory } })
-        .pipe(Effect.timeout(MODEL_LIST_TIMEOUT)),
+      models: client.model.list({ location: { directory } }).pipe(
+        Effect.timeoutOption(MODEL_LIST_TIMEOUT),
+        Effect.map((list) => (list._tag === "Some" ? list.value.data : [])),
+      ),
       providers,
     },
     { concurrency: "unbounded" },
   ).pipe(
     Effect.map(({ models, providers }) => {
       const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
-      return models.data.map((model) => {
+      return models.map((model) => {
         const providerName = providerNames.get(model.providerID);
         return {
           providerID: model.providerID,
