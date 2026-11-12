@@ -11,7 +11,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -181,14 +180,10 @@ it.effect("does not sign in to whatever took over a dead server's port", () =>
 /** Answers each tool call with the next scripted response for that tool. */
 const scriptedTools = (script: Record<string, Array<unknown>>) => {
   const calls: Array<{ readonly tool: string; readonly args: unknown }> = [];
-  const call = ((tool: string, args: unknown, schema: Schema.Decoder<unknown>) => {
+  const call = ((tool: string, args: unknown) => {
     calls.push({ tool, args });
     const next = script[tool]?.shift();
-    return next === undefined
-      ? Effect.die(`unscripted ${tool} call`)
-      : tool === "t3_thread_wait"
-        ? Schema.decodeEffect(schema)(next).pipe(Effect.orDie)
-        : Effect.succeed(next);
+    return next === undefined ? Effect.die(`unscripted ${tool} call`) : Effect.succeed(next);
   }) as ThreadTools["call"];
   return { tools: { call } satisfies ThreadTools, calls };
 };
@@ -198,23 +193,10 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
     const continuation = RunId.make("run-2");
     const { tools, calls } = scriptedTools({
       t3_thread_wait: [
-        {
-          threadId,
-          runId,
-          status: "running",
-          timedOut: true,
-          hasPendingQuestion: false,
-          pendingApproval: null,
-        },
-        {
-          threadId,
-          runId: continuation,
-          status: "failed",
-          timedOut: false,
-          hasPendingQuestion: false,
-          pendingApproval: null,
-        },
+        { threadId, runId, status: "running", timedOut: true },
+        { threadId, runId: continuation, status: "failed", timedOut: false },
       ],
+      t3_thread_read: [{ thread: { pendingRequestCount: 0 } }],
     });
 
     const outcome = yield* waitForRun(tools, threadId, runId);
@@ -223,8 +205,8 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
     assert.deepStrictEqual(
       calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
       [
-        { threadId, runId, timeoutMs: 15_000, returnOnInput: true },
-        { threadId, runId, timeoutMs: 15_000, returnOnInput: true },
+        { threadId, runId, timeoutMs: 15_000 },
+        { threadId, runId, timeoutMs: 15_000 },
       ],
     );
   }),
@@ -267,14 +249,8 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
     assert.deepStrictEqual(
       calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
       [
-        { threadId, runId, timeoutMs: 15_000, returnOnInput: true },
-        {
-          threadId,
-          runId,
-          timeoutMs: 15_000,
-          returnOnInput: true,
-          untilDelegatedWorkSettled: true,
-        },
+        { threadId, runId, timeoutMs: 15_000 },
+        { threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true },
       ],
     );
     assert.deepStrictEqual(outcome, { type: "ended", runId: wakeRun, status: "completed" });
@@ -365,48 +341,15 @@ it.effect(
 
 it.effect("--wait stops when the thread waits for an answer instead of polling forever", () =>
   Effect.gen(function* () {
-    const { tools, calls } = scriptedTools({
+    const { tools } = scriptedTools({
       t3_thread_wait: [
-        {
-          threadId,
-          runId,
-          status: "queued",
-          timedOut: false,
-          hasPendingQuestion: true,
-          pendingApproval: null,
-        },
+        { threadId, runId, status: "queued", timedOut: true },
+        { threadId, runId, status: "queued", timedOut: true },
       ],
+      t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
     });
 
     assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId), { type: "needs_input" });
-    assert.deepStrictEqual(
-      calls.map((call) => call.tool),
-      ["t3_thread_wait"],
-    );
-  }),
-);
-
-it.effect("--wait stops when the run background work woke waits for an answer", () =>
-  Effect.gen(function* () {
-    const wakeRun = RunId.make("run-2");
-    const { tools } = scriptedTools({
-      t3_thread_wait: [
-        { threadId, runId, status: "completed", timedOut: false },
-        {
-          threadId,
-          runId,
-          status: "completed",
-          timedOut: false,
-          hasPendingQuestion: true,
-          pendingApproval: null,
-        },
-      ],
-      t3_thread_read: laterRunReads(wakeRun, []),
-    });
-
-    assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId, true), {
-      type: "needs_input",
-    });
   }),
 );
 
@@ -414,23 +357,10 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
   Effect.gen(function* () {
     const { tools } = scriptedTools({
       t3_thread_wait: [
-        {
-          threadId,
-          runId,
-          status: "running",
-          timedOut: true,
-          hasPendingQuestion: false,
-          pendingApproval: null,
-        },
-        {
-          threadId,
-          runId,
-          status: "completed",
-          timedOut: false,
-          hasPendingQuestion: false,
-          pendingApproval: null,
-        },
+        { threadId, runId, status: "running", timedOut: true },
+        { threadId, runId, status: "completed", timedOut: false },
       ],
+      t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
     });
 
     assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId), {
@@ -439,24 +369,6 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       status: "completed",
     });
   }),
-);
-
-it.effect.each(["running", "completed"] as const)(
-  "--wait reads legacy pending requests and rechecks its %s run",
-  (status) =>
-    Effect.gen(function* () {
-      const { tools } = scriptedTools({
-        t3_thread_wait: [
-          { threadId, runId, status: "running", timedOut: true },
-          { threadId, runId, status, timedOut: status === "running" },
-        ],
-        t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
-      });
-      assert.deepStrictEqual(
-        yield* waitForRun(tools, threadId, runId),
-        status === "running" ? { type: "needs_input" } : { type: "ended", runId, status },
-      );
-    }),
 );
 
 /** Serves t3_thread_read pages the way the server does: positions count every item. */

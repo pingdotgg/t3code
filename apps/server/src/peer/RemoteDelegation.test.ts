@@ -1480,7 +1480,7 @@ it.effect.each([null, "question", "approval"] as const)(
           taskResult(a, delegated.taskId).pipe(Effect.as("completed here" as const)),
         );
         expect(first).toBe("waiting there");
-        // The follower asks for a terminal-only wait, so pending input never ends it early.
+        // A linked follower is a client caller there, so pending input never ends its wait early.
         expect(yield* Ref.get(thread.nestedInput)).toBe(pendingInput);
 
         // The review reports and wakes the thread there, whose next run answers.

@@ -208,7 +208,6 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           ...(runId === undefined ? {} : { runId }),
           timeoutMs: chunk,
-          returnOnInput: McpInvocationContext.threadWaitReturnsOnInput(scope, input.returnOnInput),
           ...(input.untilDelegatedWorkSettled === undefined
             ? {}
             : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),

@@ -489,19 +489,6 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
         [PeerForwarding.FORWARDED_WAIT_CHUNK_MS, boxRun],
       ]);
 
-      // An explicit terminal-only wait must survive the linked-client boundary.
-      yield* a.call("thread:laptop-full", "t3_thread_wait", {
-        environmentId: box.environmentId,
-        threadId: boxThread,
-        returnOnInput: false,
-      });
-      expect((yield* Ref.get(seen)).waits.map(({ returnOnInput }) => returnOnInput)).toEqual([
-        true,
-        true,
-        true,
-        false,
-      ]);
-
       const send = (caller: string, clientRequestId: string) =>
         a.call(caller, "t3_thread_send", {
           environmentId: box.environmentId,

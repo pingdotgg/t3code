@@ -35,6 +35,10 @@ import * as ProcessRunner from "../processRunner.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
+/**
+ * Short enough that a run which stops to ask the user something is noticed
+ * soon, since `t3_thread_wait` only returns on a terminal run.
+ */
 const WAIT_SLICE_MS = 15_000;
 const WAKE_GRACE_MS = 10_000;
 const WAKE_POLL_MS = 500;
@@ -513,12 +517,6 @@ type WaitOutcome =
     }
   | { readonly type: "needs_input" };
 
-// Keep the missing flag observable: older servers need the thread-wide request fallback.
-const CliThreadWaitResult = Schema.Struct({
-  ...OrchestratorMcpThreadWaitResult.fields,
-  hasPendingQuestion: Schema.optional(Schema.Boolean),
-});
-
 /**
  * Whether the thread has nothing left to do: no active run and no delegated
  * or background work. Only then is the work a later wait settles on this
@@ -581,32 +579,24 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
         threadId,
         runId,
         timeoutMs,
-        returnOnInput: true,
         ...(untilDelegatedWorkSettled ? { untilDelegatedWorkSettled } : {}),
       },
-      CliThreadWaitResult,
+      OrchestratorMcpThreadWaitResult,
     );
-  const needsInput = (waited: typeof CliThreadWaitResult.Type) =>
-    waited.hasPendingQuestion === true || waited.pendingApproval !== null;
-  // Servers that report input set `hasPendingQuestion`; older ones need the thread-wide count.
-  const pendingOnOlderServer = (waited: typeof CliThreadWaitResult.Type) =>
-    waited.hasPendingQuestion === undefined
-      ? tools
-          .call(
-            "t3_thread_read",
-            { threadId, limit: 1, runLimit: 1 },
-            OrchestratorMcpThreadReadResult,
-          )
-          .pipe(Effect.map(({ thread }) => thread.pendingRequestCount > 0))
-      : Effect.succeed(false);
-  const ended = (waited: typeof CliThreadWaitResult.Type) =>
+  const ended = (waited: OrchestratorMcpThreadWaitResult) =>
     ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
   const ownRun = Effect.gen(function* () {
     while (true) {
       const waited = yield* waitSlice(WAIT_SLICE_MS);
-      if (needsInput(waited)) return { type: "needs_input" } satisfies WaitOutcome;
       if (!waited.timedOut) return ended(waited);
-      if (yield* pendingOnOlderServer(waited)) {
+      // A pending request on this run, or on an earlier run this one is queued
+      // behind, blocks it until someone answers.
+      const { thread } = yield* tools.call(
+        "t3_thread_read",
+        { threadId, limit: 1, runLimit: 1 },
+        OrchestratorMcpThreadReadResult,
+      );
+      if (thread.pendingRequestCount > 0) {
         // The count is thread-wide: if this run ended since the slice, the
         // request belongs to a later run.
         const recheck = yield* waitSlice(1);
@@ -635,7 +625,6 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
     const result = waited.timedOut ? undefined : waited.resultRun;
     const after = yield* runsAfter(tools, threadId, finalRunId);
     if (after.sent) return outcome;
-    if (needsInput(waited)) return { type: "needs_input" } satisfies WaitOutcome;
     if (!waited.timedOut) {
       if (result !== undefined && after.later.some((run) => run.runId === result.runId)) {
         return { type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome;

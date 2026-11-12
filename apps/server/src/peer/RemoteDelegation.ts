@@ -772,8 +772,6 @@ const make = Effect.gen(function* () {
         // tasks to wake it for the answer, which a task here waits for too.
         // An older peer ignores this and reports the run alone.
         untilDelegatedWorkSettled: true,
-        // Only the terminal state matters here; input-aware waits would return at once.
-        returnOnInput: false,
       })
       .pipe(Effect.raceFirst(endedHere));
     // The next look reads the result and stops it there.

@@ -4101,11 +4101,9 @@ describe("OrchestratorMcpService thread lookup", () => {
   );
 
   it.effect.each([
-    { name: "legacy client", returnOnInput: undefined, agent: false, pending: false },
-    { name: "updated client", returnOnInput: true, agent: false, pending: true },
-    { name: "older linked peer", returnOnInput: undefined, linked: true, pending: false },
-    { name: "thread caller", returnOnInput: undefined, agent: true, pending: true },
-    { name: "terminal-only thread caller", returnOnInput: false, agent: true, pending: false },
+    { name: "client", agent: false, pending: false },
+    { name: "linked peer", linked: true, pending: false },
+    { name: "thread caller", agent: true, pending: true },
   ])("preserves wait semantics for $name", (scenario) =>
     Effect.gen(function* () {
       const runId = RunId.make("run:compat-wait");
@@ -4173,9 +4171,6 @@ describe("OrchestratorMcpService thread lookup", () => {
               threadId: launched.id,
               runId,
               timeoutMs: 60_000,
-              ...(scenario.returnOnInput === undefined
-                ? {}
-                : { returnOnInput: scenario.returnOnInput }),
             },
           )
           .pipe(Effect.forkChild);
