@@ -34,22 +34,23 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
-  it("preserves unknown config keys while omitting empty configurable fields", () => {
-    const opencode = providerClients.get(ProviderDriverKind.make("opencode"));
-    expect(opencode).toBeDefined();
-
-    const serverUrl = deriveProviderSettingsFields(opencode!).find(
-      (field) => field.key === "serverUrl",
-    );
-    expect(serverUrl).toBeDefined();
-
-    const next = nextProviderConfigWithFieldValue(
-      { forkOwned: 1, serverUrl: "http://127.0.0.1:4096" },
-      serverUrl!,
-      "",
-    );
-
-    expect(next).toEqual({ forkOwned: 1 });
+  it("preserves unknown config keys while editing or clearing configurable fields", () => {
+    for (const { driver, key, value } of [
+      { driver: "opencode", key: "serverUrl", value: "http://127.0.0.1:4096" },
+      { driver: "antigravity", key: "autoCompactWindow", value: "840000" },
+    ]) {
+      const client = providerClients.get(ProviderDriverKind.make(driver));
+      expect(client).toBeDefined();
+      const field = deriveProviderSettingsFields(client!).find((field) => field.key === key);
+      expect(field).toBeDefined();
+      expect(nextProviderConfigWithFieldValue({ forkOwned: 1 }, field!, value)).toEqual({
+        forkOwned: 1,
+        [key]: value,
+      });
+      expect(nextProviderConfigWithFieldValue({ forkOwned: 1, [key]: value }, field!, "")).toEqual({
+        forkOwned: 1,
+      });
+    }
   });
 
   it("stores false boolean fields when true is the default", () => {
