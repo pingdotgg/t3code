@@ -390,6 +390,24 @@ describe("readEnvironmentFromWindowsShell", () => {
     }),
   );
 
+  effectIt.effect("returns the persisted User PATH when the inherited PATH is stale", () =>
+    Effect.gen(function* () {
+      const userEntry = "C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links";
+      // Models real PowerShell: only a User-scope read sees what the registry holds.
+      const environment = yield* readEnvironmentFromWindowsShell(["PATH"], {}, (_file, args) => {
+        const script = args.at(-1) ?? "";
+        const path = /'User'|::User\b|HKCU:/u.test(script)
+          ? `C:\\Windows\\System32;${userEntry}`
+          : "C:\\Windows\\System32";
+        return Effect.succeed(
+          Option.some(`__T3CODE_ENV_PATH_START__\n${path}\n__T3CODE_ENV_PATH_END__\n`),
+        );
+      });
+
+      expect(environment.PATH?.split(";")).toContain(userEntry);
+    }),
+  );
+
   effectIt.effect("strips CRLF delimiters from captured PowerShell values", () =>
     Effect.gen(function* () {
       const execFile = vi.fn<

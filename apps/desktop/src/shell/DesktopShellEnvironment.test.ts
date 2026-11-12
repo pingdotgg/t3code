@@ -687,6 +687,36 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("finds CLIs on the persisted User PATH when the inherited PATH is stale", () =>
+    Effect.gen(function* () {
+      const localAppData = "C:\\Users\\testuser\\AppData\\Local";
+      const stalePath = "C:\\Windows\\System32";
+      const userPath = `${localAppData}\\Microsoft\\WinGet\\Links;${localAppData}\\cursor-agent`;
+      const env: NodeJS.ProcessEnv = {
+        PATH: stalePath,
+        LOCALAPPDATA: localAppData,
+        USERPROFILE: "C:\\Users\\testuser",
+      };
+
+      // Models real PowerShell: process scope echoes the stale inherited PATH; only a
+      // User-scope read sees what the registry holds.
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          const script = command.args.at(-1) ?? "";
+          const readsUserScope = /'User'|::User\b|HKCU:/u.test(script);
+          return envOutput({ PATH: readsUserScope ? `${stalePath};${userPath}` : stalePath });
+        },
+      });
+
+      const entries = (env.PATH ?? "").split(";");
+      assert.include(entries, `${localAppData}\\Microsoft\\WinGet\\Links`);
+      assert.include(entries, `${localAppData}\\cursor-agent`);
+    }),
+  );
+
   it.effect.each([false, true])(
     "leaves Windows preparation incomplete when loadProfile=%s fails",
     (loadProfile) =>
