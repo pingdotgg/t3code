@@ -65,6 +65,10 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
 const CODEX_GOAL_VALIDATION_MESSAGE =
   /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
 
+// codex_config::ConstraintError::InvalidValue for a managed requirements.toml or cloud policy.
+const CODEX_ACCESS_REQUIREMENT_REJECTION =
+  /invalid value for `(approval_policy|sandbox_mode)`: `([A-Za-z]{1,32})` is not in the allowed set /u;
+
 const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   previous_turn_active: "the previous turn is still running",
   attachment_unreadable: "an attachment could not be read",
@@ -119,8 +123,8 @@ function curatedCauseMessages(cause: unknown): {
         case "ProviderCompactionUnsupportedError":
           return { known: stringField(cause, "message"), category: categoryMessage() };
         case "CodexAppServerRequestError": {
-          // Only Codex's fixed-shape goal validation text is actionable and
-          // safe to show; other request error text stays hidden.
+          // Only Codex's fixed-shape goal validation and managed-requirements
+          // text is actionable and safe to show; other request error text stays hidden.
           const rejection = stringField(cause, "message");
           if (
             (cause as Record<string, unknown>).method === "thread/goal/set" &&
@@ -128,6 +132,14 @@ function curatedCauseMessages(cause: unknown): {
             CODEX_GOAL_VALIDATION_MESSAGE.test(rejection)
           ) {
             return { known: `Codex rejected the goal: ${rejection}.`, category: categoryMessage() };
+          }
+          const access =
+            rejection === undefined ? null : CODEX_ACCESS_REQUIREMENT_REJECTION.exec(rejection);
+          if (access !== null) {
+            return {
+              known: `Codex's managed requirements do not allow \`${access[1]}\` \`${access[2]}\`, which this thread's access mode uses. Switch the thread to an access mode the policy allows.`,
+              category: categoryMessage(),
+            };
           }
           break;
         }
