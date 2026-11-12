@@ -312,35 +312,44 @@ describe("DesktopServerExposure", () => {
     );
   });
 
-  it.effect("persists tailscale serve preferences atomically and reports no-op updates", () =>
-    withHarness(
-      emptyNetworkInterfaces,
-      Effect.gen(function* () {
-        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+  it.effect(
+    "persists tailscale serve preferences atomically and relaunches to retry an enable",
+    () =>
+      withHarness(
+        emptyNetworkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.load;
-        yield* serverExposure.configureFromSettings({ port: 4173 });
+          yield* settings.load;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
 
-        const changed = yield* serverExposure.setTailscaleServeEnabled({
-          enabled: true,
-          port: 8443,
-        });
-        assert.equal(changed.requiresRelaunch, true);
-        assert.equal(changed.state.tailscaleServeEnabled, true);
-        assert.equal(changed.state.tailscaleServePort, 8443);
+          const changed = yield* serverExposure.setTailscaleServeEnabled({
+            enabled: true,
+            port: 8443,
+          });
+          assert.equal(changed.requiresRelaunch, true);
+          assert.equal(changed.state.tailscaleServeEnabled, true);
+          assert.equal(changed.state.tailscaleServePort, 8443);
 
-        const unchanged = yield* serverExposure.setTailscaleServeEnabled({
-          enabled: true,
-          port: 8443,
-        });
-        assert.equal(unchanged.requiresRelaunch, false);
+          const retried = yield* serverExposure.setTailscaleServeEnabled({
+            enabled: true,
+            port: 8443,
+          });
+          assert.equal(retried.requiresRelaunch, true);
 
-        const persisted = yield* settings.get;
-        assert.equal(persisted.tailscaleServeEnabled, true);
-        assert.equal(persisted.tailscaleServePort, 8443);
-      }),
-    ),
+          yield* serverExposure.setTailscaleServeEnabled({ enabled: false, port: 8443 });
+          const unchanged = yield* serverExposure.setTailscaleServeEnabled({
+            enabled: false,
+            port: 8443,
+          });
+          assert.equal(unchanged.requiresRelaunch, false);
+
+          const persisted = yield* settings.get;
+          assert.equal(persisted.tailscaleServeEnabled, false);
+          assert.equal(persisted.tailscaleServePort, 8443);
+        }),
+      ),
   );
 
   it.effect("keeps a Tailscale Serve change made while a mode change is saving", () =>

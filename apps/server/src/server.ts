@@ -99,6 +99,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import { retryTailscaleServe, tailscaleServeFailureHint } from "./tailscaleServeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
@@ -906,45 +907,22 @@ const layerMakeServer = Layer.unwrap(
     );
     const layerTailscaleServe = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
-          Effect.acquireRelease(
-            Effect.gen(function* () {
-              yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
-              yield* awaitActivation;
-              const server = yield* HttpServer.HttpServer;
-              const address = server.address;
-              if (typeof address === "string" || !("port" in address)) {
-                return null;
-              }
+          Effect.gen(function* () {
+            yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
+            yield* awaitActivation;
+            const server = yield* HttpServer.HttpServer;
+            const address = server.address;
+            if (typeof address === "string" || !("port" in address)) {
+              return;
+            }
 
-              const localPort = address.port;
-              const localHost = loopbackUrlHostForAddress(address);
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost,
-              }).pipe(
-                Effect.as({
-                  localPort,
-                  localHost: localHost.replace(/^\[|\]$/gu, ""),
-                  servePort: config.tailscaleServePort,
-                }),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
-                ),
-              );
-            }),
-            (configured) =>
-              configured
+            const localPort = address.port;
+            const localHost = loopbackUrlHostForAddress(address);
+            const servePort = config.tailscaleServePort;
+            const configured = { localPort, localHost: localHost.replace(/^\[|\]$/gu, "") };
+            let serveConfigured = false;
+            yield* Effect.addFinalizer(() =>
+              serveConfigured
                 ? Effect.all(
                     [
                       readTailscaleServeRoutesTo({
@@ -960,7 +938,7 @@ const layerMakeServer = Layer.unwrap(
                     Effect.map(([routes, status]) =>
                       routes.some(
                         (route) =>
-                          route.servePort === configured.servePort &&
+                          route.servePort === servePort &&
                           route.mount === "/" &&
                           route.owner === undefined &&
                           route.ambiguous === undefined &&
@@ -970,29 +948,46 @@ const layerMakeServer = Layer.unwrap(
                     Effect.orElseSucceed(() => false),
                     Effect.flatMap((ours) =>
                       ours
-                        ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
+                        ? disableTailscaleServe({ servePort }).pipe(
                             Effect.tap(() =>
-                              Effect.logInfo("Tailscale Serve disabled", {
-                                servePort: configured.servePort,
-                              }),
+                              Effect.logInfo("Tailscale Serve disabled", { servePort }),
                             ),
                           )
                         : Effect.logInfo(
                             "Tailscale Serve left on; its root route is not known to be ours",
-                            {
-                              servePort: configured.servePort,
-                            },
+                            { servePort },
                           ),
                     ),
                     Effect.catch((cause) =>
                       Effect.logWarning("Failed to disable Tailscale Serve", {
                         cause,
-                        servePort: configured.servePort,
+                        servePort,
                       }),
                     ),
                   )
                 : Effect.void,
-          ),
+            );
+            yield* retryTailscaleServe(
+              ensureTailscaleServe({ localPort, servePort, localHost }),
+              (cause) =>
+                Effect.logWarning("Failed to configure Tailscale Serve; retrying", {
+                  hint: tailscaleServeFailureHint(cause),
+                  cause,
+                  localPort,
+                  servePort,
+                }),
+            ).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  serveConfigured = true;
+                }),
+              ),
+              Effect.tap(() =>
+                Effect.logInfo("Tailscale Serve configured", { localPort, servePort }),
+              ),
+              Effect.forkScoped,
+            );
+          }),
         )
       : Layer.empty;
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
