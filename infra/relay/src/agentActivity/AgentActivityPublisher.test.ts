@@ -71,7 +71,7 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: ({ state }) => Effect.succeed(state),
+    upsert: () => Effect.void,
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
@@ -140,64 +140,6 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
-  it.effect("fans out the persisted phase time to iOS and Android", () => {
-    const persisted = { ...state, phase: "waiting_for_input" as const };
-    const renamed = {
-      ...persisted,
-      threadTitle: "Renamed",
-      updatedAt: "1970-01-01T00:01:00.000Z",
-    };
-    const androidStates: Array<RelayAgentActivityState | null> = [];
-    const appleTimes: string[] = [];
-    const dependencies = Layer.mergeAll(
-      Layer.succeed(
-        AgentActivityRows.AgentActivityRows,
-        makeAgentActivityRows({
-          upsert: (input) => Effect.succeed({ ...input.state, updatedAt: persisted.updatedAt }),
-        }),
-      ),
-      Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
-      Layer.succeed(
-        LiveActivities.LiveActivities,
-        makeLiveActivities({
-          listTargets: () =>
-            Effect.succeed([target("ios"), { ...target("android"), platform: "android" as const }]),
-        }),
-      ),
-      Layer.succeed(FcmDeliveries.FcmDeliveries, {
-        enqueue: (input) =>
-          Effect.sync(() => {
-            androidStates.push(input.state);
-            return null;
-          }),
-        process: () => Effect.void,
-      }),
-      Layer.succeed(
-        ApnsDeliveries.ApnsDeliveries,
-        makeApnsDeliveries({
-          sendForTarget: (input) =>
-            Effect.sync(() => {
-              appleTimes.push(input.aggregate!.activities[0]!.updatedAt);
-              return null;
-            }),
-        }),
-      ),
-    );
-    return Effect.gen(function* () {
-      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-      yield* publisher.publish({
-        environmentId: state.environmentId,
-        environmentPublicKey: "key",
-        threadId: state.threadId,
-        state: renamed,
-      });
-      expect(appleTimes).toEqual([persisted.updatedAt]);
-      expect(androidStates).toMatchObject([
-        { threadTitle: "Renamed", updatedAt: persisted.updatedAt },
-      ]);
-    }).pipe(Effect.provide(AgentActivityPublisher.layer.pipe(Layer.provide(dependencies))));
-  });
-
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const ios = target("ios");

@@ -206,12 +206,11 @@ const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
-      let state = input.state;
-      if (state) {
+      if (input.state) {
         // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
-        state = yield* rows.upsert({
+        yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
-          state,
+          state: input.state,
         });
       } else {
         yield* rows.remove({
@@ -231,7 +230,7 @@ const make = Effect.gen(function* () {
         (deliveryUser) =>
           publishForDeliveryUser({
             deliveryUser,
-            state,
+            state: input.state,
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },

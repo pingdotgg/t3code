@@ -79,7 +79,7 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: ({ state }) => Effect.succeed(state),
+    upsert: () => Effect.void,
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => {
