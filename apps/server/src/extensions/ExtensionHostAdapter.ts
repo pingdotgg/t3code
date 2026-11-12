@@ -26,6 +26,7 @@ import { extensionHostEntry } from "./hostEntry.ts";
 import type { ExtensionHostLaunch } from "./ExtensionProcess.ts";
 import { hostApiSchemas } from "./hostApiSchemas.ts";
 
+const isExtensionError = Schema.is(ExtensionError);
 const decodeThread = Schema.decodeUnknownEffect(Schema.Struct({ threadId: ThreadId }));
 const decodeCommand = Schema.decodeUnknownEffect(Schema.toCodecJson(OrchestrationV2Command));
 const decodeSettings = Schema.decodeUnknownEffect(Schema.toCodecJson(ServerSettingsPatch));
@@ -41,11 +42,10 @@ export class ExtensionHostAdapter extends Context.Service<
     readonly installPackage: (
       source: string,
       directory: string,
-      signal: AbortSignal,
-    ) => Promise<void>;
-    readonly launch: (signal: AbortSignal) => Promise<ExtensionHostLaunch>;
+    ) => Effect.Effect<void, ExtensionError>;
+    readonly launch: () => Effect.Effect<ExtensionHostLaunch, ExtensionError>;
     readonly platform: NodeJS.Platform;
-    readonly call: (method: string, input: unknown, signal: AbortSignal) => Promise<unknown>;
+    readonly call: (method: string, input: unknown) => Effect.Effect<unknown, ExtensionError>;
   }
 >()("t3/extensions/ExtensionHostAdapter") {}
 
@@ -58,6 +58,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const launches = yield* ThreadLaunchService.ThreadLaunchService;
     const projects = yield* ProjectService.ProjectService;
     const settings = yield* ServerSettings.ServerSettingsService;
     const context = yield* Effect.context<
@@ -86,7 +87,7 @@ export const layer = Layer.effect(
             const command = yield* decodeCommand(input);
             return yield* (
               command.type === "prepared-run.retry"
-                ? (yield* ThreadLaunchService.ThreadLaunchService).retryPreparation(command)
+                ? launches.retryPreparation(command)
                 : ThreadMessageIntake.dispatchCommand(command)
             ).pipe(Effect.provide(context), Effect.flatMap(encodeDispatch));
           }
@@ -118,77 +119,69 @@ export const layer = Layer.effect(
           ),
         ),
     );
-    // Node IPC is a Promise boundary; the service operations retain their application-owned context.
-    return {
-      launch: (signal) =>
-        Effect.runPromiseWith(context)(
-          Effect.gen(function* () {
-            const runtime = yield* ManagedNodeRuntime.ensure(
-              path.join(config.stateDir, "extensions", "runtimes"),
-            );
-            const worker = yield* Effect.tryPromise({
-              try: () => extensionHostEntry(path.join(config.stateDir, "extensions", "hosts")),
-              catch: (cause) =>
-                new ExtensionError({
-                  operation: "host",
-                  id: "runtime",
-                  reason: "runtime-failed",
-                  cause,
-                }),
-            });
-            const env = { ...environment };
-            const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
-            env[pathKey] =
-              `${path.dirname(runtime.node)}${platform === "win32" ? ";" : ":"}${env[pathKey] ?? ""}`;
-            return {
-              command: runtime.node,
-              args: [worker],
-              env,
-            };
-          }),
-          { signal },
-        ),
-      platform,
-      installPackage: (source, directory, signal) =>
-        Effect.runPromiseWith(context)(
-          Effect.gen(function* () {
-            const runtime = yield* ManagedNodeRuntime.ensure(
-              path.join(config.stateDir, "extensions", "runtimes"),
-            );
-            const env = { ...environment };
-            const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
-            env[pathKey] =
-              `${path.dirname(runtime.node)}${platform === "win32" ? ";" : ":"}${env[pathKey] ?? ""}`;
-            const result = yield* runner.run({
-              command: runtime.node,
-              args: [
-                runtime.npm,
-                "install",
-                "--prefix",
-                directory,
-                "--no-audit",
-                "--no-fund",
-                "--",
-                source,
-              ],
-              env,
-              timeout: Duration.minutes(5),
-              maxOutputBytes: 256 * 1024,
-              outputMode: "truncate",
-            });
-            if (result.code !== 0 || result.timedOut)
-              return yield* new ExtensionError({
+    const launch = Effect.fn("ExtensionHostAdapter.launch")(function* () {
+      const runtime = yield* ManagedNodeRuntime.ensure(
+        path.join(config.stateDir, "extensions", "runtimes"),
+      );
+      const worker = yield* Effect.tryPromise({
+        try: () => extensionHostEntry(path.join(config.stateDir, "extensions", "hosts")),
+        catch: (cause) =>
+          new ExtensionError({ operation: "host", id: "runtime", reason: "runtime-failed", cause }),
+      });
+      const env = { ...environment };
+      const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+      env[pathKey] =
+        `${path.dirname(runtime.node)}${platform === "win32" ? ";" : ":"}${env[pathKey] ?? ""}`;
+      return { command: runtime.node, args: [worker], env };
+    }, Effect.provide(context));
+    const installPackage = Effect.fn("ExtensionHostAdapter.installPackage")(
+      function* (source: string, directory: string) {
+        const runtime = yield* ManagedNodeRuntime.ensure(
+          path.join(config.stateDir, "extensions", "runtimes"),
+        );
+        const env = { ...environment };
+        const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+        env[pathKey] =
+          `${path.dirname(runtime.node)}${platform === "win32" ? ";" : ":"}${env[pathKey] ?? ""}`;
+        const result = yield* runner.run({
+          command: runtime.node,
+          args: [
+            runtime.npm,
+            "install",
+            "--prefix",
+            directory,
+            "--no-audit",
+            "--no-fund",
+            "--",
+            source,
+          ],
+          env,
+          timeout: Duration.minutes(5),
+          maxOutputBytes: 256 * 1024,
+          outputMode: "truncate",
+        });
+        if (result.code !== 0 || result.timedOut)
+          return yield* new ExtensionError({
+            operation: "install",
+            id: source,
+            reason: "install-failed",
+            detail: `npm exited with ${result.code ?? "no exit code"}${result.timedOut ? " (timed out)" : ""}.`,
+            cause: new Error(result.stderr || result.stdout),
+          });
+      },
+      Effect.provide(context),
+      (effect, source) =>
+        Effect.mapError(effect, (cause) =>
+          isExtensionError(cause)
+            ? cause
+            : new ExtensionError({
                 operation: "install",
                 id: source,
                 reason: "install-failed",
-                detail: `npm exited with ${result.code ?? "no exit code"}${result.timedOut ? " (timed out)" : ""}.`,
-                cause: new Error(result.stderr || result.stdout),
-              });
-          }),
-          { signal },
+                cause,
+              }),
         ),
-      call: (method, input, signal) =>
-        Effect.runPromiseWith(context)(call(method, input), { signal }),
-    };
+    );
+    return { launch, platform, installPackage, call };
   }),
 );

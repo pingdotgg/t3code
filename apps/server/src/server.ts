@@ -820,7 +820,22 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
-  Layer.provide(ExtensionService.layer.pipe(Layer.provide(ExtensionHostAdapter.layer))),
+  Layer.provide(
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const host = yield* ExtensionHostAdapter.ExtensionHostAdapter;
+        const context = yield* Effect.context<never>();
+        const run = Effect.runPromiseWith(context);
+        return ExtensionService.layer({
+          platform: host.platform,
+          launch: (signal) => run(host.launch(), { signal }),
+          installPackage: (source, directory, signal) =>
+            run(host.installPackage(source, directory), { signal }),
+          hostCall: (method, input, signal) => run(host.call(method, input), { signal }),
+        });
+      }),
+    ).pipe(Layer.provide(ExtensionHostAdapter.layer)),
+  ),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.

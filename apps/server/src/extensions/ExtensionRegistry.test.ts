@@ -66,6 +66,7 @@ it.live(
     context.registerTool('host', async () => ({pid: process.pid, value: await context.callT3('test', {})}));
   }};`,
         );
+        const logs: string[] = [];
         const options = {
           platform: platform,
           launch: async () => ({
@@ -75,7 +76,9 @@ it.live(
           hostCall: async () => "host-value",
           changed: () => {},
           event: () => {},
-          log: () => {},
+          log: (_id: string, chunk: string) => {
+            logs.push(chunk);
+          },
         };
         const registry = new ExtensionRegistry(NodePath.join(directory, "extensions"), options);
         let restored: ExtensionRegistry | undefined;
@@ -196,10 +199,25 @@ it.live(
           expect(restored.list()[0]?.status).toBe("running");
           await NodeFSP.writeFile(
             NodePath.join(source, "extension.mjs"),
-            "export default {activate(){throw new Error('broken')}};",
+            "export default {activate(){throw new Error('fixture-credential=secret-activation-value')}};",
           );
           await restored.manage(manifest.id, "reload");
           expect(restored.list()[0]?.status).toBe("failed");
+          expect(JSON.stringify(restored.list())).not.toContain("secret-activation-value");
+          expect(logs.join("")).toContain("secret-activation-value");
+          await restored.close();
+          await NodeFSP.writeFile(
+            NodePath.join(source, "t3-extension.json"),
+            JSON.stringify({ ...manifest, main: "fixture-credential=secret-load-value.mjs" }),
+          );
+          restored = new ExtensionRegistry(NodePath.join(directory, "extensions"), options);
+          await restored.initialize();
+          expect(restored.list()[0]?.status).toBe("failed");
+          expect(restored.list()[0]?.diagnostic).toBe(
+            "Could not load extension. Check the server logs.",
+          );
+          expect(JSON.stringify(restored.list())).not.toContain("secret-load-value");
+          expect(logs.join("")).toContain("secret-load-value");
           await restored.manage(manifest.id, "uninstall");
           expect(restored.list()).toEqual([]);
           expect(await NodeFSP.readFile(NodePath.join(source, "panel.html"), "utf8")).toContain(
@@ -380,6 +398,41 @@ it.live("updates managed packages transactionally and removes only their owned i
         expect(await NodeFSP.readdir(NodePath.join(directory, "packages"))).toHaveLength(1);
         await registry.manage("test.package", "uninstall");
         expect(await NodeFSP.readdir(NodePath.join(directory, "packages"))).toEqual([]);
+        await registry.install("test-extension@latest", "npm");
+        const previous = registry.list()[0];
+        broken = true;
+        version = "1.2.0";
+        {
+          const original =
+            await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+          using _rollback = vi
+            .spyOn(NodeFSP, "rename")
+            .mockImplementationOnce(original.rename)
+            .mockRejectedValueOnce(new Error("rollback disk failure"));
+          await expect(registry.manage("test.package", "update")).rejects.toMatchObject({
+            reason: "storage-failed",
+          });
+          expect(registry.list()[0]).toMatchObject({
+            status: "running",
+            manifest: { version: previous?.manifest.version },
+          });
+          expect(
+            await registry.invoke({
+              id: "test.package",
+              kind: "command",
+              name: "version",
+              input: { generation: "1.1.0" },
+            }),
+          ).toBe("1.1.0");
+          const persisted = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(directory, "registry.json"), "utf8"),
+          );
+          expect(persisted[0].manifest.version).toBe("1.2.0");
+          expect(
+            await NodeFSP.readFile(NodePath.join(persisted[0].directory, "main.mjs"), "utf8"),
+          ).toContain("broken update");
+          expect(await NodeFSP.readdir(NodePath.join(directory, "packages"))).toHaveLength(2);
+        }
       } finally {
         await registry.close();
         await NodeFSP.rm(directory, { recursive: true, force: true });

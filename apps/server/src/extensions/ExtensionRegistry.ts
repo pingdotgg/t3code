@@ -139,9 +139,12 @@ export class ExtensionRegistry {
           } catch (cause) {
             this.states.set(entry.manifest.id, {
               status: "failed",
-              diagnostic: `Could not load extension: ${extensionDiagnostic(cause)}`,
+              diagnostic: "Could not load extension. Check the server logs.",
             });
-            this.options.log(entry.manifest.id, `Extension load failed: ${String(cause)}\n`);
+            this.options.log(
+              entry.manifest.id,
+              `Extension load failed: ${extensionDiagnostic(cause)}\n`,
+            );
           }
         }
       this.changed();
@@ -309,12 +312,12 @@ export class ExtensionRegistry {
       }
       this.states.set(id, { status: "running", runtimeId: NodeCrypto.randomUUID() });
     } catch (cause) {
-      this.options.log(id, `Activation failed: ${String(cause)}\n`);
+      this.options.log(id, `Activation failed: ${extensionDiagnostic(cause)}\n`);
       await host?.stop();
       this.processes.delete(id);
       this.states.set(id, {
         status: "failed",
-        diagnostic: `Activation failed: ${extensionDiagnostic(cause)}`,
+        diagnostic: "Extension activation failed. Check the server logs.",
       });
     }
     this.changed();
@@ -401,10 +404,13 @@ export class ExtensionRegistry {
           const activated = await this.start(next);
           if (!activated && next.directory !== previous.directory) {
             this.registrations.set(id, previous);
-            await this.persist();
-            if (previous.enabled) await this.start(previous);
+            try {
+              await this.persist();
+            } finally {
+              if (previous.enabled) await this.start(previous);
+              this.changed();
+            }
             await this.removePackage(next);
-            this.changed();
             throw error(action, id, "runtime-failed");
           }
         }

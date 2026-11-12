@@ -271,7 +271,11 @@ export function CommandPalette(props: {
     environmentLabels === undefined ? {} : { environmentLabels },
   );
   const serverConfigs = useServerConfigs();
-  const extensionEnvironmentId = activeThreadRef?.environmentId ?? searchEnvironmentIds[0];
+  const newTaskFlow = useNewTaskFlow();
+  const draftEnvironmentId =
+    useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
+  const extensionEnvironmentId =
+    activeThreadRef?.environmentId ?? draftEnvironmentId ?? searchEnvironmentIds[0];
   const extensionSupported =
     extensionEnvironmentId &&
     serverConfigs.get(extensionEnvironmentId)?.environment.capabilities.extensions === true;
@@ -282,9 +286,6 @@ export function CommandPalette(props: {
   );
   const invokeExtension = useExtensionCommandPrompt();
   const startTriage = useStartTriage();
-  const newTaskFlow = useNewTaskFlow();
-  const draftEnvironmentId =
-    useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
   const triageEnvironmentId = pickTriageEnvironment({
     // The route names the machine even before the thread shell loads.
     onScreen: activeThreadRef?.environmentId ?? draftEnvironmentId,

@@ -1084,6 +1084,28 @@ it.effect("fails preview calls with T3's errors when browser access is off or a 
     const status = yield* answer(unsupported, "preview_status");
     assert.isUndefined(status.is_error);
     assert.include(String(status.content), '"available":false');
+    const skill = makeSample(
+      {
+        ...childCase,
+        setup: {
+          ...childCase.setup,
+          mocks: {
+            extensions_development: { $sequence: [{ unavailable: true }, { recovered: true }] },
+          },
+        },
+      },
+      base,
+    );
+    skill.tools.push({ name: "mcp__t3-code__extensions_development" });
+    for (const expected of [{ unavailable: true }, { recovered: true }]) {
+      const result = yield* answerToolCall(skill, config, {
+        type: "tool_use",
+        id: "skill",
+        name: "mcp__t3-code__extensions_development",
+        input: {},
+      });
+      assert.deepEqual(JSON.parse(String(result.content)), expected);
+    }
     // A sequence mock answers each call with its next result, then repeats the last.
     const flow = makeSample(browserCase("br-flow-qa-missing-cli"), base);
     flow.tools.push({ name: "mcp__t3-code__preview_snapshot" });

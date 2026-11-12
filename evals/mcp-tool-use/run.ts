@@ -1624,12 +1624,6 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
     return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
   }
-  if (name === "extensions_development")
-    return toolResult(call.id, {
-      path: "/tmp/t3/skills/t3-extension-development/SKILL.md",
-      content: EXTENSION_DEVELOPMENT_SKILL,
-      referencePath: "/tmp/t3/skills/t3-extension-development/references/api.md",
-    });
   const mock = nextMock(sample, name, testCase.setup.mocks?.[name]);
   if (isT3Name(call.name) && PREVIEW_TOOLS.has(name)) {
     if (testCase.setup.world?.browserAgentAccess === false)
@@ -1659,6 +1653,12 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
         : withProductFields(name, mock, testCase.setup.role === "delegated-child"),
     );
   }
+  if (name === "extensions_development")
+    return toolResult(call.id, {
+      path: "/tmp/t3/skills/t3-extension-development/SKILL.md",
+      content: EXTENSION_DEVELOPMENT_SKILL,
+      referencePath: "/tmp/t3/skills/t3-extension-development/references/api.md",
+    });
   if (isT3Name(call.name)) {
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {

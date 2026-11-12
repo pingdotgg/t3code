@@ -15,7 +15,6 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
-import * as ExtensionHostAdapter from "./ExtensionHostAdapter.ts";
 import * as ExtensionService from "./ExtensionService.ts";
 
 const unexpectedHostOperation = async () => {
@@ -25,12 +24,6 @@ const unexpectedHostOperation = async () => {
 };
 
 const dependencies = Layer.mergeAll(
-  Layer.mock(ExtensionHostAdapter.ExtensionHostAdapter)({
-    platform: "linux",
-    launch: unexpectedHostOperation,
-    installPackage: unexpectedHostOperation,
-    call: unexpectedHostOperation,
-  }),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({ awaitCommandReady: Effect.void }),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
     latestApplicationSequence: Effect.succeed(0),
@@ -56,7 +49,16 @@ it.layer(NodeServices.layer)("extension development guidance", (it) => {
             path: skill,
             referencePath: guide,
           });
-        }).pipe(Effect.provide(ExtensionService.layer.pipe(Layer.provide(dependencies)))),
+        }).pipe(
+          Effect.provide(
+            ExtensionService.layer({
+              platform: "linux",
+              launch: unexpectedHostOperation,
+              installPackage: unexpectedHostOperation,
+              hostCall: unexpectedHostOperation,
+            }).pipe(Layer.provide(dependencies)),
+          ),
+        ),
       );
       yield* start;
       yield* fs.writeFileString(skill, "old installed skill");
@@ -133,15 +135,14 @@ it.live("publishes disable and uninstall changes to every connected client", () 
         yield* next((snapshot) => snapshot.length === 0);
       }).pipe(
         Effect.provide(
-          ExtensionService.layer.pipe(
+          ExtensionService.layer({
+            platform,
+            launch: async () => ({ command: executable, args: [worker] }),
+            installPackage: unexpectedHostOperation,
+            hostCall: unexpectedHostOperation,
+          }).pipe(
             Layer.provide(
               Layer.mergeAll(
-                Layer.mock(ExtensionHostAdapter.ExtensionHostAdapter)({
-                  platform,
-                  launch: async () => ({ command: executable, args: [worker] }),
-                  installPackage: unexpectedHostOperation,
-                  call: unexpectedHostOperation,
-                }),
                 Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({
                   awaitCommandReady: Effect.void,
                 }),
