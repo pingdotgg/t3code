@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -233,8 +234,10 @@ export const make = DesktopLifecycle.of({
       // Startup already acted on the app link that launched it; passing it on replays it.
       const appLinkPrefix = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}:`;
       const args = yield* HostProcess.Arguments;
+      const executablePath = yield* HostProcess.ExecutablePath;
       yield* electronApp.relaunch({
-        execPath: yield* HostProcess.ExecutablePath,
+        // An AppImage's executable lives in a FUSE mount that unmounts when this process exits.
+        execPath: Option.getOrElse(environment.appImagePath, () => executablePath),
         args: args.slice(1).filter((arg) => !arg.toLowerCase().startsWith(appLinkPrefix)),
       });
       yield* electronApp.exit(0);
