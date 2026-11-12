@@ -377,7 +377,7 @@ export class ComposerVimEditor extends VimEditor {
 
   getRange(from: VimPos, to: VimPos) {
     const { positions, text } = this.flat;
-    const start = this.indexFromPos(from);
+    const start = this.snap(this.indexFromPos(from), false);
     // A register must hold everything the same range would delete.
     const end = this.snap(this.indexFromPos(to), true);
     let lineStart = start;
@@ -419,7 +419,7 @@ export class ComposerVimEditor extends VimEditor {
     // Deleting up to a split character must take the whole of it.
     const to = this.snap(endOffset, true);
     // An insert inside a character goes after it.
-    const startOffset = rangeStart === endOffset ? to : rangeStart;
+    const startOffset = rangeStart === endOffset ? to : this.snap(rangeStart, false);
     const tr = state.tr;
     if (!text && this.deleteWholeLines(tr, startOffset, to)) {
       this.view.dispatch(tr);

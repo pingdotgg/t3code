@@ -1,8 +1,8 @@
 [
   {
     "text": "😀 foo",
-    "start": [0, 5],
-    "keys": "bdgep",
+    "start": [0, 3],
+    "keys": "dge0P0",
     "value": "😀 foo",
     "cursor": [0, 0]
   },

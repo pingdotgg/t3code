@@ -191,7 +191,7 @@ export class TextareaVimEditor extends VimEditor {
 
   getRange(from: VimPos, to: VimPos) {
     const { text } = this.flat;
-    const start = this.indexFromPos(from);
+    const start = this.snap(this.indexFromPos(from), false);
     return text.slice(start, this.snap(this.indexFromPos(to), true));
   }
   getValueForTest() {
@@ -218,7 +218,7 @@ export class TextareaVimEditor extends VimEditor {
   protected replace(rangeStart: number, endOffset: number, text: string) {
     const { text: value } = this.flat;
     const to = this.snap(endOffset, true);
-    let start = rangeStart === endOffset ? to : rangeStart;
+    let start = rangeStart === endOffset ? to : this.snap(rangeStart, false);
     // Linewise visual change selects the line break too, which must stay for the new text.
     const trims = this.changing && !text && to > start && value[to - 1] === "\n";
     const end = trims ? to - 1 : to;
