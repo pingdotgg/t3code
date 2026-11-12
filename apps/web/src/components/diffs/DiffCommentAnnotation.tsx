@@ -200,7 +200,7 @@ export function DiffCommentAnnotation({
         readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"
-        value={displayedText}
+        value={speech?.displayText ?? displayedText}
         dir={textDirection(displayedText)}
         placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}

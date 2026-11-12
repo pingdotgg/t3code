@@ -672,7 +672,7 @@ export function ReviewThreadCard({
                       autoFocus
                       size="sm"
                       completionScope={completionScope}
-                      value={reply}
+                      value={speech.displayText}
                       placeholder="Reply…"
                       aria-label="Reply to this conversation"
                       onValueChange={setReply}

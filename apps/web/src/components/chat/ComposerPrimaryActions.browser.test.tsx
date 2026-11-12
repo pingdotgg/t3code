@@ -8,6 +8,12 @@ vi.mock("~/hooks/useSettings", () => ({
   useEnvironmentIdentificationMode: () => "none",
   useClientSettings: () => false,
 }));
+vi.mock("./VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
+vi.mock("~/speech/useEnvironmentSpeechInput", () => ({
+  useEnvironmentSpeechInput: vi.fn(),
+  useSpeechUnavailableReason: vi.fn(),
+}));
+vi.mock("~/speech/useDictationShortcut", () => ({ useDictationShortcut: vi.fn() }));
 vi.mock("../SidebarStageBackdrop", () => ({
   StageBackdropButtonArt: () => null,
   useSidebarStageBackdropVariant: () => null,
@@ -15,6 +21,8 @@ vi.mock("../SidebarStageBackdrop", () => ({
 
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerSpeechButton } from "./ComposerSpeechButton";
+import { TextFieldSpeechControls, type TextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import { Button } from "../ui/button";
 
 function setup() {
   return {
@@ -131,6 +139,51 @@ it.each([false, true])(
     }
   },
 );
+
+it("dictates in a text field in place of its mic without moving the buttons beside it", async () => {
+  const onStop = vi.fn();
+  const onCancel = vi.fn();
+  const field = (phase: "idle" | "recording") => (
+    <div className="flex w-80 justify-end gap-2">
+      <TextFieldSpeechControls
+        speech={
+          {
+            state: { phase, error: null, errorAction: null },
+            available: true,
+            unavailableReason: null,
+            level: 0.5,
+            shortcutLabel: null,
+            start: vi.fn(),
+            stop: onStop,
+            cancel: onCancel,
+            skipPostProcessing: vi.fn(),
+            setup: { open: false },
+          } as unknown as TextFieldSpeech
+        }
+      />
+      <Button size="xs">Save</Button>
+    </div>
+  );
+  await using screen = await render(field("idle"));
+  const save = screen.getByRole("button", { name: "Save" }).element();
+  const restingX = save.getBoundingClientRect().x;
+  await screen.rerender(field("recording"));
+  expect(save.getBoundingClientRect().x).toBe(restingX);
+  expect(screen.container.querySelector('[role="status"]')).toBeNull();
+  expect(screen.container.querySelectorAll('[aria-label="Cancel voice input"]')).toHaveLength(1);
+  await act(() =>
+    (
+      screen.getByRole("button", { name: "Finish voice input" }).element() as HTMLButtonElement
+    ).click(),
+  );
+  await act(() =>
+    (
+      screen.getByRole("button", { name: "Cancel voice input" }).element() as HTMLButtonElement
+    ).click(),
+  );
+  expect(onStop).toHaveBeenCalledOnce();
+  expect(onCancel).toHaveBeenCalledOnce();
+});
 
 it.each([false, true])(
   "keeps repeat clicks away from Resume and Send (draft: %s)",
