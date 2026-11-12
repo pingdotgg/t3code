@@ -158,6 +158,13 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       expect(members?.[0]?.speed).toBeUndefined();
     },
   );
+
+  it("titles an untitled subagent from its prompt without splitting an emoji", () => {
+    const [untitled] = projectedSubagentsToRuntime([
+      subagent({ title: null, prompt: `${"a".repeat(76)}😀 and more work.` }),
+    ]);
+    expect(untitled?.title).toBe(`${"a".repeat(76)}...`);
+  });
 });
 
 describe("deriveWorkflowGroups over a dynamic workflow", () => {

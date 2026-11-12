@@ -18,6 +18,7 @@
     "generate": "graphqlgen"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
@@ -26,7 +27,6 @@
   },
   "devDependencies": {
     "@effect/graphql-generator": "catalog:",
-    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@t3tools/source-control-testing": "workspace:*",
     "@types/node": "catalog:",

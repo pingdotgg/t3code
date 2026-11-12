@@ -24,13 +24,14 @@ const CAPABILITIES: PullRequestCapabilities = {
   search: true,
   reactions: false,
   mentions: false,
+  referenceSigils: [],
   review: {
     inlineComment: true,
     reply: true,
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
   // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",

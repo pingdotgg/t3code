@@ -23,6 +23,7 @@ import {
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
+  deriveProviderExtensionStatuses,
   deriveResumableRunId,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -58,6 +59,77 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it("shows extension statuses only from the selected provider's current live session", () => {
+    const instanceId = v2Projection.thread.modelSelection.instanceId;
+    const providerThreadId = ProviderThreadId.make("native-status-thread");
+    const sessionId = ProviderSessionId.make("native-status-session");
+    const statuses = [{ key: "watch", text: "Watching" }];
+    const projection = {
+      thread: { ...v2Projection.thread, activeProviderThreadId: providerThreadId },
+      providerThreads: [
+        { id: providerThreadId, providerSessionId: sessionId, providerInstanceId: instanceId },
+      ],
+      providerSessions: [
+        {
+          id: sessionId,
+          providerInstanceId: instanceId,
+          status: "ready" as const,
+          extensionStatuses: statuses,
+        },
+      ],
+    };
+    expect(deriveProviderExtensionStatuses(projection)).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [
+          ...projection.providerSessions,
+          {
+            ...projection.providerSessions[0]!,
+            id: ProviderSessionId.make("unrelated"),
+            extensionStatuses: [{ key: "wrong", text: "Wrong session" }],
+          },
+        ],
+      }),
+    ).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, status: "stopped" }],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, status: "error" }],
+      }),
+    ).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [
+          { ...projection.providerSessions[0]!, status: "error", extensionStatuses: [] },
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [{ ...projection.providerSessions[0]!, extensionStatuses: undefined }],
+      }),
+    ).toEqual([]);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          modelSelection: { instanceId: ProviderInstanceId.make("other"), model: "default" },
+        },
+      }),
+    ).toEqual([]);
+    expect(deriveProviderExtensionStatuses(null)).toEqual([]);
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {
@@ -227,6 +299,49 @@ describe("thread execution presentation", () => {
       status: "running",
       turnEnded: true,
     });
+  });
+
+  // The server marks a run running before the provider opens, which can take minutes.
+  it("labels an open run whose provider has not started a turn", () => {
+    const attemptId = RunAttemptId.make("attempt-starting");
+    const openRun = { ...run("run-starting", 1, "running"), activeAttemptId: attemptId };
+    const session = {
+      id: ProviderSessionId.make("session-starting"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: openRun.providerInstanceId,
+      status: "starting" as const,
+      cwd: "/repo",
+      model: null,
+      // The label reads only the driver.
+      capabilities: {} as never,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    const starting = { ...v2Projection, runs: [openRun], providerSessions: [session] };
+
+    expect(deriveThreadActivityRun(starting)?.providerStartingLabel).toBe("Starting Claude");
+    expect(
+      deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
+    ).toBe("Starting");
+    expect(
+      deriveThreadActivityRun({
+        ...starting,
+        providerTurns: [
+          {
+            id: ProviderTurnId.make("provider-turn-starting"),
+            providerThreadId: ProviderThreadId.make("provider-thread-starting"),
+            nodeId: NodeId.make("node-starting"),
+            runAttemptId: attemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        ],
+      })?.providerStartingLabel,
+    ).toBeUndefined();
   });
 
   it("presents a held queue as the stopped run instead of queued work", () => {

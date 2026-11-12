@@ -12,7 +12,7 @@ import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import {
   PullRequestMarkdownTextarea,
-  pullRequestMentionScope,
+  pullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
@@ -113,7 +113,7 @@ export function PullRequestCommentForm({
     <div className="space-y-2">
       <PullRequestMarkdownTextarea
         ref={textareaRef}
-        mentionScope={pullRequestMentionScope(detail, environmentId, reference)}
+        completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
         // Lock while posting because success clears the draft.
         disabled={locked}
         readOnly={speech.freezesEditor}
@@ -137,9 +137,7 @@ export function PullRequestCommentForm({
         }}
       />
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <div className="mr-auto flex min-w-0 flex-wrap items-center gap-1">
-          <TextFieldSpeechControls speech={speech} disabled={locked} />
-        </div>
+        <TextFieldSpeechControls speech={speech} disabled={locked} />
         {followUpAction === null ? null : (
           <Button
             size="xs"
