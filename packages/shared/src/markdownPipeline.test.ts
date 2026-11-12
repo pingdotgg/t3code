@@ -102,6 +102,11 @@ it.each([
     ["URL：https://example.com/a。下一句", `URL：${link("https://example.com/a")}。下一句`],
     ["https://www.google.com/search?q=￥1000", link("https://www.google.com/search?q=￥1000")],
     ["https://example.com/search?q=Ａ＋Ｂ", link("https://example.com/search?q=Ａ＋Ｂ")],
+    [
+      "可以看了：**http://localhost:18780**已重启",
+      `可以看了：**${link("http://localhost:18780")}**已重启`,
+    ],
+    ["https://example.com/file＿name", link("https://example.com/file＿name")],
   ] as const) {
     expect(shape(processor.runSync(processor.parse(markdown), markdown) as Root), markdown).toBe(
       expected,

@@ -1,5 +1,5 @@
 diff --git a/dev/lib/syntax.js b/dev/lib/syntax.js
-index 904e27200ae4980183beda525d33feef70c2e7f7..7bf80020d7a1f711a154cc967f1fb22bafe82329 100644
+index 904e27200ae4980183beda525d33feef70c2e7f7..e13400e94b0c5803aa5243996f6cab80ce6d1277 100644
 --- a/dev/lib/syntax.js
 +++ b/dev/lib/syntax.js
 @@ -662,7 +662,8 @@ function tokenizePath(effects, ok) {
@@ -12,7 +12,27 @@ index 904e27200ae4980183beda525d33feef70c2e7f7..7bf80020d7a1f711a154cc967f1fb22b
      ) {
        return ok(code)
      }
-@@ -762,7 +763,8 @@ function tokenizeTrail(effects, ok, nok) {
+@@ -708,6 +709,7 @@ function tokenizePath(effects, ok) {
+  * @type {Tokenizer}
+  */
+ function tokenizeTrail(effects, ok, nok) {
++  let asterisk = false
+   return trail
+ 
+   /**
+@@ -721,6 +723,11 @@ function tokenizeTrail(effects, ok, nok) {
+    * @type {State}
+    */
+   function trail(code) {
++    // `**` straight before CJK text closes emphasis rather than continuing the path.
++    if (asterisk && cjkLetter(code)) {
++      return ok(code)
++    }
++    asterisk = code === codes.asterisk
+     // Regular trailing punctuation.
+     if (
+       code === codes.exclamationMark ||
+@@ -762,7 +769,8 @@ function tokenizeTrail(effects, ok, nok) {
        // So is whitespace.
        code === codes.eof ||
        markdownLineEndingOrSpace(code) ||
@@ -22,7 +42,7 @@ index 904e27200ae4980183beda525d33feef70c2e7f7..7bf80020d7a1f711a154cc967f1fb22b
      ) {
        return ok(code)
      }
-@@ -791,7 +793,8 @@ function tokenizeTrail(effects, ok, nok) {
+@@ -791,7 +799,8 @@ function tokenizeTrail(effects, ok, nok) {
        code === codes.leftParenthesis ||
        code === codes.leftSquareBracket ||
        markdownLineEndingOrSpace(code) ||
@@ -32,13 +52,13 @@ index 904e27200ae4980183beda525d33feef70c2e7f7..7bf80020d7a1f711a154cc967f1fb22b
      ) {
        return ok(code)
      }
-@@ -981,3 +984,16 @@ function previousUnbalanced(events) {
+@@ -981,3 +990,24 @@ function previousUnbalanced(events) {
  
    return result
  }
 +
 +// CJK and full-width punctuation (`，`, `。`, `（`) ends a URL the way whitespace does,
-+// since CJK prose puts no space after a link. Symbols (`￥`, `＋`) stay part of the URL.
++// since CJK prose puts no space after a link. Symbols (`￥`, `＋`) and connectors (`＿`) stay part of the URL.
 +function cjkPunctuation(code) {
 +  return (
 +    code !== null &&
@@ -46,11 +66,19 @@ index 904e27200ae4980183beda525d33feef70c2e7f7..7bf80020d7a1f711a154cc967f1fb22b
 +      (code >= 0xfe10 && code <= 0xfe1f) ||
 +      (code >= 0xfe30 && code <= 0xfe6f) ||
 +      (code >= 0xff00 && code <= 0xffef)) &&
-+    /\p{P}/u.test(String.fromCodePoint(code))
++    /(?!\p{Pc})\p{P}/u.test(String.fromCodePoint(code))
++  )
++}
++
++function cjkLetter(code) {
++  return (
++    code !== null &&
++    code > 0x7f &&
++    /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/u.test(String.fromCodePoint(code))
 +  )
 +}
 diff --git a/lib/syntax.js b/lib/syntax.js
-index dffbaf15146b34d3b3f634286629ccb148866f4c..00ad40ca7aea303a4def45c6dcfa86daff7171be 100644
+index dffbaf15146b34d3b3f634286629ccb148866f4c..7a7e94f58c550d5c218739892eba996f188c744d 100644
 --- a/lib/syntax.js
 +++ b/lib/syntax.js
 @@ -584,7 +584,7 @@ function tokenizePath(effects, ok) {
@@ -62,7 +90,27 @@ index dffbaf15146b34d3b3f634286629ccb148866f4c..00ad40ca7aea303a4def45c6dcfa86da
        return ok(code);
      }
      effects.consume(code);
-@@ -665,7 +665,7 @@ function tokenizeTrail(effects, ok, nok) {
+@@ -627,6 +627,7 @@ function tokenizePath(effects, ok) {
+  * @type {Tokenizer}
+  */
+ function tokenizeTrail(effects, ok, nok) {
++  let asterisk = false;
+   return trail;
+ 
+   /**
+@@ -640,6 +641,11 @@ function tokenizeTrail(effects, ok, nok) {
+    * @type {State}
+    */
+   function trail(code) {
++    // `**` straight before CJK text closes emphasis rather than continuing the path.
++    if (asterisk && cjkLetter(code)) {
++      return ok(code);
++    }
++    asterisk = code === 42;
+     // Regular trailing punctuation.
+     if (code === 33 || code === 34 || code === 39 || code === 41 || code === 42 || code === 44 || code === 46 || code === 58 || code === 59 || code === 63 || code === 95 || code === 126) {
+       effects.consume(code);
+@@ -665,7 +671,7 @@ function tokenizeTrail(effects, ok, nok) {
      // `<` is an end.
      code === 60 ||
      // So is whitespace.
@@ -71,7 +119,7 @@ index dffbaf15146b34d3b3f634286629ccb148866f4c..00ad40ca7aea303a4def45c6dcfa86da
        return ok(code);
      }
      return nok(code);
-@@ -687,7 +687,7 @@ function tokenizeTrail(effects, ok, nok) {
+@@ -687,7 +693,7 @@ function tokenizeTrail(effects, ok, nok) {
    function trailBracketAfter(code) {
      // Whitespace or something that could start a resource or reference is the end.
      // Switch back to trail otherwise.
@@ -80,13 +128,13 @@ index dffbaf15146b34d3b3f634286629ccb148866f4c..00ad40ca7aea303a4def45c6dcfa86da
        return ok(code);
      }
      return trail(code);
-@@ -852,3 +852,16 @@ function previousUnbalanced(events) {
+@@ -852,3 +858,24 @@ function previousUnbalanced(events) {
    }
    return result;
  }
 +
 +// CJK and full-width punctuation (`，`, `。`, `（`) ends a URL the way whitespace does,
-+// since CJK prose puts no space after a link. Symbols (`￥`, `＋`) stay part of the URL.
++// since CJK prose puts no space after a link. Symbols (`￥`, `＋`) and connectors (`＿`) stay part of the URL.
 +function cjkPunctuation(code) {
 +  return (
 +    code !== null &&
@@ -94,6 +142,14 @@ index dffbaf15146b34d3b3f634286629ccb148866f4c..00ad40ca7aea303a4def45c6dcfa86da
 +      (code >= 0xfe10 && code <= 0xfe1f) ||
 +      (code >= 0xfe30 && code <= 0xfe6f) ||
 +      (code >= 0xff00 && code <= 0xffef)) &&
-+    /\p{P}/u.test(String.fromCodePoint(code))
++    /(?!\p{Pc})\p{P}/u.test(String.fromCodePoint(code))
++  )
++}
++
++function cjkLetter(code) {
++  return (
++    code !== null &&
++    code > 0x7f &&
++    /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}]/u.test(String.fromCodePoint(code))
 +  )
 +}

@@ -383,7 +383,7 @@ patchedDependencies:
   expo-widgets@58.0.27: 8bf49067f93742855e15f29559ac75c8b50230b47069060993c9ea01dac11171
   mdast-util-math@3.0.0: afe6b2c89e1eaddfd3c90cf2723f12c9a17d513e65beff51653781486013251c
   mdast-util-to-hast@13.2.1: 57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1
-  micromark-extension-gfm-autolink-literal@2.1.0: 22ecd61beae63412969035c2180f58fb0f532f0a271fc7aaffc634f08ce3f22b
+  micromark-extension-gfm-autolink-literal@2.1.0: 52d2c41805d5b22d9408d3bc8598051f6bc25f6cf21f7e00a472be7bc7927344
   micromark-extension-gfm-table@2.1.1: 9ad23a530e45d9f83cba1da8654fe16d5af8b59d5c73d5c7a7c91fd25b9be1d8
   micromark-extension-llm-math@3.1.0: 4eeb9d9e27ebc75e98795e21c0719005483dad7d233055698257f7d10e91603b
   micromark@4.0.2: cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67
@@ -21184,7 +21184,7 @@ snapshots:
       micromark-util-symbol: 2.0.1
       micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-autolink-literal@2.1.0(patch_hash=22ecd61beae63412969035c2180f58fb0f532f0a271fc7aaffc634f08ce3f22b):
+  micromark-extension-gfm-autolink-literal@2.1.0(patch_hash=52d2c41805d5b22d9408d3bc8598051f6bc25f6cf21f7e00a472be7bc7927344):
     dependencies:
       micromark-util-character: 2.1.1
       micromark-util-sanitize-uri: 2.0.1
@@ -21233,7 +21233,7 @@ snapshots:
 
   micromark-extension-gfm@3.0.0:
     dependencies:
-      micromark-extension-gfm-autolink-literal: 2.1.0(patch_hash=22ecd61beae63412969035c2180f58fb0f532f0a271fc7aaffc634f08ce3f22b)
+      micromark-extension-gfm-autolink-literal: 2.1.0(patch_hash=52d2c41805d5b22d9408d3bc8598051f6bc25f6cf21f7e00a472be7bc7927344)
       micromark-extension-gfm-footnote: 2.1.0
       micromark-extension-gfm-strikethrough: 2.1.0
       micromark-extension-gfm-table: 2.1.1(patch_hash=9ad23a530e45d9f83cba1da8654fe16d5af8b59d5c73d5c7a7c91fd25b9be1d8)
