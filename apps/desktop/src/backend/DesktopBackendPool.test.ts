@@ -139,6 +139,7 @@ function layerPool(
           Layer.orDie,
         ),
         FileSystem.layerNoop(options.fileSystem ?? { exists: () => Effect.succeed(true) }),
+        Path.layer,
         options.backend?.layer ??
           Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
