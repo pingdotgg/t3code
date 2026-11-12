@@ -39,23 +39,43 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..c298ffe7808c421c29e16f1e2ba8510f
          request.on("redirect", (statusCode, method, redirectUrl) => {
              // no way to modify request options, abort old and make a new one
 diff --git a/out/providers/GitHubProvider.js b/out/providers/GitHubProvider.js
-index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..34a0759220c0cce052285204b2d14fdf0db905e5 100644
+index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..708a1fa7d740192944f04259cde6d6bf79d58c53 100644
 --- a/out/providers/GitHubProvider.js
 +++ b/out/providers/GitHubProvider.js
-@@ -107,6 +107,12 @@ class GitHubProvider extends BaseGitHubProvider {
+@@ -107,6 +107,32 @@ class GitHubProvider extends BaseGitHubProvider {
          catch (e) {
              throw (0, builder_util_runtime_1.newError)(`Cannot parse releases feed: ${e.stack || e.message},\nXML:\n${feedXml}`, "ERR_UPDATER_INVALID_RELEASE_FEED");
          }
-+        // The atom feed lists only the 10 newest releases, which other prereleases can fill.
++        // The atom feed lists only the 10 newest git tags of any kind, in an order GitHub picks, so
++        // the release workflow also records a prerelease channel's newest release at one fixed URL.
++        // The newer of the two answers wins; the API scan is the last resort.
 +        let apiRelease = null;
-+        if (tag == null && this.updater.allowPrerelease && this.updater.channel) {
-+            apiRelease = await this.getLatestChannelRelease(this.updater.channel, cancellationToken);
-+            tag = apiRelease === null ? null : apiRelease.tag_name;
++        if (this.updater.allowPrerelease && this.updater.channel) {
++            const feedTag = tag;
++            const pointer = await this.getChannelPointerRelease(this.updater.channel, cancellationToken);
++            if (pointer !== null && (tag == null || semver.gt(pointer.tag_name, tag))) {
++                apiRelease = pointer;
++                tag = pointer.tag_name;
++            }
++            // With no nightly in the feed, a pointer that offers nothing new may be stale, so the API
++            // scan still runs. Its failure is fatal only when nothing else answered.
++            if (feedTag == null && (tag == null || !semver.gt(tag, this.updater.currentVersion))) {
++                const listed = await this.getLatestChannelRelease(this.updater.channel, cancellationToken).catch(e => {
++                    if (tag == null) {
++                        throw e;
++                    }
++                    return null;
++                });
++                if (listed !== null && (tag == null || semver.gt(listed.tag_name, tag))) {
++                    apiRelease = listed;
++                    tag = listed.tag_name;
++                }
++            }
 +        }
          if (tag == null) {
              throw (0, builder_util_runtime_1.newError)(`No published versions on GitHub`, "ERR_UPDATER_NO_PUBLISHED_VERSIONS");
          }
-@@ -144,6 +150,14 @@ class GitHubProvider extends BaseGitHubProvider {
+@@ -144,6 +170,14 @@ class GitHubProvider extends BaseGitHubProvider {
              }
          }
          const result = (0, Provider_1.parseUpdateInfo)(rawData, channelFile, channelFileUrl);
@@ -70,10 +90,23 @@ index e768d24e7a957caf32a4b8ca6c68cb50eb5865ee..34a0759220c0cce052285204b2d14fdf
          if (result.releaseName == null) {
              result.releaseName = latestRelease.elementValueOrEmpty("title");
          }
-@@ -155,6 +169,29 @@ class GitHubProvider extends BaseGitHubProvider {
+@@ -155,6 +189,42 @@ class GitHubProvider extends BaseGitHubProvider {
              ...result,
          };
      }
++    async getChannelPointerRelease(channel, cancellationToken) {
++        try {
++            const url = (0, util_1.newUrlFromBase)(this.getBaseDownloadPath("update-feed", `${channel}.json`), this.baseUrl);
++            const rawData = await this.httpRequest(url, { accept: "application/json, */*" }, cancellationToken);
++            const release = rawData == null ? null : JSON.parse(rawData);
++            const releaseChannel = release == null || typeof release.tag_name !== "string" ? null : semver.prerelease(release.tag_name);
++            return releaseChannel !== null && releaseChannel[0] === channel ? release : null;
++        }
++        catch (e) {
++            // A fork, or a moment between two uploads, has no pointer. The feed still answers.
++            return null;
++        }
++    }
 +    async getLatestChannelRelease(channel, cancellationToken) {
 +        for (let page = 1; page <= 5; page++) {
 +            const url = new url_1.URL(`${this.computeGithubBasePath(`/repos/${this.options.owner}/${this.options.repo}/releases`)}?per_page=100&page=${page}`, this.baseApiUrl);
