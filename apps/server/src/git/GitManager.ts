@@ -2853,11 +2853,15 @@ export const make = Effect.gen(function* () {
         .execute({
           operation: "GitManager.invalidateStatus.headBranch",
           cwd: cacheCwd,
-          args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+          // --short prints heads/<branch> when a tag shares the branch name.
+          args: ["symbolic-ref", "--quiet", "HEAD"],
           allowNonZeroExit: true,
         })
         .pipe(
-          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
+          Effect.map((result) => {
+            const ref = result.exitCode === 0 ? result.stdout.trim() : "";
+            return ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
+          }),
           Effect.orElseSucceed(() => ""),
         );
       if (headBranch.length > 0) {

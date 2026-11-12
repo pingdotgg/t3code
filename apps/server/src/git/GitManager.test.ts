@@ -1163,17 +1163,28 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["branch", "feature/idle"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/idle"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/active"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/active"]);
+      // A same-named tag makes `symbolic-ref --short` print heads/feature/active.
+      yield* runGit(repoDir, ["tag", "feature/active"]);
       const { manager, providerCalls } = yield* makeManager({
         providerScenario: { prListOtherwise: [] },
       });
       const lookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/idle" });
+      const activeLookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/active" });
 
       expect(yield* lookup).toBeNull();
+      expect(yield* activeLookup).toBeNull();
       // Clients refresh the checkout's status while other threads work there.
       yield* manager.invalidateStatus(repoDir);
       expect(yield* lookup).toBeNull();
+      expect(yield* activeLookup).toBeNull();
 
-      expect(listedSelectors(providerCalls)).toEqual(["feature/idle"]);
+      expect(listedSelectors(providerCalls)).toEqual([
+        "feature/idle",
+        "feature/active",
+        "feature/active",
+      ]);
     }),
   );
 
