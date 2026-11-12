@@ -327,12 +327,19 @@ the published task result.
 
 ### `task_cancel`
 
-Stops the child thread with the internal `thread.stop` command, then stops every
-task the child delegated, and disposes automatic parent delivery. Like a user Stop,
-`thread.stop` interrupts the running turn, holds queued turns, and ends pull request
-watches. A nonterminal task with no interruptible run is rejected. A terminal task
-returns its existing status, and its child thread still stops, including later
-runs and watch wakes. Published task results remain available. It accepts an
+Stops every task the child delegated, then the child thread with the internal
+`thread.stop` command, cancels the task's own queued turn, and disposes automatic
+parent delivery. Like a user Stop, `thread.stop` interrupts the running turn, holds
+queued turns, and ends pull request watches. The task's own queued turn is cancelled
+even if Stop already held it, so a task that is only queued can be cancelled; other
+queued turns in the child stay held for Resume. A nonterminal task is rejected when
+it has no interruptible run, no queued turn of its own, and its finished turn no
+longer waits on background work or delegated tasks. Once a cancelled task's turn
+ends, a completed result settles as `interrupted` and a failed one stays `failed`. A
+terminal task returns its existing status, and its child thread still stops,
+including later runs and watch wakes. In both cases, a follow-up that lost its child
+run but still shows as running on the parent is cancelled there and reported as
+`cancelled`. Published task results remain available. It accepts an
 optional cancellation reason.
 
 ### `create_threads`
@@ -412,8 +419,9 @@ know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
 links name no environment: clients resolve them in the message's environment,
 then by a unique match in another enabled environment. An outside OAuth client,
 one that is not a linked environment, cannot render `t3-thread://` links, so it
-gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
-for threads in this environment.
+gets the link Copy thread copies, `https://app.t3.codes/threads/<environmentId>/<threadId>`
+on the server's `T3CODE_HOSTED_APP_URL`, for threads in this environment. The
+hosted app offers the desktop app, the mobile app, or itself.
 
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
@@ -424,10 +432,10 @@ runs, background wakes, and delegated completions keep it snoozed.
 ### `t3_thread_update`
 
 Updates metadata for the calling thread or any other thread in the environment.
-The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
-`unlink_pull_request`. A link input supplies the repository, number, and URL;
-the server records the target thread's project ID. Branch and workspace changes
-are outside this tool.
+The typed actions are `rename`, which requires `title`, and `regenerate_title`,
+which rejects one. Pull request links go through the separate
+`link_pull_request` and `unlink_pull_request` tools. Branch and workspace
+changes are outside this tool.
 
 The result includes the command ID and durable event sequence together with the
 resultant title, title-regeneration marker, and linked pull request. Reusing a
@@ -444,7 +452,12 @@ Sends a message to any ordinary or delegated thread in the environment:
 - `queue` creates a separate follow-up run after active work;
 - `steer` requires a steerable active provider turn; and
 - `restart` requires an active provider turn and uses the orchestrator's
-  interrupt-and-restart path.
+  interrupt-and-restart path. On a provider that can stop a turn and queue
+  messages but not restart a turn with new input, it stops the turn and queues
+  the message ahead of other queued messages; an unheld delegated-task result
+  that survives the stop still runs first. It is rejected when neither path
+  applies: the provider cannot stop a turn, Stop has already reached the turn,
+  or the turn or the new message is `/compact` or `/logout`.
 
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for

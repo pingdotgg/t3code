@@ -23,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -63,6 +64,7 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
+    readonly closeAllTunnels: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
 
@@ -74,11 +76,13 @@ function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
 }
 
+const isSshPasswordPromptError = Schema.is(SshPasswordPromptError);
+
 export function isDesktopSshPasswordPromptCancellation(
   error: unknown,
 ): error is SshPasswordPromptError {
   return (
-    error instanceof SshPasswordPromptError &&
+    isSshPasswordPromptError(error) &&
     DesktopSshPasswordPrompts.isDesktopSshPasswordPromptCancellation(error.cause)
   );
 }
@@ -153,6 +157,7 @@ export const make = Effect.gen(function* () {
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
       Effect.provide(runtimeContext),
     ),
+    closeAllTunnels: manager.closeAllTunnels,
   });
 });
 
