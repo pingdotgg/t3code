@@ -34,7 +34,8 @@ export interface ShellHttpSnapshot extends DeferredShellSnapshot {
 
 export type ShellHttpAnswer = ShellHttpSnapshot | OrchestrationV2ShellResumable;
 
-// Bound cold starts too: a proxy may stall /api while the socket snapshot still works.
+// A client with no cached rows shows an empty list while this waits, and a proxy may stall /api
+// while /ws works. A response slower than this is built and sent again over the socket.
 const DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS = 3_000;
 
 export const fetchEnvironmentShellSnapshot = Effect.fn(

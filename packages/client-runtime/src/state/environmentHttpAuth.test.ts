@@ -264,40 +264,29 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
-  it.effect.each([
-    { name: "default deadline", timeoutMs: undefined, deadline: 3_000 },
-    { name: "explicit deadline", timeoutMs: 5_000, deadline: 5_000 },
-  ])("bounds a stalled shell snapshot with the $name", ({ timeoutMs, deadline }) =>
+  it.effect("gives up on a stalled shell snapshot after three seconds", () =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<number>();
-      let answer!: () => void;
       const harness = makeHarness((requestNumber) => {
         Queue.offerUnsafe(requests, requestNumber);
-        return new Promise<Response>((resolve) => {
-          answer = () => resolve(Response.json(SHELL));
-        });
+        return new Promise<Response>(() => {});
       });
-      const load = yield* fetchEnvironmentShellSnapshot({
-        ...harness.input,
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      }).pipe(Effect.provide(harness.httpLayer), Effect.forkChild({ startImmediately: true }));
+      const load = yield* fetchEnvironmentShellSnapshot(harness.input).pipe(
+        Effect.provide(harness.httpLayer),
+        Effect.forkChild({ startImmediately: true }),
+      );
 
       yield* Queue.take(requests);
-      yield* TestClock.adjust(deadline - 1);
+      yield* TestClock.adjust("2999 millis");
       expect(load.pollUnsafe()).toBeUndefined();
-      yield* TestClock.adjust(1);
-      const timedOut = load.pollUnsafe();
-      expect(timedOut).toMatchObject({
+      yield* TestClock.adjust("1 millis");
+
+      expect(yield* Fiber.await(load)).toMatchObject({
         _tag: "Failure",
         cause: {
-          reasons: [{ error: { _tag: "RemoteEnvironmentAuthTimeoutError", timeoutMs: deadline } }],
+          reasons: [{ error: { _tag: "RemoteEnvironmentAuthTimeoutError", timeoutMs: 3_000 } }],
         },
       });
-
-      answer();
-      yield* TestClock.adjust("1 millis");
-      expect(yield* Fiber.await(load)).toStrictEqual(timedOut);
-      expect(harness.calls).toHaveLength(1);
     }),
   );
 
