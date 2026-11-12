@@ -28,6 +28,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -54,6 +55,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -584,6 +586,62 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   });
 });
 
+function layerRebuildableInstanceRegistry(
+  makeAdapter: Effect.Effect<
+    ProviderAdapter.ProviderAdapterV2["Service"],
+    never,
+    McpProviderSessions.McpProviderSessions
+  >,
+  rebuildInstance: Deferred.Deferred<Effect.Effect<void>>,
+) {
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const current = yield* Ref.make(yield* makeAdapter);
+      const changes = yield* PubSub.unbounded<void>();
+      yield* Deferred.succeed(
+        rebuildInstance,
+        makeAdapter.pipe(
+          Effect.provideService(McpProviderSessions.McpProviderSessions, mcpSessions),
+          Effect.flatMap((adapter) => Ref.set(current, adapter)),
+          Effect.andThen(PubSub.publish(changes, undefined)),
+          Effect.asVoid,
+        ),
+      );
+      const toInstance = (
+        orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"],
+      ): ProviderInstance => ({
+        instanceId: orchestrationAdapter.instanceId,
+        driverKind: orchestrationAdapter.driver,
+        continuationIdentity: {
+          driverKind: orchestrationAdapter.driver,
+          continuationKey: `test:${orchestrationAdapter.instanceId}`,
+        },
+        displayName: undefined,
+        enabled: true,
+        snapshot: {} as ProviderInstance["snapshot"],
+        orchestrationAdapter,
+        textGeneration: {} as ProviderInstance["textGeneration"],
+      });
+      const instances = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        getInstance: (instanceId) =>
+          Ref.get(current).pipe(
+            Effect.map((adapter) =>
+              adapter.instanceId === instanceId ? toInstance(adapter) : undefined,
+            ),
+          ),
+        listInstances: Ref.get(current).pipe(Effect.map((adapter) => [toInstance(adapter)])),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.fromPubSub(changes),
+        subscribeChanges: PubSub.subscribe(changes),
+      });
+      return ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+        Layer.provideMerge(instances),
+      );
+    }),
+  );
+}
+
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
@@ -619,6 +677,8 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  /** Receives an effect that rebuilds the instance, as a settings change does. */
+  readonly rebuildInstance?: Deferred.Deferred<Effect.Effect<void>>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -630,39 +690,48 @@ function layerTest(input: {
           : input.failReleaseEventWrites
             ? layerFailingReleaseEventSink
             : layerTestEventSink;
-  const layerRegistry = Layer.unwrap(
-    makeProviderAdapter(input.state, {
-      failEventStream: input.failEventStream ?? false,
-      ...(input.normalizeThreadLoadModelSelection === undefined
-        ? {}
-        : { normalizeThreadLoadModelSelection: input.normalizeThreadLoadModelSelection }),
-      ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
-      ...(input.extensionStatuses === undefined
-        ? {}
-        : { extensionStatuses: input.extensionStatuses }),
-      ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
-      ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
-      ...(input.hasPendingBackgroundWork === undefined
-        ? {}
-        : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
-      ...(input.hasPendingBackgroundWorkForThread === undefined
-        ? {}
-        : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
-      ...(input.backgroundTasksEndWithProcess === undefined
-        ? {}
-        : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
-      ...(input.hangSessionScopeClose === undefined
-        ? {}
-        : { hangSessionScopeClose: input.hangSessionScopeClose }),
-      ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
-      ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
-      ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
-      ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
-      ...(input.scopeCloseReached === undefined
-        ? {}
-        : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
-  );
+  const adapterOptions = {
+    failEventStream: input.failEventStream ?? false,
+    ...(input.normalizeThreadLoadModelSelection === undefined
+      ? {}
+      : { normalizeThreadLoadModelSelection: input.normalizeThreadLoadModelSelection }),
+    ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+    ...(input.extensionStatuses === undefined
+      ? {}
+      : { extensionStatuses: input.extensionStatuses }),
+    ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+    ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+    ...(input.hasPendingBackgroundWork === undefined
+      ? {}
+      : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+    ...(input.hasPendingBackgroundWorkForThread === undefined
+      ? {}
+      : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+    ...(input.backgroundTasksEndWithProcess === undefined
+      ? {}
+      : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
+    ...(input.hangSessionScopeClose === undefined
+      ? {}
+      : { hangSessionScopeClose: input.hangSessionScopeClose }),
+    ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+    ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
+    ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+    ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
+    ...(input.scopeCloseReached === undefined
+      ? {}
+      : { scopeCloseReached: input.scopeCloseReached }),
+  };
+  const layerRegistry =
+    input.rebuildInstance === undefined
+      ? Layer.unwrap(
+          makeProviderAdapter(input.state, adapterOptions).pipe(
+            Effect.map(ProviderAdapterRegistry.layerSingle),
+          ),
+        )
+      : layerRebuildableInstanceRegistry(
+          makeProviderAdapter(input.state, adapterOptions),
+          input.rebuildInstance,
+        );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
       ? layerTestMcpRegistry
@@ -1103,6 +1172,39 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
           idleTimeoutMs: 60_000,
         }),
       ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 reopens a live session after its instance is rebuilt", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const rebuildInstance = yield* Deferred.make<Effect.Effect<void>>();
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-rebuilt-instance");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      yield* open;
+      yield* yield* Deferred.await(rebuildInstance);
+      yield* open;
+
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, rebuildInstance })),
     );
   }),
 );
