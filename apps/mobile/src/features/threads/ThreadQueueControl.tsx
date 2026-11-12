@@ -5,8 +5,22 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
+  deriveResumableRunId,
+  deriveThreadStructureRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  type ChatAttachment,
+  type EnvironmentId,
+  MessageId,
+  type RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -20,12 +34,14 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
 import { useAssetUrl } from "../../state/assets";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -39,6 +55,7 @@ import {
   buildCancelQueuedRunCommand,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
+import { resumeThread } from "./resume-thread";
 
 const REMOVE_ACTION_WIDTH = 76;
 const THUMBNAIL_LIMIT = 3;
@@ -132,6 +149,23 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
+  const continueRun = useAtomCommand(threadEnvironment.startTurn, {
+    label: "continue thread",
+    reportFailure: false,
+  });
+  const setRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+    label: "set thread runtime mode",
+    reportFailure: false,
+  });
+  const setInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    label: "set thread interaction mode",
+    reportFailure: false,
+  });
+  const resumeHeldQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
+    label: "resume queue",
+    reportFailure: false,
+  });
+  const quietThread = useAtomValue(environmentThreadDetails.quietThreadAtom(target));
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
@@ -217,9 +251,39 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               if (busyRef.current) return;
               busyRef.current = true;
               setResuming(true);
-              await resume({ ...target, input: { threadId: target.threadId } });
+              const result = quietThread
+                ? await resumeThread({
+                    thread: {
+                      environmentId: target.environmentId,
+                      id: target.threadId,
+                      runtimeMode: quietThread.projection.thread.runtimeMode,
+                      interactionMode: quietThread.projection.thread.interactionMode,
+                    },
+                    resumableRunId: deriveResumableRunId(
+                      quietThread.projection,
+                      deriveThreadStructureRuntime(quietThread.projection),
+                    ),
+                    queueHeld: true,
+                    runtimeMode: quietThread.projection.thread.runtimeMode,
+                    interactionMode: quietThread.projection.thread.interactionMode,
+                    modelSelection: null,
+                    messageId: MessageId.make(uuidv4()),
+                    createdAt: new Date().toISOString(),
+                    setRuntimeMode,
+                    setInteractionMode,
+                    startTurn: continueRun,
+                    resumeQueue: resumeHeldQueue,
+                  })
+                : await resumeHeldQueue({ ...target, input: { threadId: target.threadId } });
               busyRef.current = false;
               setResuming(false);
+              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                Dialog.alert(
+                  "Could not resume queue",
+                  error instanceof Error ? error.message : "Try again.",
+                );
+              }
             }}
           />
         </View>
