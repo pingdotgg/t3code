@@ -5594,7 +5594,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         assert.deepEqual(yield* fileSystem.readDirectory(created.worktree.path), ["notes.txt"]);
 
-
         // Relative settings live under each repository's main checkout, with no repo-name level.
         const relativeBranch = "feature/relative-dir";
         const nested = yield* driver.createWorktree(
