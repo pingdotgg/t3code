@@ -2689,12 +2689,16 @@ it.effect("a finished turn leaves another project's cached listing in place", ()
       ],
     });
     const webListing = { state: "open" as const, projectId: "p1" as ProjectId };
+    const everyListing = { state: "open" as const };
 
     yield* service.list(webListing);
+    yield* service.list(everyListing);
+    reads.length = 0;
     yield* service.refreshAfterTurn("p2" as ProjectId);
     yield* service.list(webListing);
+    yield* service.list(everyListing);
 
-    assert.deepStrictEqual(reads, ["acme/web"]);
+    assert.deepStrictEqual(reads, []);
   }),
 );
 

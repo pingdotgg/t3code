@@ -2910,17 +2910,6 @@ export const make = Effect.gen(function* () {
   const refEpochs = new Map<string, number>();
   const projectEpochs = new Map<ProjectId, number>();
   let projectEpochFloor = 0;
-  let latestProjectEpoch = 0;
-  // A turn refreshes its own project's listings; a listing spanning every project sees them all.
-  const listingProjectsEpoch = (input: Pick<PullRequestListInput, "projectId" | "projectIds">) => {
-    const ids = [
-      ...(input.projectId === undefined ? [] : [input.projectId]),
-      ...(input.projectIds ?? []),
-    ];
-    return ids.length === 0
-      ? latestProjectEpoch
-      : Math.max(...ids.map((id) => projectEpochs.get(id) ?? projectEpochFloor));
-  };
   const REF_EPOCH_CAPACITY = 2_048;
   const refScope = (ref: PullRequestRef) =>
     JSON.stringify([
@@ -3094,7 +3083,6 @@ export const make = Effect.gen(function* () {
     (key: string) => {
       const [
         ,
-        ,
         state,
         involvement,
         filters,
@@ -3105,7 +3093,6 @@ export const make = Effect.gen(function* () {
         query,
         cursorEntries,
       ] = JSON.parse(key) as [
-        number,
         number,
         string,
         string | null,
@@ -3137,7 +3124,6 @@ export const make = Effect.gen(function* () {
   const list: PullRequestService["Service"]["list"] = (input) => {
     const key = JSON.stringify([
       listingsEpoch,
-      listingProjectsEpoch(input),
       input.state,
       input.involvement ?? null,
       input.filters === undefined
@@ -3659,7 +3645,6 @@ export const make = Effect.gen(function* () {
     // reads are gone, or a reader in between keeps the old one under the new epoch.
     yield* forgetProviderReads();
     const epoch = ++epochCounter;
-    latestProjectEpoch = epoch;
     projectEpochs.delete(projectId);
     if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
       const oldest = projectEpochs.keys().next().value;
