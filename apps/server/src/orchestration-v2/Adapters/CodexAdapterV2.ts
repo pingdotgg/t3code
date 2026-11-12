@@ -729,7 +729,16 @@ const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
 );
 
-function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
+type CodexWorkspaceWriteSandbox = Omit<
+  Extract<CodexSchema.V2TurnStartParams__SandboxPolicy, { readonly type: "workspaceWrite" }>,
+  "type"
+>;
+
+function codexRuntimeModeTurnDefaults(
+  runtimeMode: RuntimeMode,
+  // A bare workspaceWrite turn override resets network access and writable roots to off.
+  configuredWorkspaceWriteSandbox: CodexWorkspaceWriteSandbox | undefined,
+): {
   readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
   readonly approvalsReviewer: CodexSchema.V2TurnStartParams__ApprovalsReviewer;
   readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
@@ -747,17 +756,13 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
       return {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-        },
+        sandboxPolicy: { ...configuredWorkspaceWriteSandbox, type: "workspaceWrite" },
       };
     case "auto":
       return {
         approvalPolicy: "on-request",
         approvalsReviewer: "auto_review",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-        },
+        sandboxPolicy: { ...configuredWorkspaceWriteSandbox, type: "workspaceWrite" },
       };
     case "full-access":
       return {
@@ -784,8 +789,13 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** The user's `model_reasoning_summary` from the Codex config, when set. */
     readonly configuredReasoningSummary?: CodexSchema.V2TurnStartParams__ReasoningSummary;
+    /** The user's `sandbox_workspace_write` from the Codex config, when set. */
+    readonly configuredWorkspaceWriteSandbox?: CodexWorkspaceWriteSandbox;
   }) {
-    const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
+    const runtimeModeDefaults = codexRuntimeModeTurnDefaults(
+      input.runtimePolicy.runtimeMode,
+      input.configuredWorkspaceWriteSandbox,
+    );
     const approvalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
@@ -7240,14 +7250,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-            const configuredReasoningSummary = yield* client
+            const config = yield* client
               .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
               .pipe(
-                Effect.map((response) => response.config.model_reasoning_summary ?? undefined),
+                Effect.map((response) => response.config),
                 Effect.catch(() =>
                   Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
                 ),
               );
+            const configuredReasoningSummary = config?.model_reasoning_summary ?? undefined;
+            const workspaceWrite = config?.sandbox_workspace_write ?? undefined;
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
@@ -7259,6 +7271,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
+              ...(workspaceWrite === undefined
+                ? {}
+                : {
+                    configuredWorkspaceWriteSandbox: {
+                      ...(workspaceWrite.writable_roots === undefined
+                        ? {}
+                        : { writableRoots: workspaceWrite.writable_roots }),
+                      ...(workspaceWrite.network_access === undefined
+                        ? {}
+                        : { networkAccess: workspaceWrite.network_access }),
+                      ...(workspaceWrite.exclude_tmpdir_env_var === undefined
+                        ? {}
+                        : { excludeTmpdirEnvVar: workspaceWrite.exclude_tmpdir_env_var }),
+                      ...(workspaceWrite.exclude_slash_tmp === undefined
+                        ? {}
+                        : { excludeSlashTmp: workspaceWrite.exclude_slash_tmp }),
+                    },
+                  }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
