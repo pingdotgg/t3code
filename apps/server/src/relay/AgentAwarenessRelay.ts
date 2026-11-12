@@ -831,9 +831,9 @@ export const make = Effect.gen(function* () {
   });
 
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
-    const relayUrl = yield* readSecretString(RELAY_URL_SECRET).pipe(
-      Effect.orElseSucceed(() => null),
-    );
+    const relayUrl =
+      backgroundRelay?.url ??
+      (yield* readSecretString(RELAY_URL_SECRET).pipe(Effect.orElseSucceed(() => null)));
     if (!relayUrl) {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return "unlinked" as const;
