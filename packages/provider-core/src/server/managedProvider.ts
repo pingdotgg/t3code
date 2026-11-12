@@ -28,6 +28,7 @@ interface ProviderSnapshotState {
   readonly enrichmentGeneration: number;
   // null preserves an explicitly cleared plan across probes and enrichment.
   readonly usageAuthLabel: string | null | undefined;
+  readonly checked: boolean;
 }
 
 function withUsageLimits(
@@ -79,6 +80,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
     usageAuthLabel: undefined,
+    checked: false,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -143,9 +145,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     nextSettings: Settings,
     options?: { readonly forceRefresh?: boolean },
   ) {
-    const forceRefresh = options?.forceRefresh === true;
     const previousSettings = yield* Ref.get(settingsRef);
-    if (!forceRefresh && !input.haveSettingsChanged(previousSettings, nextSettings)) {
+    const settingsChanged =
+      options?.forceRefresh === true || input.haveSettingsChanged(previousSettings, nextSettings);
+    // Nothing watches credential files, so any settings apply rechecks a failed sign-in.
+    const { snapshot: currentSnapshot } = yield* Ref.get(snapshotStateRef);
+    const forceRefresh =
+      options?.forceRefresh === true ||
+      (currentSnapshot.enabled && currentSnapshot.auth.status === "unauthenticated");
+    if (!forceRefresh && !settingsChanged) {
       yield* Ref.set(settingsRef, nextSettings);
       return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
     }
@@ -212,7 +220,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation, usageAuthLabel },
+          { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
         ] as const;
       },
     );
@@ -419,6 +427,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+    isAwaitingFirstCheck: Ref.get(snapshotStateRef).pipe(Effect.map((state) => !state.checked)),
     refresh: input
       .resolveMaintenance({ fresh: true })
       .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),

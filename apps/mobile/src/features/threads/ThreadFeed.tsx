@@ -10,10 +10,10 @@ import {
   withChipIcon,
 } from "../../native/useEnrichedLinkVariants";
 import {
-  enrichedSkillDisplayName,
   enrichedSkillInstructionsPath,
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
+import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { ThreadContextDivider } from "./thread-context-divider";
 import {
   ThreadHandoffDivider,
@@ -2992,7 +2992,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         return {
-          title: enrichedSkillDisplayName(skill),
+          title: formatProviderSkillDisplayName(skill),
           actions: [
             {
               id: "open-skill",

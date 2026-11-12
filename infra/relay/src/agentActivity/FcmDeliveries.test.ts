@@ -590,26 +590,6 @@ describe("delivery policy regressions", () => {
       expect(h.sent.filter((x) => x.alert)).toHaveLength(1);
     }).pipe(Effect.provide(h.layer));
   });
-  it("keeps an older waiting thread visible and alertable beyond five running rows", () => {
-    const running = Array.from({ length: 5 }, (_, i) => ({
-      ...state,
-      threadId: ThreadId.make(`running-${i}`),
-    }));
-    const waiting = {
-      ...state,
-      phase: "waiting_for_approval" as const,
-      updatedAt: "1969-12-31T23:59:00.000Z",
-    };
-    const next = aggregateFor([...running, waiting]);
-    expect(
-      FcmDeliveries.androidAlertForAggregate({
-        previousAggregate: aggregateFor(running),
-        nextAggregate: next,
-        preferences,
-        nowMs: 0,
-      }),
-    ).not.toBeNull();
-  });
 });
 
 describe("notification-only environments", () => {

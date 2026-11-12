@@ -57,6 +57,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -115,6 +116,18 @@ const refusedBeforePrompt = (error: unknown): boolean =>
   PROMPT_REFUSAL_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
+const startFailureMessage = (error: Error): string => {
+  const nestedCause = "cause" in error ? error.cause : undefined;
+  return (
+    knownProviderFailureMessage(error) ??
+    (nestedCause instanceof Error
+      ? nestedCause.message
+      : typeof nestedCause === "string"
+        ? nestedCause
+        : error.message)
+  );
+};
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -145,6 +158,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -161,6 +175,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
@@ -233,6 +248,7 @@ export const layer: Layer.Layer<
       readonly attemptId: OrchestrationV2RunAttempt["id"];
       readonly providerThreadId: OrchestrationV2ProviderThread["id"];
       readonly runOrdinal: number;
+      readonly worktreePath: string | null;
       readonly inheritedBackgroundTurnItems: ReturnType<
         typeof RunExecutionService.selectInheritedBackgroundTurnItems
       >;
@@ -278,6 +294,11 @@ export const layer: Layer.Layer<
               }),
             )
             .pipe(Effect.catchCause(() => Effect.succeed(false))),
+        hasWorkspaceMoved: () =>
+          projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
+            Effect.map((current) => current.thread.worktreePath !== input.worktreePath),
+            Effect.catchCause(() => Effect.succeed(false)),
+          ),
         loadRunInterruptReason: () =>
           projectionStore
             .getThreadRecords(input.threadId, ["turnItems"], {
@@ -516,7 +537,6 @@ export const layer: Layer.Layer<
           readonly error: Error;
           readonly message?: string;
         }) {
-          const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
@@ -528,14 +548,7 @@ export const layer: Layer.Layer<
               title: failed.title,
               failure: makeProviderFailure({
                 cause: failed.error,
-                message:
-                  failed.message ??
-                  knownProviderFailureMessage(failed.error) ??
-                  (nestedCause instanceof Error
-                    ? nestedCause.message
-                    : typeof nestedCause === "string"
-                      ? nestedCause
-                      : failed.error.message),
+                message: failed.message ?? startFailureMessage(failed.error),
                 class: "provider_error",
               }),
             },
@@ -689,6 +702,7 @@ export const layer: Layer.Layer<
         attemptId: attempt.id,
         providerThreadId: providerThread.id,
         runOrdinal: run.ordinal,
+        worktreePath: projection.thread.worktreePath,
         inheritedBackgroundTurnItems,
       });
       const { isCurrentAttemptInStatus } = runControls;
@@ -1109,6 +1123,7 @@ export const layer: Layer.Layer<
       let resumedRetryHandoff: ReadonlyArray<OrchestrationV2ContextHandoff> | undefined;
       let resumedHandoffContext: ReturnType<typeof handoffContextForThread> | undefined;
       let portableForkFallback: OrchestrationV2ContextHandoff | undefined;
+      let recoveryTurnItem: OrchestrationV2TurnItem | undefined;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
           const sourceProjection = yield* projectionStore.getThreadRecords(
@@ -1140,6 +1155,7 @@ export const layer: Layer.Layer<
           const sourceBusy = sourceProjection.runs.some(
             (candidate) => candidate.ordinal > sourceRun.ordinal && isActiveRun(candidate),
           );
+          let nativeForkFailure: string | undefined;
           if (!sourceBusy) {
             // Rolled-back turns are no longer in the source conversation, so they cannot bound a fork.
             const rolledBackAttemptIds = new Set(
@@ -1152,7 +1168,7 @@ export const layer: Layer.Layer<
                 )
                 .map((attempt) => attempt.id),
             );
-            return yield* loadFromProvider(
+            const forked = yield* Effect.result(
               session.forkThread({
                 sourceProviderThread,
                 sourceProviderTurns: sourceProjection.providerTurns.filter(
@@ -1167,7 +1183,24 @@ export const layer: Layer.Layer<
                   : { providerTurnId: sourceProviderTurn.id }),
               }),
             );
+            if (forked._tag === "Success") return forked.success;
+            if (input.willRetry === true) return yield* forked.failure;
+            if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
+            // Retries are spent (e.g. the source's native session is gone): start fresh with portable history.
+            yield* Effect.logWarning("Starting a native fork in a fresh native session", {
+              driver: session.driver,
+              providerThreadId: providerThread.id,
+              sourceProviderThreadId: sourceProviderThread.id,
+              runId,
+              errorTag: forked.failure._tag,
+            });
+            nativeForkFailure = makeProviderFailure({
+              cause: forked.failure,
+              message: startFailureMessage(forked.failure),
+              class: "provider_error",
+            }).message;
           }
+          const nativeForkFailed = nativeForkFailure !== undefined;
           const sourceItems = yield* ContextHandoffService.readForkHistoryItems(
             projectionStore,
             sourceProjection,
@@ -1198,7 +1231,11 @@ export const layer: Layer.Layer<
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
               providerSessionId,
-              existingProviderThread: { ...providerThread, forkedFrom: null },
+              existingProviderThread: nativeForkFailed
+                ? { ...providerThread, nativeThreadRef: null, forkedFrom: null }
+                : { ...providerThread, forkedFrom: null },
+              // The failed fork may have left the adapter's session half-switched.
+              ...(nativeForkFailed ? { forceNewNativeThread: true } : {}),
             }),
           );
           if (loaded === undefined) return undefined;
@@ -1231,6 +1268,45 @@ export const layer: Layer.Layer<
                   updatedAt: createdAt,
                 },
               },
+              ...(nativeForkFailure === undefined
+                ? []
+                : [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                      type: "turn-item.updated" as const,
+                      threadId: projection.thread.id,
+                      runId: run.id,
+                      providerInstanceId: run.providerInstanceId,
+                      occurredAt: createdAt,
+                      payload: {
+                        id: idAllocator.derive.runSignalTurnItem({
+                          runId,
+                          signal: "native-fork-fallback",
+                        }),
+                        threadId: projection.thread.id,
+                        runId,
+                        nodeId: rootNode.id,
+                        providerThreadId: providerThread.id,
+                        providerTurnId: null,
+                        nativeItemRef: null,
+                        parentItemId: null,
+                        ordinal:
+                          Math.max(
+                            0,
+                            ...projection.turnItems
+                              .filter((item) => item.runId === runId)
+                              .map((item) => item.ordinal),
+                          ) + 1,
+                        status: "completed" as const,
+                        title: "Native fork failed",
+                        startedAt: createdAt,
+                        completedAt: createdAt,
+                        updatedAt: createdAt,
+                        type: "system_notice" as const,
+                        message: `Could not fork the source conversation natively (${nativeForkFailure}). Started a fresh session with its history.`,
+                      },
+                    },
+                  ]),
             ],
           });
           return loaded;
@@ -1363,6 +1439,50 @@ export const layer: Layer.Layer<
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
         effectiveHandoffs = withRecoveryHandoff(handoff);
         resumeFellBack = true;
+        const previousRun = projection.runs.findLast(
+          (candidate) =>
+            candidate.providerThreadId === providerThread.id &&
+            candidate.ordinal < run.ordinal &&
+            candidate.startedAt !== null,
+        );
+        // Stable per run so a retried start reuses the reserved run-start position.
+        const handoffTurnItemId = idAllocator.derive.runSignalTurnItem({
+          runId,
+          signal: "resume-fallback-handoff",
+        });
+        const handoffTurnItem: OrchestrationV2TurnItem = {
+          id: handoffTurnItemId,
+          threadId: projection.thread.id,
+          runId,
+          nodeId: rootNode.id,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          // The summary is delivered ahead of this run's own handoffs and message.
+          ordinal: yield* turnItemPositions.allocate({
+            threadId: projection.thread.id,
+            turnItemId: handoffTurnItemId,
+            runId,
+            runOrdinal: run.ordinal,
+            placement: "run_start",
+          }),
+          status: "completed",
+          title: "Recovered context",
+          startedAt: createdAt,
+          completedAt: createdAt,
+          updatedAt: createdAt,
+          type: "handoff",
+          contextHandoffId: handoff.id,
+          fromProviderThreadIds: handoff.fromProviderThreadIds,
+          toProviderThreadId: handoff.toProviderThreadId,
+          fromProviderInstanceIds: [providerThread.providerInstanceId],
+          toProviderInstanceId: run.providerInstanceId,
+          fromModelSelections: previousRun === undefined ? [] : [previousRun.modelSelection],
+          toModel: run.modelSelection.model,
+          strategy: handoff.strategy,
+          summary: handoff.summaryText,
+        };
         yield* eventSink.write({
           events: [
             {
@@ -1402,6 +1522,7 @@ export const layer: Layer.Layer<
             },
           ],
         });
+        recoveryTurnItem = handoffTurnItem;
         return replacement;
       });
       if (loadedProviderThread === undefined) return;
@@ -1506,6 +1627,20 @@ export const layer: Layer.Layer<
                   updatedAt: now,
                   consumedAt: now,
                 },
+              },
+            ]),
+        // Shown only once the replacement session commits with the running transition.
+        ...(recoveryTurnItem === undefined
+          ? []
+          : [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "turn-item.updated" as const,
+                threadId: projection.thread.id,
+                runId: run.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: now,
+                payload: recoveryTurnItem,
               },
             ]),
         {
@@ -1703,6 +1838,7 @@ export const layer: Layer.Layer<
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
+        hasWorkspaceMoved: runControls.hasWorkspaceMoved,
         message: {
           messageId: message.id,
           text: userText,

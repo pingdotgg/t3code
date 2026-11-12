@@ -149,6 +149,8 @@ export const AcpRegistrySession = Schema.Struct({
   title: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_024))),
   updatedAt: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
   importedThreadId: Schema.NullOr(ThreadId),
+  /** The imported thread still lacks the session's history, so importing again copies it. */
+  nativeHistoryPending: Schema.optionalKey(Schema.Boolean),
 });
 export type AcpRegistrySession = typeof AcpRegistrySession.Type;
 

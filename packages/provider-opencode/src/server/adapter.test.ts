@@ -35,6 +35,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -154,6 +155,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   client: object,
   host: Partial<ProviderHost.ProviderHost["Service"]> = {},
   turnSettings: {
+    readonly model?: string;
     readonly options?: ReadonlyArray<ProviderOptionSelection>;
     readonly interactionMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["interactionMode"];
   } = {},
@@ -162,7 +164,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
     instanceId,
-    model: "anthropic/claude-sonnet",
+    model: turnSettings.model ?? "anthropic/claude-sonnet",
     options: turnSettings.options ?? [],
   };
   const policy = runtimePolicy("full-access", {
@@ -255,6 +257,266 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect.each([
+    ["empty", "prompt"],
+    ["unsupported", "command"],
+    ["supported", "command"],
+    ["unknown", "prompt"],
+    ["failure", "prompt"],
+    ["unset", "prompt"],
+  ] as const)("normalizes reasoning variants for %s inventory at %s dispatch", ([kind, request]) =>
+    Effect.gen(function* () {
+      const suffix = `variant-${kind}-${request}`;
+      const nativeEvents = asyncEventStream();
+      const inputs: Array<Record<string, unknown>> = [];
+      let inventoryCalls = 0;
+      const receive = async (input: Record<string, unknown>) => {
+        inputs.push(input);
+        return { data: true };
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        suffix,
+        suffix,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async () => {
+              inventoryCalls++;
+              if (kind === "failure") throw new Error("inventory unavailable");
+              return {
+                data: {
+                  all: [
+                    {
+                      id: "opencode",
+                      models:
+                        kind === "unknown"
+                          ? {}
+                          : {
+                              "big-pickle": {
+                                id: "big-pickle",
+                                variants:
+                                  kind === "supported"
+                                    ? { medium: {} }
+                                    : kind === "unsupported"
+                                      ? { high: {} }
+                                      : {},
+                              },
+                            },
+                    },
+                  ],
+                },
+              };
+            },
+          },
+          command: { list: async () => ({ data: [{ name: "review" }] }) },
+          session: {
+            create: async () => ({ data: { id: suffix, time: { created: 1, updated: 1 } } }),
+            promptAsync: receive,
+            command: receive,
+          },
+        },
+        {},
+        {
+          model: "opencode/big-pickle",
+          options: [
+            ...(kind === "unset" ? [] : [{ id: "variant", value: "medium" }]),
+            { id: "agent", value: "plan" },
+          ],
+        },
+      );
+      yield* harness.startTurn(request === "command" ? "/review staged changes" : "hello");
+      assert.equal(inputs.length, 1);
+      const payload = inputs[0]!;
+      assert.equal(payload.agent, "plan");
+      if (kind === "supported" || kind === "unknown" || kind === "failure") {
+        assert.equal(payload.variant, "medium");
+      } else {
+        assert.equal(Object.hasOwn(payload, "variant"), false);
+      }
+      if (kind === "unset") assert.equal(inventoryCalls, 0);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("reuses successful model variants for the session and retries failed inventories", () =>
+    Effect.gen(function* () {
+      const sessionId = "variant-cache";
+      const nativeEvents = asyncEventStream();
+      const inputs: Array<Record<string, unknown>> = [];
+      let inventoryCalls = 0;
+      let variants: Record<string, object> = {};
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        sessionId,
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async () => {
+              inventoryCalls++;
+              if (inventoryCalls === 1) throw new Error("inventory unavailable");
+              return {
+                data: {
+                  all: [{ id: "opencode", models: { "big-pickle": { variants } } }],
+                },
+              };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: Record<string, unknown>) => {
+              inputs.push(input);
+              return { data: true };
+            },
+          },
+        },
+        {},
+        { model: "opencode/big-pickle", options: [{ id: "variant", value: "medium" }] },
+      );
+      const submit = Effect.fnUntraced(function* () {
+        yield* harness.startTurn();
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: sessionId,
+              info: {
+                id: inputs.at(-1)!.messageID,
+                sessionID: sessionId,
+                role: "user",
+                time: { created: 1 },
+              },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({ type: "session.idle", properties: { sessionID: sessionId } }),
+        );
+        yield* harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        return inputs.at(-1)!;
+      });
+
+      assert.equal((yield* submit()).variant, "medium");
+      assert.equal(inventoryCalls, 1);
+      assert.isFalse(Object.hasOwn(yield* submit(), "variant"));
+      assert.equal(inventoryCalls, 2);
+      variants = { medium: {} };
+      assert.isFalse(Object.hasOwn(yield* submit(), "variant"));
+      assert.equal(inventoryCalls, 2);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("keeps queued steers behind a cold catalog lookup and cancels them on stop", () =>
+    Effect.gen(function* () {
+      const sessionId = "catalog-admission";
+      const nativeEvents = asyncEventStream();
+      const catalogStarted = promiseGate<void>();
+      const calls: string[] = [];
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        sessionId,
+        sessionId,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async (_input: unknown, { signal }: { signal: AbortSignal }) => {
+              calls.push("catalog");
+              catalogStarted.resolve();
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener(
+                  "abort",
+                  () => {
+                    calls.push("catalog-aborted");
+                    reject(signal.reason);
+                  },
+                  { once: true },
+                );
+              });
+              return { data: { all: [] } };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+            messages: async () => ({ data: [] }),
+            children: async () => ({ data: [] }),
+            promptAsync: async (_input: unknown, { signal }: { signal: AbortSignal }) => {
+              signal.throwIfAborted();
+              calls.push("prompt");
+              return { data: true };
+            },
+            abort: async () => {
+              calls.push("abort");
+              return { data: true };
+            },
+          },
+        },
+        {},
+        { model: "opencode/big-pickle", options: [{ id: "variant", value: "medium" }] },
+      );
+      const start = yield* harness.startTurn().pipe(Effect.forkScoped);
+      yield* Effect.promise(() => catalogStarted.promise);
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const activeTurn = snapshot.providerTurns.at(-1)!;
+      const steer = (message: string) =>
+        harness.runtime
+          .steerTurn({
+            threadId: harness.threadId,
+            runId: harness.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: activeTurn.id,
+            message: {
+              messageId: MessageId.make(message),
+              text: message,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          })
+          .pipe(Effect.exit, Effect.forkScoped({ startImmediately: true }));
+      const firstSteer = yield* steer("first follow-up");
+      const secondSteer = yield* steer("second follow-up");
+      yield* TestClock.adjust("5 seconds");
+      assert.deepEqual(calls, ["catalog"]);
+
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: activeTurn.id,
+      });
+      yield* Fiber.join(start);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(firstSteer)));
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(secondSteer)));
+      assert.deepEqual(calls, ["catalog", "catalog-aborted", "abort"]);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect.each([
     {
       message: "<none>",
@@ -658,6 +920,159 @@ describe("OpenCodeAdapterV2", () => {
         Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
         Effect.scoped,
       ),
+  );
+
+  // OpenCode 1.18.18 reports a context overflow as session.error, then auto-compacts and continues.
+  it.effect("keeps a turn running through a context overflow that OpenCode auto-compacts", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let promptId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("context-overflow", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: { messageID: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const status = (type: "busy" | "idle") => ({
+        type: "session.status",
+        properties: { sessionID: "root", status: { type } },
+      });
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: { id: promptId, role: "user", time: { created: 1 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("busy")));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.error",
+          properties: {
+            sessionID: "root",
+            error: {
+              name: "ContextOverflowError",
+              data: {
+                message:
+                  "This model's maximum context length is 131070 tokens. However, your messages resulted in 140049 tokens.",
+              },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.compacted", properties: { sessionID: "root" } }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("busy")));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: "root",
+            part: {
+              id: "post-compaction-text",
+              sessionID: "root",
+              messageID: "post-compaction-assistant",
+              type: "text",
+              text: "Post-compaction step",
+              time: { start: 2 },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: {
+              id: "post-compaction-assistant",
+              sessionID: "root",
+              role: "assistant",
+              time: { created: 2, completed: 3 },
+              parentID: promptId,
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("idle")));
+
+      const events = Array.from(yield* Fiber.join(received));
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "completed");
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "Post-compaction step",
+        ),
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("fails an explicit compaction that OpenCode reports as a context overflow", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("compact-overflow", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          summarize: async () => {
+            await nativeEvents.push({
+              type: "session.error",
+              properties: {
+                sessionID: "root",
+                error: {
+                  name: "ContextOverflowError",
+                  data: { message: "This model's maximum context length is 131070 tokens." },
+                },
+              },
+            });
+            return { data: true };
+          },
+        },
+      });
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn("/compact");
+
+      const events = Array.from(yield* Fiber.join(received));
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(
+        terminal?.failure?.message,
+        "This model's maximum context length is 131070 tokens.",
+      );
+      assert.isFalse(
+        events.some(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        ),
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
   );
 
   it.effect("preserves native multi-select and custom-answer flags through a live reply", () =>

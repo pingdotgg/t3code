@@ -49,6 +49,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
           >
             <ChatMarkdown
               text={messageText}
+              renderInsights
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
@@ -68,6 +69,11 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             resolvedTheme={ctx.resolvedTheme}
             onOpenTurnDiff={ctx.onOpenTurnDiff}
           />
+        ) : null}
+        {!row.showAssistantMeta && row.projectedItem?.item.status === "interrupted" ? (
+          <div className="mt-1.5 flex">
+            <AssistantStatusBadge status="interrupted" />
+          </div>
         ) : null}
         {row.showAssistantMeta ? (
           <AssistantMessageMeta
@@ -177,9 +183,7 @@ function AssistantMessageMeta({
       )}
     >
       {projectedItem && projectedItem.item.status !== "completed" ? (
-        <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
-          {projectedItem.item.status}
-        </span>
+        <AssistantStatusBadge status={projectedItem.item.status} />
       ) : null}
       <AssistantCopyButton
         message={message}
@@ -200,6 +204,14 @@ function AssistantMessageMeta({
         </Tooltip>
       )}
     </div>
+  );
+}
+
+function AssistantStatusBadge({ status }: { status: string }) {
+  return (
+    <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
+      {status}
+    </span>
   );
 }
 

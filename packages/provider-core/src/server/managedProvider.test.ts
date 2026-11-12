@@ -272,6 +272,7 @@ describe("makeManagedServerProvider", () => {
 
           const initial = yield* provider.getSnapshot;
           assert.deepStrictEqual(initial, initialSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, true);
 
           const updatesFiber = yield* Stream.take(provider.streamChanges, 1).pipe(
             Stream.runCollect,
@@ -287,6 +288,7 @@ describe("makeManagedServerProvider", () => {
 
           assert.deepStrictEqual(updates, [refreshedSnapshot]);
           assert.deepStrictEqual(latest, refreshedSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, false);
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
@@ -470,6 +472,66 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshotSecond);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect(
+    "rechecks an auth failure when settings are applied, even if this provider's did not change",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const settingsChanges = yield* PubSub.unbounded<
+            TestSettings & { readonly revision: number }
+          >();
+          const checkCalls = yield* Ref.make(0);
+          const seenRevisions: Array<number> = [];
+          const releaseInitialCheck = yield* Deferred.make<void>();
+          const markerApplied = yield* Deferred.make<void>();
+          const unauthenticatedSnapshot: ServerProvider = {
+            ...refreshedSnapshot,
+            status: "error",
+            auth: { status: "unauthenticated" },
+            message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+          };
+          const provider = yield* makeManagedServerProvider<
+            TestSettings & { readonly revision: number }
+          >({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true, revision: 0 }),
+            streamSettings: Stream.fromPubSub(settingsChanges),
+            haveSettingsChanged: (previous, next) => {
+              seenRevisions.push(next.revision);
+              if (next.revision === 2) Deferred.doneUnsafe(markerApplied, Effect.void);
+              return previous.enabled !== next.enabled;
+            },
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            // The credential is fixed (e.g. `codex login`) after the first, failed probe.
+            checkProvider: Deferred.await(releaseInitialCheck).pipe(
+              Effect.andThen(Ref.updateAndGet(checkCalls, (count) => count + 1)),
+              Effect.map((count) => (count === 1 ? unauthenticatedSnapshot : refreshedSnapshot)),
+            ),
+            refreshInterval: "1 hour",
+          });
+          const initialProbe = yield* provider.streamChanges.pipe(
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(releaseInitialCheck, undefined);
+          yield* Fiber.join(initialProbe);
+          assert.deepStrictEqual(yield* provider.getSnapshot, unauthenticatedSnapshot);
+
+          // A settings apply that does not touch this provider's settings, then a marker:
+          // the consumer is sequential, so the first apply has finished once the marker is seen.
+          yield* PubSub.publish(settingsChanges, { enabled: true, revision: 1 });
+          yield* PubSub.publish(settingsChanges, { enabled: true, revision: 2 });
+          yield* Deferred.await(markerApplied);
+
+          assert.deepStrictEqual(seenRevisions, [1, 2]);
+          assert.isAtLeast(yield* Ref.get(checkCalls), 2);
+          assert.deepStrictEqual((yield* provider.getSnapshot).auth, refreshedSnapshot.auth);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
   it.effect("streams supplemental snapshot updates after the base provider check completes", () =>
