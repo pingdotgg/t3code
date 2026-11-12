@@ -20,6 +20,7 @@ import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
+import { useEnvironmentPresentation } from "../state/presentation";
 import {
   pullRequestListLines,
   resolveThreadCurrentPullRequestLink,
@@ -698,10 +699,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     pr,
     linkedPullRequest?.sourceControlProvider ?? resolveDisplayedThreadPrProvider(displayedPrInput),
   );
+  const connectionPhase = useEnvironmentPresentation(thread.environmentId).presentation?.connection
+    .phase;
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
       lastVisitedAt,
+      connectionPhase,
     },
   });
 

@@ -18,6 +18,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
@@ -390,6 +391,28 @@ export function resolveThreadWorkingStartedAt(input: {
     return valid(run.startedAt) ?? valid(run.requestedAt);
   }
   return null;
+}
+
+export type ThreadConnectionStatus = "connecting" | "reconnecting" | "offline";
+
+// Cached active work is only known to be live while its environment answers.
+export function resolveThreadConnectionStatus(input: {
+  readonly runtime: Pick<ThreadRuntimeSummary, "status"> | null;
+  readonly connectionPhase?: EnvironmentConnectionPhase | undefined;
+}): ThreadConnectionStatus | null {
+  const phase = input.connectionPhase;
+  if (phase === undefined || phase === "connected") return null;
+  const status = input.runtime?.status;
+  if (
+    status !== "preparing" &&
+    status !== "queued" &&
+    status !== "starting" &&
+    status !== "running" &&
+    status !== "waiting"
+  ) {
+    return null;
+  }
+  return phase === "connecting" || phase === "reconnecting" ? phase : "offline";
 }
 
 export function formatWorkingDurationLabel(elapsedMs: number): string {

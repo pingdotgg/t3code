@@ -51,6 +51,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   pendingDraftBranchNeedsRefs,
@@ -118,6 +119,24 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     icon: "circle.dashed",
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  connecting: {
+    label: "Connecting",
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  reconnecting: {
+    label: "Reconnecting",
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  offline: {
+    label: "Offline",
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
   },
   waiting: {
     label: null,
@@ -766,7 +785,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
-  const status = resolveThreadListV2Status(thread);
+  const connectionPhase = useEnvironmentPresentation(thread.environmentId).presentation?.connection
+    .phase;
+  const status = resolveThreadListV2Status({ ...thread, connectionPhase });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
