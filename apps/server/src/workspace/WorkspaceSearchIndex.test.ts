@@ -4,9 +4,11 @@ import * as NodeEvents from "node:events";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { FileItem, GrepCursor, GrepOptions, GrepResult } from "@ff-labs/fff-node";
 import { afterEach, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -202,4 +204,35 @@ it.live("ends the search process once its last index closes", () =>
     Effect.scoped,
     Effect.provide(Layer.merge(WorkspaceSearchIndex.layerWorker, NodeServices.layer)),
   ),
+);
+
+// fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "refuses to index a workspace rooted at the home directory",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-home-" }),
+        );
+        yield* fs.makeDirectory(path.join(home, "OneDrive", "Remix"), { recursive: true });
+        yield* fs.writeFileString(path.join(home, "OneDrive", "Remix", "part.stl"), "solid part\n");
+        yield* Effect.acquireRelease(
+          Effect.sync(() => vi.stubEnv("HOME", home)),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
+        );
+
+        const result = yield* WorkspaceSearchIndex.make(home).pipe(
+          Effect.flatMap((searchIndex) => searchIndex.search("stl", 50, undefined, false)),
+          Effect.map(({ entries }) => entries),
+          Effect.catchTags({
+            WorkspaceSearchIndexCreateFailed: (error) => Effect.succeed(error._tag),
+          }),
+        );
+
+        expect(result).toBe("WorkspaceSearchIndexCreateFailed");
+      }),
+    ).pipe(Effect.provide(Layer.merge(WorkspaceSearchIndex.layerWorker, NodeServices.layer))),
 );
