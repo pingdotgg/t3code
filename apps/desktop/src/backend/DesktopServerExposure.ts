@@ -513,15 +513,23 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ port });
       const settings = yield* desktopSettings.get;
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
-      const resolved = resolveRuntimeState({
-        requestedMode: withinPolicy(settings).serverExposureMode,
-        settings: withinPolicy(settings),
+      const effectiveSettings = withinPolicy(settings);
+      const override = Option.getOrUndefined(config.desktopLanHostOverride);
+      // A saved network choice binds every interface even before any address exists, so a
+      // network that comes up after launch is reachable without a restart.
+      const state = runtimeStateFromResolvedExposure({
+        requestedMode: effectiveSettings.serverExposureMode,
+        settings: effectiveSettings,
+        exposure: resolveDesktopServerExposure({
+          mode: effectiveSettings.serverExposureMode,
+          port,
+          networkInterfaces: currentNetworkInterfaces,
+          ...(override ? { advertisedHostOverride: override } : {}),
+        }),
         port,
-        networkInterfaces: currentNetworkInterfaces,
-        advertisedHostOverride: config.desktopLanHostOverride,
       });
-      yield* Ref.set(stateRef, resolved.state);
-      return toContractState(resolved.state);
+      yield* Ref.set(stateRef, state);
+      return toContractState(state);
     },
   );
 

@@ -181,9 +181,14 @@ describe("DesktopServerExposure", () => {
     );
   });
 
-  it.effect("falls back to local-only without losing the requested network preference", () =>
-    withHarness(
-      emptyNetworkInterfaces,
+  it.effect("restores saved network access when a network appears after launch", () => {
+    const networkInterfaces: Record<
+      string,
+      readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+    > = {};
+
+    return withHarness(
+      networkInterfaces,
       Effect.gen(function* () {
         const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
@@ -191,16 +196,18 @@ describe("DesktopServerExposure", () => {
         yield* settings.setServerExposureMode("network-accessible");
 
         const state = yield* serverExposure.configureFromSettings({ port: 4173 });
-        assert.equal(state.mode, "local-only");
+        assert.equal(state.mode, "network-accessible");
         assert.equal(state.endpointUrl, null);
-        assert.equal((yield* settings.get).serverExposureMode, "network-accessible");
 
         const backendConfig = yield* serverExposure.backendConfig;
-        assert.equal(backendConfig.bindHost, "127.0.0.1");
+        assert.equal(backendConfig.bindHost, "0.0.0.0");
         assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
+
+        networkInterfaces.en0 = lanNetworkInterfaces.en0;
+        assert.equal((yield* serverExposure.getState).endpointUrl, "http://192.168.1.20:4173");
       }),
-    ),
-  );
+    );
+  });
 
   it.effect("starts local-only, Serve off, when a managed policy keeps clients local", () =>
     withHarness(
