@@ -1,7 +1,7 @@
 # Antigravity
 
 T3 Code runs Google's official Antigravity ACP agent on your selected environment.
-It has its own sign-in, separate from the Antigravity IDE or CLI. Google controls
+T3 manages its own CLI installation and sign-in, separate from your terminal or IDE. Google controls
 which models and account access are available through this agent.
 
 ## Set up Antigravity
@@ -51,20 +51,28 @@ account.
 
 ## Runtime installation
 
-Managed installation supports Apple Silicon macOS, Linux x64 or ARM64, and Windows
-x64 or ARM64. Intel Macs can connect to a supported remote environment. Allow
-several GB of free disk space, especially on Linux.
+Managed installation supports Apple Silicon and Intel macOS, Linux x64 or ARM64
+with glibc or musl, and Windows x64 or ARM64. Allow at least 1.25 GiB of free disk
+space for downloading and staging an update.
 
 ### Use a manual installation
 
-Download the archive for your environment from the [official ACP Registry][registry].
-Extract the ACP executable and its `localharness_external` helper into the same
-directory, at the same version. Make both executable on macOS or Linux; Windows
-uses `.exe` files.
-
-Set **Binary path** to the ACP executable on the environment and update it yourself.
+Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on the environment.
+Set **Binary path** to its `agy` executable and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
+
+## Update the managed runtime
+
+In web or desktop provider settings, choose **Update Antigravity** when an update
+is available. T3 checks Google's CLI release channel while provider update checks
+are enabled. Installing or reinstalling also checks that channel. Updates keep
+your profile and existing runtime available if the new release fails validation.
+
+Updating an older 1.4.5 installation migrates it to the native CLI. You may need to
+sign in again after migration. Threads already running finish with their original
+runtime; new sessions use the updated release. Custom binary paths keep using the
+executable you selected.
 
 ## Models and threads
 
@@ -139,8 +147,8 @@ is refused while the runtime is in use.
 
 When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
 objective. Antigravity keeps working until it completes the goal or you cancel it.
-The bundled 1.4.5 ACP runtime does not offer this command; use a newer `agy acp`
-runtime through the binary path setting, then refresh provider status.
+If you still use the older 1.4.5 runtime, update Antigravity in provider settings,
+then refresh provider status.
 
 To cancel a goal, send a follow-up asking Antigravity to stop the current goal.
 T3 does not support Antigravity goal status, pause, resume, or clear commands.
@@ -162,5 +170,4 @@ If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage li
 follow the provider's message and any retry time. See [Google's account plans][plans]
 for eligibility.
 
-[registry]: https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json
 [plans]: https://antigravity.google/docs/plans
