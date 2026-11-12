@@ -516,6 +516,57 @@ describe("CloudManagedEndpointRuntime", () => {
       }),
   );
 
+  it.effect("remembers an HTTP/2 fallback the relay client made on its own", () =>
+    Effect.gen(function* () {
+      const context = yield* Layer.build(
+        ServerSecretStore.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-transport-test-" })),
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      );
+      const secretStoreLayer = Layer.succeed(
+        ServerSecretStore.ServerSecretStore,
+        context.pipe(Context.get(ServerSecretStore.ServerSecretStore)),
+      );
+      const start = (spawner: ReturnType<typeof ChildProcessSpawner.make>) =>
+        buildCloudManagedEndpointRuntime(
+          spawner,
+          layerRelayClientAvailable,
+          unusedHttpClient,
+          secretStoreLayer,
+        );
+      const registered = (protocol: string) =>
+        `2026-11-10T01:43:17Z INF Registered tunnel connection connIndex=0 connection=c1 event=0 ip=198.41.192.7 location=fra08 protocol=${protocol}\n`;
+
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        yield* fixture.emit(0, registered("quic"));
+        yield* Stream.runHead(runtime.tunnelConnected);
+      }).pipe(Effect.scoped);
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+        // cloudflared, started with `auto`, gave up on QUIC itself.
+        yield* fixture.emit(0, registered("http2"));
+        yield* Stream.runHead(runtime.tunnelConnected);
+        // The connector already runs on HTTP/2, so it is not restarted.
+        expect(fixture.spawned).toHaveLength(1);
+        expect(fixture.killed).toEqual([]);
+      }).pipe(Effect.scoped);
+
+      yield* Effect.gen(function* () {
+        const fixture = yield* makeTransportSpawner();
+        const runtime = yield* start(fixture.spawner);
+        yield* runtime.applyConfig(tunnelConfig);
+        expect(fixture.spawned[0]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+      }).pipe(Effect.scoped);
+    }),
+  );
+
   it.effect(
     "ignores invalid or unreadable fallback state and still falls back if persistence fails",
     () =>
