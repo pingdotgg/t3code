@@ -338,12 +338,14 @@ export function planScopedSettingsClear(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
   keys: readonly ProjectScopedServerSettingKey[],
+  preserve?: ProjectSettingsOverrides,
 ) {
   const serverWrites =
     scope.kind === "project" || scope.kind === "checkout"
-      ? projectOverrideWrites(scope, environments, (_current, settings, projectId) =>
-          clearProjectSettingsOverrides(settings, projectId, keys),
-        )
+      ? projectOverrideWrites(scope, environments, (_current, settings, projectId) => {
+          const cleared = clearProjectSettingsOverrides(settings, projectId, keys);
+          return preserve === undefined ? cleared : { ...cleared, ...preserve };
+        })
       : [];
   return {
     clientPatch: {} as ClientSettingsPatch,

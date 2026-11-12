@@ -63,6 +63,8 @@ const SETTINGS_SEARCH_TERMS = {
   ],
   SettingsThreads: [
     "new threads",
+    "new chat prompt",
+    "first message instructions",
     "default workspace",
     "default permissions",
     "access",

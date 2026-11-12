@@ -23,6 +23,7 @@ import {
 } from "../threads/thread-settings-options";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
+import { NewChatPromptSettings } from "./components/NewChatPromptSettings";
 import { BranchNamingSettings } from "./components/BranchNamingSettings";
 import { DatabaseStorageNotice } from "./components/DatabaseStorageNotice";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -58,6 +59,8 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "defaultThreadEnvMode",
     "defaultRuntimeMode",
     "responseStreamingMode",
+    "newChatPromptEnabled",
+    "newChatPrompt",
     "enableAgentBrowserAccess",
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
@@ -360,6 +363,17 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   ))}
                 </SettingsSection>
+                <NewChatPromptSettings
+                  key={targetsKey}
+                  enabled={uniform("newChatPromptEnabled")}
+                  prompt={uniform("newChatPrompt")}
+                  disabled={{
+                    enabled: disabledFor("newChatPromptEnabled"),
+                    prompt: disabledFor("newChatPrompt"),
+                  }}
+                  reason={managed("newChatPromptEnabled", "newChatPrompt")}
+                  onChange={write}
+                />
                 <SettingsSection
                   title="Response streaming"
                   footer={managed("responseStreamingMode")}

@@ -843,6 +843,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "new-chat-prompt",
+    title: "New chat prompt",
+    to: "/settings/threads",
+    scope: "project-defaults",
+    searchTerms: ["first message initial prompt append custom instructions enable disable"],
+  },
+  {
     id: "thread-title-instructions",
     title: "Thread title instructions",
     to: "/settings/threads",

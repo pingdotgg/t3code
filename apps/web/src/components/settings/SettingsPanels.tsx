@@ -62,6 +62,7 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { NewChatPromptSettings } from "./NewChatPromptSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
 import { SnoozePresetsRow } from "./SnoozePresetsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -586,6 +587,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
       : []),
+    ...(settings.newChatPromptEnabled !== DEFAULT_UNIFIED_SETTINGS.newChatPromptEnabled ||
+    settings.newChatPrompt !== DEFAULT_UNIFIED_SETTINGS.newChatPrompt
+      ? ["New chat prompt"]
+      : []),
     ...getChangedBrowserSettingLabels(settings),
     ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
       ? ["Agent browser access"]
@@ -694,6 +699,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
+      newChatPromptEnabled: DEFAULT_UNIFIED_SETTINGS.newChatPromptEnabled,
+      newChatPrompt: DEFAULT_UNIFIED_SETTINGS.newChatPrompt,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -2035,9 +2042,11 @@ export function ThreadsSettingsPanel() {
         <AdvancedSettings
           targetIds={[
             searchableSetting("thread-title-instructions").id,
+            searchableSetting("new-chat-prompt").id,
             searchableSetting("response-streaming").id,
           ]}
         >
+          <NewChatPromptSettings />
           <ThreadTitleInstructionsSettings />
           <SettingsRow
             serverScoped
