@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import { ManagedRelayDpopSigner } from "./managedRelay.ts";
 import * as DpopProof from "./dpopProof.ts";
 
 const decodePublicJwk = Schema.decodeUnknownEffect(DpopPublicJwk);
@@ -40,6 +41,26 @@ const webCryptoProofKey = Effect.gen(function* () {
 });
 
 describe("DpopProof", () => {
+  it.effect("omits query strings from proof creation failures", () =>
+    Effect.gen(function* () {
+      const signer = yield* ManagedRelayDpopSigner;
+      const error = yield* Effect.flip(
+        signer.createProof({
+          method: "GET",
+          url: "https://relay.test/v1/mobile/agent-activity?excludedEnvironmentIds=private",
+        }),
+      );
+      expect(error).toMatchObject({ url: "https://relay.test/v1/mobile/agent-activity" });
+    }).pipe(
+      Effect.provide(
+        DpopProof.layerSigner({
+          keyStore: "indexed-db",
+          loadOrCreateKey: Effect.fail(new DpopProof.DpopProofError({ message: "unavailable" })),
+        }).pipe(Layer.provide(layer)),
+      ),
+    ),
+  );
+
   it.effect("creates proofs the relay verifier accepts, with htu normalized and ath bound", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(1_700_000_000_000);

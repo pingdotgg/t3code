@@ -2,10 +2,12 @@ import { EnvironmentId } from "@t3tools/contracts";
 import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
+  RelayMobileRegistrationScope,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Tracer from "effect/Tracer";
 import * as Layer from "effect/Layer";
 
 import { RELAY_GATEWAY_TIMEOUT_MESSAGE, relayRequestFailureDetail } from "./errorPresentation.ts";
@@ -40,6 +42,70 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
+  it.effect.each([false, true])(
+    "keeps global reads compatible and signs the filtered request (legacy=%s)",
+    (legacy) => {
+      const requests: URL[] = [];
+      const spans: Tracer.NativeSpan[] = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const excludedEnvironmentIds = [EnvironmentId.make("local-1"), EnvironmentId.make("local-2")];
+      const fetchFn = ((input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/client/dpop-token") {
+          return Promise.resolve(
+            Response.json({
+              access_token: "relay-token",
+              token_type: "DPoP",
+              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              expires_in: 1_800,
+              scope: RelayMobileRegistrationScope,
+            }),
+          );
+        }
+        requests.push(url);
+        expect(new Headers(init?.headers).get("dpop")).toBe(`proof:${url}`);
+        return Promise.resolve(
+          Response.json({
+            aggregate: null,
+            ...(legacy
+              ? {}
+              : { excludedEnvironmentIds: url.searchParams.getAll("excludedEnvironmentIds") }),
+          }),
+        );
+      }) satisfies typeof globalThis.fetch;
+      return Effect.gen(function* () {
+        const client = yield* ManagedRelay.ManagedRelayClient;
+        const input = { clerkToken: clerkToken("user", "session") };
+        const global = yield* client.getAgentActivitySnapshot(input);
+        const filtered = yield* client.getAgentActivitySnapshot({
+          ...input,
+          excludedEnvironmentIds,
+        });
+        expect(
+          spans
+            .filter((span) => span.name === "clientRuntime.managedRelay.authorize")
+            .map((span) => span.attributes.get("url.full")),
+        ).toEqual([
+          "https://relay.example.test/v1/mobile/agent-activity",
+          "https://relay.example.test/v1/mobile/agent-activity",
+        ]);
+        expect(requests[0]?.search).toBe("");
+        expect(requests[1]?.searchParams.getAll("excludedEnvironmentIds")).toEqual(
+          excludedEnvironmentIds,
+        );
+        expect(global.excludedEnvironmentIds).toEqual(legacy ? undefined : []);
+        expect(filtered.excludedEnvironmentIds).toEqual(
+          legacy ? undefined : excludedEnvironmentIds,
+        );
+      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)), Effect.withTracer(tracer));
+    },
+  );
   it.effect("rejects unsafe relay URLs before sending credentials", () => {
     let requestCount = 0;
     const fetchFn = (() => {

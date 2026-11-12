@@ -1,3 +1,4 @@
+import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import { sql as drizzleSql } from "drizzle-orm";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -52,6 +53,7 @@ import {
   RelayManagedEndpointRecoveryProofPayload,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
+  RelayWidgetRateLimitedError,
 } from "@t3tools/contracts/relay";
 import {
   normalizeRelayIssuer,
@@ -78,7 +80,7 @@ import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
-import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
+import * as AgentWidgetRefresh from "../agentActivity/AgentWidgetRefresh.ts";
 import { withSpanAttributes } from "../observability.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
@@ -744,6 +746,77 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
   };
 });
 
+export const layerWidgetApi = HttpApiBuilder.group(
+  RelayApi,
+  "widget",
+  Effect.fnUntraced(function* (handlers) {
+    const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+    return handlers
+      .handle(
+        "refresh",
+        Effect.fn("relay.api.widget.refresh")(
+          function* ({ headers, query }) {
+            const token = headers.authorization.replace(/^Bearer /i, "");
+            yield* appendRelayCredentialResponseHeaders;
+            return yield* widgets.refresh({
+              token,
+              ...(query.pushToken !== undefined ? { pushToken: query.pushToken } : {}),
+            });
+          },
+          mapErrorTags({
+            WidgetRefreshUnauthorized: (_error, traceId) =>
+              new RelayAuthInvalidError({
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId,
+              }),
+            WidgetRefreshPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+            AgentActivityRowListPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+        ),
+      )
+      .handle(
+        "revoke",
+        Effect.fn("relay.api.widget.revoke")(
+          function* ({ headers }) {
+            yield* appendRelayCredentialResponseHeaders;
+            yield* widgets.revoke({ token: headers.authorization.replace(/^Bearer /i, "") });
+            return { ok: true as const };
+          },
+          mapErrorTags({
+            WidgetRefreshRateLimited: (_error, traceId) =>
+              new RelayWidgetRateLimitedError({
+                code: "widget_rate_limited",
+                traceId,
+              }),
+            WidgetRefreshUnauthorized: (_error, traceId) =>
+              new RelayAuthInvalidError({
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId,
+              }),
+            WidgetRefreshPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+        ),
+      );
+  }),
+);
+
 export const layerMobileApi = HttpApiBuilder.group(
   RelayApi,
   "mobile",
@@ -777,13 +850,16 @@ export const layerMobileApi = HttpApiBuilder.group(
       )
       .handle(
         "getAgentActivitySnapshot",
-        Effect.fn("relay.api.mobile.getAgentActivitySnapshot")(function* () {
+        Effect.fn("relay.api.mobile.getAgentActivitySnapshot")(function* ({ query }) {
           const { userId, token } = yield* RelayClientPrincipal;
           const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
           yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
-          return yield* registrations.getAgentActivitySnapshot({ userId });
+          return yield* registrations.getAgentActivitySnapshot({
+            userId,
+            excludedEnvironmentIds: query.excludedEnvironmentIds ?? [],
+          });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       )
       .handle(
@@ -1227,6 +1303,7 @@ export const layerServerApi = HttpApiBuilder.group(
             environmentPublicKey: principal.environmentPublicKey,
             threadId: params.threadId,
             state: payload.state,
+            replay: payload.replay ?? false,
           });
         },
         mapErrorTags({
@@ -1320,6 +1397,12 @@ export const layerServerApi = HttpApiBuilder.group(
               traceId,
             }),
           ApnsDeliveryQueueSendError: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "upstream_unavailable",
+              traceId,
+            }),
+          WidgetRefreshDeliveryError: (_error, traceId) =>
             new RelayInternalError({
               code: "internal_error",
               reason: "upstream_unavailable",
@@ -1475,6 +1558,7 @@ const RelayCommonPersistenceError = Schema.Union([
   DpopProofs.DpopProofReplayPersistenceError,
   LiveActivities.LiveActivityTargetListPersistenceError,
   AgentActivityRows.AgentActivityRowUpsertPersistenceError,
+  AgentWidgetRefresh.WidgetRefreshPersistenceError,
   AgentActivityRows.AgentActivityRowDeletePersistenceError,
   AgentActivityRows.AgentActivityRowListPersistenceError,
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,

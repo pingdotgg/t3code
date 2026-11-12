@@ -1,8 +1,10 @@
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import type {
   RelayAgentActivityState,
   RelayDeviceRegistrationRequest,
 } from "@t3tools/contracts/relay";
 import type { SignedApnsDeliveryJob } from "./apnsDeliveryJobs.ts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -21,6 +23,22 @@ import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 
 const layerPublisher = AgentActivityPublisher.layer.pipe(
+  Layer.provide(
+    Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+      revoke: () => Effect.void,
+      refresh: () => Effect.succeed({ aggregate: null }),
+      notify: () => Effect.succeed([]),
+      process: (job) =>
+        Effect.succeed({
+          deviceId: job.target.deviceId,
+          kind: "widget_refresh",
+          ok: true,
+          apnsStatus: null,
+          apnsReason: null,
+          apnsId: null,
+        }),
+    }),
+  ),
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -79,9 +97,10 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: () => Effect.void,
+    upsert: () => Effect.succeed(true),
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
+    acknowledgeDelivery: () => Effect.void,
     listForUser: () => {
       const activeState: RelayAgentActivityState = {
         environmentId: "env-1" as RelayAgentActivityState["environmentId"],
@@ -162,6 +181,22 @@ function layerRegistrationReplay(input: {
     Layer.provide(layerPublisher),
     Layer.provide(
       ApnsDeliveries.layer.pipe(
+        Layer.provide(
+          Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+            revoke: () => Effect.void,
+            refresh: () => Effect.succeed({ aggregate: null }),
+            notify: () => Effect.succeed([]),
+            process: (job) =>
+              Effect.succeed({
+                deviceId: job.target.deviceId,
+                kind: "widget_refresh",
+                ok: true,
+                apnsStatus: null,
+                apnsReason: null,
+                apnsId: null,
+              }),
+          }),
+        ),
         Layer.provide(ApnsClient.layer.pipe(Layer.provide(ApnsProviderTokens.layer))),
       ),
     ),
@@ -242,6 +277,79 @@ describe("MobileRegistrations", () => {
       ]);
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
+
+  it.effect("excludes local environments before counting and selecting the five relay rows", () =>
+    Effect.gen(function* () {
+      const local = EnvironmentId.make("local");
+      const remote = EnvironmentId.make("remote");
+      const states: RelayAgentActivityState[] = Array.from({ length: 14 }, (_, index) => ({
+        environmentId: index < 6 ? local : remote,
+        threadId: ThreadId.make(`thread-${index}`),
+        projectTitle: "Project",
+        threadTitle: `Task ${index}`,
+        modelTitle: "Test model",
+        phase: index < 6 ? "waiting_for_approval" : "running",
+        headline: "Working",
+        updatedAt: "1970-01-01T00:00:10.000Z",
+        deepLink: `/threads/${index < 6 ? local : remote}/thread-${index}`,
+      }));
+      const registrations = yield* MobileRegistrations.MobileRegistrations.pipe(
+        Effect.provide(
+          MobileRegistrations.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(Devices.Devices, makeDevices()),
+                Layer.succeed(
+                  AgentActivityRows.AgentActivityRows,
+                  makeAgentActivityRows({
+                    listForUser: (input) =>
+                      Effect.succeed(
+                        input.includeLiveActivitiesDisabled
+                          ? states
+                          : states.filter((state) => state.environmentId === remote),
+                      ),
+                  }),
+                ),
+                Layer.succeed(LiveActivities.LiveActivities, makeLiveActivities()),
+                Layer.succeed(
+                  AgentActivityPublisher.AgentActivityPublisher,
+                  makeAgentActivityPublisher(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      const global = yield* registrations.getAgentActivitySnapshot({ userId: "user" });
+      expect(global.excludedEnvironmentIds).toEqual([]);
+      expect(global.aggregate?.activeCount).toBe(14);
+      expect(global.liveActivityAggregate?.activeCount).toBe(8);
+      expect(
+        global.liveActivityAggregate?.activities.every((row) => row.environmentId === remote),
+      ).toBe(true);
+      expect(global.aggregate?.activities.every((row) => row.environmentId === local)).toBe(true);
+      const filtered = yield* registrations.getAgentActivitySnapshot({
+        userId: "user",
+        excludedEnvironmentIds: [local, local],
+      });
+      expect(filtered.excludedEnvironmentIds).toEqual([local]);
+      expect(filtered.aggregate?.activeCount).toBe(8);
+      expect(filtered.aggregate?.activities).toHaveLength(5);
+      expect(filtered.aggregate?.activities.every((row) => row.environmentId === remote)).toBe(
+        true,
+      );
+      expect(
+        yield* registrations.getAgentActivitySnapshot({
+          userId: "user",
+          excludedEnvironmentIds: [local, remote],
+        }),
+      ).toEqual({
+        aggregate: null,
+        liveActivityAggregate: null,
+        excludedEnvironmentIds: [local, remote],
+      });
+    }),
+  );
 
   it.effect(
     "does not remotely start a Live Activity when a device registers after work is already active",

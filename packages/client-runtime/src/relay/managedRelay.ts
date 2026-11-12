@@ -34,6 +34,7 @@ import {
 import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import { normalizeDpopHtu } from "@t3tools/shared/dpopCommon";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -316,6 +317,9 @@ export class ManagedRelayClient extends Context.Service<
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly getAgentActivitySnapshot: (input: {
       readonly clerkToken: string;
+      readonly excludedEnvironmentIds?: ReadonlyArray<
+        RelayClientEnvironmentRecord["environmentId"]
+      >;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
   }
@@ -348,7 +352,7 @@ function relayRequestError(action: ManagedRelayRequestAction) {
 function proofCreationErrorFields(error: ManagedRelayDpopProofCreationError) {
   return {
     method: error.method,
-    url: error.url,
+    url: normalizeDpopHtu(error.url) ?? "invalid URL",
     cause: error,
   };
 }
@@ -500,9 +504,11 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       method: RelayUnregisterDeviceEndpoint.method,
       url: urlBuilder.mobile.unregisterDevice({ params: { deviceId } }),
     }),
-    getAgentActivitySnapshot: (): DpopProofTarget => ({
+    getAgentActivitySnapshot: (
+      excludedEnvironmentIds?: ReadonlyArray<RelayClientEnvironmentRecord["environmentId"]>,
+    ): DpopProofTarget => ({
       method: RelayAgentActivitySnapshotEndpoint.method,
-      url: urlBuilder.mobile.getAgentActivitySnapshot(),
+      url: urlBuilder.mobile.getAgentActivitySnapshot({ query: { excludedEnvironmentIds } }),
     }),
     registerLiveActivity: (): DpopProofTarget => ({
       method: RelayRegisterLiveActivityEndpoint.method,
@@ -645,7 +651,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       "relay.client_id": options.clientId,
       "relay.scopes": input.scopes.join(" "),
       "http.request.method": input.target.method,
-      "url.full": input.target.url,
+      "url.full": normalizeDpopHtu(input.target.url) ?? "invalid URL",
     });
     const thumbprint = yield* signer.thumbprint;
     const token = yield* obtainAccessToken({
@@ -954,12 +960,13 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         return yield* mobileRegistrationRequest(
           {
             clerkToken: input.clerkToken,
-            target: dpopProofTargets.getAgentActivitySnapshot(),
+            target: dpopProofTargets.getAgentActivitySnapshot(input.excludedEnvironmentIds),
           },
           (authorization) =>
             client.mobile
               .getAgentActivitySnapshot({
                 headers: dpopHeaders(authorization),
+                query: { excludedEnvironmentIds: input.excludedEnvironmentIds },
               })
               .pipe(
                 Effect.mapError(relayRequestError("read relay agent activity snapshot")),

@@ -1,4 +1,5 @@
 import * as AgentActivityAlerts from "./agentActivityAlerts.ts";
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type {
   RelayAgentActivityAggregateState,
@@ -158,15 +159,32 @@ function layerFor(input: {
 }) {
   return ApnsDeliveries.layer.pipe(
     Layer.provideMerge(NodeCryptoLayer.layerMac),
+    Layer.provide(
+      Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+        revoke: () => Effect.void,
+        refresh: () => Effect.succeed({ aggregate: null }),
+        notify: () => Effect.succeed([]),
+        process: (job) =>
+          Effect.succeed({
+            deviceId: job.target.deviceId,
+            kind: "widget_refresh",
+            ok: true,
+            apnsStatus: null,
+            apnsReason: null,
+            apnsId: null,
+          }),
+      }),
+    ),
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
-          upsert: () => Effect.void,
+          upsert: () => Effect.succeed(true),
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
+          acknowledgeDelivery: () => Effect.void,
           listForUser: () =>
             input.activityStates !== undefined
               ? Effect.succeed([...input.activityStates])

@@ -112,6 +112,7 @@ export class EnvironmentLinks extends Context.Service<
     readonly listDeliveryUsersForEnvironment: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
+      readonly includeDisabled?: boolean;
     }) => Effect.Effect<
       ReadonlyArray<AgentAwarenessDeliveryUserRecord>,
       EnvironmentLinkUserListPersistenceError
@@ -155,14 +156,17 @@ export class EnvironmentLinks extends Context.Service<
 function agentAwarenessDeliveryUserKeyCondition(input: {
   readonly environmentId: string;
   readonly environmentPublicKey: string;
+  readonly includeDisabled?: boolean;
 }) {
   return and(
     eq(relayEnvironmentLinks.environmentId, input.environmentId),
     isNull(relayEnvironmentLinks.revokedAt),
-    or(
-      eq(relayEnvironmentLinks.notificationsEnabled, true),
-      eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
-    ),
+    input.includeDisabled
+      ? undefined
+      : or(
+          eq(relayEnvironmentLinks.notificationsEnabled, true),
+          eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
+        ),
     eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
   );
 }

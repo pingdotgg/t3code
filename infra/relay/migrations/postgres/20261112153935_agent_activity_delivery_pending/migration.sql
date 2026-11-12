@@ -1,0 +1,1 @@
+ALTER TABLE "relay_agent_activity_rows" ADD COLUMN "delivery_pending" boolean DEFAULT true NOT NULL;
