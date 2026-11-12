@@ -333,6 +333,8 @@ export interface AcpAdapterV2Flavor {
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
   readonly mcpOverHttp?: boolean;
+  /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
+  readonly deferMcpTools?: boolean;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
@@ -838,6 +840,7 @@ function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
+  deferMcpTools: boolean | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
@@ -864,7 +867,12 @@ function acpMcpContext(
               type: "http",
               name: "t3-code",
               url: session.endpoint,
-              headers: [{ name: "Authorization", value: session.authorizationHeader }],
+              headers: [
+                { name: "Authorization", value: session.authorizationHeader },
+                ...(deferMcpTools === true
+                  ? [{ name: McpProviderSession.MCP_TOOL_EXPOSURE_HEADER, value: "deferred" }]
+                  : []),
+              ],
             },
           ]
         : [],
@@ -1336,6 +1344,7 @@ interface ActiveTextSegment {
 interface ActiveTextStream {
   current: ActiveTextSegment | null;
   nextSegment: number;
+  readonly closedNamedSegments: Map<string, ActiveTextSegment>;
 }
 
 interface AcpNativeBuildConfiguration {
@@ -1641,10 +1650,21 @@ type PendingRuntimeRequest = {
 interface SnapshotMessageState {
   readonly order: Array<string>;
   readonly messages: Map<string, OrchestrationV2ConversationMessage>;
+  /** Messages loaded from thought chunks; `messages` stores them as assistant text. */
+  readonly reasoningIds: ReadonlySet<OrchestrationV2ConversationMessage["id"]>;
   loadingRole: "user" | "assistant" | "thought" | null;
   loadingMessageId: string | null;
   loadingIndex: number;
 }
+
+const emptySnapshotState = (): SnapshotMessageState => ({
+  order: [],
+  messages: new Map(),
+  reasoningIds: new Set(),
+  loadingRole: null,
+  loadingMessageId: null,
+  loadingIndex: 0,
+});
 
 /** How long a Stop waits for the agent to confirm before the user is offered Force stop. */
 const ACP_STOP_CONFIRM_TIMEOUT_MS = 10_000;
@@ -1687,10 +1707,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const { flavor, selfInvocation: self } = options;
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp))
+      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools))
       : mcpSessions
           .read(threadId)
-          .pipe(Effect.map((session) => acpMcpContext(session, self, flavor.mcpOverHttp)));
+          .pipe(
+            Effect.map((session) =>
+              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools),
+            ),
+          );
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
@@ -1962,13 +1986,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           options.testHooks?.onNativeResponseLifecycle ?? (() => Effect.void);
         const nextElicitationOrdinal = yield* Ref.make(0);
         const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
-        const snapshot = yield* Ref.make<SnapshotMessageState>({
-          order: [],
-          messages: new Map(),
-          loadingRole: null,
-          loadingMessageId: null,
-          loadingIndex: 0,
-        });
+        const snapshot = yield* Ref.make(emptySnapshotState());
 
         const awaitRuntimeTeardown = Effect.fnUntraced(function* () {
           const state = yield* Ref.get(runtimeTeardownState);
@@ -2847,8 +2865,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           kind: "user" | "assistant" | "reasoning",
         ) {
           const stream = textStreamFor(context, kind);
-          if (stream.current === null) return;
+          const segment = stream.current;
+          if (segment === null) return;
           yield* emitTextSegment(context, kind, true);
+          if (segment.sourceMessageId !== null) {
+            stream.closedNamedSegments.set(segment.sourceMessageId, segment);
+          }
           stream.current = null;
         });
 
@@ -2856,6 +2878,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* closeTextStream(context, "user");
           yield* closeTextStream(context, "reasoning");
           yield* closeTextStream(context, "assistant");
+        });
+
+        const openTextSegment = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+          sourceMessageId: string | null,
+        ) {
+          const stream = textStreamFor(context, kind);
+          const closed =
+            sourceMessageId === null ? undefined : stream.closedNamedSegments.get(sourceMessageId);
+          // A new object, so a flush scheduled before the close stays a no-op.
+          const segment: ActiveTextSegment =
+            closed === undefined
+              ? {
+                  nativeItemId:
+                    sourceMessageId === null
+                      ? `${context.nativeTurnId}:${kind}:${stream.nextSegment}`
+                      : `${context.nativeTurnId}:${kind}:message:${sourceMessageId}`,
+                  startedAt: yield* DateTime.now,
+                  sourceMessageId,
+                  text: "",
+                  emitted: false,
+                  dirty: false,
+                }
+              : { ...closed, emitted: false, dirty: false };
+          if (closed === undefined) stream.nextSegment += 1;
+          stream.current = segment;
+          return segment;
         });
 
         const appendText = Effect.fnUntraced(function* (
@@ -2878,25 +2928,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ) {
             yield* closeTextStream(context, kind);
           }
-          if (stream.current === null) {
-            const now = yield* DateTime.now;
-            stream.current = {
-              nativeItemId:
-                sourceMessageId === null
-                  ? `${context.nativeTurnId}:${kind}:${stream.nextSegment}`
-                  : `${context.nativeTurnId}:${kind}:message:${sourceMessageId}`,
-              startedAt: now,
-              sourceMessageId,
-              text: "",
-              emitted: false,
-              dirty: false,
-            };
-            stream.nextSegment += 1;
-          } else if (stream.current.sourceMessageId === null && sourceMessageId !== null) {
+          let segment = stream.current;
+          if (segment === null) {
+            segment = yield* openTextSegment(context, kind, sourceMessageId);
+          } else if (segment.sourceMessageId === null && sourceMessageId !== null) {
             // Agents may omit the first messageId; retain projected identity until the first later id.
-            stream.current.sourceMessageId = sourceMessageId;
+            segment.sourceMessageId = sourceMessageId;
           }
-          stream.current.text += text;
+          segment.text += text;
           yield* publishTextSegment(context, kind);
         });
 
@@ -2909,22 +2948,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           for (const other of ["user", "reasoning", "assistant"] as const) {
             if (other !== kind) yield* closeTextStream(context, other);
           }
-          const stream = textStreamFor(context, kind);
-          if (stream.current?.sourceMessageId !== messageId) {
+          let segment = textStreamFor(context, kind).current;
+          if (segment?.sourceMessageId !== messageId) {
             yield* closeTextStream(context, kind);
-            const now = yield* DateTime.now;
-            stream.current = {
-              nativeItemId: `${context.nativeTurnId}:${kind}:message:${messageId}`,
-              startedAt: now,
-              sourceMessageId: messageId,
-              text,
-              emitted: false,
-              dirty: false,
-            };
-            stream.nextSegment += 1;
-          } else {
-            stream.current.text = text;
+            segment = yield* openTextSegment(context, kind, messageId);
           }
+          segment.text = text;
           yield* publishTextSegment(context, kind);
         });
 
@@ -3165,7 +3194,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const nodeId = existing?.task.id ?? providerNodeId(nativeTaskId);
           const childThreadId =
             existing?.childThreadId ??
-            idAllocator.derive.threadFromProviderThread({
+            idAllocator.derive.subagentThread({
               driver,
               providerInstanceId: context.input.modelSelection.instanceId,
               nativeThreadId: `${context.nativeThreadId}:task:${nativeTaskId}`,
@@ -4548,6 +4577,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return {
                 order: current.order.includes(key) ? current.order : [...current.order, key],
                 messages,
+                reasoningIds:
+                  role === "thought" && !current.reasoningIds.has(messageId)
+                    ? new Set(current.reasoningIds).add(messageId)
+                    : current.reasoningIds,
                 loadingRole: role,
                 loadingMessageId: sourceMessageId ?? (startsNew ? null : current.loadingMessageId),
                 loadingIndex,
@@ -6627,12 +6660,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 !offeredOptions.some((option) => option.decision === "acceptForSession")
                   ? "accept"
                   : answered;
-              if (
-                parsedPermission.kind !== "unknown" &&
-                (decision === "accept" || decision === "acceptForSession")
-              ) {
+              if (decision === "accept" || decision === "acceptForSession") {
                 clientPolicyGrants.recordApproval({
-                  kind: providerRequestKind(parsedPermission.kind),
+                  toolKind: parsedPermission.kind,
                   scope: decision === "acceptForSession" ? "session" : "turn",
                   turnKey: String(context.providerTurnId),
                 });
@@ -7105,13 +7135,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(promptInstructionStates, new Map());
             yield* Ref.set(compactionMarkers, new Map());
             yield* Ref.set(providerTurns, new Map());
-            yield* Ref.set(snapshot, {
-              order: [],
-              messages: new Map(),
-              loadingRole: null,
-              loadingMessageId: null,
-              loadingIndex: 0,
-            });
+            yield* Ref.set(snapshot, emptySnapshotState());
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -7367,11 +7391,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* runtime.setConfigOption(selection.id, selection.value).pipe(
               Effect.catchTags({
                 AcpRequestError: (error) =>
-                  Effect.logWarning("ACP session rejected a configuration option value", {
-                    optionId: selection.id,
-                    value: selection.value,
-                    detail: error.message,
-                  }),
+                  error.code === -32602
+                    ? Effect.logWarning("ACP session rejected a configuration option value", {
+                        optionId: selection.id,
+                        value: selection.value,
+                        detail: error.message,
+                      })
+                    : Effect.fail(error),
               }),
             );
           }
@@ -8049,13 +8075,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
-          yield* Ref.set(snapshot, {
-            order: [],
-            messages: new Map(),
-            loadingRole: null,
-            loadingMessageId: null,
-            loadingIndex: 0,
-          });
+          yield* Ref.set(snapshot, emptySnapshotState());
           return true;
         });
 
@@ -8183,9 +8203,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 (yield* Ref.get(activeSessionSetup))?.initializeResult.protocolVersion === 2
                   ? promptParts?.prompt
                   : undefined,
-              user: { current: null, nextSegment: 0 },
-              assistant: { current: null, nextSegment: 0 },
-              reasoning: { current: null, nextSegment: 0 },
+              user: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
+              assistant: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
+              reasoning: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
@@ -8575,7 +8595,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     !restartRequired &&
                     !transportHadOutstandingResponses
                   ) {
-                    yield* runtime.closeSession().pipe(Effect.ignore);
+                    // Finalizers can't be interrupted, so an agent that never
+                    // answers would keep its process and this scope open.
+                    yield* runtime
+                      .closeSession()
+                      .pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
                   }
                 }),
               );
@@ -8733,13 +8757,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     threadInput.providerThread.appThreadId,
                   ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
                   if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
-                    yield* Ref.set(snapshot, {
-                      order: [],
-                      messages: new Map(),
-                      loadingRole: null,
-                      loadingMessageId: null,
-                      loadingIndex: 0,
-                    });
+                    yield* Ref.set(snapshot, emptySnapshotState());
                     const activated = yield* activateSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
@@ -9237,13 +9255,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         detail: "ACP driver does not support session/load snapshots",
                       });
                     }
-                    yield* Ref.set(snapshot, {
-                      order: [],
-                      messages: new Map(),
-                      loadingRole: null,
-                      loadingMessageId: null,
-                      loadingIndex: 0,
-                    });
+                    yield* Ref.set(snapshot, emptySnapshotState());
                     const mcpContext = yield* readMcpContext(
                       snapshotInput.providerThread.appThreadId,
                     );
@@ -9275,6 +9287,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       const message = state.messages.get(key);
                       return message === undefined ? [] : [message];
                     }),
+                    reasoningMessageIds: [...state.reasoningIds],
                     runtimeRequests: [],
                     providerPayload: { protocol: ACP_PROTOCOL, sessionId },
                   };

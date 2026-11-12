@@ -691,14 +691,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // each route that reaches synchronizing adds its own snapshot budget, so
   // a route that fails late does not eat the next route's time. Untraced: it
   // is a calculation rerun on every deadline wake.
-  const setupDeadline = Effect.fnUntraced(function* (
-    startedAt: bigint,
-    synchronizedRoutes: Ref.Ref<number>,
-  ) {
+  const setupBudget = Effect.fnUntraced(function* (synchronizedRoutes: Ref.Ref<number>) {
     const routeCount = connectionRoutes(yield* Ref.get(currentEntry)).length;
     const synchronized = BigInt(yield* Ref.get(synchronizedRoutes));
     return (
-      startedAt +
       Duration.toNanosUnsafe(Duration.times(establishmentTimeout, routeCount)) +
       synchronized * Duration.toNanosUnsafe(synchronizationTimeout)
     );
@@ -707,10 +703,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // A hidden replacement has no timer of its own; past its setup budget it
   // is stale, so it is neither adopted nor allowed to block a new one.
   const replacementExpired = (replacement: Replacement) =>
-    Effect.all([
-      setupDeadline(replacement.startedAt, replacement.synchronizedRoutes),
-      Clock.monotonicTimeNanos,
-    ]).pipe(Effect.map(([deadline, now]) => now >= deadline));
+    Effect.all([setupBudget(replacement.synchronizedRoutes), Clock.monotonicTimeNanos]).pipe(
+      Effect.map(([budget, now]) => now - replacement.startedAt >= budget),
+    );
 
   // `generation` is the live session's; the replacement reports progress as
   // the first attempt of the next one, which it becomes if the session ends.
@@ -913,6 +908,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   };
 
+  const isForegroundProbe = (next: SupervisorSignal) =>
+    next._tag === "Wakeup" && next.reason === "application-active";
+
   // Ends "silent" when the host answers a fresh request while the socket
   // delivers nothing, as when iOS kills a suspended socket without a close
   // event, and "alive" once the socket delivers a frame. A slow or
@@ -1001,7 +999,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       yield* Ref.set(probeUnanswered, true);
-      const probe = yield* Effect.forkChild(lease.session.probe);
+      let probe = yield* Effect.forkChild(lease.session.probe);
+      // A busy server can miss one foreground probe while the socket is still
+      // healthy, so the first miss asks again and only the follow-up's miss
+      // replaces the session.
+      let toleratesMiss = isForegroundProbe(next);
       let silentSocket: Fiber.Fiber<"silent" | "alive"> | undefined;
       // A signal during a running check, such as a network change that kills
       // the socket, needs a fresh check only if the running one sees a frame.
@@ -1042,7 +1044,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // The web and desktop foreground probe allows a busy host 15 seconds,
       // and a busy host can answer a fresh request before a queued probe.
       const armSilentSocketCheck = Effect.fnUntraced(function* (signal: SupervisorSignal) {
-        if (signal._tag === "Wakeup" && signal.reason === "application-active") return;
+        if (isForegroundProbe(signal)) return;
         if (silentSocket !== undefined) {
           recheck = true;
           return;
@@ -1096,6 +1098,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           return true;
         }
         if (probeEvent._tag === "TimedOut") {
+          if (toleratesMiss) {
+            toleratesMiss = false;
+            yield* Fiber.interrupt(probe);
+            probe = yield* Effect.forkChild(lease.session.probe);
+            deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
+            continue;
+          }
           yield* stopProbe;
           // A long suspension leaves the socket suspect even when the network
           // reports offline, so it is replaced like a silent one.
@@ -1121,6 +1130,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }
         const signalTimeout = probeTimeoutFor(probeEvent.signal, routeKind);
         if (signalTimeout !== undefined) {
+          // A retry or network signal wants a definite answer, even when its
+          // own deadline lands after the foreground one.
+          if (!isForegroundProbe(probeEvent.signal)) toleratesMiss = false;
           if (isLongResume(probeEvent.signal) && !longResume) {
             longResume = true;
             longResumeStartedAt = yield* Clock.monotonicTimeNanos;
@@ -1197,14 +1209,27 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         })),
       ),
       Effect.gen(function* () {
+        const routes = connectionRoutes(yield* Ref.get(currentEntry));
+        // The desktop bounds SSH preparation, which may download a server
+        // release, so for SSH-only entries the clock stops while preparing.
+        const pausesWhilePreparing = routes.every((route) => connectionRouteKind(route) === "ssh");
+        const preparing = (expected: boolean) =>
+          SubscriptionRef.changes(state).pipe(
+            Stream.filter((current) => (current.stage === "preparing") === expected),
+            Stream.runHead,
+          );
+        // An adopted replacement has already used part of its budget.
+        let spent = (yield* Clock.monotonicTimeNanos) - startedAt;
         while (true) {
-          const remaining =
-            (yield* setupDeadline(startedAt, synchronizedRoutes)) -
-            (yield* Clock.monotonicTimeNanos);
+          if (pausesWhilePreparing) yield* preparing(false);
+          const remaining = (yield* setupBudget(synchronizedRoutes)) - spent;
           if (remaining <= 0n) {
             return { _tag: "TimedOut" } as const satisfies EstablishmentEvent;
           }
-          yield* Effect.sleep(Duration.nanos(remaining));
+          const resumedAt = yield* Clock.monotonicTimeNanos;
+          const sleep = Effect.sleep(Duration.nanos(remaining));
+          yield* pausesWhilePreparing ? Effect.raceFirst(sleep, preparing(true)) : sleep;
+          spent += (yield* Clock.monotonicTimeNanos) - resumedAt;
         }
       }),
     ]);
