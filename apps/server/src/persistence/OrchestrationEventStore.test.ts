@@ -217,6 +217,81 @@ layer("OrchestrationEventStore", (it) => {
     }),
   );
 
+  it.effect("stores a workflow tick without re-storing its unchanged members", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const afterSequence = yield* store.latestApplicationSequence;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:workflow-ticks");
+      const driver = ProviderDriverKind.make("claudeAgent");
+      const memberCount = 60;
+      const members = Array.from({ length: memberCount }, (_, index) => ({
+        index,
+        label: `Agent ${index}`,
+        state: "running" as const,
+        prompt: `Review shard ${index}. `.repeat(50),
+      }));
+      // Each tick completes one member, as Claude Workflow progress frames do.
+      const events = members.map(
+        (_, tick) =>
+          ({
+            id: EventId.make(`event:workflow-ticks:${tick}`),
+            type: "subagent.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: NodeId.make("node:workflow-ticks"),
+              threadId,
+              runId: null,
+              parentNodeId: NodeId.make("node:workflow-ticks-parent"),
+              origin: "provider_native",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              providerThreadId: null,
+              childThreadId: null,
+              nativeTaskRef: { driver, nativeId: "workflow-ticks", strength: "strong" },
+              prompt: "Run the review workflow.",
+              progress: `Tick ${tick}`,
+              title: "Review",
+              model: null,
+              status: "running",
+              result: null,
+              workflow: {
+                phases: [{ index: 0, title: "Review" }],
+                agents: members.map((member) =>
+                  member.index <= tick
+                    ? { ...member, state: "completed" as const, result: `Done ${member.index}` }
+                    : member,
+                ),
+              },
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          }) satisfies OrchestrationV2DomainEvent,
+      );
+      yield* store.appendAgentEvents({ events });
+
+      const [stored] = yield* sql<{ readonly total: number; readonly last: number }>`
+        SELECT SUM(length(payload_json)) AS total,
+          (SELECT length(payload_json) FROM orchestration_events
+            WHERE stream_id = ${threadId} ORDER BY sequence DESC LIMIT 1) AS last
+        FROM orchestration_events WHERE stream_id = ${threadId}
+      `;
+      // A tick that changes one member should cost about one member, not the whole list again.
+      assert.isBelow(stored!.total, stored!.last * 3);
+      const replayed = yield* store
+        .readAgentEvents({ threadId, afterSequence })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        replayed.map((entry) => entry.event),
+        events,
+      );
+    }),
+  );
+
   it.effect("stores the full subagent prompt when its hint row was rolled back", () =>
     Effect.gen(function* () {
       const store = yield* OrchestrationEventStore.OrchestrationEventStore;
