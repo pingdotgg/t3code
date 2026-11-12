@@ -622,6 +622,15 @@ export const make = Effect.gen(function* () {
       yield* electronWindow.destroyAll;
       return Option.none();
     }
+    const previewGuests = new Set<Electron.WebContents>();
+    // An off-screen preview keeps its timers while the app is on screen, so a parked page
+    // keeps its heartbeats alive. A hidden app must not pay for them.
+    const setPreviewGuestThrottling = (enabled: boolean) => {
+      for (const guest of previewGuests) {
+        if (guest.isDestroyed()) continue;
+        guest.setBackgroundThrottling(enabled);
+      }
+    };
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
@@ -635,6 +644,8 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
+      // A suspended page's heartbeats keep running while the app is on screen.
+      webPreferences.backgroundThrottling = false;
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
@@ -648,6 +659,10 @@ export const make = Effect.gen(function* () {
         ];
       }
     });
+    window.on("hide", () => setPreviewGuestThrottling(true));
+    window.on("show", () => setPreviewGuestThrottling(false));
+    window.on("minimize", () => setPreviewGuestThrottling(true));
+    window.on("restore", () => setPreviewGuestThrottling(false));
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
     const installContextMenu = (
@@ -769,6 +784,9 @@ export const make = Effect.gen(function* () {
     };
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
+      previewGuests.add(contents);
+      contents.once("destroyed", () => previewGuests.delete(contents));
+      if (!window.isVisible()) contents.setBackgroundThrottling(true);
       installContextMenu(window, contents, true);
       void runPromise(previewManager.prepareWebview(contents));
     });

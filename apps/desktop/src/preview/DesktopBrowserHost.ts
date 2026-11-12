@@ -326,7 +326,8 @@ export const make = Effect.gen(function* () {
       (tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
         tab.frameStalled ||
-        tab.waitingScreenshots.some((waiting) => waiting.live()));
+        tab.waitingScreenshots.some((waiting) => waiting.live()) ||
+        (tab.agentUsed && agentTurns.has(tab.key.threadId)));
     if (tab.painting === active) return;
     tab.painting = active;
     runFork(PubSub.publish(painting, { key: tab.key, active }));
@@ -552,6 +553,7 @@ export const make = Effect.gen(function* () {
             if (owner === undefined || !streamingOwners.has(owner)) {
               tab.agentUsed = true;
               tab.agentLedAt = performance.now();
+              syncPainting(tab);
             } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
               tab.agentLedAt = Number.NEGATIVE_INFINITY;
             }
@@ -813,8 +815,13 @@ export const make = Effect.gen(function* () {
       const command = decodeCommand(line);
       if (Option.isNone(command)) return;
       if (command.value.type === "turn") {
-        if (command.value.active) agentTurns.add(command.value.threadId);
-        else endAgentTurn(command.value.threadId);
+        if (command.value.active) {
+          agentTurns.add(command.value.threadId);
+          // A command may arrive before the server announces the turn; its tab paints on the announcement.
+          for (const tab of tabs.values()) {
+            if (tab.key.threadId === command.value.threadId) syncPainting(tab);
+          }
+        } else endAgentTurn(command.value.threadId);
         return;
       }
       const tab = tabs.get(keyOf(command.value));
