@@ -6095,39 +6095,49 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("tracks a remote start point once another process releases the config lock", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const remote = yield* makeTmpDir("git-remote-");
-        yield* git(remote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "origin", remote]);
-        yield* git(cwd, ["push", "origin", initialBranch]);
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const lockPath = path.join(cwd, ".git", "config.lock");
-        yield* fileSystem.writeFileString(lockPath, "");
-        const { driver, failures } = yield* makeDriverReleasingLock(
-          (args) => args.some((arg) => arg.startsWith("--set-upstream-to")),
-          lockPath,
-        );
+    it.effect.each(["createWorktree", "switchRef"] as const)(
+      "tracks a remote start point once another process releases the config lock: %s",
+      (operation) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const remote = yield* makeTmpDir("git-remote-");
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "origin", `${initialBranch}:refs/heads/feature/tracked`]);
+          yield* git(cwd, ["fetch", "origin"]);
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const lockPath = path.join(cwd, ".git", "config.lock");
+          yield* fileSystem.writeFileString(lockPath, "");
+          const { driver, failures } = yield* makeDriverReleasingLock(
+            (args) => args.some((arg) => arg.startsWith("--set-upstream-to")),
+            lockPath,
+          );
 
-        // The upstream retry waits on the real clock; the lock is already gone by then.
-        yield* TestClock.withLive(
-          driver.createWorktree({
-            cwd,
-            path: path.join(yield* makeTmpDir("git-worktrees-"), "tracked"),
-            refName: `origin/${initialBranch}`,
-            newRefName: "feature/tracked",
-          }),
-        );
+          // The upstream retry waits on the real clock; the lock is already gone by then.
+          if (operation === "createWorktree") {
+            yield* TestClock.withLive(
+              driver.createWorktree({
+                cwd,
+                path: path.join(yield* makeTmpDir("git-worktrees-"), "tracked"),
+                refName: "origin/feature/tracked",
+                newRefName: "feature/tracked",
+              }),
+            );
+          } else {
+            const switched = yield* TestClock.withLive(
+              driver.switchRef({ cwd, refName: "origin/feature/tracked" }),
+            );
+            assert.equal(switched.refName, "feature/tracked");
+          }
 
-        assert.equal(yield* Ref.get(failures), 1);
-        assert.equal(
-          yield* git(cwd, ["rev-parse", "--abbrev-ref", "feature/tracked@{upstream}"]),
-          `origin/${initialBranch}`,
-        );
-      }),
+          assert.equal(yield* Ref.get(failures), 1);
+          assert.equal(
+            yield* git(cwd, ["rev-parse", "--abbrev-ref", "feature/tracked@{upstream}"]),
+            "origin/feature/tracked",
+          );
+        }),
     );
 
     it.effect("fetches a remote branch into a tracking branch past another process's lock", () =>
