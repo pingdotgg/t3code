@@ -20,14 +20,14 @@ const MAX_RELEASE_NOTE_GROUPS = 6;
 const MAX_RELEASE_NOTE_ITEMS_PER_GROUP = 8;
 const MAX_RELEASE_NOTE_ITEM_LENGTH = 220;
 
-const HTML_ENTITY_REPLACEMENTS: Readonly<Record<string, string>> = {
-  amp: "&",
-  apos: "'",
-  gt: ">",
-  lt: "<",
-  nbsp: " ",
-  quot: '"',
-};
+const HTML_ENTITY_REPLACEMENTS: ReadonlyMap<string, string> = new Map([
+  ["amp", "&"],
+  ["apos", "'"],
+  ["gt", ">"],
+  ["lt", "<"],
+  ["nbsp", " "],
+  ["quot", '"'],
+]);
 
 function decodeCodePoint(codePoint: number, entity: string): string {
   if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
@@ -37,7 +37,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
 }
 
 function decodeHtmlEntity(entity: string): string {
-  const named = HTML_ENTITY_REPLACEMENTS[entity];
+  const named = HTML_ENTITY_REPLACEMENTS.get(entity);
   if (named) return named;
   if (entity.startsWith("#x")) {
     return decodeCodePoint(Number.parseInt(entity.slice(2), 16), entity);
@@ -54,17 +54,18 @@ function decodeHtmlEntities(input: string): string {
   );
 }
 
-function stripMarkup(input: string): string {
-  return decodeHtmlEntities(
+function stripMarkup(input: string, keepBold = false): string {
+  const markdown = decodeHtmlEntities(
     input
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<li\b[^>]*>/gi, "\n- ")
       .replace(/<h([1-6])\b[^>]*>/gi, (_, level: string) => `\n${"#".repeat(Number(level))} `)
       .replace(/<\/(?:p|div|li|h[1-6]|ul|ol|blockquote)>/gi, "\n")
+      .replace(/<\/?(?:strong|b)\b[^>]*>/gi, "**")
       .replace(/<[^>]*>/g, "")
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      .replace(/\*\*([^*]+)\*\*/g, "$1"),
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"),
   );
+  return keepBold ? markdown : markdown.replace(/\*\*([^*]+)\*\*/g, "$1");
 }
 
 function truncateReleaseNoteItem(item: string): string {
@@ -92,40 +93,42 @@ function isIgnoredReleaseNoteLine(line: string): boolean {
   );
 }
 
-interface ExtractedReleaseNoteItems {
-  readonly items: ReadonlyArray<string>;
-  readonly totalItems: number;
-  readonly intro?: string;
-  readonly stats?: string;
-}
+type ExtractedReleaseNoteItems = Omit<DesktopUpdateReleaseNote, "version" | "releasedAt">;
 
-/**
- * Reads a generated summary (`scripts/generate-release-notes.ts`): a `v1.2.3 · N changes…`
- * header, a highlights paragraph, and fix bullets. PR numbers are left to the GitHub page.
- */
+/** Older generated notes have a highlights paragraph followed by a separate list of fixes. */
 function extractReleaseNoteSummary(summary: string): ExtractedReleaseNoteItems {
   let stats: string | undefined;
+  let footer: string | undefined;
   const intro: string[] = [];
   const items: string[] = [];
-  for (const rawLine of stripMarkup(summary).split("\n")) {
-    const line = rawLine.trim().replace(/\s+/g, " ");
-    if (line === "" || /^#{1,6}\s+/.test(line)) continue;
-    if (stats === undefined && /^v\S+ · /.test(line)) {
-      stats = line.slice(line.indexOf(" · ") + 3);
-      continue;
-    }
-    const text = line
-      .replace(/^[-*]\s+/, "")
+  for (const rawLine of stripMarkup(summary, true).split("\n")) {
+    const line = rawLine
+      .trim()
+      .replace(/\s+/g, " ")
       .replace(/\s*\((?:#\d+(?:,\s*)?)+\)\.?$/, "")
       .trim();
-    if (/^[-*]\s+/.test(line)) items.push(text);
-    else intro.push(text);
+    const plain = line.replace(/\*\*([^*]+)\*\*/g, "$1");
+    if (/^### Plus \d+ more /.test(plain)) {
+      footer = plain.slice(4);
+      continue;
+    }
+    if (plain === "" || /^#{1,6}\s+/.test(plain)) continue;
+    if (stats === undefined && /^v\S+ · /.test(plain)) {
+      stats = plain.slice(plain.indexOf(" · ") + 3);
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      items.push(line.replace(/^[-*]\s+/, ""));
+    } else {
+      intro.push(plain);
+    }
   }
   return {
     items,
     totalItems: items.length + intro.length,
     ...(intro.length > 0 ? { intro: intro.join(" ") } : {}),
     ...(stats ? { stats } : {}),
+    ...(footer ? { footer } : {}),
   };
 }
 
@@ -168,6 +171,22 @@ interface NormalizedDesktopUpdateReleaseNotes {
   readonly omittedReleaseCount: number;
 }
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Untagged notes come from the feed entry named by releaseName, which is the newest entry when the
+ * offered release is not on the feed's first page. Keep them only when that entry is the offered one.
+ */
+export function releaseNotesOfOfferedVersion(info: {
+  readonly version: string;
+  readonly releaseNotes?: unknown;
+  readonly releaseName?: string | null | undefined;
+}): unknown {
+  if (typeof info.releaseNotes !== "string" || !info.releaseName) return info.releaseNotes;
+  const namesVersion = new RegExp(`(?:^|[^\\w.-])v?${escapeRegExp(info.version)}(?![\\w.-])`);
+  return namesVersion.test(info.releaseName) ? info.releaseNotes : undefined;
+}
+
 /** fullChangelog includes all greater semvers, so preview cuts sort above nightlies of the same base version. */
 export function normalizeDesktopUpdateReleaseNotes(
   releaseNotes: unknown,
@@ -184,16 +203,13 @@ export function normalizeDesktopUpdateReleaseNotes(
   ).filter((entry) => desktopUpdateChannelOf(entry.version) === channel);
 
   const normalizedNotes = rawNotes.flatMap((entry) => {
-    const { items, totalItems, intro, stats } = extractReleaseNoteItems(entry.note);
-    if (totalItems === 0) return [];
+    const note = extractReleaseNoteItems(entry.note);
+    if (note.totalItems === 0 && !note.stats) return [];
     const releasedAt = resolveReleasedAt(entry.version, fallbackVersion, releaseDate);
     return [
       {
         version: entry.version,
-        items,
-        totalItems,
-        ...(intro ? { intro } : {}),
-        ...(stats ? { stats } : {}),
+        ...note,
         ...(releasedAt ? { releasedAt } : {}),
       },
     ];

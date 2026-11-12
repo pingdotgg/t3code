@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -19,6 +20,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
 import type {
@@ -92,8 +95,9 @@ interface FakeProviderScenario {
   /** Check out the pull request head from its pull ref: fast-forward only unless forced. */
   syncCheckoutWithPullHead?: boolean;
   /**
-   * The host's `headBranchProbe`. By default the fake probes only bare branch names, a hundred
-   * at a time, so tests see GitManager defer to the hook; null leaves the probe to GitManager.
+   * The host's `headBranchProbe`. By default the fake probes bare branch names, a hundred at a
+   * time, or only the owner-qualified default branch, as GitHub does, so tests see GitManager
+   * defer to the hook; null leaves the probe to GitManager.
    */
   headBranchProbe?: SourceControlProvider["Service"]["headBranchProbe"] | null;
 }
@@ -203,34 +207,55 @@ function runGit(
   });
 }
 
+/** A committed repository and an empty bare remote, built once and copied into each test. */
+class GitFixtureTemplates extends Context.Service<
+  GitFixtureTemplates,
+  { readonly repo: string; readonly bareRemote: string }
+>()("t3/git/GitManager.test/GitFixtureTemplates") {}
+
+const layerGitFixtureTemplates = Layer.effect(
+  GitFixtureTemplates,
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const repo = yield* makeTempDir("t3code-git-template-");
+    // An empty template skips copying git's sample hooks into every test repository.
+    yield* runGit(repo, ["init", "--initial-branch=main", "--template="]);
+    yield* runGit(repo, ["config", "user.email", "test@example.com"]);
+    yield* runGit(repo, ["config", "user.name", "Test User"]);
+    // Override global autocrlf on Windows for LF assertions, including linked worktrees.
+    yield* runGit(repo, ["config", "core.autocrlf", "false"]);
+    yield* fs.writeFileString(NodePath.join(repo, "README.md"), "hello\n");
+    yield* runGit(repo, ["add", "README.md"]);
+    yield* runGit(repo, ["commit", "-m", "Initial commit"]);
+    const bareRemote = yield* makeTempDir("t3code-git-remote-template-");
+    yield* runGit(bareRemote, ["init", "--bare", "--template="]);
+    yield* fs.makeDirectory(NodePath.join(bareRemote, "hooks"), { recursive: true });
+    return { repo, bareRemote };
+  }),
+);
+
 function initRepo(
   cwd: string,
-): Effect.Effect<
-  void,
-  PlatformError.PlatformError | GitCommandError,
-  FileSystem.FileSystem | Scope.Scope | GitVcsDriver.GitVcsDriver
-> {
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | GitFixtureTemplates> {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* runGit(cwd, ["init", "--initial-branch=main"]);
-    yield* runGit(cwd, ["config", "user.email", "test@example.com"]);
-    yield* runGit(cwd, ["config", "user.name", "Test User"]);
-    // Override global autocrlf on Windows for LF assertions, including linked worktrees.
-    yield* runGit(cwd, ["config", "core.autocrlf", "false"]);
-    yield* fs.writeFileString(NodePath.join(cwd, "README.md"), "hello\n");
-    yield* runGit(cwd, ["add", "README.md"]);
-    yield* runGit(cwd, ["commit", "-m", "Initial commit"]);
+    const templates = yield* GitFixtureTemplates;
+    for (const entry of [".git", "README.md"]) {
+      yield* fs.copy(NodePath.join(templates.repo, entry), NodePath.join(cwd, entry));
+    }
   });
 }
 
 function createBareRemote(): Effect.Effect<
   string,
-  PlatformError.PlatformError | GitCommandError,
-  FileSystem.FileSystem | Scope.Scope | GitVcsDriver.GitVcsDriver
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Scope.Scope | GitFixtureTemplates
 > {
   return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const templates = yield* GitFixtureTemplates;
     const remoteDir = yield* makeTempDir("t3code-git-remote-");
-    yield* runGit(remoteDir, ["init", "--bare"]);
+    yield* fs.copy(templates.bareRemote, remoteDir, { overwrite: true });
     return remoteDir;
   });
 }
@@ -288,6 +313,8 @@ function createTextGeneration(
         title: "Update workflow",
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
+    generateTranscriptionPostProcessing: () =>
+      Effect.succeed({ transcription: "processed transcript" }),
     ...overrides,
   };
 
@@ -337,6 +364,8 @@ function createTextGeneration(
         ),
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
+    generateTranscriptionPostProcessing: (input) =>
+      implementation.generateTranscriptionPostProcessing(input),
   };
 }
 
@@ -432,8 +461,10 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
       : {
           headBranchProbe:
             scenario.headBranchProbe ??
-            (({ headSelectors }: { readonly headSelectors: ReadonlyArray<string> }) => ({
-              headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+            (({ headSelectors, defaultBranchHeadSelector }) => ({
+              headSelectors: defaultBranchHeadSelector
+                ? [defaultBranchHeadSelector]
+                : headSelectors.filter((selector) => !selector.includes(":")),
               limit: 100,
             })),
         };
@@ -632,7 +663,7 @@ function makeManager(input?: {
             const args =
               command._tag === "StandardCommand" &&
               NodePath.parse(command.command).name.toLowerCase() === "git"
-                ? command.args
+                ? command.args.map(String)
                 : null;
             if (args !== null) gitCommands?.push(args.join(" "));
             if (args === null || gitSpawnGate === undefined || !gitSpawnGate.matches(args)) {
@@ -650,7 +681,7 @@ function makeManager(input?: {
               );
           });
         }),
-      ).pipe(Layer.provide(NodeServices.layer))
+      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)))
     : Layer.empty;
   const gitVcsDriver = input?.gitConfigReads
     ? Layer.effect(
@@ -671,7 +702,7 @@ function makeManager(input?: {
   const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerServerConfig),
   );
   const layerSourceControlRegistry = Layer.effect(
@@ -713,7 +744,7 @@ function makeManager(input?: {
   ).pipe(
     Layer.provideMerge(layerSourceControlRegistry),
     Layer.provideMerge(layerVcsDriver),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const layerStores = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -734,10 +765,11 @@ function makeManager(input?: {
 
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
-const layerGitManagerTest = GitVcsDriver.layer.pipe(
+const layerGitManagerTest = layerGitFixtureTemplates.pipe(
+  Layer.provideMerge(GitVcsDriver.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
@@ -1073,6 +1105,84 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
         { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
       ]);
+    }),
+  );
+
+  it.effect("a settled branch PR is rechecked only when the branch moves or every 15 minutes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/settled"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/settled"]);
+      const pullRequest = (number: number, state: "open" | "merged"): FakeChangeRequest => ({
+        number,
+        title: "Settled",
+        url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+        baseRefName: "main",
+        headRefName: "feature/settled",
+        state,
+        updatedAt: `2026-04-0${number}T15:00:00Z`,
+      });
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        gitCommands,
+        providerScenario: {
+          prListSequence: [
+            [pullRequest(1, "merged")],
+            [pullRequest(1, "merged")],
+            [pullRequest(1, "merged")],
+          ],
+          prListOtherwise: [pullRequest(2, "open")],
+        },
+      });
+      const lookup = manager.branchPullRequest({ cwd: repoDir, branch: "feature/settled" });
+      const freshLookups = () => gitCommands.filter((args) => args === "remote").length;
+
+      expect((yield* lookup)?.state).toBe("merged");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(gitCommands.map((args) => args.split(" ", 1)[0]).toSorted()).toEqual([
+        "config",
+        "config",
+        "for-each-ref",
+        "for-each-ref",
+      ]);
+      expect(freshLookups()).toBe(0);
+      gitCommands.length = 0;
+      yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/settled" },
+        { confirmTerminal: false },
+      );
+      expect(gitCommands).toEqual([]);
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "settled.txt"), "new work\n");
+      yield* runGit(repoDir, ["add", "settled.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "New work"]);
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(freshLookups()).toBe(1);
+      gitCommands.length = 0;
+      yield* lookup;
+      expect(freshLookups()).toBe(0);
+
+      // Remembered git state expires after 5 minutes; that rereads git without a recheck.
+      yield* TestClock.adjust("10 minutes");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(freshLookups()).toBe(1);
+
+      yield* TestClock.adjust("5 minutes");
+      gitCommands.length = 0;
+      expect((yield* lookup)?.state).toBe("merged");
+      expect(freshLookups()).toBe(2);
+
+      // A new PR from the reused branch shows on the next host query.
+      yield* TestClock.adjust("5 minutes");
+      expect((yield* lookup)?.number).toBe(2);
     }),
   );
 
@@ -1774,6 +1884,244 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  function squashMergeIntoRemoteMain(repoDir: string, branch: string) {
+    return Effect.gen(function* () {
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "squash.txt"), "one\ntwo\n");
+      yield* runGit(repoDir, ["add", "squash.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature work"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      // The host squash-merges: a new commit on main with the branch's tree, not the branch's commit.
+      const squash = yield* runGit(repoDir, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "origin/main",
+        "-m",
+        "Feature work (#217)",
+      ]);
+      yield* runGit(repoDir, ["push", "origin", `${squash.stdout.trim()}:refs/heads/main`]);
+      return (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+    });
+  }
+
+  const squashMergedPr = (branch: string, headSha: string): FakeChangeRequest => ({
+    number: 217,
+    title: "Feature work",
+    url: "https://github.com/pingdotgg/t3code/pull/217",
+    baseRefName: "main",
+    headRefName: branch,
+    headSha,
+    state: "merged",
+    mergedAt: "2026-04-02T15:00:00Z",
+    updatedAt: "2026-04-02T15:00:00Z",
+  });
+
+  it.effect("status reports nothing to ship after a squash merge deleted the remote branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-deleted";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["push", "origin", "--delete", branch]);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.hasUpstream).toBe(false);
+      expect({
+        aheadCount: status.aheadCount,
+        aheadOfDefaultCount: status.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
+  it.effect("status reports nothing to ship after a squash merge kept the remote branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-kept";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.hasUpstream).toBe(true);
+      expect({
+        aheadCount: status.aheadCount,
+        aheadOfDefaultCount: status.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
+  it.effect("status still reports work to ship for a commit added after a squash merge", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-follow-up";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "follow-up.txt"), "after merge\n");
+      yield* runGit(repoDir, ["add", "follow-up.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Follow-up work"]);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.aheadCount).toBe(1);
+      expect(status.aheadOfDefaultCount).toBe(2);
+    }),
+  );
+
+  it.effect("status still reports work against main after a merge into another base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const initialSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/release-only";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      // Move the merge to release and leave main without it.
+      const squashSha = (yield* runGit(repoDir, ["rev-parse", "origin/main"])).stdout.trim();
+      yield* runGit(repoDir, ["push", "origin", `${squashSha}:refs/heads/release`]);
+      yield* runGit(repoDir, ["push", "--force", "origin", `${initialSha}:refs/heads/main`]);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [[{ ...squashMergedPr(branch, headSha), baseRefName: "release" }]],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect(status.aheadOfDefaultCount).toBe(1);
+    }),
+  );
+
+  it.effect("status keeps a squash-merged branch shipped when a later PR lookup fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-lookup-fails";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["push", "origin", "--delete", branch]);
+      yield* runGit(repoDir, ["fetch", "--prune", "origin"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [[squashMergedPr(branch, headSha)]],
+          failWith: "Rate limited",
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      yield* manager.invalidateStatus(repoDir);
+      const second = yield* manager.status({ cwd: repoDir });
+
+      expect(first.aheadOfDefaultCount).toBe(0);
+      expect(second.pr?.state).toBe("merged");
+      expect({
+        aheadCount: second.aheadCount,
+        aheadOfDefaultCount: second.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
+  it.effect("status keeps real divergence for a squash-merged branch that tracks its base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/squash-tracks-main";
+      const headSha = yield* squashMergeIntoRemoteMain(repoDir, branch);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "origin/main"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: { prListSequence: [[squashMergedPr(branch, headSha)]] },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect({ aheadCount: status.aheadCount, behindCount: status.behindCount }).toEqual({
+        aheadCount: 1,
+        behindCount: 1,
+      });
+    }),
+  );
+
+  it.effect("status reports nothing to ship after a squash merge into a non-origin default", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["branch", "-m", "develop"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "upstream", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "upstream", "develop"]);
+      yield* runGit(repoDir, ["remote", "set-head", "upstream", "develop"]);
+      const branch = "feature/squash-develop";
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "squash.txt"), "one\ntwo\n");
+      yield* runGit(repoDir, ["add", "squash.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature work"]);
+      yield* runGit(repoDir, ["push", "-u", "upstream", branch]);
+      const headSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const squash = yield* runGit(repoDir, [
+        "commit-tree",
+        "HEAD^{tree}",
+        "-p",
+        "upstream/develop",
+        "-m",
+        "Feature work (#217)",
+      ]);
+      yield* runGit(repoDir, ["push", "upstream", `${squash.stdout.trim()}:refs/heads/develop`]);
+      yield* runGit(repoDir, ["fetch", "upstream"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [[{ ...squashMergedPr(branch, headSha), baseRefName: "develop" }]],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.state).toBe("merged");
+      expect({
+        aheadCount: status.aheadCount,
+        aheadOfDefaultCount: status.aheadOfDefaultCount,
+      }).toEqual({ aheadCount: 0, aheadOfDefaultCount: 0 });
+    }),
+  );
+
   it.each([
     [
       "https://github.example.com/team/repository/pull/42?tab=files",
@@ -2072,7 +2420,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const { manager, providerCalls } = yield* makeManager({
         providerScenario: {
           prListByHeadSelector: {
-            main: [
+            "contributor:main": [
               {
                 number: 777,
                 title: "Fork PR from main",
@@ -2103,7 +2451,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       expect(providerCalls).toContainEqual({
         operation: "listChangeRequests",
-        headSelector: "main",
+        headSelector: "contributor:main",
         state: "all",
         limit: 100,
       });
@@ -2256,6 +2604,102 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(status.pr).toBeNull();
       expect(listed(providerCalls).length > 0).toBe(false);
     }),
+  );
+
+  it.effect("branch PR lookup ignores the PR of a local branch the branch tracks", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+      // `--track` from a local branch, or `branch.autoSetupMerge=always`, records remote ".".
+      yield* runGit(repoDir, ["checkout", "-b", "feature/local-base", "--track", "develop"]);
+
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListByHeadSelector: {
+            develop: [
+              {
+                number: 61,
+                title: "Release develop",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/61",
+                baseRefName: "main",
+                headRefName: "develop",
+                state: "open",
+                updatedAt: "2026-05-01T10:00:00Z",
+              },
+            ],
+            // Someone else's branch of the same name; this one was never pushed.
+            "feature/local-base": [
+              {
+                number: 62,
+                title: "Another local base",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/62",
+                baseRefName: "main",
+                headRefName: "feature/local-base",
+                state: "open",
+                updatedAt: "2026-05-01T10:00:00Z",
+              },
+            ],
+          },
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+      expect(status.refName).toBe("feature/local-base");
+      expect(status.pr).toBeNull();
+      expect(listedSelectors(providerCalls).includes("develop")).toBe(false);
+
+      const branchPullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/local-base",
+      });
+      expect(branchPullRequest).toBeNull();
+    }),
+  );
+
+  it.effect(
+    "status does not inherit a release PR from a worktree's non-default base upstream",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["push", "origin", "main:dev"]);
+        yield* runGit(repoDir, ["fetch", "origin"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/from-dev", "origin/dev"]);
+        yield* runGit(repoDir, ["config", "branch.feature/from-dev.t3-merge-base", "dev"]);
+
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            prListByHeadSelector: {
+              dev: [
+                {
+                  number: 49,
+                  title: "Release dev to main",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/49",
+                  baseRefName: "main",
+                  headRefName: "dev",
+                  state: "merged",
+                  updatedAt: "2026-08-20T10:00:00Z",
+                },
+              ],
+            },
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.refName).toBe("feature/from-dev");
+        expect(status.pr).toBeNull();
+        expect(listedSelectors(providerCalls).includes("dev")).toBe(false);
+      }),
   );
 
   it.effect("status finds a PR pushed under the branch's own name despite a default upstream", () =>
@@ -2561,6 +3005,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(commitInstructions[0]).toContain("Local AGENTS.md:\nUse imperative subjects.");
       expect(commitInstructions[0]).not.toContain("Local CLAUDE.md:");
       expect(commitInstructions[1]).toContain("Local CLAUDE.md:\nMention the Claude provider.");
+    }),
+  );
+
+  it.effect("keeps signature output out of recent commit subjects", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const signingKey = NodePath.join(yield* makeTempDir("t3code-git-signing-key-"), "key");
+      NodeChildProcess.execFileSync("ssh-keygen", [
+        "-q",
+        "-t",
+        "ed25519",
+        "-N",
+        "",
+        "-f",
+        signingKey,
+      ]);
+      yield* runGit(repoDir, ["config", "gpg.format", "ssh"]);
+      // A global signer such as 1Password's cannot use the fixture's generated key.
+      yield* runGit(repoDir, ["config", "gpg.ssh.program", "ssh-keygen"]);
+      yield* runGit(repoDir, ["config", "user.signingkey", `${signingKey}.pub`]);
+      yield* runGit(repoDir, ["config", "log.showSignature", "true"]);
+      yield* runGit(repoDir, ["commit", "--amend", "-S", "--no-edit"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello again\n");
+      let commitInstructions: string | undefined;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            commitInstructions = input.policy?.commitInstructions;
+            return Effect.succeed({ subject: "Update readme", body: "" });
+          },
+        },
+      });
+
+      yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+
+      expect(commitInstructions).toMatch(
+        /Recent commit subjects from this repository:\nInitial commit$/,
+      );
     }),
   );
 
@@ -3088,6 +3572,175 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           (call) => call.baseRefName === "master" && call.headSelector === "feature/master-default",
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    { localBranch: "develop" },
+    // Pushes to origin's develop under a name that differs from the base.
+    { localBranch: "origin/develop" },
+  ] as const)(
+    "commit_push_pr refuses to commit or push on the default branch when origin/HEAD is missing ($localBranch)",
+    ({ localBranch }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["branch", "-m", "main", "develop"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+        if (localBranch !== "develop") yield* runGit(repoDir, ["checkout", "-b", localBranch]);
+        const readRemoteDevelop = runGit(repoDir, [
+          "ls-remote",
+          "origin",
+          "refs/heads/develop",
+        ]).pipe(Effect.map((output) => output.stdout));
+        const remoteBefore = yield* readRemoteDevelop;
+        const localBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+
+        const { manager } = yield* makeManager({
+          providerScenario: { defaultBranch: "develop", prListSequence: [[], []] },
+        });
+
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        }).pipe(Effect.flip);
+
+        expect(yield* readRemoteDevelop).toBe(remoteBefore);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(localBefore);
+        expect(error.message).toContain("develop is the base branch");
+      }),
+  );
+
+  it.effect("commit_push_pr on the default branch returns its open PR into another base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const releasePr = {
+        number: 43,
+        title: "Release",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/43",
+        baseRefName: "release",
+        headRefName: "main",
+      };
+
+      const { manager } = yield* makeManager({
+        providerScenario: { defaultBranch: "main", prListSequence: [[releasePr], [releasePr]] },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(43);
+    }),
+  );
+
+  it.effect(
+    "commit_push_pr publishes a branch that tracks the default branch under its own name",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["branch", "-m", "main", "develop"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "develop"]);
+        yield* runGit(repoDir, ["checkout", "-b", "t3code/feature", "--track", "origin/develop"]);
+        const readRemoteDevelop = runGit(repoDir, [
+          "ls-remote",
+          "origin",
+          "refs/heads/develop",
+        ]).pipe(Effect.map((output) => output.stdout));
+        const remoteBefore = yield* readRemoteDevelop;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            defaultBranch: "develop",
+            prListSequence: [
+              [],
+              [
+                {
+                  number: 506,
+                  title: "Feature",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/506",
+                  baseRefName: "develop",
+                  headRefName: "t3code/feature",
+                },
+              ],
+            ],
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("created");
+        expect(yield* readRemoteDevelop).toBe(remoteBefore);
+        expect(
+          created(providerCalls).some(
+            (call) => call.baseRefName === "develop" && call.headSelector === "t3code/feature",
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect("create_pr reports a created PR when the lookup after creation fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/lookup-after-create"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "lookup.txt"), "lookup\n");
+      yield* runGit(repoDir, ["add", "lookup.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Lookup after create"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/lookup-after-create"]);
+
+      const { service: github } = createFakeSourceControlProvider();
+      let created = false;
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...github,
+          createChangeRequest: (input) =>
+            github.createChangeRequest(input).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  created = true;
+                }),
+              ),
+            ),
+          listChangeRequests: (input) =>
+            created
+              ? Effect.fail(
+                  new SourceControlProviderFailure({
+                    provider: github.kind,
+                    operation: "listChangeRequests",
+                    cwd: input.cwd,
+                    detail: "GitHub API rate limit exceeded.",
+                  }),
+                )
+              : github.listChangeRequests(input),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(created).toBe(true);
+      expect(result.pr).toMatchObject({
+        status: "created",
+        headBranch: "feature/lookup-after-create",
+      });
+      expect(result.pr.url).toBeUndefined();
     }),
   );
 
@@ -3893,6 +4546,116 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("creates a fork PR from origin into the upstream remote the provider targets", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", forkDir]);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "upstream",
+        "git@github.com:pingdotgg/codething-mvp.git",
+      ]);
+      yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/fork-only"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fork-only.txt"), "fork only\n");
+      yield* runGit(repoDir, ["add", "fork-only.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork-only commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/fork-only"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:octocat/codething-mvp.git",
+        forkDir,
+      );
+
+      const { service, calls } = createFakeSourceControlProvider({ prListSequence: [[], []] });
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          createsChangeRequestsIn: ({ repository }) =>
+            Effect.succeed(repository === "pingdotgg/codething-mvp"),
+        },
+      });
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(created(calls)).toEqual([
+        { baseRefName: "main", headSelector: "octocat:feature/fork-only" },
+      ]);
+    }),
+  );
+
+  it.effect("commit_push_pr publishes the default branch to the push remote's fork", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      yield* runGit(repoDir, ["push", "fork", "main"]);
+      yield* runGit(repoDir, ["config", "remote.pushDefault", "fork"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork",
+        "git@github.com:octocat/codething-mvp.git",
+        forkDir,
+      );
+      const readOriginMain = runGit(repoDir, ["ls-remote", "origin", "refs/heads/main"]).pipe(
+        Effect.map((output) => output.stdout),
+      );
+      const originBefore = yield* readOriginMain;
+      NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          defaultBranch: "main",
+          prListSequenceByHeadSelector: {
+            "octocat:main": [
+              [],
+              [
+                {
+                  number: 189,
+                  title: "Contribute from main",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/189",
+                  baseRefName: "main",
+                  headRefName: "main",
+                  state: "open",
+                  isCrossRepository: true,
+                  headRepositoryNameWithOwner: "octocat/codething-mvp",
+                  headRepositoryOwnerLogin: "octocat",
+                },
+              ],
+            ],
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(yield* readOriginMain).toBe(originBefore);
+      expect(
+        created(providerCalls).some(
+          (call) => call.baseRefName === "main" && call.headSelector === "octocat:main",
+        ),
+      ).toBe(true);
+    }),
+  );
+
   it.effect("rejects push/pr actions from detached HEAD", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4313,6 +5076,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(NodeFS.readFileSync(NodePath.join(repoDir, "untracked.txt"), "utf8")).toBe(
           "keep me\n",
         );
+        expect(
+          (yield* runGit(repoDir, ["config", "branch.feature/pr-safe.t3-pull-request"])).stdout,
+        ).toBe("https://github.com/pingdotgg/codething-mvp/pull/91\n");
       }),
   );
 
@@ -4647,6 +5413,204 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ])).stdout.trim(),
       ).toBe(forkDir);
     }),
+  );
+
+  it.effect.each([
+    { localBranch: "ahead", expectedHead: "local", isOnPullRequestHead: false },
+    { localBranch: "behind", expectedHead: "pull request", isOnPullRequestHead: true },
+    { localBranch: "rewritten", expectedHead: "pull request", isOnPullRequestHead: true },
+    { localBranch: "rewritten-fetched", expectedHead: "pull request", isOnPullRequestHead: true },
+    { localBranch: "wrong-ref", expectedHead: "pull request", isOnPullRequestHead: true },
+    { localBranch: "stale-head", expectedHead: "local", isOnPullRequestHead: false },
+    { localBranch: "checkout-race", expectedHead: "pull request", isOnPullRequestHead: true },
+  ] as const)(
+    "moves an existing PR branch into a new worktree only when nothing is lost ($localBranch)",
+    ({ localBranch, expectedHead, isOnPullRequestHead }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-existing"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "existing.txt"), "pushed\n");
+        yield* runGit(repoDir, ["add", "existing.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Pushed PR commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-existing"]);
+        if (localBranch === "ahead") {
+          NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+          yield* runGit(repoDir, ["add", "mine.txt"]);
+          yield* runGit(repoDir, ["commit", "-m", "My unpublished commit"]);
+        } else if (!localBranch.startsWith("rewritten")) {
+          yield* runGit(repoDir, ["checkout", "-b", "author-push"]);
+          NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
+          yield* runGit(repoDir, ["add", "authored.txt"]);
+          yield* runGit(repoDir, ["commit", "-m", "New PR head commit"]);
+          yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-existing"]);
+        } else {
+          const staleHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+          yield* runGit(repoDir, ["checkout", "-b", "author-rewrite"]);
+          NodeFS.writeFileSync(NodePath.join(repoDir, "existing.txt"), "rewritten\n");
+          yield* runGit(repoDir, ["add", "existing.txt"]);
+          yield* runGit(repoDir, ["commit", "--amend", "-m", "Rewritten PR head"]);
+          yield* runGit(repoDir, [
+            "push",
+            "--force",
+            "origin",
+            "author-rewrite:feature/pr-existing",
+          ]);
+          if (localBranch === "rewritten") {
+            yield* runGit(repoDir, [
+              "update-ref",
+              "refs/remotes/origin/feature/pr-existing",
+              staleHead,
+            ]);
+          }
+        }
+        const localHead = (yield* runGit(repoDir, [
+          "rev-parse",
+          "feature/pr-existing",
+        ])).stdout.trim();
+        const pullHead = (yield* runGit(repoDir, [
+          "ls-remote",
+          "origin",
+          "refs/heads/feature/pr-existing",
+        ])).stdout.split("\t")[0];
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        if (localBranch === "wrong-ref") {
+          yield* runGit(repoDir, ["push", "origin", "main:refs/pull/88/head"]);
+        }
+        const gate = {
+          matches: (args: ReadonlyArray<string>) =>
+            args[0] === "fetch" &&
+            args.some((arg) => arg.startsWith("+refs/heads/feature/pr-existing:")),
+          reached: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const { manager } = yield* makeManager({
+          ...(localBranch === "checkout-race" ? { gitSpawnGate: gate } : {}),
+          providerScenario: {
+            pullRequest: {
+              number: 88,
+              title: "Existing branch PR",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+              baseRefName: "main",
+              headRefName: "feature/pr-existing",
+              state: "open",
+              headSha: localBranch === "stale-head" ? localHead : pullHead,
+              isCrossRepository: false,
+              headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+              headRepositoryOwnerLogin: "pingdotgg",
+            },
+            repositoryCloneUrls: {
+              "pingdotgg/codething-mvp": { url: remoteDir, sshUrl: remoteDir },
+            },
+          },
+        });
+
+        const preparing = yield* Effect.forkChild(
+          preparePullRequestThread(manager, {
+            cwd: repoDir,
+            reference: "88",
+            mode: "worktree",
+          }),
+        );
+        if (localBranch === "checkout-race") {
+          yield* Deferred.await(gate.reached);
+          const checkout = yield* runGit(repoDir, ["checkout", "feature/pr-existing"], true);
+          yield* Deferred.succeed(gate.release, undefined);
+          expect(checkout.exitCode).not.toBe(0);
+          expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+        }
+        const result = yield* Fiber.join(preparing);
+
+        const head = expectedHead === "local" ? localHead : pullHead;
+        expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-existing"])).stdout.trim()).toBe(
+          head,
+        );
+        expect(
+          (yield* runGit(result.worktreePath as string, ["rev-parse", "HEAD"])).stdout.trim(),
+        ).toBe(head);
+        expect(result).toMatchObject({ branch: "feature/pr-existing", isOnPullRequestHead });
+      }),
+  );
+
+  it.effect.each(["adds", "removes"] as const)(
+    "checks out the submodules of the head an existing PR branch moves onto (head %s one)",
+    (headChange) =>
+      Effect.gen(function* () {
+        const submoduleDir = yield* makeTempDir("t3code-git-submodule-");
+        yield* initRepo(submoduleDir);
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-existing"]);
+        if (headChange === "removes") {
+          yield* runGit(repoDir, ["submodule", "add", submoduleDir, "shared"]);
+          yield* runGit(repoDir, ["commit", "-m", "Add shared submodule"]);
+        }
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-existing"]);
+        yield* runGit(repoDir, ["checkout", "-b", "author-push"]);
+        if (headChange === "adds") {
+          yield* runGit(repoDir, ["submodule", "add", submoduleDir, "shared"]);
+          yield* runGit(repoDir, ["commit", "-m", "Add shared submodule"]);
+        } else {
+          yield* runGit(repoDir, ["rm", "shared"]);
+          yield* runGit(repoDir, ["commit", "-m", "Remove shared submodule"]);
+        }
+        yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-existing"]);
+        const pullHead = (yield* runGit(repoDir, ["rev-parse", "author-push"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            pullRequest: {
+              number: 89,
+              title: "Submodule PR",
+              headSha: pullHead,
+              url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+              baseRefName: "main",
+              headRefName: "feature/pr-existing",
+              state: "open",
+              isCrossRepository: false,
+              headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+              headRepositoryOwnerLogin: "pingdotgg",
+            },
+            repositoryCloneUrls: {
+              "pingdotgg/codething-mvp": { url: remoteDir, sshUrl: remoteDir },
+            },
+          },
+        });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "89",
+          mode: "worktree",
+        });
+
+        const worktreePath = result.worktreePath as string;
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+        expect(NodeFS.existsSync(NodePath.join(worktreePath, "shared", "README.md"))).toBe(
+          headChange === "adds",
+        );
+        expect((yield* runGit(worktreePath, ["status", "--porcelain"])).stdout).toBe("");
+        expect(result).toMatchObject({ isOnPullRequestHead: true });
+      }).pipe(
+        // Git refuses `file:` submodule transports by default (CVE-2022-39253) and ignores
+        // repo-level config for it, so a local fixture needs the env allowance.
+        (effect) =>
+          Effect.flatMap(HostProcess.Environment, (env) =>
+            effect.pipe(
+              Effect.provideService(HostProcess.Environment, {
+                ...env,
+                GIT_ALLOW_PROTOCOL: "file",
+              }),
+            ),
+          ),
+      ),
   );
 
   it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>

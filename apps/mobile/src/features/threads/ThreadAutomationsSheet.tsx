@@ -6,21 +6,17 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { useCallback, useState } from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
-import { ScreenStack } from "react-native-screens";
+import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
-import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { ScheduledTaskStatusDot } from "../settings/components/ScheduledTaskStatusDot";
 import { useScheduledTaskActions } from "../settings/scheduled-task-actions";
 import { startScheduledTaskEditor } from "../settings/scheduled-task-editor-state";
@@ -30,8 +26,6 @@ import {
   formatNextScheduledTaskRun,
 } from "../settings/scheduledTaskPresentation";
 import { openSettings } from "../settings/settings-navigation";
-
-const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
 type AutomationsTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
@@ -45,12 +39,12 @@ export function useThreadAutomations(target: AutomationsTarget | null) {
   return {
     tasks: tasks.data?.tasks.filter((task) => task.threadId === target?.threadId) ?? [],
     loaded: tasks.data !== null,
+    timeZone: tasks.data?.timeZone,
     error: tasks.error,
   };
 }
 
 export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsTarget>) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const target = route.params;
@@ -77,7 +71,8 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
     <ScrollView
       nestedScrollEnabled
       className="flex-1"
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+      // UIKit must inset content beneath the floating translucent iOS header.
+      contentInsetAdjustmentBehavior="automatic"
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
@@ -97,6 +92,7 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
             key={task.id}
             task={task}
             now={now}
+            timeZone={automations.timeZone}
             enabled={actions.isEnabled(task)}
             canOperate={actions.canOperate}
             onEdit={edit}
@@ -115,40 +111,10 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
       </Pressable>
     </ScrollView>
   );
-  if (Platform.OS === "ios") {
-    return (
-      <View collapsable={false} className="flex-1 bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <NativeScreen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="thread-automations-sheet-native"
-            scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            className="flex-1 bg-sheet"
-          >
-            {content}
-            <NativeHeader
-              backgroundColor="rgba(0,0,0,0)"
-              tintColorClassName="accent-foreground"
-              hideBackButton
-              hideShadow={false}
-              title="Automations"
-              titleColorClassName="accent-foreground"
-              titleFontSize={18}
-              titleFontWeight="800"
-              translucent
-            />
-          </NativeScreen>
-        </ScreenStack>
-      </View>
-    );
-  }
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title="Automations" onBack={() => navigation.goBack()} />
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+      <SheetHeader title="Automations" onClose={() => navigation.goBack()} />
+      <ScreenContent>{content}</ScreenContent>
     </View>
   );
 }
@@ -156,6 +122,7 @@ export function ThreadAutomationsSheet({ route }: StaticScreenProps<AutomationsT
 function AutomationRow(props: {
   readonly task: ScheduledTask;
   readonly now: number;
+  readonly timeZone: string | undefined;
   readonly enabled: boolean;
   readonly canOperate: boolean;
   readonly onEdit: (task: ScheduledTask) => void;
@@ -184,7 +151,7 @@ function AutomationRow(props: {
           {task.title}
         </Text>
         <Text className="text-xs text-foreground-muted" numberOfLines={2}>
-          {describeScheduledTaskSchedule(task)}
+          {describeScheduledTaskSchedule(task, props.timeZone)}
           {running
             ? " · Running"
             : !props.enabled

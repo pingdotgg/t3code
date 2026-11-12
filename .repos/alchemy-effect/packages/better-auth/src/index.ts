@@ -21,10 +21,7 @@ export {
   mergeAPIErrorHeaders,
 } from "./Errors.ts";
 export { Memory } from "./Memory.ts";
-export {
-  SecondaryStorage,
-  type SecondaryStorageService,
-} from "./SecondaryStorage.ts";
+export { SecondaryStorage, type SecondaryStorageService } from "./SecondaryStorage.ts";
 // Driver-backed platform layers are deliberately NOT re-exported from the
 // barrel (they carry optional peer deps / runtime-specific imports).
 // One file per layer, one export condition per layer:
