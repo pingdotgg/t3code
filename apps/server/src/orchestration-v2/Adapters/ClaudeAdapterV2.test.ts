@@ -11127,6 +11127,103 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("publishes each background roster change once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const roster = (
+          tasks: ReadonlyArray<{ readonly task_id: string; readonly task_type: string }>,
+          uuid: string,
+        ) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: tasks.map((task) => ({ ...task, description: WAKE_TASK_DESCRIPTION })),
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const shell = { task_id: WAKE_TASK_ID, task_type: "local_bash" };
+        const subagent = { task_id: "a1a715b7d0bdfefea", task_type: "local_agent" };
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-roster-once"),
+            text: "Run the build in the background, then review the diff in a subagent.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_roster_once_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: WAKE_TOOL_USE_ID,
+                  name: "Bash",
+                  input: { command: "sleep 8 && echo BG_DONE", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000501",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // Claude Code reports each start and end both as a task event and as a roster level.
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(roster([shell], "00000000-0000-4000-8000-000000000502"));
+        yield* harness.offerAndWait(
+          roster([shell, subagent], "00000000-0000-4000-8000-000000000503"),
+        );
+        yield* harness.offerAndWait(roster([shell], "00000000-0000-4000-8000-000000000504"));
+        yield* harness.offerAndWait(roster([], "00000000-0000-4000-8000-000000000505"));
+        yield* harness.offerAndWait(wakeNotification);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          roster(
+            [{ task_id: "b2", task_type: "local_bash" }],
+            "00000000-0000-4000-8000-000000000506",
+          ),
+        );
+        yield* harness.until(() =>
+          providerThreadRosterEvents(harness.events).some(
+            (event) => event.providerThread.pendingBackgroundTasks?.[0]?.taskId === "b2",
+          ),
+        );
+
+        assert.deepStrictEqual(
+          providerThreadRosterEvents(harness.events).map((event) => [
+            (event.providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId),
+            event.pendingBackgroundWork === true,
+          ]),
+          [
+            [[], false],
+            [[WAKE_TASK_ID], false],
+            [[WAKE_TASK_ID], true],
+            [["b2"], false],
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
     Effect.scoped(
       Effect.gen(function* () {

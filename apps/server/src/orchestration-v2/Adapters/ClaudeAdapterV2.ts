@@ -110,7 +110,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
-  type OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
@@ -2311,6 +2311,7 @@ function isClaudeGoalAcknowledgement(message: SDKMessage): boolean {
 }
 
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
+const providerThreadsEqual = Schema.toEquivalence(OrchestrationV2ProviderThread);
 
 function normalizeClaudeResultText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -5789,24 +5790,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
-        const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
-          if (event.type === "provider_thread.updated") {
-            const budget = pdfBudgets.get(event.providerThread.nativeThreadRef?.nativeId ?? "");
-            if (budget !== undefined) {
-              event = {
-                ...event,
-                providerThread: {
-                  ...event.providerThread,
-                  nativeMetadata: {
-                    ...event.providerThread.nativeMetadata,
-                    claudeAttachmentBudget: {
-                      bytesUsed: budget.committed.bytes,
-                      pagesUsed: budget.committed.pages,
-                    },
+        const withAttachmentBudget = (
+          providerThread: OrchestrationV2ProviderThread,
+        ): OrchestrationV2ProviderThread => {
+          const budget = pdfBudgets.get(providerThread.nativeThreadRef?.nativeId ?? "");
+          return budget === undefined
+            ? providerThread
+            : {
+                ...providerThread,
+                nativeMetadata: {
+                  ...providerThread.nativeMetadata,
+                  claudeAttachmentBudget: {
+                    bytesUsed: budget.committed.bytes,
+                    pagesUsed: budget.committed.pages,
                   },
                 },
               };
-            }
+        };
+        const lastProviderThreadUpdates = new Map<
+          string,
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
+        >();
+
+        const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
+          if (event.type === "provider_thread.updated") {
+            event = { ...event, providerThread: withAttachmentBudget(event.providerThread) };
+            lastProviderThreadUpdates.set(event.providerThread.id, event);
           }
           return Queue.offer(events, event).pipe(Effect.asVoid);
         };
@@ -6097,6 +6106,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.nativeThreadId,
           );
           const owedWakeTasks = yield* owedWakeTasksForNativeThread(input.nativeThreadId);
+          const pendingBackgroundWork = owedWakeTasks.length > 0;
           const now = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {
             ...input.providerThread,
@@ -6112,11 +6122,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             updatedAt: now,
           };
           yield* rememberProviderThread(providerThread);
+          // Claude reports a change both as a task event and as a roster level, and a level also
+          // lists subagents, which the roster leaves out.
+          const last = lastProviderThreadUpdates.get(providerThread.id);
+          if (
+            last !== undefined &&
+            (last.pendingBackgroundWork === true) === pendingBackgroundWork &&
+            providerThreadsEqual(last.providerThread, {
+              ...withAttachmentBudget(providerThread),
+              updatedAt: last.providerThread.updatedAt,
+            })
+          ) {
+            return;
+          }
           yield* emitProviderEvent({
             type: "provider_thread.updated",
             driver: CLAUDE_PROVIDER,
             providerThread,
-            pendingBackgroundWork: owedWakeTasks.length > 0,
+            pendingBackgroundWork,
           });
         });
 
@@ -12029,6 +12052,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
               return updated;
             });
+            // Events reach the server only while a run listens, so a turn compares from scratch.
+            lastProviderThreadUpdates.delete(turnInput.providerThread.id);
             // A queued turn's snapshot can predate another task's exit.
             const owedWakeTasks = yield* owedWakeTasksForNativeThread(nativeThreadId);
             yield* rememberProviderThread(
