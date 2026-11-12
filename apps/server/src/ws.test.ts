@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -22,6 +23,7 @@ import {
   WsRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
+  type AuthAccessStreamEvent,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2StoredEvent,
@@ -135,6 +137,7 @@ import * as TriageService from "./triage/TriageService.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as ServerConfigModule from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -790,6 +793,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+  Layer.mock(SecretCheck.SecretCheck)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
   Layer.mock(TriageService.TriageService)({}),
@@ -1138,6 +1142,118 @@ it.effect.each([
       ),
       Effect.scoped,
     ),
+);
+
+it.effect("access changes made while the snapshot loads reach the client after it", () =>
+  Effect.gen(function* () {
+    const pairingChanges = yield* PubSub.unbounded<PairingGrantStore.BootstrapCredentialChange>();
+    const sessionChanges = yield* PubSub.unbounded<SessionStore.SessionCredentialChange>();
+    const subscribed = yield* Queue.unbounded<void>();
+    const subscribe = <A>(changes: PubSub.PubSub<A>) =>
+      Stream.unwrap(
+        PubSub.subscribe(changes).pipe(
+          Effect.tap(() => Queue.offer(subscribed, undefined)),
+          Effect.map(Stream.fromSubscription),
+        ),
+      );
+    const revokedElsewhere = AuthSessionId.make("revoked-elsewhere");
+    const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Chunk"
+          ? Effect.forEach(
+              response.values,
+              (event) => Queue.offer(responses, event as AuthAccessStreamEvent),
+              {
+                discard: true,
+              },
+            )
+          : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("current"),
+            subject: "current",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.merge(RpcAuthorization.layer([AuthAccessReadScope])),
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/unused",
+              }),
+              Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+                listPairingLinks: () => Effect.succeed([]),
+                // Another client revokes a session after the snapshot read it.
+                listClientSessions: () =>
+                  PubSub.publish(sessionChanges, {
+                    type: "clientRemoved",
+                    sessionId: revokedElsewhere,
+                  }).pipe(Effect.as([])),
+              }),
+              Layer.mock(PairingGrantStore.PairingGrantStore)({
+                streamChanges: subscribe(pairingChanges),
+              }),
+              Layer.mock(SessionStore.SessionStore)({
+                cookieName: "auth-access-test",
+                legacyCookieName: undefined,
+                streamChanges: subscribe(sessionChanges),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    const requestId = RpcMessage.RequestId("auth-access");
+    yield* server.write(0, {
+      _tag: "Request",
+      id: requestId,
+      tag: WS_METHODS.subscribeAuthAccess,
+      payload: {},
+      headers: Headers.empty,
+    });
+    const snapshot = yield* Queue.take(responses);
+    assert.equal(snapshot.type, "snapshot");
+    yield* server.write(0, { _tag: "Ack", requestId });
+    yield* Queue.take(subscribed);
+    yield* Queue.take(subscribed);
+
+    // A later change arrives either way, so a dropped revocation fails as a mismatch.
+    yield* PubSub.publish(pairingChanges, { type: "pairingLinkRemoved", id: "later" });
+    const next = yield* Queue.take(responses);
+    assert.deepEqual(next, {
+      version: 1,
+      revision: 2,
+      type: "clientRemoved",
+      payload: { sessionId: revokedElsewhere },
+    });
+    yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
