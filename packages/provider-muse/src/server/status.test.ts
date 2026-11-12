@@ -94,7 +94,11 @@ process.stdout.write("muse 1.0.3-R2198.1\\n");`,
       ).pipe(
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(SpawnExecutableResolution, (command) =>
-          command.toLowerCase().endsWith("powershell.exe") ? executable : undefined,
+          command === binaryPath
+            ? binaryPath
+            : command.toLowerCase().endsWith("powershell.exe")
+              ? executable
+              : undefined,
         ),
       );
       expect(result.status).toBe("ready");
