@@ -654,6 +654,8 @@ const layerTelemetry = Layer.unwrap(
           maxFiles: DESKTOP_LOG_FILE_MAX_FILES,
           batchWindowMs: DESKTOP_TRACE_BATCH_WINDOW_MS,
         });
+        // Unscoped: Electron can exit without closing the app scope, e.g. when the display drops.
+        process.once("exit", sink.flushSync);
         const delegate =
           endpoints.traces === undefined
             ? undefined
