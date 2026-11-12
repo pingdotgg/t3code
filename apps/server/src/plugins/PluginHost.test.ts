@@ -169,25 +169,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PluginHost", (it
     }).pipe(Effect.provide(layerConfig())),
   );
 
-  it.effect("marks a plugin that throws in activate as failed and keeps the others running", () =>
-    Effect.gen(function* () {
-      yield* writePluginsConfig({
-        enabled: { [hello]: true, [broken]: true },
-        devPaths: [`${fixturesDir}broken-plugin`, `${fixturesDir}hello-plugin`],
-      });
-      yield* Effect.gen(function* () {
-        const host = yield* PluginHost.PluginHost;
-        const states = yield* waitForStatuses(host, { [broken]: "failed", [hello]: "active" });
-        assert.deepStrictEqual(stateOf(states, broken)?.failure, {
-          stage: "activate",
-          message: "broken-plugin refuses to start",
+  it.effect(
+    "marks a plugin that throws while loading or in activate as failed and keeps the others running",
+    () =>
+      Effect.gen(function* () {
+        yield* writeInstalledPlugin("unloadable", `throw new Error("unloadable cannot load");`);
+        yield* writePluginsConfig({
+          enabled: { [hello]: true, [broken]: true, unloadable: true },
+          devPaths: [`${fixturesDir}broken-plugin`, `${fixturesDir}hello-plugin`],
         });
-        const missing = yield* host
-          .invoke({ pluginId: broken, method: "ping", input: undefined, scopes: operate })
-          .pipe(Effect.flip);
-        assert.strictEqual(missing._tag, "PluginNotActiveError");
-      }).pipe(Effect.provide(layerHost()));
-    }).pipe(Effect.provide(layerConfig())),
+        yield* Effect.gen(function* () {
+          const host = yield* PluginHost.PluginHost;
+          const states = yield* waitForStatuses(host, {
+            [broken]: "failed",
+            [hello]: "active",
+            unloadable: "failed",
+          });
+          assert.deepStrictEqual(stateOf(states, broken)?.failure, {
+            stage: "activate",
+            message: "broken-plugin refuses to start",
+          });
+          assert.deepStrictEqual(stateOf(states, "unloadable")?.failure, {
+            stage: "load",
+            message: "unloadable cannot load",
+          });
+          const missing = yield* host
+            .invoke({ pluginId: broken, method: "ping", input: undefined, scopes: operate })
+            .pipe(Effect.flip);
+          assert.strictEqual(missing._tag, "PluginNotActiveError");
+        }).pipe(Effect.provide(layerHost()));
+      }).pipe(Effect.provide(layerConfig())),
   );
 
   it.effect("fails a plugin with server code below Node 24 and runs one without", () =>
