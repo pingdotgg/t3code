@@ -24,13 +24,19 @@ export interface PullRequestListPreferences {
   readonly state: PullRequestListState;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
+  /** Lowercased repository keys the list leaves out while no single project is chosen. */
+  readonly excludedRepositories?: ReadonlyArray<string>;
   readonly host?: string;
   readonly q?: string | undefined;
   readonly draft?: "only" | "hide";
   readonly review?: NonNullable<PullRequestListFilters["review"]>;
+  readonly excludedReview?: NonNullable<PullRequestListFilters["review"]>;
   readonly checks?: NonNullable<PullRequestListFilters["checks"]>;
+  readonly excludedChecks?: NonNullable<PullRequestListFilters["checks"]>;
   readonly author?: string;
+  readonly excludedAuthors?: ReadonlyArray<string>;
   readonly labels?: ReadonlyArray<string>;
+  readonly excludedLabels?: ReadonlyArray<string>;
   readonly sort?: PullRequestListSort;
 }
 
@@ -43,19 +49,28 @@ const DEFAULT_PULL_REQUEST_LIST_PREFERENCES = {
   state: "open",
 } as const satisfies PullRequestListPreferences;
 
+export const MAX_EXCLUDED_REPOSITORIES = 100;
 const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
+const BoundedPreferences = Schema.Array(BoundedPreference).check(Schema.isMaxLength(10));
 const PullRequestListPreferencesSchema = Schema.Struct({
   involvement: PullRequestInvolvement,
   state: PullRequestListState,
   environmentId: Schema.optional(EnvironmentId),
   projectId: Schema.optional(ProjectId),
+  excludedRepositories: Schema.optional(
+    Schema.Array(BoundedPreference).check(Schema.isMaxLength(MAX_EXCLUDED_REPOSITORIES)),
+  ),
   host: Schema.optional(BoundedPreference),
   q: Schema.optional(BoundedPreference),
   draft: PullRequestListFilters.fields.draft,
   review: PullRequestListFilters.fields.review,
+  excludedReview: PullRequestListFilters.fields.excludedReview,
   checks: PullRequestListFilters.fields.checks,
+  excludedChecks: PullRequestListFilters.fields.excludedChecks,
   author: Schema.optional(BoundedPreference),
-  labels: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(10))),
+  excludedAuthors: Schema.optional(BoundedPreferences),
+  labels: Schema.optional(BoundedPreferences),
+  excludedLabels: Schema.optional(BoundedPreferences),
   sort: Schema.optional(PullRequestListSort),
 });
 
@@ -79,13 +94,24 @@ export function pullRequestListPreferences(
     state: search.state,
     ...(search.environmentId ? { environmentId: search.environmentId } : {}),
     ...(search.projectId ? { projectId: search.projectId } : {}),
+    ...(search.excludedRepositories && search.excludedRepositories.length > 0
+      ? { excludedRepositories: search.excludedRepositories }
+      : {}),
     ...(search.host ? { host: search.host } : {}),
     ...(search.q ? { q: search.q } : {}),
     ...(search.draft ? { draft: search.draft } : {}),
     ...(search.review ? { review: search.review } : {}),
+    ...(search.excludedReview ? { excludedReview: search.excludedReview } : {}),
     ...(search.checks ? { checks: search.checks } : {}),
+    ...(search.excludedChecks ? { excludedChecks: search.excludedChecks } : {}),
     ...(search.author ? { author: search.author } : {}),
+    ...(search.excludedAuthors && search.excludedAuthors.length > 0
+      ? { excludedAuthors: search.excludedAuthors }
+      : {}),
     ...(search.labels && search.labels.length > 0 ? { labels: search.labels } : {}),
+    ...(search.excludedLabels && search.excludedLabels.length > 0
+      ? { excludedLabels: search.excludedLabels }
+      : {}),
     ...(search.sort && search.sort !== "ready" ? { sort: search.sort } : {}),
   };
 }

@@ -33,6 +33,7 @@ import { Button } from "../ui/button";
 import {
   Menu,
   MenuCheckboxItem,
+  MenuGroup,
   MenuGroupLabel,
   MenuItem,
   MenuPopup,
@@ -57,6 +58,7 @@ import {
 } from "./pullRequestList.logic";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { type AssignableProject, repositoryKey } from "./pullRequestProjectAssignment.logic";
 
 export interface PullRequestFilterOption<Value extends string> {
   readonly value: Value;
@@ -269,30 +271,89 @@ function useHostedFilterOptions(
   return sent === typed ? hosted : { labels: [], authors: [], error: null, isPending: true };
 }
 
+/**
+ * Whether a submenu's picks narrow to or drop their matches. A pick on either side decides; the
+ * switch only matters while nothing is picked.
+ */
+function useExcluding(included: boolean, excluded: boolean) {
+  const [preferExcluding, setPreferExcluding] = useState(excluded);
+  return [excluded || (!included && preferExcluding), setPreferExcluding] as const;
+}
+
+function PullRequestExcludeSwitch({
+  checked,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <>
+      <MenuCheckboxItem variant="switch" checked={checked} onCheckedChange={onCheckedChange}>
+        Exclude matches
+      </MenuCheckboxItem>
+      <MenuSeparator />
+    </>
+  );
+}
+
+function excludedSummary(names: ReadonlyArray<string>) {
+  return names.length === 1 ? `Not ${names[0]}` : `${names.length} excluded`;
+}
+
+export interface PullRequestAuthorSelection {
+  readonly author?: string | undefined;
+  readonly excludedAuthors?: ReadonlyArray<string> | undefined;
+}
+
 function PullRequestAuthorChoices({
   value,
   options,
   scope,
   onChange,
 }: {
-  value: string | undefined;
+  value: PullRequestAuthorSelection;
   options: ReadonlyArray<PullRequestAuthorFacet>;
   scope: ReadonlyArray<PullRequestFilterOptionScope>;
-  onChange: (author: string | undefined) => void;
+  onChange: (next: PullRequestAuthorSelection) => void;
 }) {
+  const excluded = value.excludedAuthors ?? [];
+  const [excluding, setExcluding] = useExcluding(value.author !== undefined, excluded.length > 0);
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "authors", query);
-  const login = value?.toLowerCase() ?? "";
-  const selected = selectedPullRequestAuthor(options, hosted.authors, value);
+  const picked = excluding ? excluded : value.author === undefined ? [] : [value.author];
+  const pickedLogins = new Set(picked.map((login) => login.toLowerCase()));
   const visible = [
-    ...(selected ? [selected] : []),
+    ...picked.flatMap((login) => selectedPullRequestAuthor(options, hosted.authors, login) ?? []),
     ...pullRequestAuthorChoices(options, hosted.authors, query).filter(
-      (option) => option.actor.login.toLowerCase() !== login,
+      (option) => !pickedLogins.has(option.actor.login.toLowerCase()),
     ),
   ].slice(0, 30);
-  const select = (next: string) => next.toLowerCase() !== login && onChange(next || undefined);
+  const toggleExcluding = (next: boolean) => {
+    setExcluding(next);
+    if (next && value.author !== undefined) onChange({ excludedAuthors: [value.author] });
+    if (!next && excluded.length > 0) onChange({ author: excluded[0] });
+  };
+  const row = (option: PullRequestAuthorFacet) => (
+    <span className="flex min-w-0 items-center gap-2">
+      <PullRequestActorAvatar actor={option.actor} />
+      <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
+      {option.mergedCount > 0 ? (
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+          {option.mergedCount} merges loaded
+        </span>
+      ) : null}
+    </span>
+  );
+  const empty =
+    visible.length === 0 && !hosted.isPending ? (
+      <MenuItem disabled>
+        {hosted.error === null ? "No authors found" : "Couldn't search authors on the host"}
+      </MenuItem>
+    ) : null;
   return (
     <>
+      <PullRequestExcludeSwitch checked={excluding} onCheckedChange={toggleExcluding} />
       <MenuSearchInput
         autoFocus
         busy={hosted.isPending}
@@ -301,32 +362,50 @@ function PullRequestAuthorChoices({
         placeholder="Search authors"
         aria-label="Search authors"
       />
-      <MenuRadioGroup value={selected?.actor.login ?? value ?? ""} onValueChange={select}>
-        <MenuRadioItem value="">
-          <span className="flex min-w-0 items-center gap-2">
-            <LayersIcon aria-hidden className="size-3.5" />
-            Anyone
-          </span>
-        </MenuRadioItem>
-        {visible.map((option) => (
-          <MenuRadioItem key={option.actor.login.toLowerCase()} value={option.actor.login}>
+      {excluding ? (
+        <>
+          {visible.map((option) => {
+            const login = option.actor.login;
+            return (
+              <MenuCheckboxItem
+                key={login.toLowerCase()}
+                checked={pickedLogins.has(login.toLowerCase())}
+                onCheckedChange={(next) =>
+                  onChange({
+                    excludedAuthors: next
+                      ? [...excluded, login].slice(0, 10)
+                      : excluded.filter((held) => held.toLowerCase() !== login.toLowerCase()),
+                  })
+                }
+              >
+                {row(option)}
+              </MenuCheckboxItem>
+            );
+          })}
+          {empty}
+        </>
+      ) : (
+        <MenuRadioGroup
+          value={visible[0] && value.author !== undefined ? visible[0].actor.login : ""}
+          onValueChange={(next: string) => {
+            if (next.toLowerCase() !== (value.author?.toLowerCase() ?? ""))
+              onChange({ author: next || undefined });
+          }}
+        >
+          <MenuRadioItem value="">
             <span className="flex min-w-0 items-center gap-2">
-              <PullRequestActorAvatar actor={option.actor} />
-              <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
-              {option.mergedCount > 0 ? (
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {option.mergedCount} merges loaded
-                </span>
-              ) : null}
+              <LayersIcon aria-hidden className="size-3.5" />
+              Anyone
             </span>
           </MenuRadioItem>
-        ))}
-        {visible.length === 0 && !hosted.isPending ? (
-          <MenuItem disabled>
-            {hosted.error === null ? "No authors found" : "Couldn't search authors on the host"}
-          </MenuItem>
-        ) : null}
-      </MenuRadioGroup>
+          {visible.map((option) => (
+            <MenuRadioItem key={option.actor.login.toLowerCase()} value={option.actor.login}>
+              {row(option)}
+            </MenuRadioItem>
+          ))}
+          {empty}
+        </MenuRadioGroup>
+      )}
     </>
   );
 }
@@ -337,18 +416,19 @@ function PullRequestAuthorFilter({
   scope,
   onChange,
 }: {
-  value: string | undefined;
+  value: PullRequestAuthorSelection;
   options: ReadonlyArray<PullRequestAuthorFacet>;
   scope: ReadonlyArray<PullRequestFilterOptionScope>;
-  onChange: (author: string | undefined) => void;
+  onChange: (next: PullRequestAuthorSelection) => void;
 }) {
+  const excluded = value.excludedAuthors ?? [];
   return (
     <MenuSub>
       <MenuSubTrigger>
         <UserRoundIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Author</span>
         <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
-          {value ?? "Anyone"}
+          {excluded.length > 0 ? excludedSummary(excluded) : (value.author ?? "Anyone")}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
@@ -363,29 +443,53 @@ function PullRequestAuthorFilter({
   );
 }
 
+export interface PullRequestLabelSelection {
+  readonly labels: ReadonlyArray<string>;
+  readonly excludedLabels: ReadonlyArray<string>;
+}
+
 function PullRequestLabelChoices({
   value,
   options,
   scope,
   onChange,
 }: {
-  value: ReadonlyArray<string>;
+  value: PullRequestLabelSelection;
   options: ReadonlyArray<PullRequestLabelFacet>;
   scope: ReadonlyArray<PullRequestFilterOptionScope>;
-  onChange: (labels: ReadonlyArray<string>) => void;
+  onChange: (next: PullRequestLabelSelection) => void;
 }) {
+  const [excluding, setExcluding] = useExcluding(
+    value.labels.length > 0,
+    value.excludedLabels.length > 0,
+  );
   const [query, setQuery] = useState("");
   const hosted = useHostedFilterOptions(scope, "labels", query);
-  const selected = new Set(value.map((name) => name.toLowerCase()));
+  const picked = excluding ? value.excludedLabels : value.labels;
+  const pick = (labels: ReadonlyArray<string>) =>
+    onChange(excluding ? { labels: [], excludedLabels: labels } : { labels, excludedLabels: [] });
+  const selected = new Set(picked.map((name) => name.toLowerCase()));
   const choices = pullRequestLabelChoices(options, hosted.labels, query);
   const visible = [
-    ...value
+    ...picked
       .filter((name) => !choices.some((option) => option.name.toLowerCase() === name.toLowerCase()))
       .map((name) => ({ name, color: null, count: 0 })),
     ...choices,
   ];
   return (
     <>
+      <PullRequestExcludeSwitch
+        checked={excluding}
+        onCheckedChange={(next) => {
+          setExcluding(next);
+          if (picked.length > 0)
+            onChange(
+              next
+                ? { labels: [], excludedLabels: picked }
+                : { labels: picked, excludedLabels: [] },
+            );
+        }}
+      />
       <MenuSearchInput
         autoFocus
         busy={hosted.isPending}
@@ -407,10 +511,10 @@ function PullRequestLabelChoices({
             key={key}
             checked={selected.has(key)}
             onCheckedChange={(next) =>
-              onChange(
+              pick(
                 next
-                  ? [...value, option.name]
-                  : value.filter((name) => name.toLowerCase() !== option.name.toLowerCase()),
+                  ? [...picked, option.name].slice(0, 10)
+                  : picked.filter((name) => name.toLowerCase() !== key),
               )
             }
           >
@@ -440,18 +544,22 @@ function PullRequestLabelFilter({
   scope,
   onChange,
 }: {
-  value: ReadonlyArray<string>;
+  value: PullRequestLabelSelection;
   options: ReadonlyArray<PullRequestLabelFacet>;
   scope: ReadonlyArray<PullRequestFilterOptionScope>;
-  onChange: (labels: ReadonlyArray<string>) => void;
+  onChange: (next: PullRequestLabelSelection) => void;
 }) {
   return (
     <MenuSub>
       <MenuSubTrigger>
         <TagIcon aria-hidden className="size-3.5" />
         <span className="flex-1">Labels</span>
-        <span className="text-xs text-muted-foreground">
-          {value.length === 0 ? "Any" : `${value.length} selected`}
+        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+          {value.excludedLabels.length > 0
+            ? excludedSummary(value.excludedLabels)
+            : value.labels.length === 0
+              ? "Any"
+              : `${value.labels.length} selected`}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
@@ -463,6 +571,164 @@ function PullRequestLabelFilter({
         />
       </MenuSubPopup>
     </MenuSub>
+  );
+}
+
+function PullRequestExcludableRadioChoices<Value extends string>({
+  label,
+  value,
+  excluded,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: Value | undefined;
+  excluded: Value | undefined;
+  options: ReadonlyArray<PullRequestFilterOption<Value | typeof UNFILTERED_VALUE>>;
+  onChange: (next: { readonly value?: Value; readonly excluded?: Value }) => void;
+}) {
+  const [excluding, setExcluding] = useExcluding(value !== undefined, excluded !== undefined);
+  const picked = excluding ? excluded : value;
+  return (
+    <>
+      <PullRequestExcludeSwitch
+        checked={excluding}
+        onCheckedChange={(next) => {
+          setExcluding(next);
+          if (picked !== undefined) onChange(next ? { excluded: picked } : { value: picked });
+        }}
+      />
+      <PullRequestFilterRadioGroup
+        label={label}
+        value={picked ?? UNFILTERED_VALUE}
+        options={options}
+        onChange={(next) => {
+          const chosen = next === UNFILTERED_VALUE ? undefined : (next as Value);
+          onChange(
+            chosen === undefined ? {} : excluding ? { excluded: chosen } : { value: chosen },
+          );
+        }}
+      />
+    </>
+  );
+}
+
+function PullRequestExcludableRadioSubmenu<Value extends string>({
+  label,
+  value,
+  excluded,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: Value | undefined;
+  excluded: Value | undefined;
+  options: ReadonlyArray<PullRequestFilterOption<Value | typeof UNFILTERED_VALUE>>;
+  onChange: (next: { readonly value?: Value; readonly excluded?: Value }) => void;
+}) {
+  const current =
+    options.find((option) => option.value === (excluded ?? value ?? UNFILTERED_VALUE)) ??
+    options[0];
+  if (!current) return null;
+  return (
+    <MenuSub>
+      <MenuSubTrigger>
+        <PullRequestFilterOptionIcon option={current} />
+        <span className="flex-1">{label}</span>
+        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+          {excluded === undefined ? current.label : `Not ${current.label.toLowerCase()}`}
+        </span>
+      </MenuSubTrigger>
+      <MenuSubPopup>
+        <PullRequestExcludableRadioChoices
+          label={label}
+          value={value}
+          excluded={excluded}
+          options={options}
+          onChange={onChange}
+        />
+      </MenuSubPopup>
+    </MenuSub>
+  );
+}
+
+type PullRequestFilterProject = ProjectFaviconProject & AssignableProject;
+
+function PullRequestProjectChoices({
+  projects,
+  options,
+  value,
+  excludedRepositories,
+  onChange,
+}: {
+  projects: ReadonlyArray<PullRequestFilterProject>;
+  options: ReadonlyArray<PullRequestFilterOption<string>>;
+  value: string;
+  excludedRepositories: ReadonlyArray<string>;
+  onChange: (next: { value: string; excludedRepositories: ReadonlyArray<string> }) => void;
+}) {
+  const byRepository = new Map<string, PullRequestFilterProject>();
+  for (const project of projects) {
+    const key = repositoryKey(project);
+    if (key && !byRepository.has(key)) byRepository.set(key, project);
+  }
+  const chosen = projects.find((project) => pullRequestProjectKey(project) === value);
+  const [excluding, setExcluding] = useExcluding(
+    chosen !== undefined,
+    excludedRepositories.length > 0,
+  );
+  const excluded = new Set(excludedRepositories);
+  const toggleExcluding = (next: boolean) => {
+    setExcluding(next);
+    const chosenKey = chosen === undefined ? undefined : repositoryKey(chosen);
+    if (next && chosenKey !== undefined) {
+      onChange({ value: ALL_PROJECTS_VALUE, excludedRepositories: [chosenKey] });
+    }
+    if (!next && excludedRepositories.length > 0) {
+      const first = excludedRepositories
+        .map((key) => byRepository.get(key))
+        .find((project) => project !== undefined);
+      onChange({
+        value: first === undefined ? ALL_PROJECTS_VALUE : pullRequestProjectKey(first),
+        excludedRepositories: [],
+      });
+    }
+  };
+  return (
+    <>
+      <PullRequestExcludeSwitch checked={excluding} onCheckedChange={toggleExcluding} />
+      {excluding ? (
+        <MenuGroup>
+          <MenuGroupLabel>Project</MenuGroupLabel>
+          {[...byRepository].map(([key, project]) => (
+            <MenuCheckboxItem
+              key={key}
+              checked={excluded.has(key)}
+              onCheckedChange={(next) =>
+                onChange({
+                  value: ALL_PROJECTS_VALUE,
+                  excludedRepositories: next
+                    ? [...excludedRepositories, key]
+                    : excludedRepositories.filter((held) => held !== key),
+                })
+              }
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <ProjectFavicon project={project} className="size-3.5" />
+                <span className="min-w-0 flex-1 truncate">{project.title}</span>
+              </span>
+            </MenuCheckboxItem>
+          ))}
+        </MenuGroup>
+      ) : (
+        <PullRequestFilterRadioGroup
+          label="Project"
+          value={value}
+          options={options}
+          onChange={(next) => onChange({ value: next, excludedRepositories: [] })}
+        />
+      )}
+    </>
   );
 }
 
@@ -489,7 +755,8 @@ export function PullRequestFiltersMenu({
   projectId,
   projectEnvironmentId,
   unavailable,
-  onProject,
+  excludedRepositories,
+  onProjectScope,
 }: {
   onOpenChange?: (open: boolean) => void;
   state: PullRequestListState;
@@ -509,35 +776,46 @@ export function PullRequestFiltersMenu({
   server: EnvironmentId | undefined;
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<PullRequestFilterProject>;
   projectId: ProjectId | undefined;
   projectEnvironmentId: EnvironmentId | undefined;
   unavailable: ReadonlyMap<string, string>;
-  onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
+  excludedRepositories: ReadonlyArray<string>;
+  onProjectScope: (next: {
+    readonly project: PullRequestFilterProject | undefined;
+    readonly excludedRepositories: ReadonlyArray<string>;
+  }) => void;
 }) {
+  const shownRepositoryKeys = new Set(projects.map(repositoryKey));
+  const excludedRepositoryCount =
+    projectId === undefined
+      ? excludedRepositories.filter((key) => shownRepositoryKeys.has(key)).length
+      : 0;
   const selectedLabels = (filters.labels ?? []).flatMap((group) => group);
-  const filterCount = [
-    state !== "open",
-    involvement !== "all",
-    host,
-    server,
-    projectId,
-    filters.draft,
-    filters.review,
-    filters.checks,
-    filters.author,
-    ...selectedLabels,
-  ].filter(Boolean).length;
+  const filterCount =
+    [
+      state !== "open",
+      involvement !== "all",
+      host,
+      server,
+      projectId,
+      filters.draft,
+      filters.review,
+      filters.excludedReview,
+      filters.checks,
+      filters.excludedChecks,
+      filters.author,
+      ...(filters.excludedAuthors ?? []),
+      ...selectedLabels,
+      ...(filters.excludedLabels ?? []),
+    ].filter(Boolean).length + excludedRepositoryCount;
   const updateFilters = (next: Partial<PullRequestListFilters>) =>
     onFilters(
       Object.fromEntries(
         Object.entries({ ...filters, ...next }).filter(([, value]) => value !== undefined),
       ) as PullRequestListFilters,
     );
-  const updateFilter = (key: keyof PullRequestListFilters, value: string) =>
-    updateFilters({
-      [key]: value === UNFILTERED_VALUE ? undefined : value,
-    } as Partial<PullRequestListFilters>);
+
   const projectValue =
     projectId === undefined || projectEnvironmentId === undefined
       ? ALL_PROJECTS_VALUE
@@ -586,18 +864,24 @@ export function PullRequestFiltersMenu({
         />
         <MenuSeparator />
         <PullRequestAuthorFilter
-          value={filters.author}
+          value={{ author: filters.author, excludedAuthors: filters.excludedAuthors }}
           options={authorOptions}
           scope={optionScope}
-          onChange={(author) => updateFilters({ author })}
+          onChange={(next) =>
+            updateFilters({
+              author: next.author,
+              excludedAuthors: next.excludedAuthors?.length ? next.excludedAuthors : undefined,
+            })
+          }
         />
         <PullRequestLabelFilter
-          value={selectedLabels}
+          value={{ labels: selectedLabels, excludedLabels: filters.excludedLabels ?? [] }}
           options={labelOptions}
           scope={optionScope}
-          onChange={(labels) =>
+          onChange={(next) =>
             updateFilters({
-              labels: labels.length === 0 ? undefined : labels.slice(0, 10).map((label) => [label]),
+              labels: next.labels.length === 0 ? undefined : next.labels.map((label) => [label]),
+              excludedLabels: next.excludedLabels.length === 0 ? undefined : next.excludedLabels,
             })
           }
         />
@@ -605,19 +889,23 @@ export function PullRequestFiltersMenu({
           label="Draft"
           value={filters.draft ?? UNFILTERED_VALUE}
           options={DRAFT_OPTIONS}
-          onChange={(draft) => updateFilter("draft", draft)}
+          onChange={(draft) =>
+            updateFilters({ draft: draft === UNFILTERED_VALUE ? undefined : draft })
+          }
         />
-        <PullRequestFilterRadioSubmenu
+        <PullRequestExcludableRadioSubmenu
           label="Review"
-          value={filters.review ?? UNFILTERED_VALUE}
+          value={filters.review}
+          excluded={filters.excludedReview}
           options={REVIEW_OPTIONS}
-          onChange={(review) => updateFilter("review", review)}
+          onChange={(next) => updateFilters({ review: next.value, excludedReview: next.excluded })}
         />
-        <PullRequestFilterRadioSubmenu
+        <PullRequestExcludableRadioSubmenu
           label="Checks"
-          value={filters.checks ?? UNFILTERED_VALUE}
+          value={filters.checks}
+          excluded={filters.excludedChecks}
           options={CHECKS_OPTIONS}
-          onChange={(checks) => updateFilter("checks", checks)}
+          onChange={(next) => updateFilters({ checks: next.value, excludedChecks: next.excluded })}
         />
         {hostOptions.length > 2 ? (
           <>
@@ -644,16 +932,41 @@ export function PullRequestFiltersMenu({
           </>
         ) : null}
         <MenuSeparator />
-        <PullRequestFilterRadioSubmenu
-          label="Project"
-          value={projectValue}
-          options={projectOptions}
-          onChange={(next) => {
-            const project = projects.find((candidate) => pullRequestProjectKey(candidate) === next);
-            if (project) onProject(project.id, project.environmentId);
-            else if (projectId !== undefined) onProject(undefined, undefined);
-          }}
-        />
+        <MenuSub>
+          <MenuSubTrigger>
+            <FolderGit2Icon aria-hidden className="size-3.5" />
+            <span className="flex-1">Project</span>
+            <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+              {excludedRepositoryCount > 0
+                ? excludedSummary(
+                    projects
+                      .filter((project) =>
+                        excludedRepositories.includes(repositoryKey(project) ?? ""),
+                      )
+                      .map((project) => project.title)
+                      .filter((title, index, titles) => titles.indexOf(title) === index),
+                  )
+                : (projectOptions.find((option) => option.value === projectValue)?.label ??
+                  "All projects")}
+            </span>
+          </MenuSubTrigger>
+          <MenuSubPopup>
+            <PullRequestProjectChoices
+              projects={projects}
+              options={projectOptions}
+              value={projectValue}
+              excludedRepositories={projectId === undefined ? excludedRepositories : []}
+              onChange={(next) =>
+                onProjectScope({
+                  project: projects.find(
+                    (candidate) => pullRequestProjectKey(candidate) === next.value,
+                  ),
+                  excludedRepositories: next.excludedRepositories,
+                })
+              }
+            />
+          </MenuSubPopup>
+        </MenuSub>
       </MenuPopup>
     </Menu>
   );

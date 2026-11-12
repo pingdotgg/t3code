@@ -115,7 +115,7 @@ export function rememberPullRequestHosts(
   return next;
 }
 
-function repositoryKey(project: AssignableProject): string | undefined {
+export function repositoryKey(project: AssignableProject): string | undefined {
   return project.repositoryIdentity?.canonicalKey?.toLowerCase();
 }
 
@@ -173,16 +173,22 @@ export function assignProjectsToEnvironments(
   return assignment;
 }
 
+/**
+ * Excluding repositories names every remaining project, because a server asked without
+ * `projectIds` lists all of its projects, excluded ones included.
+ */
 export function pullRequestProjectQueries(
   projects: ReadonlyArray<AssignableProject>,
   environmentIds: ReadonlyArray<EnvironmentId>,
   hostAvailability?: PullRequestHostAvailability,
+  excludedRepositories: ReadonlyArray<string> = [],
 ): ReadonlyArray<{
   readonly environmentId: EnvironmentId;
   readonly projectIds?: ReadonlyArray<ProjectId>;
 }> {
+  const excluded = new Set(excludedRepositories);
   const assignment = assignProjectsToEnvironments(
-    projects,
+    projects.filter((project) => !excluded.has(repositoryKey(project) ?? "")),
     environmentIds,
     environmentIds[0],
     hostAvailability,

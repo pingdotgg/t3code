@@ -1,6 +1,13 @@
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
-import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
+  pullRequestFilterProjects,
+  pullRequestRepositoryKey,
+} from "@t3tools/client-runtime/pull-request-project-filter";
+import {
+  mergePullRequestFilters,
+  parsePullRequestQuery,
+} from "@t3tools/client-runtime/pull-request-query";
+import {
+  PULL_REQUEST_LIST_PROJECT_LIMIT,
   ProjectId,
   resolvePullRequestAuthorFilter,
   type EnvironmentId,
@@ -299,17 +306,55 @@ export function patchPullRequestListEntry(
   );
 }
 
+type ScopeProject = Pick<FilterProject, "id" | "repositoryIdentity">;
+
+/**
+ * The project batches an environment's reads cover: none when it holds only excluded
+ * repositories, one unscoped read when nothing is excluded, else the rest in request-sized
+ * batches, since a read without `projectIds` lists every project.
+ */
+export function pullRequestProjectScopes(
+  controls: PullRequestListControls,
+  environmentProjects: readonly ScopeProject[],
+): readonly (readonly ProjectId[] | undefined)[] {
+  const excluded = new Set(controls.projectId ? [] : (controls.excludedRepositories ?? []));
+  const remaining = environmentProjects.filter(
+    (project) => !excluded.has(pullRequestRepositoryKey(project) ?? ""),
+  );
+  // Until its projects load, an environment's unscoped read would include excluded ones.
+  if (excluded.size > 0 && environmentProjects.length === 0) return [];
+  if (remaining.length === environmentProjects.length) return [undefined];
+  const batches: ProjectId[][] = [];
+  for (let offset = 0; offset < remaining.length; offset += PULL_REQUEST_LIST_PROJECT_LIMIT) {
+    batches.push(
+      remaining
+        .slice(offset, offset + PULL_REQUEST_LIST_PROJECT_LIMIT)
+        .map((project) => ProjectId.make(project.id)),
+    );
+  }
+  return batches;
+}
+
+/**
+ * One environment's list read, or null when it holds only excluded repositories. A list read is
+ * one request, so past one batch it reads everything and the screen drops excluded rows.
+ */
 export function pullRequestListInput(
   controls: PullRequestListControls,
   query: string,
-): PullRequestListInput {
+  environmentProjects: readonly ScopeProject[],
+): PullRequestListInput | null {
   const parsed = parsePullRequestQuery(query);
+  const scopes = pullRequestProjectScopes(controls, environmentProjects);
+  if (scopes.length === 0) return null;
+  const projectIds = scopes.length === 1 ? scopes[0] : undefined;
   return {
     state: controls.state,
     involvement: controls.involvement,
-    filters: { ...controls.filters, ...parsed.filters },
+    filters: mergePullRequestFilters(controls.filters, parsed.filters),
     limit: PR_LIST_PAGE_SIZE,
     ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+    ...(projectIds ? { projectIds } : {}),
     ...(parsed.text ? { query: parsed.text } : {}),
   };
 }
@@ -409,7 +454,7 @@ export function filterPullRequestList<
   const normalize = (value: string) => value.toLowerCase();
   const parsed = parsePullRequestQuery(query);
   const words = parsed.text.toLowerCase().split(/\s+/).filter(Boolean);
-  const filters = { ...controls.filters, ...parsed.filters };
+  const filters = mergePullRequestFilters(controls.filters, parsed.filters);
   const filtered = entries.filter((entry) => {
     if (controls.state !== "all" && entry.state !== controls.state) return false;
     if (controls.projectId && entry.projectId !== controls.projectId) return false;
@@ -432,7 +477,24 @@ export function filterPullRequestList<
     if (filters.review && entry.reviewDecision && entry.reviewDecision !== filters.review)
       return false;
     if (filters.review === "none" && entry.reviewDecision) return false;
+    if (filters.excludedAuthors?.length) {
+      const login = normalize(entry.author?.login ?? "");
+      if (
+        filters.excludedAuthors.some(
+          (excluded) => normalize(resolvePullRequestAuthorFilter(excluded, viewer)) === login,
+        )
+      )
+        return false;
+    }
+    // Entries omit both "no reviews" and "host reports none", so the server judges "none".
+    if (
+      filters.excludedReview &&
+      filters.excludedReview !== "none" &&
+      entry.reviewDecision === filters.excludedReview
+    )
+      return false;
     if (filters.checks && entry.checksState && entry.checksState !== filters.checks) return false;
+    if (filters.excludedChecks && entry.checksState === filters.excludedChecks) return false;
     const labels = new Set(entry.labels.map((label) => normalize(label.name)));
     if (filters.labels?.some((group) => !group.some((label) => labels.has(normalize(label)))))
       return false;

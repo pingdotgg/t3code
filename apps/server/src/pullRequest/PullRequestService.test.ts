@@ -3980,6 +3980,27 @@ it.effect("judges review and checks filters only on a host that summarises them"
 
     const passing = yield* service.list({ state: "open", filters: { checks: "passing" } });
     assert.deepStrictEqual(passing.entries.map((entry) => entry.number).toSorted(), [3]);
+
+    const notApproved = yield* service.list({
+      state: "open",
+      filters: { excludedReview: "approved" },
+    });
+    assert.deepStrictEqual(notApproved.entries.map((entry) => entry.number).toSorted(), [1, 3]);
+
+    const reviewed = yield* service.list({ state: "open", filters: { excludedReview: "none" } });
+    assert.deepStrictEqual(reviewed.entries.map((entry) => entry.number).toSorted(), [2, 3]);
+
+    const notFailing = yield* service.list({
+      state: "open",
+      filters: { excludedChecks: "failing" },
+    });
+    assert.deepStrictEqual(notFailing.entries.map((entry) => entry.number).toSorted(), [2, 3]);
+
+    const notOctocat = yield* service.list({
+      state: "open",
+      filters: { excludedAuthors: ["OctoCat"] },
+    });
+    assert.deepStrictEqual(notOctocat.entries, []);
   }),
 );
 

@@ -35,16 +35,26 @@ const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check
   Schema.isMaxLength(10),
 );
 
+export const PullRequestReviewFilter = Schema.Literals([
+  "approved",
+  "changes-requested",
+  "review-required",
+  "none",
+]);
+export const PullRequestChecksFilter = Schema.Literals(["passing", "failing"]);
+
+/** Each `excluded*` field drops the rows its include counterpart would keep. */
 export const PullRequestListFilters = Schema.Struct({
   draft: Schema.optional(Schema.Literals(["only", "hide"])),
-  review: Schema.optional(
-    Schema.Literals(["approved", "changes-requested", "review-required", "none"]),
-  ),
-  checks: Schema.optional(Schema.Literals(["passing", "failing"])),
+  review: Schema.optional(PullRequestReviewFilter),
+  excludedReview: Schema.optional(PullRequestReviewFilter),
+  checks: Schema.optional(PullRequestChecksFilter),
+  excludedChecks: Schema.optional(PullRequestChecksFilter),
   /** GitHub label qualifiers: every group must match; any name within a group suffices. */
   labels: Schema.optional(Schema.Array(PullRequestQualifierValues).check(Schema.isMaxLength(10))),
   excludedLabels: Schema.optional(PullRequestQualifierValues),
   author: Schema.optional(PullRequestQualifierValue),
+  excludedAuthors: Schema.optional(PullRequestQualifierValues),
 });
 export type PullRequestListFilters = typeof PullRequestListFilters.Type;
 

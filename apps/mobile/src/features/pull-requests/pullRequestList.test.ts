@@ -20,6 +20,7 @@ import {
   pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
+  pullRequestProjectScopes,
   scopedPullRequestListKey,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
@@ -272,7 +273,7 @@ describe("mobile PR scan and filters", () => {
     ).toEqual([1]);
   });
   it("reads a typed draft qualifier as a filter and searches only the text left over", () => {
-    expect(pullRequestListInput(DEFAULT_PR_LIST_CONTROLS, "draft:false fix")).toEqual({
+    expect(pullRequestListInput(DEFAULT_PR_LIST_CONTROLS, "draft:false fix", [])).toEqual({
       state: "open",
       involvement: "all",
       filters: { draft: "hide" },
@@ -294,6 +295,55 @@ describe("mobile PR scan and filters", () => {
       ).map((row) => row.number),
     ).toEqual([1]);
   });
+  it("names the other projects when a repository is hidden, and skips an environment holding only it", () => {
+    const controls = { ...DEFAULT_PR_LIST_CONTROLS, excludedRepositories: ["github.com/acme/app"] };
+    const app = {
+      id: ProjectId.make("app"),
+      repositoryIdentity: { canonicalKey: "GitHub.com/acme/app" },
+    };
+    const tools = {
+      id: ProjectId.make("tools"),
+      repositoryIdentity: { canonicalKey: "github.com/acme/tools" },
+    };
+    expect(pullRequestListInput(controls, "", [app, tools])?.projectIds).toEqual(["tools"]);
+    expect(pullRequestListInput(controls, "", [app])).toBeNull();
+    expect(pullRequestListInput(controls, "", [])).toBeNull();
+    const many = Array.from({ length: 101 }, (_, index) => ({
+      id: ProjectId.make(`p${index}`),
+      repositoryIdentity: { canonicalKey: `github.com/acme/r${index}` },
+    }));
+    expect(pullRequestListInput(controls, "", [app, ...many])).not.toHaveProperty("projectIds");
+    expect(pullRequestProjectScopes(controls, [app, ...many]).map((ids) => ids?.length)).toEqual([
+      100, 1,
+    ]);
+  });
+  it("drops the rows an excluded author, review, or checks state matches", () => {
+    const rows = [
+      entry(1, { author: { login: "dependabot", name: null, avatarUrl: null } }),
+      entry(2, { reviewDecision: "approved" }),
+      entry(3, { checksState: "failing" }),
+      entry(4),
+    ];
+    const controls = {
+      ...DEFAULT_PR_LIST_CONTROLS,
+      filters: {
+        excludedAuthors: ["Dependabot"],
+        excludedReview: "approved" as const,
+        excludedChecks: "failing" as const,
+      },
+    };
+    expect(
+      filterPullRequestList(rows, controls, {}, "", new Set()).map((row) => row.number),
+    ).toEqual([4]);
+    const notUnreviewed = {
+      ...DEFAULT_PR_LIST_CONTROLS,
+      filters: { excludedReview: "none" as const },
+    };
+    expect(
+      filterPullRequestList([entry(4)], notUnreviewed, {}, "", new Set()).map((row) => row.number),
+    ).toEqual([4]);
+  });
+
   it("does not label unsupported review summaries as reviewed or match text locally on host-search results", () => {
     expect(
       filterPullRequestList(

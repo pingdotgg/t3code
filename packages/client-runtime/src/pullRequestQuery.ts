@@ -48,11 +48,14 @@ export function parsePullRequestQuery(raw: string): {
   const text: string[] = [];
   const labels: string[][] = [];
   const excludedLabels: string[] = [];
+  const excludedAuthors: string[] = [];
   // `null` once two different logins are named: GitHub ORs them, the contract carries one.
   let author: string | null | undefined;
   let draft: PullRequestListFilters["draft"];
   let review: PullRequestListFilters["review"];
+  let excludedReview: PullRequestListFilters["review"];
   let checks: PullRequestListFilters["checks"];
+  let excludedChecks: PullRequestListFilters["checks"];
   for (const [token] of raw.matchAll(QUERY_TOKEN)) {
     const qualifier = /^(-?)([A-Za-z][A-Za-z0-9_-]*):(.*)$/.exec(token);
     const value = qualifier === null ? "" : qualifierValue(qualifier[3] ?? "");
@@ -66,9 +69,9 @@ export function parsePullRequestQuery(raw: string): {
         continue;
       }
       case "author": {
-        if (negated) break;
         const login = value.slice(0, MAX_QUALIFIER_LENGTH).trim();
-        if (author === undefined) author = login;
+        if (negated) excludedAuthors.push(login);
+        else if (author === undefined) author = login;
         else if (author === null || authorKey(author) !== authorKey(login)) author = null;
         continue;
       }
@@ -77,16 +80,18 @@ export function parsePullRequestQuery(raw: string): {
         draft = (value.toLowerCase() === "true") !== negated ? "only" : "hide";
         continue;
       case "review": {
-        const decision = negated ? undefined : REVIEW_VALUES[value.toLowerCase()];
+        const decision = REVIEW_VALUES[value.toLowerCase()];
         if (decision === undefined) break;
-        review = decision;
+        if (negated) excludedReview = decision;
+        else review = decision;
         continue;
       }
       case "status":
       case "checks": {
-        const state = negated ? undefined : CHECKS_VALUES[value.toLowerCase()];
+        const state = CHECKS_VALUES[value.toLowerCase()];
         if (state === undefined) break;
-        checks = state;
+        if (negated) excludedChecks = state;
+        else checks = state;
         continue;
       }
       // GitHub's own search qualifiers, not labels: the list sets scope and order itself.
@@ -123,10 +128,42 @@ export function parsePullRequestQuery(raw: string): {
         ? {}
         : { excludedLabels: excludedLabels.slice(0, MAX_QUALIFIER_VALUES) }),
       ...(typeof author === "string" ? { author } : {}),
+      ...(excludedAuthors.length === 0
+        ? {}
+        : { excludedAuthors: excludedAuthors.slice(0, MAX_QUALIFIER_VALUES) }),
       ...(draft === undefined ? {} : { draft }),
       ...(review === undefined ? {} : { review }),
+      ...(excludedReview === undefined ? {} : { excludedReview }),
       ...(checks === undefined ? {} : { checks }),
+      ...(excludedChecks === undefined ? {} : { excludedChecks }),
     },
+  };
+}
+
+function unionNames(left: ReadonlyArray<string> = [], right: ReadonlyArray<string> = []) {
+  const seen = new Set<string>();
+  return [...left, ...right]
+    .filter((name) => {
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_QUALIFIER_VALUES);
+}
+
+/** Typed qualifiers override the menu's picks, but exclusions from both apply together. */
+export function mergePullRequestFilters(
+  menu: PullRequestListFilters,
+  typed: PullRequestListFilters,
+): PullRequestListFilters {
+  const excludedLabels = unionNames(menu.excludedLabels, typed.excludedLabels);
+  const excludedAuthors = unionNames(menu.excludedAuthors, typed.excludedAuthors);
+  return {
+    ...menu,
+    ...typed,
+    ...(excludedLabels.length === 0 ? {} : { excludedLabels }),
+    ...(excludedAuthors.length === 0 ? {} : { excludedAuthors }),
   };
 }
 

@@ -1,5 +1,8 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import {
+  mergePullRequestFilters,
+  parsePullRequestQuery,
+} from "@t3tools/client-runtime/pull-request-query";
 import {
   type EnvironmentId,
   type ProjectId,
@@ -33,10 +36,11 @@ import {
   type PullRequestGroup,
   type PullRequestListOverride,
 } from "./pullRequestList.logic";
-import type { PullRequestExpectedHost } from "./PullRequestListFilters";
+import { type PullRequestExpectedHost, pullRequestProjectKey } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
 import {
   pullRequestProjectQueries,
+  repositoryKey,
   type PullRequestHostAvailability,
 } from "./pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
@@ -121,6 +125,8 @@ export function usePullRequestScope(
     scopedProjectId,
     projectsKnown,
   );
+  const excludedRepositories =
+    scopedProjectId === undefined ? (search.excludedRepositories ?? []) : [];
   const queriesFor = (
     availability?: PullRequestHostAvailability,
   ): ReadonlyArray<{
@@ -128,12 +134,26 @@ export function usePullRequestScope(
     readonly projectIds?: ReadonlyArray<ProjectId>;
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
-    if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    return pullRequestProjectQueries(projects, queryEnvironmentIds, availability);
+    if (scopedProjectId !== undefined) return plain;
+    // Until projects load, a plain read would list the excluded repositories too.
+    if (!projectsKnown) return excludedRepositories.length > 0 ? [] : plain;
+    return pullRequestProjectQueries(
+      projects,
+      queryEnvironmentIds,
+      availability,
+      excludedRepositories,
+    );
   };
   const environmentQueries = queriesFor(hostAvailability);
   // What the page reads once a refresh forgets host reads; refresh must refetch these too.
   const preferredEnvironmentQueries = queriesFor();
+  // Rows read before a project's repository identity arrived, or carried over from the previous
+  // answer, can still belong to an excluded repository.
+  const excludedProjectKeys = new Set(
+    projects
+      .filter((project) => excludedRepositories.includes(repositoryKey(project) ?? ""))
+      .map(pullRequestProjectKey),
+  );
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
     .join("|");
@@ -188,6 +208,7 @@ export function usePullRequestScope(
     linkedSelection,
     expectedHosts,
     projectsKnown,
+    excludedProjectKeys,
   };
 }
 
@@ -204,14 +225,18 @@ export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuer
   const menuFilters = {
     ...(search.draft ? { draft: search.draft } : {}),
     ...(search.review ? { review: search.review } : {}),
+    ...(search.excludedReview ? { excludedReview: search.excludedReview } : {}),
     ...(search.checks ? { checks: search.checks } : {}),
+    ...(search.excludedChecks ? { excludedChecks: search.excludedChecks } : {}),
     ...(search.author ? { author: search.author } : {}),
+    ...(search.excludedAuthors ? { excludedAuthors: search.excludedAuthors } : {}),
     ...(search.labels ? { labels: search.labels.map((label) => [label]) } : {}),
+    ...(search.excludedLabels ? { excludedLabels: search.excludedLabels } : {}),
   };
   const menuFiltered = Object.keys(menuFilters).length > 0;
-  const filters = { ...menuFilters, ...sentParsed.filters };
+  const filters = mergePullRequestFilters(menuFilters, sentParsed.filters);
   const hasFilters = Object.keys(filters).length > 0;
-  const localFilters = { ...menuFilters, ...typedParsed.filters };
+  const localFilters = mergePullRequestFilters(menuFilters, typedParsed.filters);
   const hasLocalFilters = Object.keys(localFilters).length > 0;
   return {
     sentQuery,
@@ -245,6 +270,7 @@ export function usePullRequestDisplayGroups({
   sort,
   text,
   involvement,
+  excludedProjectKeys,
 }: {
   answered: MergedPullRequestList | null;
   host: string | undefined;
@@ -258,6 +284,7 @@ export function usePullRequestDisplayGroups({
   sort: PullRequestListSort;
   text: string;
   involvement: PullRequestInvolvement;
+  excludedProjectKeys: ReadonlySet<string>;
 }) {
   const [hostsState, setHostsState] = useState<{
     readonly source: MergedPullRequestList | null;
@@ -276,7 +303,15 @@ export function usePullRequestDisplayGroups({
   const displayGroups = (() => {
     const enriched = groups.map((group) => {
       const overridden = applyPullRequestOverrides(
-        group.entries.map((entry) => withDiffStat(entry, statsByRow)),
+        group.entries
+          .filter(
+            (entry) =>
+              excludedProjectKeys.size === 0 ||
+              !excludedProjectKeys.has(
+                pullRequestProjectKey({ id: entry.projectId, environmentId: entry.environmentId }),
+              ),
+          )
+          .map((entry) => withDiffStat(entry, statsByRow)),
         overrides,
         pullRequestEntryKey,
         state,

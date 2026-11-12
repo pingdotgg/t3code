@@ -1,30 +1,59 @@
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ProjectId,
+  PullRequestChecksFilter,
+  PullRequestReviewFilter,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
+import {
+  MAX_EXCLUDED_REPOSITORIES,
+  type PullRequestListSort,
+} from "../components/pullRequest/pullRequestListPreferences";
 import { SORT_OPTIONS } from "../components/pullRequest/pullRequestListOptions";
 import { type PullRequestsSearch } from "../components/pullRequest/usePullRequestListView";
 import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
 
-const MAX_SEARCH_LABEL_CANDIDATES = 100;
+const MAX_SEARCH_LIST_CANDIDATES = 100;
 
-function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch, "labels">> {
+function searchStringList(raw: unknown, limit: number): ReadonlyArray<string> {
   const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
     0,
-    MAX_SEARCH_LABEL_CANDIDATES,
+    MAX_SEARCH_LIST_CANDIDATES,
   );
-  const labels: Array<string> = [];
+  const list: Array<string> = [];
   const seen = new Set<string>();
   for (const rawValue of values) {
     if (typeof rawValue !== "string") continue;
     const value = rawValue.trim().slice(0, 200);
     const key = value.toLowerCase();
     if (value.length === 0 || seen.has(key)) continue;
-    labels.push(value);
+    list.push(value);
     seen.add(key);
-    if (labels.length === 10) break;
+    if (list.length === limit) break;
   }
-  return labels.length === 0 ? {} : { labels };
+  return list;
+}
+
+function pullRequestSearchList<Key extends "labels" | "excludedLabels" | "excludedAuthors">(
+  key: Key,
+  raw: unknown,
+): Partial<Record<Key, ReadonlyArray<string>>> {
+  const values = searchStringList(raw, 10);
+  return values.length === 0 ? {} : ({ [key]: values } as Record<Key, ReadonlyArray<string>>);
+}
+
+const isReviewFilter = Schema.is(PullRequestReviewFilter);
+const isChecksFilter = Schema.is(PullRequestChecksFilter);
+
+function pullRequestSearchExcludedRepositories(
+  raw: unknown,
+): Partial<Pick<PullRequestsSearch, "excludedRepositories">> {
+  const excludedRepositories = searchStringList(raw, MAX_EXCLUDED_REPOSITORIES).map((key) =>
+    key.toLowerCase(),
+  );
+  return excludedRepositories.length === 0 ? {} : { excludedRepositories };
 }
 
 export const Route = createFileRoute("/_chat/pull-requests")({
@@ -46,6 +75,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.projectId === "string" && raw.projectId
       ? { projectId: raw.projectId as ProjectId }
       : {}),
+    ...pullRequestSearchExcludedRepositories(raw.excludedRepositories),
     ...(typeof raw.environmentId === "string" && raw.environmentId
       ? { environmentId: raw.environmentId as EnvironmentId }
       : {}),
@@ -62,17 +92,16 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     // Always include q to override numeric values in the parent route's unvalidated search.
     q: typeof raw.q === "string" && raw.q ? raw.q.slice(0, 200) : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
-    ...(raw.review === "approved" ||
-    raw.review === "changes-requested" ||
-    raw.review === "review-required" ||
-    raw.review === "none"
-      ? { review: raw.review }
-      : {}),
-    ...(raw.checks === "passing" || raw.checks === "failing" ? { checks: raw.checks } : {}),
+    ...(isReviewFilter(raw.review) ? { review: raw.review } : {}),
+    ...(isReviewFilter(raw.excludedReview) ? { excludedReview: raw.excludedReview } : {}),
+    ...(isChecksFilter(raw.checks) ? { checks: raw.checks } : {}),
+    ...(isChecksFilter(raw.excludedChecks) ? { excludedChecks: raw.excludedChecks } : {}),
     ...(typeof raw.author === "string" && raw.author.trim()
       ? { author: raw.author.trim().slice(0, 200) }
       : {}),
-    ...pullRequestSearchLabels(raw.labels),
+    ...pullRequestSearchList("excludedAuthors", raw.excludedAuthors),
+    ...pullRequestSearchList("labels", raw.labels),
+    ...pullRequestSearchList("excludedLabels", raw.excludedLabels),
   }),
   component: PullRequestsPage,
 });

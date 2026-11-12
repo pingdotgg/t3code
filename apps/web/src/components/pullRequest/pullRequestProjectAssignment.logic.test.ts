@@ -378,6 +378,24 @@ const on = (environmentId: string, projectId: string) => ({
   projectId: projectId as ProjectId,
 });
 
+describe("excluding repositories from the list", () => {
+  it("names the remaining projects so the server leaves every copy of the excluded one out", () => {
+    expect(
+      pullRequestProjectQueries(
+        [
+          project("app", "env-1", "github.com/acme/app"),
+          project("app-wt", "env-1", "github.com/acme/app"),
+          project("tools", "env-1", "github.com/acme/tools"),
+          project("app-2", "env-2", "github.com/acme/app"),
+        ],
+        envs("env-1", "env-2"),
+        undefined,
+        ["github.com/acme/app"],
+      ),
+    ).toEqual([{ environmentId: "env-1", projectIds: ["tools"] }]);
+  });
+});
+
 describe("where a pull request can be acted on", () => {
   it("offers every server holding the repository, the panel's own first", () => {
     const pickable = resolvePickableEnvironments(

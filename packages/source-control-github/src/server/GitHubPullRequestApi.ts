@@ -814,6 +814,8 @@ const REVIEW_QUALIFIERS = {
   none: "none",
 } as const;
 
+const STATUS_QUALIFIERS = { passing: "success", failing: "failure" } as const;
+
 /** Labels/logins cannot contain quotes; strip them to prevent qualifier injection. */
 function qualifierValue(value: string): string {
   return `"${value.replaceAll('"', "").trim()}"`;
@@ -834,10 +836,17 @@ function filterQualifiers(
       ? []
       : [`author:${qualifierValue(resolvePullRequestAuthorFilter(filters.author, viewer))}`]),
     ...(filters.draft === undefined ? [] : [`draft:${filters.draft === "only"}`]),
+    ...(filters.excludedAuthors ?? []).map(
+      (author) => `-author:${qualifierValue(resolvePullRequestAuthorFilter(author, viewer))}`,
+    ),
     ...(filters.review === undefined ? [] : [`review:${REVIEW_QUALIFIERS[filters.review]}`]),
-    ...(filters.checks === undefined
+    ...(filters.excludedReview === undefined
       ? []
-      : [`status:${filters.checks === "passing" ? "success" : "failure"}`]),
+      : [`-review:${REVIEW_QUALIFIERS[filters.excludedReview]}`]),
+    ...(filters.checks === undefined ? [] : [`status:${STATUS_QUALIFIERS[filters.checks]}`]),
+    ...(filters.excludedChecks === undefined
+      ? []
+      : [`-status:${STATUS_QUALIFIERS[filters.excludedChecks]}`]),
   ];
 }
 
@@ -849,18 +858,21 @@ function matchesFilters(
   if (filters === undefined) return true;
   const labels = new Set(item.labels.map((label) => label.name.trim().toLowerCase()));
   const holds = (label: string) => labels.has(label.trim().toLowerCase());
+  const reviewIs = (review: NonNullable<PullRequestListFilters["review"]>) =>
+    review === "none" ? item.reviewDecision === null : item.reviewDecision === review;
+  const authoredBy = (author: string) =>
+    item.author?.login.toLowerCase() ===
+    resolvePullRequestAuthorFilter(author, viewer).toLowerCase();
   return (
     (filters.draft === undefined || item.isDraft === (filters.draft === "only")) &&
-    (filters.review === undefined ||
-      (filters.review === "none"
-        ? item.reviewDecision === null
-        : item.reviewDecision === filters.review)) &&
+    (filters.review === undefined || reviewIs(filters.review)) &&
+    (filters.excludedReview === undefined || !reviewIs(filters.excludedReview)) &&
     (filters.checks === undefined || item.checksState === filters.checks) &&
+    (filters.excludedChecks === undefined || item.checksState !== filters.excludedChecks) &&
     (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
-    (filters.author === undefined ||
-      item.author?.login.toLowerCase() ===
-        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+    (filters.author === undefined || authoredBy(filters.author)) &&
+    !(filters.excludedAuthors ?? []).some(authoredBy)
   );
 }
 

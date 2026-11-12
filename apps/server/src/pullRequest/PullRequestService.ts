@@ -1257,21 +1257,24 @@ export const make = Effect.gen(function* () {
     if (filters === undefined) return true;
     const labels = new Set(item.labels.map((label) => label.name.trim().toLowerCase()));
     const holds = (label: string) => labels.has(label.trim().toLowerCase());
+    // A provider that does not report a review or checks state cannot be filtered on it.
+    const reviewIs = (review: NonNullable<PullRequestListFilters["review"]>) =>
+      review === "none" ? item.reviewDecision === null : item.reviewDecision === review;
+    const authoredBy = (author: string) =>
+      item.author?.login.toLowerCase() ===
+      resolvePullRequestAuthorFilter(author, viewer).toLowerCase();
     return (
       (filters.draft === undefined || item.isDraft === (filters.draft === "only")) &&
-      (filters.review === undefined ||
-        item.reviewDecision === undefined ||
-        (filters.review === "none"
-          ? item.reviewDecision === null
-          : item.reviewDecision === filters.review)) &&
-      (filters.checks === undefined ||
-        item.checksState === undefined ||
-        item.checksState === filters.checks) &&
+      (item.reviewDecision === undefined ||
+        ((filters.review === undefined || reviewIs(filters.review)) &&
+          (filters.excludedReview === undefined || !reviewIs(filters.excludedReview)))) &&
+      (item.checksState === undefined ||
+        ((filters.checks === undefined || item.checksState === filters.checks) &&
+          item.checksState !== filters.excludedChecks)) &&
       (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
       (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
-      (filters.author === undefined ||
-        item.author?.login.toLowerCase() ===
-          resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+      (filters.author === undefined || authoredBy(filters.author)) &&
+      !(filters.excludedAuthors ?? []).some(authoredBy)
     );
   };
 
@@ -3003,12 +3006,31 @@ export const make = Effect.gen(function* () {
       string | ReadonlyArray<string> | ReadonlyArray<ReadonlyArray<string>> | null
     >,
   ): PullRequestListFilters => {
-    const [draft, review, checks, author, labels, excludedLabels] = slots;
+    const [
+      draft,
+      review,
+      excludedReview,
+      checks,
+      excludedChecks,
+      author,
+      excludedAuthors,
+      labels,
+      excludedLabels,
+    ] = slots;
     return {
       ...(typeof draft === "string" ? { draft: draft as "only" | "hide" } : {}),
       ...(typeof review === "string" ? { review: review as PullRequestListFilters["review"] } : {}),
+      ...(typeof excludedReview === "string"
+        ? { excludedReview: excludedReview as PullRequestListFilters["excludedReview"] }
+        : {}),
       ...(typeof checks === "string" ? { checks: checks as PullRequestListFilters["checks"] } : {}),
+      ...(typeof excludedChecks === "string"
+        ? { excludedChecks: excludedChecks as PullRequestListFilters["excludedChecks"] }
+        : {}),
       ...(typeof author === "string" ? { author } : {}),
+      ...(Array.isArray(excludedAuthors)
+        ? { excludedAuthors: excludedAuthors as ReadonlyArray<string> }
+        : {}),
       ...(Array.isArray(labels) ? { labels: labels as ReadonlyArray<ReadonlyArray<string>> } : {}),
       ...(Array.isArray(excludedLabels) ? { excludedLabels } : {}),
     };
@@ -3134,8 +3156,11 @@ export const make = Effect.gen(function* () {
         : [
             input.filters.draft ?? null,
             input.filters.review ?? null,
+            input.filters.excludedReview ?? null,
             input.filters.checks ?? null,
+            input.filters.excludedChecks ?? null,
             input.filters.author ?? null,
+            input.filters.excludedAuthors ?? null,
             input.filters.labels ?? null,
             input.filters.excludedLabels ?? null,
           ],

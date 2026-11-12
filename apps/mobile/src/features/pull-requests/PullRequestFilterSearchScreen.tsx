@@ -25,10 +25,15 @@ import { usePullRequestListControls } from "./usePullRequestListControls";
 
 export type PullRequestFilterSearchParams = {
   readonly kind: PullRequestFilterOptionKind;
+  /** Whether a pick drops its matches instead of narrowing to them. */
+  readonly excluding: boolean;
   /** The list controls' own key: the environment the list is narrowed to, or every one. */
   readonly environmentId: string | null;
-  /** The environments the list reads, which the host search covers as well. */
-  readonly environmentIds: readonly string[];
+  /** What the list reads, which the host search covers as well. */
+  readonly scopes: readonly {
+    readonly environmentId: string;
+    readonly projectIds?: readonly string[];
+  }[];
   /** What the loaded rows already carry, offered before the host has answered. */
   readonly suggestions: readonly string[];
   /** Dot colors by lowercased label name, from the loaded rows. */
@@ -54,7 +59,7 @@ export function PullRequestFilterSearchScreen({
   route,
 }: StaticScreenProps<PullRequestFilterSearchParams>) {
   const navigation = useNavigation();
-  const { kind, environmentId, environmentIds, suggestions, labelColors } = route.params;
+  const { kind, excluding, environmentId, scopes, suggestions, labelColors } = route.params;
   const listControls = usePullRequestListControls();
   const controls = listControls.controlsFor(environmentId);
   const [query, setQuery] = useState("");
@@ -63,19 +68,26 @@ export function PullRequestFilterSearchScreen({
   // Until the search catches up with the typing, the host's answers are for older text.
   const settled = sent === typed;
   const key = JSON.stringify(
-    environmentIds.map((id) => ({
-      environmentId: EnvironmentId.make(id),
+    scopes.map((scope) => ({
+      environmentId: EnvironmentId.make(scope.environmentId),
       input: {
         kind,
         ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+        ...(scope.projectIds
+          ? { projectIds: scope.projectIds.map((id) => ProjectId.make(id)) }
+          : {}),
         ...(sent ? { query: sent } : {}),
       },
     })),
   );
   const hosted = useAtomValue(optionsFamily(key));
-  const selectedLabels = controls.filters.labels?.flat() ?? [];
+  const selectedLabels = excluding
+    ? (controls.filters.excludedLabels ?? [])
+    : (controls.filters.labels?.flat() ?? []);
   const author = controls.filters.author;
-  const selected = kind === "labels" ? selectedLabels : author ? [author] : [];
+  const excludedAuthors = controls.filters.excludedAuthors ?? [];
+  const selected =
+    kind === "labels" ? selectedLabels : excluding ? excludedAuthors : author ? [author] : [];
   const rows = pullRequestFilterChoices({
     selected,
     suggestions,
@@ -92,8 +104,14 @@ export function PullRequestFilterSearchScreen({
   };
   const isSelected = (value: string) =>
     selected.some((held) => held.toLowerCase() === value.toLowerCase());
+  const toggled = (list: readonly string[], value: string) => {
+    const next = isSelected(value)
+      ? list.filter((held) => held.toLowerCase() !== value.toLowerCase())
+      : [...list, value].slice(0, 10);
+    return next.length ? next : undefined;
+  };
   const choose = (value: string) => {
-    if (kind === "authors") {
+    if (kind === "authors" && !excluding) {
       listControls.setControls(environmentId, {
         ...controls,
         filters: { ...controls.filters, author: isSelected(value) ? undefined : value },
@@ -101,15 +119,15 @@ export function PullRequestFilterSearchScreen({
       navigation.goBack();
       return;
     }
-    const labels = isSelected(value)
-      ? selectedLabels.filter((label) => label.toLowerCase() !== value.toLowerCase())
-      : [...selectedLabels, value].slice(0, 10);
+    const filters =
+      kind === "authors"
+        ? { excludedAuthors: toggled(excludedAuthors, value) }
+        : excluding
+          ? { excludedLabels: toggled(selectedLabels, value) }
+          : { labels: toggled(selectedLabels, value)?.map((label) => [label]) };
     listControls.setControls(environmentId, {
       ...controls,
-      filters: {
-        ...controls.filters,
-        labels: labels.length ? labels.map((label) => [label]) : undefined,
-      },
+      filters: { ...controls.filters, ...filters },
     });
   };
   const placeholder = kind === "labels" ? "Search labels" : "Search authors";

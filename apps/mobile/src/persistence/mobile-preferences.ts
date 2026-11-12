@@ -34,6 +34,8 @@ export const PullRequestListControls = Schema.Struct({
   filters: PullRequestListFilters,
   projectId: Schema.optional(Schema.String),
   projectEnvironmentId: Schema.optional(Schema.String),
+  /** Lowercased repository keys left out while no single project is chosen. */
+  excludedRepositories: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(100))),
   sort: Schema.Literals(["updated", "created", "oldest"]),
 });
 export type PullRequestListControls = typeof PullRequestListControls.Type;

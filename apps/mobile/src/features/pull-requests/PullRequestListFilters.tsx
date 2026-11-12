@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import { pullRequestRepositoryKey } from "@t3tools/client-runtime/pull-request-project-filter";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { useState } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
@@ -33,6 +35,13 @@ const ROW_STYLE =
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
     : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
 const id = (field: string, value: string) => JSON.stringify([field, value]);
+const EXCLUDABLE_FIELDS = ["author", "labels", "review", "checks", "project"] as const;
+type ExcludableField = (typeof EXCLUDABLE_FIELDS)[number];
+const isExcludableField = (value: string): value is ExcludableField =>
+  (EXCLUDABLE_FIELDS as readonly string[]).includes(value);
+function excludedSummary(names: readonly string[], noun: string) {
+  return names.length === 1 ? `Not ${names[0]}` : `${names.length} ${noun} excluded`;
+}
 function choices(field: string, options: Readonly<Record<string, string>>, selected: string) {
   return Object.entries(options).map(([value, title]) => ({
     id: id(field, value),
@@ -102,15 +111,118 @@ export function usePullRequestListFilters(props: {
   readonly labels: readonly string[];
   /** Dot colors by lowercased label name, for the labels that have one. */
   readonly labelColors: Readonly<Record<string, string>>;
-  readonly projects: readonly { id: string; title: string; environmentId: string }[];
+  readonly projects: readonly {
+    id: string;
+    title: string;
+    environmentId: string;
+    repositoryIdentity?: { readonly canonicalKey?: string | undefined } | null | undefined;
+  }[];
   /** Opens a picker that searches the host, for a label or author no loaded row carries. */
-  readonly onSearch: (kind: "labels" | "authors") => void;
+  readonly onSearch: (kind: "labels" | "authors", excluding: boolean) => void;
 }) {
   const { value } = props;
   const projects = useProjectsInSidebarOrder(props.projects);
+  const [preferExcluding, setPreferExcluding] = useState<ReadonlySet<ExcludableField>>(
+    () => new Set(),
+  );
   const selectedLabels = value.filters.labels?.flat() ?? [];
-  const selectedLabelSet = new Set(selectedLabels);
+  const excludedLabels = value.filters.excludedLabels ?? [];
   const author = value.filters.author;
+  const excludedAuthors = value.filters.excludedAuthors ?? [];
+  const repositories = new Map<string, string>();
+  for (const project of projects) {
+    const key = pullRequestRepositoryKey(project);
+    if (key && !repositories.has(key)) repositories.set(key, project.title);
+  }
+  const excludedRepositories = value.projectId
+    ? []
+    : (value.excludedRepositories ?? []).filter((key) => repositories.has(key));
+  const picks = {
+    author: { included: author !== undefined, excluded: excludedAuthors.length > 0 },
+    labels: { included: selectedLabels.length > 0, excluded: excludedLabels.length > 0 },
+    review: {
+      included: value.filters.review !== undefined,
+      excluded: value.filters.excludedReview !== undefined,
+    },
+    checks: {
+      included: value.filters.checks !== undefined,
+      excluded: value.filters.excludedChecks !== undefined,
+    },
+    project: { included: Boolean(value.projectId), excluded: excludedRepositories.length > 0 },
+  } satisfies Record<ExcludableField, { included: boolean; excluded: boolean }>;
+  // A pick on either side decides the mode; the toggle only matters while nothing is picked.
+  const excluding = (field: ExcludableField) =>
+    picks[field].excluded || (!picks[field].included && preferExcluding.has(field));
+  const withFilters = (filters: Partial<PullRequestListControls["filters"]>) =>
+    props.onChange({ ...value, filters: { ...value.filters, ...filters } });
+  const toggled = (list: readonly string[], item: string, limit: number) =>
+    list.includes(item) ? list.filter((held) => held !== item) : [...list, item].slice(0, limit);
+  const listOrUndefined = (list: readonly string[]) => (list.length ? list : undefined);
+  const toggleExcluding = (field: ExcludableField) => {
+    const next = !excluding(field);
+    setPreferExcluding((previous) => {
+      const updated = new Set(previous);
+      if (next) updated.add(field);
+      else updated.delete(field);
+      return updated;
+    });
+    switch (field) {
+      case "author":
+        if (next && author !== undefined)
+          withFilters({ author: undefined, excludedAuthors: [author] });
+        if (!next && excludedAuthors.length > 0)
+          withFilters({ author: excludedAuthors[0], excludedAuthors: undefined });
+        break;
+      case "labels":
+        if (next && selectedLabels.length > 0)
+          withFilters({ labels: undefined, excludedLabels: selectedLabels });
+        if (!next && excludedLabels.length > 0)
+          withFilters({
+            labels: excludedLabels.map((label) => [label]),
+            excludedLabels: undefined,
+          });
+        break;
+      case "review":
+        if (picks.review.included || picks.review.excluded)
+          withFilters({
+            review: next ? undefined : value.filters.excludedReview,
+            excludedReview: next ? value.filters.review : undefined,
+          });
+        break;
+      case "checks":
+        if (picks.checks.included || picks.checks.excluded)
+          withFilters({
+            checks: next ? undefined : value.filters.excludedChecks,
+            excludedChecks: next ? value.filters.checks : undefined,
+          });
+        break;
+      case "project": {
+        const chosen = projects.find(
+          (project) =>
+            project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
+        );
+        const chosenKey = chosen === undefined ? undefined : pullRequestRepositoryKey(chosen);
+        if (next && chosenKey !== undefined)
+          props.onChange({
+            ...value,
+            projectId: undefined,
+            projectEnvironmentId: undefined,
+            excludedRepositories: [chosenKey],
+          });
+        const first = projects.find(
+          (project) => pullRequestRepositoryKey(project) === excludedRepositories[0],
+        );
+        if (!next && first !== undefined)
+          props.onChange({
+            ...value,
+            projectId: first.id,
+            projectEnvironmentId: first.environmentId,
+            excludedRepositories: undefined,
+          });
+        break;
+      }
+    }
+  };
   const select = (event: string) => {
     let selection: unknown;
     try {
@@ -133,9 +245,13 @@ export function usePullRequestListFilters(props: {
           props.onEnvironmentChange(next);
         break;
       case "reset":
+        setPreferExcluding(new Set());
         props.onChange(DEFAULT_PR_LIST_CONTROLS);
         // The Android header menu also holds the environment, so its reset clears that too.
         if (next === "environment") props.onEnvironmentChange(null);
+        break;
+      case "exclude":
+        if (isExcludableField(next)) toggleExcluding(next);
         break;
       case "state":
         props.onChange({ ...value, state: next as PullRequestListControls["state"] });
@@ -147,6 +263,13 @@ export function usePullRequestListFilters(props: {
         props.onChange({ ...value, sort: next as PullRequestListControls["sort"] });
         break;
       case "project": {
+        if (excluding("project") && next !== "") {
+          props.onChange({
+            ...value,
+            excludedRepositories: listOrUndefined(toggled(excludedRepositories, next, 100)),
+          });
+          break;
+        }
         const project = projects.find(
           (project) => JSON.stringify([project.environmentId, project.id]) === next,
         );
@@ -154,72 +277,80 @@ export function usePullRequestListFilters(props: {
           ...value,
           projectId: project?.id,
           projectEnvironmentId: project?.environmentId,
+          excludedRepositories: undefined,
         });
         break;
       }
-      case "label": {
-        const labels = selectedLabels.includes(next)
-          ? selectedLabels.filter((label) => label !== next)
-          : [...selectedLabels, next].slice(0, 10);
-        props.onChange({
-          ...value,
-          filters: {
-            ...value.filters,
-            labels: labels.length ? labels.map((label) => [label]) : undefined,
-          },
-        });
+      case "label":
+        if (excluding("labels"))
+          withFilters({ excludedLabels: listOrUndefined(toggled(excludedLabels, next, 10)) });
+        else
+          withFilters({
+            labels: listOrUndefined(toggled(selectedLabels, next, 10))?.map((label) => [label]),
+          });
         break;
-      }
       case "labels":
-        props.onChange({ ...value, filters: { ...value.filters, labels: undefined } });
+        withFilters({ labels: undefined, excludedLabels: undefined });
         break;
       case "author":
-        props.onChange({ ...value, filters: { ...value.filters, author: next || undefined } });
+        if (next === "") withFilters({ author: undefined, excludedAuthors: undefined });
+        else if (excluding("author"))
+          withFilters({ excludedAuthors: listOrUndefined(toggled(excludedAuthors, next, 10)) });
+        else withFilters({ author: next });
         break;
       case "search":
-        if (next === "labels" || next === "authors") props.onSearch(next);
+        if (next === "labels" || next === "authors")
+          props.onSearch(next, excluding(next === "labels" ? "labels" : "author"));
         break;
       case "draft":
-        props.onChange({
-          ...value,
-          filters: {
-            ...value.filters,
-            draft: next === "all" ? undefined : (next as "only" | "hide"),
-          },
-        });
+        withFilters({ draft: next === "all" ? undefined : (next as "only" | "hide") });
         break;
-      case "review":
-        props.onChange({
-          ...value,
-          filters: {
-            ...value.filters,
-            review:
-              next === "all"
-                ? undefined
-                : (next as NonNullable<PullRequestListControls["filters"]["review"]>),
-          },
-        });
+      case "review": {
+        const review =
+          next === "all"
+            ? undefined
+            : (next as NonNullable<PullRequestListControls["filters"]["review"]>);
+        withFilters(
+          excluding("review")
+            ? { review: undefined, excludedReview: review }
+            : { review, excludedReview: undefined },
+        );
         break;
-      case "checks":
-        props.onChange({
-          ...value,
-          filters: {
-            ...value.filters,
-            checks: next === "all" ? undefined : (next as "passing" | "failing"),
-          },
-        });
+      }
+      case "checks": {
+        const checks = next === "all" ? undefined : (next as "passing" | "failing");
+        withFilters(
+          excluding("checks")
+            ? { checks: undefined, excludedChecks: checks }
+            : { checks, excludedChecks: undefined },
+        );
         break;
+      }
     }
   };
+  const excludeToggle = (field: ExcludableField): MenuProps["actions"][number] => ({
+    id: id("exclude", field),
+    title: "Exclude matches",
+    state: excluding(field) ? "on" : "off",
+  });
   const count =
     Number(value.state !== "open") +
     Number(value.involvement !== "all") +
     Number(Boolean(author)) +
+    excludedAuthors.length +
     selectedLabels.length +
+    excludedLabels.length +
     Number(Boolean(value.filters.draft)) +
     Number(Boolean(value.filters.review)) +
+    Number(Boolean(value.filters.excludedReview)) +
     Number(Boolean(value.filters.checks)) +
-    Number(Boolean(value.projectId));
+    Number(Boolean(value.filters.excludedChecks)) +
+    Number(Boolean(value.projectId)) +
+    excludedRepositories.length;
+  const selectedProject = projects.find(
+    (project) =>
+      project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
+  );
   const more: MenuProps["actions"] = [
     {
       id: "drafts",
@@ -228,32 +359,65 @@ export function usePullRequestListFilters(props: {
     },
     {
       id: "reviews",
-      title: value.filters.review ? REVIEWS[value.filters.review] : "Reviews",
-      subactions: choices("review", REVIEWS, value.filters.review ?? "all"),
+      title: value.filters.excludedReview
+        ? `Not ${REVIEWS[value.filters.excludedReview].toLowerCase()}`
+        : value.filters.review
+          ? REVIEWS[value.filters.review]
+          : "Reviews",
+      subactions: [
+        excludeToggle("review"),
+        ...choices(
+          "review",
+          REVIEWS,
+          (excluding("review") ? value.filters.excludedReview : value.filters.review) ?? "all",
+        ),
+      ],
     },
     {
       id: "checks",
-      title: value.filters.checks ? `${CHECKS[value.filters.checks]} checks` : "Checks",
-      subactions: choices("checks", CHECKS, value.filters.checks ?? "all"),
+      title: value.filters.excludedChecks
+        ? `Not ${CHECKS[value.filters.excludedChecks].toLowerCase()} checks`
+        : value.filters.checks
+          ? `${CHECKS[value.filters.checks]} checks`
+          : "Checks",
+      subactions: [
+        excludeToggle("checks"),
+        ...choices(
+          "checks",
+          CHECKS,
+          (excluding("checks") ? value.filters.excludedChecks : value.filters.checks) ?? "all",
+        ),
+      ],
     },
     {
       id: "projects",
       title:
-        projects.find(
-          (project) =>
-            project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
-        )?.title ?? "Project",
-      subactions: choices(
-        "project",
-        Object.fromEntries([
-          ["", "All projects"],
-          ...projects.map((project) => [
-            JSON.stringify([project.environmentId, project.id]),
-            project.title,
-          ]),
-        ]),
-        value.projectId ? JSON.stringify([value.projectEnvironmentId, value.projectId]) : "",
-      ),
+        excludedRepositories.length > 0
+          ? excludedSummary(
+              excludedRepositories.map((key) => repositories.get(key) ?? key),
+              "projects",
+            )
+          : (selectedProject?.title ?? "Project"),
+      subactions: [
+        excludeToggle("project"),
+        ...(excluding("project")
+          ? [...repositories].map(([key, title]) => ({
+              id: id("project", key),
+              title,
+              state: excludedRepositories.includes(key) ? ("on" as const) : ("off" as const),
+            }))
+          : choices(
+              "project",
+              Object.fromEntries([
+                ["", "All projects"],
+                ...projects.map((project) => [
+                  JSON.stringify([project.environmentId, project.id]),
+                  project.title,
+                ]),
+              ]),
+              value.projectId ? JSON.stringify([value.projectEnvironmentId, value.projectId]) : "",
+            )),
+      ],
     },
     { id: "sort", title: SORTS[value.sort], subactions: choices("sort", SORTS, value.sort) },
   ];
@@ -267,9 +431,13 @@ export function usePullRequestListFilters(props: {
         (!withEnvironment || props.environmentId === null),
     },
   });
-  const labels = [...new Set([...selectedLabels, ...props.labels])].slice(0, 60);
+  const labelsExcluding = excluding("labels");
+  const pickedLabels = labelsExcluding ? excludedLabels : selectedLabels;
+  const labels = [...new Set([...pickedLabels, ...props.labels])].slice(0, 60);
+  const authorsExcluding = excluding("author");
+  const pickedAuthors = authorsExcluding ? excludedAuthors : author ? [author] : [];
   const authors = [
-    ...new Set([...(author && author !== "me" ? [author] : []), ...props.authors]),
+    ...new Set([...pickedAuthors.filter((login) => login !== "me"), ...props.authors]),
   ].slice(0, 60);
   const environmentActions = choices(
     "environment",
@@ -282,28 +450,29 @@ export function usePullRequestListFilters(props: {
   const stateActions = choices("state", STATES, value.state);
   const involvementActions = choices("involvement", INVOLVEMENT, value.involvement);
   const labelActions: MenuProps["actions"] = [
+    excludeToggle("labels"),
     { id: id("search", "labels"), title: "Search labels…", image: "magnifyingglass" },
-    { id: id("labels", ""), title: "All labels", state: selectedLabels.length ? "off" : "on" },
+    { id: id("labels", ""), title: "All labels", state: pickedLabels.length ? "off" : "on" },
     ...labels.map((label) => {
       const color = props.labelColors[label.toLowerCase()];
       return {
         id: id("label", label),
         title: label,
-        state: selectedLabelSet.has(label) ? ("on" as const) : ("off" as const),
+        state: pickedLabels.includes(label) ? ("on" as const) : ("off" as const),
         ...(color ? { image: "circle.fill", imageColor: color } : {}),
       };
     }),
   ];
   const authorActions: MenuProps["actions"] = [
+    excludeToggle("author"),
     { id: id("search", "authors"), title: "Search authors…", image: "magnifyingglass" },
-    ...choices(
-      "author",
-      Object.fromEntries([
-        ["", "All authors"],
-        ["me", "Me"],
-        ...authors.map((login) => [login, login]),
-      ]),
-      author ?? "",
+    { id: id("author", ""), title: "All authors", state: pickedAuthors.length ? "off" : "on" },
+    ...[["me", "Me"] as const, ...authors.map((login) => [login, login] as const)].map(
+      ([login, title]) => ({
+        id: id("author", login),
+        title,
+        state: pickedAuthors.includes(login) ? ("on" as const) : ("off" as const),
+      }),
     ),
   ];
   const customized = count > 0 || value.sort !== "updated" || props.environmentId !== null;
@@ -340,9 +509,24 @@ export function usePullRequestListFilters(props: {
     stateActions,
     involvement: value.involvement,
     involvementActions,
-    selectedLabelCount: selectedLabels.length,
+    labelLabel:
+      excludedLabels.length > 0
+        ? excludedSummary(excludedLabels, "labels")
+        : selectedLabels.length
+          ? `Labels ${selectedLabels.length}`
+          : "Labels",
+    labelActive: selectedLabels.length + excludedLabels.length > 0,
     labelActions,
-    author,
+    authorLabel:
+      excludedAuthors.length > 0
+        ? excludedSummary(
+            excludedAuthors.map((login) => (login === "me" ? "you" : login)),
+            "authors",
+          )
+        : author === "me"
+          ? "By you"
+          : (author ?? "Author"),
+    authorActive: author !== undefined || excludedAuthors.length > 0,
     authorActions,
   };
 }
@@ -352,7 +536,7 @@ export function PullRequestListFilters(props: {
   readonly sidebar?: boolean;
   readonly filters: ReturnType<typeof usePullRequestListFilters>;
 }) {
-  const { count, more, reset, select, author, selectedLabelCount } = props.filters;
+  const { count, more, reset, select } = props.filters;
   return (
     <ScrollView
       horizontal
@@ -399,15 +583,15 @@ export function PullRequestListFilters(props: {
         onSelect={select}
       />
       <ListFilterMenu
-        label={selectedLabelCount ? `Labels ${selectedLabelCount}` : "Labels"}
-        active={selectedLabelCount > 0}
+        label={props.filters.labelLabel}
+        active={props.filters.labelActive}
         accessibilityLabel="Filter by label"
         actions={props.filters.labelActions}
         onSelect={select}
       />
       <ListFilterMenu
-        label={author === "me" ? "By you" : (author ?? "Author")}
-        active={Boolean(author)}
+        label={props.filters.authorLabel}
+        active={props.filters.authorActive}
         accessibilityLabel="Filter by author"
         actions={props.filters.authorActions}
         onSelect={select}

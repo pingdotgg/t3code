@@ -1846,6 +1846,39 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("carries exclusions into the search as negated qualifiers", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.operationName === "PullRequestList"
+            ? emptyList()
+            : emptySearch(),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        filters: {
+          excludedAuthors: ["dependabot[bot]", "me"],
+          excludedReview: "approved",
+          excludedChecks: "failing",
+        },
+      });
+
+      expect(searchOfCall(0)).toBe(
+        'is:pr is:open -author:"dependabot[bot]" -author:"bilal" -review:approved ' +
+          "-status:failure sort:updated-desc repo:acme/web",
+      );
+    }),
+  );
+
   it.effect('resolves an author filter of "me" to the viewer, not the literal word', () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>

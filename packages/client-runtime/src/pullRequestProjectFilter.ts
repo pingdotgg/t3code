@@ -23,6 +23,10 @@ function distinguishTitles<Project extends FilterProject>(
   );
 }
 
+export function pullRequestRepositoryKey(project: Pick<FilterProject, "repositoryIdentity">) {
+  return project.repositoryIdentity?.canonicalKey?.toLowerCase();
+}
+
 export function pullRequestFilterProjects<Project extends FilterProject>(
   projects: ReadonlyArray<Project>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
@@ -30,7 +34,7 @@ export function pullRequestFilterProjects<Project extends FilterProject>(
 ) {
   const byRepository = new Map<string, Project>();
   for (const project of projects) {
-    const repository = project.repositoryIdentity?.canonicalKey?.toLowerCase();
+    const repository = pullRequestRepositoryKey(project);
     const key = JSON.stringify([
       project.environmentId,
       repository ? ["repository", repository] : ["project", project.id],
