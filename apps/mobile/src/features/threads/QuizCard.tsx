@@ -190,7 +190,7 @@ export function QuizCard(props: {
             }
           >
             {parsedAnswer?.kind === "skipped"
-              ? "I don't know."
+              ? parsedAnswer.label
               : sentAnswer === undefined
                 ? "Answered."
                 : sentAnswer === null

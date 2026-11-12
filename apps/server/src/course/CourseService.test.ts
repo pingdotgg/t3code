@@ -74,9 +74,27 @@ describe("CourseService", () => {
         const before = yield* service.problems({ courseId: course.id, pset: 1 });
         assert.strictEqual(before.problemSets[0]?.text, "Problem");
         assert.isUndefined(before.problemSets[0]?.solution);
+        const reference = {
+          label: "Posted solution",
+          url: "https://example.com/solution",
+          answers: "answer",
+        };
+        yield* service.update({ courseId: course.id, pset: 1, references: [reference] });
+        const plain = yield* service.problems({ courseId: course.id, pset: 1 });
+        assert.deepStrictEqual(plain.problemSets[0]?.references, [reference]);
+        assert.include(plain.problemSets[0]?.note ?? "", "a check, not the truth");
+        assert.strictEqual(
+          plain.problemSets[0]?.cite,
+          "Checked against [Posted solution](https://example.com/solution).",
+        );
         const revealed = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
         assert.strictEqual(revealed.problemSets[0]?.solution, "Solution");
         assert.strictEqual(revealed.attribution, "MIT OpenCourseWare, Mechanics, CC BY-NC-SA 4.0");
+        const skipped = yield* service.problems({ courseId: course.id, pset: 1, skip: true });
+        assert.strictEqual(skipped.problemSets[0]?.solution, "Solution");
+        assert.deepStrictEqual(skipped.problemSets[0]?.references, [reference]);
+        assert.include(skipped.problemSets[0]?.note ?? "", "**Skipped, not graded.**");
+        assert.notInclude(skipped.problemSets[0]?.note ?? "", "graded against");
       }),
     ),
   );
@@ -105,7 +123,7 @@ describe("CourseService", () => {
         yield* service.update({ courseId: course.id, pset: 1, references });
         const revealed = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
         assert.deepStrictEqual(revealed.problemSets[0]?.references, references);
-        assert.include(revealed.problemSets[0]?.note ?? "", "published solution references");
+        assert.include(revealed.problemSets[0]?.note ?? "", "with the cite line");
         const repaired = yield* service.add({
           lessonThreadId: threadId,
           ingested: {
@@ -140,7 +158,7 @@ describe("CourseService", () => {
         });
         yield* service.update({ courseId: course.id, pset: 1, references: [] });
         const result = yield* service.problems({ courseId: course.id, pset: 1, reveal: true });
-        assert.include(result.problemSets[0]?.note ?? "", "no published solution was found online");
+        assert.include(result.problemSets[0]?.note ?? "", "No published solution was found online");
       }),
     ),
   );
