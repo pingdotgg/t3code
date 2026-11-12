@@ -1,11 +1,7 @@
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import type { UiLocaleSetting } from "../../../lib/uiLocale";
 import { resolveActiveUiLocale, type ResolvedUiLocale } from "../../../lib/uiLocale";
-
-// 06 号任务给 contracts 的 ServerSettings 加上 uiLocale 后，删掉这个本地声明和下面的 cast。
-type SettingsWithUiLocale = { readonly uiLocale?: UiLocaleSetting };
 
 function makeUiLocaleAtom(input: {
   readonly configsAtom: Atom.Atom<ReadonlyMap<EnvironmentId, ServerConfig>>;
@@ -13,7 +9,7 @@ function makeUiLocaleAtom(input: {
 }): Atom.Atom<ResolvedUiLocale> {
   return Atom.make((get) =>
     resolveActiveUiLocale(
-      [...get(input.configsAtom).values()].map((config) => config.settings as SettingsWithUiLocale),
+      [...get(input.configsAtom).values()].map((config) => config.settings),
       input.systemLocale,
     ),
   ).pipe(Atom.withLabel("mobile:ui-locale"));

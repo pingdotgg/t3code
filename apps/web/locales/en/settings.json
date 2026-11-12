@@ -3,6 +3,8 @@
     "label": "Interface language",
     "description": "Choose the language for menus, labels, and descriptions across the app.",
     "system": "System",
-    "change": "Change interface language"
+    "change": "Change interface language",
+    "title": "Language",
+    "footer": "Interface language across your devices. Change it on any connected server and every client follows."
   }
 }

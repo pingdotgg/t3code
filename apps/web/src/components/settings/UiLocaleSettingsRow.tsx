@@ -1,7 +1,7 @@
 import { type UiLocale, UI_LOCALES } from "@t3tools/contracts/settings";
 import { useTranslation } from "react-i18next";
 
-import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
+import { useUiLocale, writeUiLocale } from "../../hooks/useUiLocale";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -14,7 +14,7 @@ const NATIVE_LANGUAGE_LABELS: Record<Exclude<UiLocale, "system">, string> = {
 
 export function UiLocaleSettingsRow() {
   const { t } = useTranslation("settings");
-  const uiLocale = useClientSettings((settings) => settings.uiLocale);
+  const uiLocale = useUiLocale();
   return (
     <SettingsRow
       {...searchableSetting("ui-locale")}
@@ -25,7 +25,7 @@ export function UiLocaleSettingsRow() {
             value={uiLocale}
             onValueChange={(value) => {
               if (value === "system" || value === "en" || value === "zh-Hans") {
-                void updateClientSettings({ uiLocale: value });
+                writeUiLocale(value);
               }
             }}
           >

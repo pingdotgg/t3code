@@ -10,7 +10,8 @@ import { APPEARANCE_OPTIONS, notifyThemeSaveFailure } from "../components/Comman
 import { uiLocaleLabel } from "../components/CommandPaletteUiLocaleItems";
 import { toggleThemeEditorForTheme } from "../components/settings/themeEditorStore";
 import { toastManager } from "../components/ui/toast";
-import { getClientSettings, updateClientSettings } from "../hooks/useSettings";
+import { activeUiLocaleAtom, writeUiLocale } from "../hooks/useUiLocale";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { getThemeSnapshot, setAppearanceMode } from "../hooks/useTheme";
 import { i18n, nextUiLocale } from "../i18n";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -88,8 +89,8 @@ export function installCommandPaletteCommands(
       "uiLocale.cycle": (event) => {
         consume(event);
         if (event.repeat) return;
-        const next = nextUiLocale(getClientSettings().uiLocale);
-        void updateClientSettings({ uiLocale: next });
+        const next = nextUiLocale(appAtomRegistry.get(activeUiLocaleAtom));
+        writeUiLocale(next);
         toastManager.add({
           id: "ui-locale-cycle",
           title: `${i18n.t("uiLocale.label")}: ${uiLocaleLabel(next)}`,

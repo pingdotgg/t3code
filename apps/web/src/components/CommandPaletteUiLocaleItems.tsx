@@ -3,7 +3,7 @@ import { LanguagesIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { i18n } from "../i18n";
-import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
+import { useUiLocale, writeUiLocale } from "../hooks/useUiLocale";
 import {
   ADDON_ICON_CLASS,
   ITEM_ICON_CLASS,
@@ -22,7 +22,7 @@ export function uiLocaleLabel(uiLocale: UiLocale): string {
 
 export function useCommandPaletteUiLocaleItems() {
   const { t } = useTranslation("settings");
-  const uiLocale = useClientSettings((settings) => settings.uiLocale);
+  const uiLocale = useUiLocale();
 
   const changeUiLocaleItem: CommandPaletteSubmenuItem = {
     kind: "submenu",
@@ -47,7 +47,7 @@ export function useCommandPaletteUiLocaleItems() {
               <span className="text-xs text-muted-foreground/70">Current</span>
             ) : undefined,
           run: async () => {
-            await updateClientSettings({ uiLocale: locale });
+            writeUiLocale(locale);
           },
         })),
       },

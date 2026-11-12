@@ -1,29 +1,42 @@
-import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
+import { EnvironmentId, type ServerConfig, type UiLocale } from "@t3tools/contracts";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../test/render";
 import { UiLocaleSettingsRow } from "./components/settings/UiLocaleSettingsRow";
-import {
-  __resetClientSettingsPersistenceForTests,
-  __setClientSettingsForTests,
-  updateClientSettings,
-} from "./hooks/useSettings";
-import { i18n, nextUiLocale, resolveUiLanguage, startUiLocaleSync } from "./i18n";
+import { writeUiLocale } from "./hooks/useUiLocale";
+import { AppAtomRegistryProvider, appAtomRegistry } from "./rpc/atomRegistry";
+import { serverEnvironment } from "./state/server";
+import { nextUiLocale, resolveUiLanguage, startUiLocaleSync } from "./i18n";
 
-const persistenceMocks = vi.hoisted(() => ({
-  getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
-  setClientSettings: vi.fn<(settings: ClientSettings) => Promise<void>>(),
+const state = vi.hoisted(() => ({
+  configs: new Map<EnvironmentId, ServerConfig>(),
+  configsAtom: null as
+    | null
+    | import("effect/reactivity").Atom.Writable<ReadonlyMap<EnvironmentId, ServerConfig>>,
 }));
 
-vi.mock("~/localApi", () => ({
-  ensureLocalApi: () => ({ persistence: persistenceMocks }),
+// The sync and the settings row both read server settings through this atom.
+vi.mock(import("./state/server"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  const atom = Atom.make<ReadonlyMap<EnvironmentId, ServerConfig>>(state.configs);
+  state.configsAtom = atom;
+  return {
+    ...(await original()),
+    environmentServerConfigsAtom: atom,
+    serverEnvironment: { updateSettings: { label: "serverEnvironment.updateSettings" } } as never,
+  };
+});
+vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
+  ...(await original()),
+  runAtomCommand: vi.fn(),
 }));
 
-function resetSettings(uiLocale: ClientSettings["uiLocale"]): void {
-  persistenceMocks.getClientSettings.mockResolvedValue(null);
-  persistenceMocks.setClientSettings.mockResolvedValue(undefined);
-  __resetClientSettingsPersistenceForTests();
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, uiLocale });
+const environmentId = EnvironmentId.make("primary");
+
+function setConfigs(uiLocale: UiLocale): void {
+  state.configs = new Map([[environmentId, { settings: { uiLocale } } as unknown as ServerConfig]]);
+  if (state.configsAtom) appAtomRegistry.set(state.configsAtom, state.configs);
 }
 
 describe("resolveUiLanguage", () => {
@@ -55,15 +68,19 @@ describe("nextUiLocale", () => {
 });
 
 describe("uiLocale setting", () => {
-  it("switches the rendered language when the setting changes", async () => {
-    resetSettings("en");
+  it("switches the rendered language when the synced server setting changes", async () => {
+    setConfigs("en");
     using _sync = { [Symbol.dispose]: startUiLocaleSync() };
-    await using screen = await render(<UiLocaleSettingsRow />);
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <UiLocaleSettingsRow />
+      </AppAtomRegistryProvider>,
+    );
     expect(screen.getByText("Interface language")).toBeTruthy();
     expect(screen.getByText("English")).toBeTruthy();
 
     await act(async () => {
-      await updateClientSettings({ uiLocale: "zh-Hans" });
+      setConfigs("zh-Hans");
     });
     await vi.waitFor(() => {
       expect(screen.getByText("界面语言")).toBeTruthy();
@@ -71,22 +88,23 @@ describe("uiLocale setting", () => {
     expect(screen.getByText("跟随系统")).toBeTruthy();
 
     await act(async () => {
-      await updateClientSettings({ uiLocale: "en" });
+      setConfigs("en");
     });
     await vi.waitFor(() => {
       expect(screen.getByText("Interface language")).toBeTruthy();
     });
   });
 
-  it("falls back to English for keys missing from zh-Hans", async () => {
-    resetSettings("zh-Hans");
-    using _sync = { [Symbol.dispose]: startUiLocaleSync() };
-    await act(async () => {
-      await i18n.changeLanguage("zh-Hans");
-    });
-    expect(i18n.t("uiLocale.label")).toBe("界面语言");
-    i18n.addResourceBundle("en", "settings", { fallbackProbe: "English fallback" }, true, true);
-    // @ts-expect-error the probe key is only added to the en bundle at runtime
-    expect(i18n.t("fallbackProbe")).toBe("English fallback");
+  it("writes the picked locale to every connected environment", () => {
+    setConfigs("en");
+    writeUiLocale("zh-Hans");
+    expect(vi.mocked(runAtomCommand)).toHaveBeenCalledWith(
+      appAtomRegistry,
+      serverEnvironment.updateSettings,
+      {
+        environmentId,
+        input: { patch: { uiLocale: "zh-Hans" } },
+      },
+    );
   });
 });

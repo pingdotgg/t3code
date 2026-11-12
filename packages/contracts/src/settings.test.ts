@@ -541,17 +541,17 @@ describe("server model preferences", () => {
 
 describe("uiLocale", () => {
   it("defaults to system and accepts only supported locales", () => {
-    const settings = decodeClientSettings({});
+    const settings = decodeServerSettings({});
     expect(settings.uiLocale).toBe("system");
     for (const uiLocale of ["en", "zh-Hans"] as const) {
-      expect(decodeClientSettings({ ...settings, uiLocale }).uiLocale).toBe(uiLocale);
+      expect(decodeServerSettings({ uiLocale }).uiLocale).toBe(uiLocale);
     }
-    expect(() => decodeClientSettings({ uiLocale: "fr" })).toThrow();
+    expect(() => decodeServerSettings({ uiLocale: "fr" })).toThrow();
   });
 
   it("accepts uiLocale in the patch schema", () => {
-    const patch = decodeClientSettingsPatch({ uiLocale: "zh-Hans" });
+    const patch = decodeServerSettingsPatch({ uiLocale: "zh-Hans" });
     expect(patch.uiLocale).toBe("zh-Hans");
-    expect(decodeClientSettingsPatch({}).uiLocale).toBeUndefined();
+    expect(decodeServerSettingsPatch({}).uiLocale).toBeUndefined();
   });
 });

@@ -4,7 +4,7 @@ import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 
-import { getClientSettings, subscribeClientSettings } from "./hooks/useSettings";
+import { subscribeActiveUiLocale } from "./hooks/useUiLocale";
 
 const UI_LANGUAGES = ["en", "zh-Hans"] as const;
 type UiLanguage = (typeof UI_LANGUAGES)[number];
@@ -77,12 +77,9 @@ function applyUiLocale(uiLocale: UiLocale): void {
   );
 }
 
-/** Applies the saved uiLocale now and on every client settings change. */
+/** Applies the synced uiLocale now and on every server settings push. */
 export function startUiLocaleSync(): () => void {
-  applyUiLocale(getClientSettings().uiLocale);
-  return subscribeClientSettings(() => {
-    applyUiLocale(getClientSettings().uiLocale);
-  });
+  return subscribeActiveUiLocale(applyUiLocale);
 }
 
 /** Cycles system → en → zh-Hans → system. */
