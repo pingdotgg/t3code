@@ -4094,11 +4094,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("wakes a thread once for a pass that changed several of its pull requests", () =>
+  // A busy thread queues its wakes, and a queued wake is dropped whole once outdated, so
+  // there each pull request keeps its own wake.
+  it.effect.each([
+    ["an idle", false],
+    ["a busy", true],
+  ] as const)("wakes %s thread once per pass, or per pull request while it is busy", ([, busy]) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-pass");
-      const projectId = ProjectId.make("pr-watch-pass-project");
+      const threadId = ThreadId.make(`runtime-pull-request-watch-pass-${busy}`);
+      const projectId = ProjectId.make(`pr-watch-pass-project-${busy}`);
       yield* seedProject({
         projectId,
         title: "Watch pass",
@@ -4110,7 +4115,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-pass-create"),
+        commandId: CommandId.make(`pr-watch-pass-create-${busy}`),
         threadId,
         projectId,
         title: "Watch pass",
@@ -4124,13 +4129,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       for (const number of numbers) {
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-pass-start-${number}`),
+          commandId: CommandId.make(`pr-watch-pass-start-${busy}-${number}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
           number,
           watching: true,
           link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+        });
+      }
+      if (busy) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("pr-watch-pass-busy"),
+          threadId,
+          messageId: MessageId.make("pr-watch-pass-busy"),
+          text: "Keep this run active.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
         });
       }
       const host = Layer.mergeAll(
@@ -4164,17 +4183,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       const wakes = messages.filter((message) => message.notification !== undefined);
-      assert.equal(wakes.length, 1);
-      for (const number of numbers) assert.include(wakes[0]!.text, `#${number}`);
-      const source = wakes[0]!.notification!.source;
-      assert.deepEqual(
-        source.kind === "monitor"
-          ? [source.pullRequest, ...(source.otherPullRequests ?? [])]
+      const stamps = wakes.map(({ notification }) =>
+        notification?.source.kind === "monitor"
+          ? [notification.source.pullRequest, ...(notification.source.otherPullRequests ?? [])]
               .map((stamp) => stamp?.number)
               .toSorted()
           : [],
-        numbers,
       );
+      assert.deepEqual(
+        stamps.toSorted((left, right) => left[0]! - right[0]!),
+        busy ? numbers.map((number) => [number]) : [numbers],
+      );
+      for (const number of numbers) {
+        assert.isTrue(wakes.some((wake) => wake.text.includes(`#${number}`)));
+      }
     }),
   );
 

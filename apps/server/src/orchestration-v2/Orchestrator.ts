@@ -3596,10 +3596,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           entry.watch !== null &&
           pullRequestSnapshotEndsWatch(link?.snapshot ?? null, entry.startedAt),
       );
+      // A queued wake is dropped whole once outdated, so one covering several pull requests
+      // must start now; otherwise the sender splits it into one wake per pull request.
+      const queues =
+        entries.length > 1 &&
+        (yield* projectionStore.getThreadRecords(command.threadId, ["runs"]).pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+          Effect.map(({ runs }) => {
+            const latest = latestExecutedRun(runs);
+            return (
+              runs.some(isActiveRun) ||
+              ((latest?.status === "failed" || latest?.status === "interrupted") &&
+                latest.workspacePreparation?.type === "worktree" &&
+                thread.worktreePath === null)
+            );
+          }),
+        ));
       if (
         entries.some(({ entry, link }) => link?.watch?.startedAt !== entry.startedAt) ||
         (wake && inactive) ||
-        // One wake cannot drop the news of just some of its pull requests; the sender splits it.
+        queues ||
         (entries.length > 1 && outdated.some(Boolean))
       ) {
         return yield* new OrchestratorDispatchError({
