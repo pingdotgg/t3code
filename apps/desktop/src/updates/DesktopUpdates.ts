@@ -1229,7 +1229,10 @@ export const make = Effect.gen(function* () {
       }
 
       return yield* Effect.gen(function* () {
-        yield* Ref.set(releaseFloorRef, Option.fromNullishOr(options?.minimumVersion));
+        const previousFloor = yield* Ref.getAndSet(
+          releaseFloorRef,
+          Option.fromNullishOr(options?.minimumVersion),
+        );
         const state = yield* Ref.get(updateStateRef);
         const retained = state.downloadedVersion ?? state.availableVersion;
         // A build from another track re-checks, so retrying a track switch finds an older release.
@@ -1242,13 +1245,12 @@ export const make = Effect.gen(function* () {
           return state;
         }
 
-        yield* desktopSettings
-          .setUpdateChannel(nextChannel)
-          .pipe(
-            Effect.mapError(
-              (cause) => new DesktopUpdateChannelPersistenceError({ channel: nextChannel, cause }),
-            ),
-          );
+        yield* desktopSettings.setUpdateChannel(nextChannel).pipe(
+          Effect.onError(() => Ref.set(releaseFloorRef, previousFloor)),
+          Effect.mapError(
+            (cause) => new DesktopUpdateChannelPersistenceError({ channel: nextChannel, cause }),
+          ),
+        );
 
         const disabledReason = yield* resolveDisabledReason;
         yield* setState(yield* baseUpdateState(nextChannel, disabledReason));

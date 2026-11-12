@@ -62,6 +62,7 @@ import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHy
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -75,6 +76,7 @@ import type {
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
@@ -1702,6 +1704,8 @@ it.layer(
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
         const manifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
+        const updateEvents = yield* Ref.make<ReadonlyArray<string>>([]);
+        const hookFails = yield* Ref.make(false);
         const makeInstance = (name: string) =>
           Effect.gen(function* () {
             const driver = ProviderDriverKind.make("codex");
@@ -1721,7 +1725,7 @@ it.layer(
             } as const satisfies ServerProvider;
             const invalidations = yield* Ref.make(0);
             const probes = yield* Ref.make(0);
-            const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean>>([]);
+            const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
             const instance = {
               instanceId,
               driverKind: driver,
@@ -1746,7 +1750,25 @@ it.layer(
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
-              invalidateCaches: Ref.update(invalidations, (count) => count + 1),
+              invalidateCaches: Ref.update(invalidations, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Ref.update(updateEvents, (events) => [...events, `invalidate:${name}`]),
+                ),
+              ),
+              afterUpdate: Ref.update(maintenanceReads, (reads) => [
+                ...reads,
+                "afterUpdate" as const,
+              ]).pipe(
+                Effect.andThen(
+                  Ref.update(updateEvents, (events) => [...events, `afterUpdate:${name}`]),
+                ),
+                Effect.andThen(Ref.get(hookFails)),
+                Effect.flatMap((fails) =>
+                  fails
+                    ? Effect.fail(new ProviderDriverError({ driver, instanceId, detail: "hook" }))
+                    : Effect.void,
+                ),
+              ),
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
@@ -1834,6 +1856,30 @@ it.layer(
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore + 1);
           // A changed manifest also rechecks latest CLI versions.
           assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
+
+          yield* first.takeMaintenanceReads;
+          yield* Ref.set(updateEvents, []);
+          yield* registry.refreshAfterUpdate(first.instance.driverKind, first.instance.instanceId);
+          assert.deepStrictEqual((yield* first.takeMaintenanceReads).slice(0, 2), [
+            "afterUpdate",
+            true,
+          ]);
+          assert.notInclude(yield* second.takeMaintenanceReads, "afterUpdate");
+          // Instances sharing the replaced service must not cache its old version.
+          assert.strictEqual((yield* Ref.get(updateEvents))[0], "afterUpdate:codex_first");
+
+          // A failed hook leaves the probe to report what is running.
+          yield* Ref.set(hookFails, true);
+          const probesBeforeFailedHook = yield* Ref.get(first.probes);
+          const refreshed = yield* registry.refreshAfterUpdate(
+            first.instance.driverKind,
+            first.instance.instanceId,
+          );
+          assert.strictEqual(yield* Ref.get(first.probes), probesBeforeFailedHook + 1);
+          assert.include(
+            refreshed.map((provider) => provider.instanceId),
+            first.instance.instanceId,
+          );
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(
@@ -3168,7 +3214,13 @@ it.layer(
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(
             ProviderInstanceRegistryHydration.layer.pipe(
-              Layer.provide(Layer.mergeAll(PortScanner.layerTest, ProviderInstallationGate.layer)),
+              Layer.provide(
+                Layer.mergeAll(
+                  PortScanner.layerTest,
+                  ProviderInstallationGate.layer,
+                  SqlitePersistence.layerMemory,
+                ),
+              ),
             ),
           ),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
@@ -3288,7 +3340,13 @@ it.layer(
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
           Layer.provideMerge(
             ProviderInstanceRegistryHydration.layer.pipe(
-              Layer.provide(Layer.mergeAll(PortScanner.layerTest, ProviderInstallationGate.layer)),
+              Layer.provide(
+                Layer.mergeAll(
+                  PortScanner.layerTest,
+                  ProviderInstallationGate.layer,
+                  SqlitePersistence.layerMemory,
+                ),
+              ),
             ),
           ),
           Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
@@ -3425,7 +3483,13 @@ it.layer(
       readSeed = false;
       const services = yield* Layer.build(
         ProviderInstanceRegistryHydration.layer.pipe(
-          Layer.provide(Layer.mergeAll(PortScanner.layerTest, ProviderInstallationGate.layer)),
+          Layer.provide(
+            Layer.mergeAll(
+              PortScanner.layerTest,
+              ProviderInstallationGate.layer,
+              SqlitePersistence.layerMemory,
+            ),
+          ),
         ),
       ).pipe(Effect.provide(dependencies));
       failCurrentRead = input.failCurrentRead ?? false;
