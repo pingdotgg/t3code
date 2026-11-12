@@ -36,11 +36,12 @@ const layerNoProject = Layer.mergeAll(
   Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
 );
 
-it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
+it.effect("completes finalization without waiting for the post-checkpoint refresh", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
   const runId = RunId.make("run_refresh_failure");
   const scopeId = CheckpointScopeId.make("scope_refresh_failure");
   const captured: string[] = [];
+  const refreshStarted = Deferred.makeUnsafe<void>();
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -62,10 +63,8 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
           refresh: () =>
             Effect.gen(function* () {
               captured.push("refresh");
-              return yield* new RunFinalization.RunFinalizationRefreshError({
-                cwd: "/repo",
-                cause: new Error("Git command timed out"),
-              });
+              yield* Deferred.succeed(refreshStarted, undefined);
+              return yield* Effect.never;
             }),
           refreshAfterTurn: () => Effect.void,
         }),
@@ -75,6 +74,7 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
+    yield* Deferred.await(refreshStarted);
     assert.deepEqual(captured, ["checkpoint", "refresh"]);
   }).pipe(Effect.provide(layer));
 });
