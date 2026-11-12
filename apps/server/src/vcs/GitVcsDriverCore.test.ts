@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -4371,6 +4372,42 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             T3_TEST_SSH_ASKPASS_LOG: sshLogPath,
           }),
         );
+      }),
+    );
+
+    it.effect("stops re-running a credential helper that keeps failing background fetches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const tempDir = yield* makeTmpDir("git-vcs-driver-credential-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const helperLogPath = NodePath.join(tempDir, "helper.log");
+        const port = yield* Effect.acquireRelease(
+          Effect.callback<NodeHttp.Server>((resume) => {
+            const server = NodeHttp.createServer((_request, response) => {
+              response.writeHead(401, { "WWW-Authenticate": 'Basic realm="private"' }).end();
+            });
+            server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+          }),
+          (server) => Effect.callback<void>((resume) => server.close(() => resume(Effect.void))),
+        ).pipe(Effect.map((server) => (server.address() as { port: number }).port));
+
+        yield* git(cwd, ["remote", "add", "origin", `http://127.0.0.1:${port}/private.git`]);
+        yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+        yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
+        // Stands in for an OS keychain helper whose unlock dialog the user dismisses.
+        yield* git(cwd, ["config", "credential.helper", `!echo prompted >> '${helperLogPath}'`]);
+        const helperRuns = fileSystem
+          .readFileString(helperLogPath)
+          .pipe(Effect.map((log) => log.trim().split(/\r?\n/).length));
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        for (let poll = 0; poll < 6; poll++) {
+          yield* driver.statusDetailsRemote(cwd);
+          yield* TestClock.adjust("16 minutes");
+        }
+
+        assert.equal(yield* helperRuns, 3);
       }),
     );
 
