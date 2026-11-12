@@ -5,6 +5,8 @@ import {
   MAX_TOOL_OUTPUT_IMAGES,
   mcpToolResultOutput,
   toolOutputImages,
+  courseOutlineFromToolItem,
+  courseOutlineMessageId,
   lessonCardFromToolItem,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
@@ -181,6 +183,53 @@ it("keeps valid quiz cards and drops invalid cards", () => {
       output: { questionCard: { question: "___", blanks: [{ answers: ["x"] }] } },
     }),
   ).toEqual({ question: "___", blanks: [{ answers: ["x"] }] });
+});
+
+describe("courseOutlineFromToolItem", () => {
+  it("groups sections and includes attribution", () => {
+    const output = {
+      structuredContent: {
+        title: "8.01SC Classical Mechanics",
+        attribution: "MIT OpenCourseWare, 8.01SC Classical Mechanics, CC BY-NC-SA 4.0",
+        units: [
+          { title: "Video Introduction", section: "Syllabus" },
+          { title: "0.1 Vectors vs. Scalars", section: "Review: Vectors" },
+          { title: "0.2 Vector Operators", section: "Review: Vectors" },
+          { title: "1.1 Kinematics", section: "Week 1: Kinematics" },
+        ],
+      },
+    };
+
+    expect(courseOutlineFromToolItem({ toolName: "mcp__t3-code__course_add", output })).toBe(
+      "**8.01SC Classical Mechanics**: 4 units\n\n- Syllabus: unit 0\n- Review: Vectors: units 1–2\n- Week 1: Kinematics: unit 3\n\nMIT OpenCourseWare, 8.01SC Classical Mechanics, CC BY-NC-SA 4.0",
+    );
+    expect(courseOutlineMessageId("turn-item:course")).toBe("turn-item:course:outline");
+  });
+
+  it("returns undefined for other tools and errors", () => {
+    const course = {
+      title: "Course",
+      units: [{ title: "Unit", section: "Section" }],
+    };
+    expect(courseOutlineFromToolItem({ toolName: "course_read", output: course })).toBeUndefined();
+    expect(
+      courseOutlineFromToolItem({
+        toolName: "course_add",
+        output: { isError: true, structuredContent: course },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("caps unsectioned units at 40 lines", () => {
+    const units = Array.from({ length: 42 }, (_, index) => ({ title: `Unit ${index}` }));
+    const lines = courseOutlineFromToolItem({
+      toolName: "course_add",
+      output: { title: "Course", units },
+    })!.split("\n");
+    expect(lines.slice(0, 2)).toEqual(["**Course**: 42 units", ""]);
+    expect(lines.at(-1)).toBe("- …and 3 more");
+    expect(lines.filter((line) => line.startsWith("- ")).length).toBe(40);
+  });
 });
 
 describe("toolOutputIndicatesFailure", () => {

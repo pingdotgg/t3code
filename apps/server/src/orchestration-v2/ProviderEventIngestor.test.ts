@@ -37,7 +37,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
-import { lessonCardReplyMessageId, toolOutputImages } from "@t3tools/shared/toolOutput";
+import {
+  courseOutlineMessageId,
+  lessonCardReplyMessageId,
+  toolOutputImages,
+} from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1677,7 +1681,21 @@ layer("ProviderEventIngestorV2", (it) => {
       });
 
       yield* eventSink.write({ events: [threadEvent] });
-      for (const turnItem of [card("turn-item:card-a", "Right: it halves."), card("turn-item:b")]) {
+      const course = {
+        ...(card("turn-item:course") as Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>),
+        toolName: "mcp__t3-code__course_add",
+        output: {
+          structuredContent: {
+            title: "Course",
+            units: [{ title: "Unit 0", section: "Syllabus" }],
+          },
+        },
+      };
+      for (const turnItem of [
+        card("turn-item:card-a", "Right: it halves."),
+        card("turn-item:b"),
+        course,
+      ]) {
         yield* ingestor.ingestNormalized({
           providerSessionId,
           providerInstanceId: modelSelection.instanceId,
@@ -1698,6 +1716,12 @@ layer("ProviderEventIngestorV2", (it) => {
             id: lessonCardReplyMessageId("turn-item:card-a"),
             role: "assistant",
             text: "Right: it halves.",
+            streaming: false,
+          },
+          {
+            id: courseOutlineMessageId("turn-item:course"),
+            role: "assistant",
+            text: "**Course**: 1 units\n\n- Syllabus: unit 0",
             streaming: false,
           },
         ],
