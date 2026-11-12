@@ -78,6 +78,8 @@ Fix:
 1. Make sure the host is awake and online.
 2. On the host, run `t3 connect status`.
 3. If the check fails only on the host, check the host's DNS, VPN, or proxy.
+   If it says the host's network has an old cached answer, wait: it usually
+   clears within about 30 minutes.
 
 ## This device can't reach T3 Connect
 
@@ -108,8 +110,9 @@ an active link between your account and the host.
 - **T3 Connect is off on the host, or the host only publishes agent activity.**
   On the host, open **Settings > Sharing & access** and turn **T3 Connect** on, or
   run `t3 connect`.
-- **The host was linked, but the server did not apply the link yet.** Run
-  `t3 service restart` on the host, or restart `t3 serve`.
+- **The host was linked, but the server did not apply the link yet.** Restart
+  the server on the host: quit and reopen the T3 Code desktop app, run
+  `t3 service restart`, or stop `t3 serve` and run it again.
 - **This device's sign-in expired, or the host no longer accepts this
   device.** Sign out of T3 Connect and sign in again.
 - **This device is still loading its T3 Connect sign-in.** Wait a moment;

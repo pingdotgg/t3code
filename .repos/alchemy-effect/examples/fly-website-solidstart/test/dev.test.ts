@@ -24,13 +24,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const alchemyBin = path.join(
-  root,
-  "node_modules",
-  "alchemy",
-  "bin",
-  "alchemy.js",
-);
+const alchemyBin = path.join(root, "node_modules", "alchemy", "bin", "alchemy.js");
 const STAGE = "dev-cli-test";
 
 const pagePath = path.join(root, "src", "routes", "index.tsx");
@@ -80,9 +74,7 @@ const fetchOk = async (
     }
     await Bun.sleep(delayMs);
   }
-  throw new Error(
-    `GET ${url} never returned 2xx (last status: ${last?.status})`,
-  );
+  throw new Error(`GET ${url} never returned 2xx (last status: ${last?.status})`);
 };
 
 /** Extract the stack-output URL the CLI prints on stdout. */

@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -52,31 +52,21 @@ export default class Chat extends GCP.Function<Chat>()(
         }
 
         if (request.method !== "POST" || url.pathname !== "/chat") {
-          return yield* HttpServerResponse.json(
-            { error: "not found" },
-            { status: 404 },
-          );
+          return yield* HttpServerResponse.json({ error: "not found" }, { status: 404 });
         }
 
         const body = (yield* request.json) as ChatRequest;
         if (!body.prompt) {
-          return yield* HttpServerResponse.json(
-            { error: "prompt is required" },
-            { status: 400 },
-          );
+          return yield* HttpServerResponse.json({ error: "prompt is required" }, { status: 400 });
         }
 
         // Model access is bound at deploy time; generation settings are a
         // per-request decision.
         const response = yield* gemini.generate({
           contents: [{ role: "user", parts: [{ text: body.prompt }] }],
-          ...(body.system
-            ? { systemInstruction: { parts: [{ text: body.system }] } }
-            : {}),
+          ...(body.system ? { systemInstruction: { parts: [{ text: body.system }] } } : {}),
           generationConfig: {
-            ...(body.temperature !== undefined
-              ? { temperature: body.temperature }
-              : {}),
+            ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
             ...(body.maxOutputTokens !== undefined
               ? { maxOutputTokens: body.maxOutputTokens }
               : {}),

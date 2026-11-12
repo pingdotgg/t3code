@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -18,9 +19,11 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { rebuildMessageSearch } from "./messageSearchIndex.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
@@ -150,6 +153,20 @@ const message = (
   },
 });
 
+// The prefix and suffix are hidden selection context, not text the reader sees.
+const quote = serializeAssistantCitation({
+  version: 1,
+  environmentId: EnvironmentId.make("environment:local"),
+  threadId: ThreadId.make("thread:quoted"),
+  messageId: MessageId.make("quoted-answer"),
+  text: "A lighthouse guides ships safely through the darkness.",
+  comment: "what are you talking about",
+  start: 0,
+  end: 54,
+  prefix: "beacon01",
+  suffix: "harbor",
+});
+
 it.effect.each([true, false])(
   "ThreadSearch excludes bootstrap text before the hit and candidate limits (indexed: %s)",
   (indexed) =>
@@ -270,7 +287,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -346,6 +363,96 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       );
       assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
+    }),
+  );
+
+  it.effect("matches the readable text of quotes and their comments", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-citation");
+      const threadId = ThreadId.make("thread:citation");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "citation", "user", `${quote} quiet silver lantern`),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const snippets = (query: string) =>
+        Effect.map(search.search({ query }), (result) =>
+          result.matches
+            .filter((match) => match.threadId === threadId)
+            .map((match) => match.snippet),
+        );
+
+      const readable =
+        "A lighthouse guides ships safely through the darkness. Comment: what are you talking about quiet silver lantern";
+      assert.deepEqual(yield* snippets("what are you talking about"), [
+        `…${readable.slice(readable.indexOf("the darkness"))}`,
+      ]);
+      assert.deepEqual(yield* snippets("ships safely through"), [readable]);
+      assert.deepEqual(yield* snippets("beacon01"), []);
+      assert.deepEqual(yield* snippets("harbor"), []);
+
+      yield* projections.apply(message(threadId, "citation", "user", "quiet silver lantern"));
+      assert.deepEqual(yield* snippets("what are you talking about"), []);
+      assert.deepEqual(yield* snippets("lantern"), ["quiet silver lantern"]);
+    }),
+  );
+
+  it.effect("finds accented, CJK, and apostrophe words of a quote through the index", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-citation-index");
+      const threadId = ThreadId.make("thread:citation-index");
+      // The stored link percent-encodes these words; the index must hold them as they read.
+      const encodedQuote = serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("environment:local"),
+        threadId: ThreadId.make("thread:quoted"),
+        messageId: MessageId.make("quoted-answer"),
+        text: "The kittiwake's résumé mentions 灯台の光 twice.",
+        comment: "naïve question в логах",
+        start: 0,
+        end: 44,
+        prefix: "",
+        suffix: "",
+      });
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [thread(threadId, project), message(threadId, "citation-index", "user", encodedQuote)],
+        projections.apply,
+        { discard: true },
+      );
+      const index = yield* sql`
+        SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
+      `;
+      assert.lengthOf(index, 1);
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      for (const query of [
+        "kittiwake's",
+        "kittiwake’s",
+        "résumé",
+        "灯台の光",
+        "naïve",
+        "логах в",
+      ]) {
+        assert.deepEqual(yield* threadIds(query), [threadId], query);
+      }
+      // `t3 doctor` rebuilds the index after VACUUM; quotes must still read.
+      yield* rebuildMessageSearch(sql);
+      assert.deepEqual(yield* threadIds("résumé"), [threadId]);
+
+      yield* projections.apply(message(threadId, "citation-index", "user", "plain words"));
+      assert.deepEqual(yield* threadIds("résumé"), []);
+      assert.deepEqual(yield* threadIds("plain"), [threadId]);
     }),
   );
 
@@ -728,6 +835,85 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE thread_id = ${busy}`;
       yield* insertBusy(10_000);
       assert.deepEqual(yield* threadIds("kestrel ci"), []);
+    }),
+  );
+});
+
+it.effect.each([true, false])(
+  "ThreadSearch narrows short words outside ASCII before the hit limit (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:short-limit");
+      const older = ThreadId.make("thread:short-older");
+      const newer = ThreadId.make("thread:short-newer");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(older, project),
+          message(older, "older", "user", "В логах ошибка"),
+          thread(newer, project),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      // More newer hits for the long word than one read holds, none with the short one.
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT 'short-newer-' || i, ${newer}, 'assistant', 0, ${DateTime.formatIso(at(5))},
+          ${DateTime.formatIso(at(5))}, json_object('text', 'ошибка здесь')
+        FROM n
+      `;
+      const { matches } = yield* search.search({ query: "ошибка в" });
+      assert.deepEqual(
+        matches.map((match) => match.threadId),
+        [older],
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
+  it.effect("finds them in any case or accent, with or without the index", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:short-non-ascii");
+      const russian = ThreadId.make("thread:short-russian");
+      const french = ThreadId.make("thread:short-french");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(russian, project),
+          message(russian, "russian", "user", "В логах ошибка"),
+          thread(french, project),
+          message(french, "french", "user", "École fermée à Lyon"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      const assertMatches = Effect.gen(function* () {
+        assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
+        assert.deepEqual(yield* threadIds("fermée éc"), [french]);
+        // They still narrow: a word the message lacks rules it out.
+        assert.deepEqual(yield* threadIds("ошибка я"), []);
+      });
+      yield* assertMatches;
+      yield* sql`DROP TABLE orchestration_v2_message_search`;
+      yield* assertMatches;
     }),
   );
 });
