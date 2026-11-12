@@ -21,6 +21,12 @@ vi.mock(import("../../state/entities"), () => ({
   useProject: (ref: { projectId: string } | null) =>
     ref?.projectId === "essay-project" ? ({ title: "Essays" } as never) : null,
 }));
+vi.mock(import("../../state/environments"), () => ({
+  useEnvironmentIdentities: () => [
+    { environmentId: EnvironmentId.make("environment"), label: "Here" },
+    { environmentId: EnvironmentId.make("remote"), label: "Remote" },
+  ],
+}));
 vi.mock(import("../ProjectFavicon"), () => ({
   ProjectFavicon: () => (
     <span role="img" aria-label="Essays project icon">
@@ -132,3 +138,21 @@ it.each([
     }
   },
 );
+
+it("names a thread on a machine this client has no connection to, without waiting on it", async () => {
+  const { registry } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  await using screen = await render(
+    <RegistryContext value={registry}>
+      <MarkdownThreadLink
+        environmentId={EnvironmentId.make("environment")}
+        link={{ environmentId: EnvironmentId.make("peer"), threadId: ThreadId.make("peer-thread") }}
+        label={null}
+      />
+    </RegistryContext>,
+  );
+  await expect
+    .element(screen.getByText("Thread on another machine", { exact: true }))
+    .toBeVisible();
+  await expect.element(screen.getByRole("link")).not.toBeInTheDocument();
+});

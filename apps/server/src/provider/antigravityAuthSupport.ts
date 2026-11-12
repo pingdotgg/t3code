@@ -512,7 +512,14 @@ export function buildAntigravityAcpSpawnInput(input: {
     // must be relative to --gemini-dir.
     args:
       input.installation.harnessPath === null
-        ? ["acp", `--gemini-dir=${input.profile.geminiHome}`, "--app-data-dir=antigravity-acp"]
+        ? [
+            "acp",
+            "--gemini-dir",
+            input.profile.geminiHome,
+            "--app-data-dir",
+            // The CLI joins this beneath gemini-dir, including when the value is absolute.
+            "antigravity-acp",
+          ]
         : input.profile.platform === "linux"
           ? ["--uid="]
           : [],
