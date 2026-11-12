@@ -2517,7 +2517,12 @@ export const make = Effect.gen(function* () {
   });
   const settledPrLookupByBranchKey = new Map<
     string,
-    { readonly url: string; readonly fingerprint: string; readonly confirmedAtMs: number }
+    {
+      readonly url: string;
+      readonly dirs: { readonly commonDir: string; readonly gitDir: string };
+      readonly fingerprint: string;
+      readonly confirmedAtMs: number;
+    }
   >();
   const forgetPrLookupGitState = (cwd: string) =>
     normalizeStatusCacheKey(cwd).pipe(
@@ -2584,19 +2589,47 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.map((result) => result.stdout)),
     );
-  const readSettledPrLookupFingerprint = (cacheCwd: string, branch: string) =>
-    Effect.all(
+  const readSettledPrLookupGitDirs = (cacheCwd: string) =>
+    gitCore
+      .execute({
+        operation: "GitManager.branchPullRequest.gitDirs",
+        cwd: cacheCwd,
+        args: ["rev-parse", "--git-common-dir", "--git-dir"],
+      })
+      .pipe(
+        Effect.map((result) => {
+          const [commonDir = ".git", gitDir = commonDir] = result.stdout.trim().split("\n");
+          return {
+            commonDir: path.resolve(cacheCwd, commonDir),
+            gitDir: path.resolve(cacheCwd, gitDir),
+          };
+        }),
+      );
+  // Stats, not git, so sweeps over a settled answer spawn nothing. Git rewrites these files
+  // through a lock and rename when the branch moves or a remote or upstream changes.
+  const readSettledPrLookupFingerprint = (
+    dirs: { readonly commonDir: string; readonly gitDir: string },
+    branch: string,
+  ) =>
+    Effect.forEach(
       [
-        readPrLookupBranchRef(cacheCwd, branch, true),
-        gitCore
-          .execute({
-            operation: "GitManager.branchPullRequest.remoteUrls",
-            cwd: cacheCwd,
-            args: ["config", "--get-regexp", "^remote\\..*\\.url$"],
-            allowNonZeroExit: true,
-          })
-          .pipe(Effect.map((result) => result.stdout)),
+        path.join(dirs.commonDir, "refs", "heads", branch),
+        path.join(dirs.commonDir, "packed-refs"),
+        path.join(dirs.commonDir, "reftable", "tables.list"),
+        path.join(dirs.commonDir, "config"),
+        path.join(dirs.gitDir, "config.worktree"),
       ],
+      (file) =>
+        fileSystem.stat(file).pipe(
+          Effect.map((info) =>
+            [
+              Option.getOrElse(info.ino, () => 0),
+              info.size,
+              Option.match(info.mtime, { onNone: () => 0, onSome: (date) => date.getTime() }),
+            ].join(":"),
+          ),
+          Effect.orElseSucceed(() => "-"),
+        ),
       { concurrency: "unbounded" },
     ).pipe(Effect.map((parts) => parts.join("\u0000")));
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
@@ -2781,16 +2814,17 @@ export const make = Effect.gen(function* () {
     const settledKey = `${cacheCwd}\u0000${branch}`;
     const now = yield* Clock.currentTimeMillis;
     const settled = settledPrLookupByBranchKey.get(settledKey);
-    // Read before any fresh lookup, so a change made during it forces another one.
-    const fingerprint = yield* readSettledPrLookupFingerprint(cacheCwd, branch);
     if (
       settled !== undefined &&
       settled.url === pullRequest.url &&
-      settled.fingerprint === fingerprint &&
-      now - settled.confirmedAtMs < Duration.toMillis(SETTLED_PR_LOOKUP_RECHECK_INTERVAL)
+      now - settled.confirmedAtMs < Duration.toMillis(SETTLED_PR_LOOKUP_RECHECK_INTERVAL) &&
+      (yield* readSettledPrLookupFingerprint(settled.dirs, branch)) === settled.fingerprint
     ) {
       return pullRequest;
     }
+    const dirs = yield* readSettledPrLookupGitDirs(cacheCwd);
+    // Read before any fresh lookup, so a change made during it forces another one.
+    const fingerprint = yield* readSettledPrLookupFingerprint(dirs, branch);
     const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
@@ -2803,6 +2837,7 @@ export const make = Effect.gen(function* () {
       }
       settledPrLookupByBranchKey.set(settledKey, {
         url: confirmed.url,
+        dirs,
         fingerprint,
         confirmedAtMs: now,
       });
