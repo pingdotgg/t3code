@@ -18,11 +18,13 @@ vi.mock("@react-navigation/native", () => ({
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 vi.mock("../../lib/copyThreadReference", () => ({ copyThreadReference: vi.fn() }));
 vi.mock("../../state/entities", () => ({ useThreadShell: () => null }));
-vi.mock("../workspace/workspace-selection-store", () => ({
+vi.mock("../layout/workspace/workspace-selection-store", () => ({
   firstWorkspaceDetailOpen: () => false,
   workspaceHasColumns: () => false,
 }));
-vi.mock("../workspace/workspace-detail-selection", () => ({ selectWorkspaceDetail: vi.fn() }));
+vi.mock("../layout/workspace/workspace-detail-selection", () => ({
+  selectWorkspaceDetail: vi.fn(),
+}));
 vi.mock("../threads/GitActionProgressOverlay", () => ({ GitActionProgressOverlay: () => null }));
 vi.mock("./CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../../native/T3KeyboardCommands", () => ({

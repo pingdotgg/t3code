@@ -1,24 +1,38 @@
 export * from "./Errors.ts";
-export * from "./Progress.ts";
-export { layer } from "./Runtime.ts";
+// Operations report progress as typed events: log records `onEvent` observes.
 export {
-  routeCacheLayer,
+  Event,
+  onEvent,
+  type ApplyEvent,
+  type ApplyStatus,
+  type PlanningPhase,
+  type ResourceAnnotated,
+  type ResourceStatusChanged,
+} from "../Events.ts";
+export { layer, type Services } from "./Runtime.ts";
+export {
+  apply,
+  hasChanges,
+  plan,
+  type BuildOptions,
+  type ConfigOptions,
+  type PlanOptions,
+  type PlanOutput,
+  type PlanSummary,
+  type StackPlan,
+} from "./Operations.ts";
+export {
   DEFAULT_ENTRYPOINT,
-  open,
+  importStack,
   StackEntrypointError,
-  type OpenOptions,
-  type Session,
-  type StackTarget,
   type Target,
-} from "./Session.ts";
+} from "./Entrypoint.ts";
 
-export * as Aws from "./routes/aws.ts";
-export * as Cloudflare from "./routes/cloudflare.ts";
-export * as CloudflareToken from "./routes/cloudflareToken.ts";
-export * as Drift from "./routes/drift.ts";
-export * as Logs from "./routes/logs.ts";
-export * as Nuke from "./routes/nuke.ts";
-export * as Profile from "./routes/profile.ts";
-export * as Provider from "./routes/provider.ts";
-export * as Stack from "./routes/stack.ts";
-export * as State from "./routes/state.ts";
+export type { ConfiguredStack } from "../Stack.ts";
+
+export * as Drift from "./Drift.ts";
+export * as Logs from "./Logs.ts";
+export * as Nuke from "./Nuke.ts";
+export * as Profile from "./Profile.ts";
+export * as Provider from "./Provider.ts";
+export * as State from "./State.ts";

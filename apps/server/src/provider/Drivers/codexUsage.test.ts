@@ -1,7 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import { totalTokens } from "@t3tools/provider-core/server/usage";
 
-import { codexUsageFormat, initialCodexScanState, parseCodexLine } from "./codexUsage.ts";
+import {
+  type CodexScanState,
+  codexUsageFormat,
+  initialCodexScanState,
+  parseCodexLine as parseCodexRecords,
+} from "./codexUsage.ts";
+
+function parseCodexLine(line: string, state: CodexScanState) {
+  const records = parseCodexRecords(line, state);
+  expect(records.length).toBeLessThanOrEqual(1);
+  return records[0] ?? null;
+}
 
 describe("parseCodexLine", () => {
   const sessionMeta = JSON.stringify({
@@ -326,6 +337,174 @@ describe("parseCodexLine", () => {
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
   });
 
+  it("bills only the reported request when usage records sit between reconciling snapshots", () => {
+    const state = initialCodexScanState();
+    const usageRecord = (usage: unknown) =>
+      JSON.stringify({
+        type: "token_usage_record",
+        timestamp: "2026-08-01T05:17:45.000Z",
+        payload: { usage },
+      });
+    parseCodexLine(turnContext, state);
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    for (const usage of [counters(40, 5), counters(60, 15), counters(30, 3)]) {
+      expect(parseCodexLine(usageRecord(usage), state)).toBeNull();
+    }
+    expect(
+      parseCodexLine(counted(counters(100, 20), counters(200, 40)), state)?.totals.outputTokens,
+    ).toBe(20);
+    // Records explained by an earlier snapshot cannot bridge a later gap.
+    parseCodexLine(usageRecord(counters(10, 2)), state);
+    expect(parseCodexLine(counted(counters(10, 2), counters(340, 65)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(1);
+  });
+
+  it("bills each interrupted turn's request with the model, tier and time it was read under", () => {
+    const state = initialCodexScanState();
+    const line = (type: string, time: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ type, timestamp: `2026-11-0${time}Z`, payload });
+    const context = (time: string, turn_id: string, model: string) =>
+      line("turn_context", time, { turn_id, model });
+    const tier = (time: string, service_tier: string) =>
+      line("event_msg", time, {
+        type: "thread_settings_applied",
+        thread_settings: { service_tier },
+      });
+    const request = (time: string, usage: unknown) => line("token_usage_record", time, { usage });
+    const snapshot = (time: string, last: unknown, total: unknown) =>
+      line("event_msg", time, {
+        type: "token_count",
+        info: { last_token_usage: last, total_token_usage: total },
+      });
+    const parsed = [
+      line("session_meta", "1T23:59:50", { id: "session-a", model_provider: "openai" }),
+      context("1T23:59:50", "turn-1", "gpt-6-sol"),
+      request("1T23:59:51", counters(100, 20)),
+      snapshot("1T23:59:52", counters(100, 20), counters(100, 20)),
+      // One interrupted turn whose requests straddle midnight.
+      request("1T23:59:59", counters(150, 10)),
+      request("2T00:00:01", counters(50, 5)),
+      tier("2T00:00:02", "priority"),
+      context("2T00:00:02", "turn-2", "gpt-6-astra"),
+      request("2T00:00:03", counters(50, 5)),
+      request("2T00:00:04", counters(30, 5)),
+      tier("2T00:00:05", "default"),
+      context("2T00:00:05", "turn-3", "gpt-6-sol"),
+      request("2T00:00:06", counters(200, 30)),
+      snapshot("2T00:00:07", counters(200, 30), counters(580, 75)),
+    ].flatMap((value) => parseCodexRecords(value, state));
+
+    const at = (time: string) => Date.parse(`2026-11-0${time}Z`);
+    expect(
+      parsed.map((record) => ({
+        tokens: totalTokens(record.totals),
+        model: record.model,
+        speed: record.speed,
+        timestampMs: record.timestampMs,
+        unresolvedServiceTierTurnId: record.unresolvedServiceTierTurnId,
+      })),
+    ).toEqual([
+      {
+        tokens: 120,
+        model: "gpt-6-sol",
+        speed: "standard",
+        timestampMs: at("1T23:59:52"),
+        unresolvedServiceTierTurnId: "turn-1",
+      },
+      {
+        tokens: 160,
+        model: "gpt-6-sol",
+        speed: "standard",
+        timestampMs: at("1T23:59:59"),
+        unresolvedServiceTierTurnId: "turn-1",
+      },
+      {
+        tokens: 55,
+        model: "gpt-6-sol",
+        speed: "standard",
+        timestampMs: at("2T00:00:01"),
+        unresolvedServiceTierTurnId: "turn-1",
+      },
+      {
+        tokens: 55,
+        model: "gpt-6-astra",
+        speed: "fast",
+        timestampMs: at("2T00:00:03"),
+        unresolvedServiceTierTurnId: undefined,
+      },
+      {
+        tokens: 35,
+        model: "gpt-6-astra",
+        speed: "fast",
+        timestampMs: at("2T00:00:04"),
+        unresolvedServiceTierTurnId: undefined,
+      },
+      {
+        tokens: 230,
+        model: "gpt-6-sol",
+        speed: "standard",
+        timestampMs: at("2T00:00:07"),
+        unresolvedServiceTierTurnId: undefined,
+      },
+    ]);
+    expect(state.malformedRecords).toBe(0);
+  });
+
+  it("bills request-ledger usage through resumed context counters and compaction", () => {
+    const state = initialCodexScanState();
+    const request = (response_id: string, usage: unknown) =>
+      JSON.stringify({
+        type: "token_usage_record",
+        timestamp: "2026-08-01T05:17:45.000Z",
+        payload: { response_id, usage },
+      });
+    parseCodexLine(sessionMeta, state);
+    parseCodexLine(turnContext, state);
+    parseCodexLine(counted(counters(100, 20), counters(1000, 200)), state);
+    // Resume restores older context counters, while the request ledger continues.
+    expect(
+      parseCodexLine(request("response-1", counters(80, 10)), state)?.totals.outputTokens,
+    ).toBe(10);
+    expect(parseCodexLine(counted(counters(80, 10), counters(580, 110)), state)).toBeNull();
+    // Rate-limit refreshes repeat the snapshot without another request.
+    expect(parseCodexLine(counted(counters(80, 10), counters(580, 110)), state)).toBeNull();
+    expect(
+      parseCodexLine(request("compaction", counters(90, 15)), state)?.totals.outputTokens,
+    ).toBe(15);
+    parseCodexLine(turnContext, state);
+    expect(
+      parseCodexLine(counted({ ...counters(0, 0), total_tokens: 40 }, counters(580, 110)), state),
+    ).toBeNull();
+    expect(parseCodexLine(request("response-2", counters(30, 5)), state)?.totals.outputTokens).toBe(
+      5,
+    );
+    expect(parseCodexLine(counted(counters(30, 5), counters(610, 115)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(0);
+    // A later turn from an older CLI can still report usage through snapshots alone.
+    parseCodexLine(turnContext, state);
+    expect(
+      parseCodexLine(counted(counters(20, 2), counters(630, 117)), state)?.totals.outputTokens,
+    ).toBe(2);
+    expect(
+      parseCodexLine(request("interrupted", counters(40, 4)), state)?.totals.outputTokens,
+    ).toBe(4);
+    parseCodexLine(turnContext, state);
+    expect(
+      parseCodexLine(counted(counters(10, 1), counters(680, 122)), state)?.totals.outputTokens,
+    ).toBe(1);
+    expect(parseCodexLine(request("", counters(15, 3)), state)).toBeNull();
+    parseCodexLine(turnContext, state);
+    const transition = parseCodexRecords(request("upgraded", counters(25, 5)), state);
+    expect(transition.map((record) => record.totals.outputTokens)).toEqual([3, 5]);
+    expect(parseCodexLine(counted(counters(25, 5), counters(720, 130)), state)).toBeNull();
+    expect(parseCodexLine(request("", counters(10, 1)), state)).toBeNull();
+    expect(
+      parseCodexLine(counted(counters(10, 1), counters(730, 131)), state)?.totals.outputTokens,
+    ).toBe(1);
+    expect(parseCodexLine(counted(counters(10, 1), counters(730, 131)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(0);
+  });
+
   it("does not bill a context-window estimate or lose the following real request", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
@@ -372,6 +551,42 @@ describe("parseCodexLine", () => {
       parseCodexLine(counted(counters(10, 2), counters(40, 7)), state)?.totals.outputTokens,
     ).toBe(2);
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+  });
+
+  const later = (line: string) => line.replace("05:17:49.919Z", "07:17:49.919Z");
+  it.each([
+    {
+      name: "bills a later request that continues from an earlier snapshot",
+      tail: [
+        later(counted(counters(20, 4), counters(130, 26))),
+        later(counted(counters(5, 1), counters(135, 27))),
+      ],
+      processed: [120, 12, 35, 24, 6],
+      skipped: 0,
+    },
+    {
+      name: "does not bill a re-emitted earlier snapshot again",
+      tail: [counted(counters(10, 2), counters(110, 22))],
+      processed: [120, 12, 35, 0],
+      skipped: 1,
+    },
+  ])("$name when cumulative counters rewind", ({ tail, processed, skipped }) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const billed = [
+      counted(counters(100, 20), counters(100, 20)),
+      counted(counters(10, 2), counters(110, 22)),
+      counted(counters(30, 5), counters(140, 27)),
+      ...tail,
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({ processed: billed, skipped: codexUsageFormat.readMalformedRecords?.(state) }).toEqual({
+      processed,
+      skipped,
+    });
   });
 
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
@@ -663,6 +878,27 @@ describe("parseCodexLine", () => {
         processed: [first, copied, afterBurst, next],
         skipped: codexUsageFormat.readMalformedRecords?.(state),
       }).toEqual({ processed: [120, 0, 120, 35], skipped: 0 });
+    });
+
+    it("bills the child's first request when its turn is interrupted before any snapshot", () => {
+      const state = initialCodexScanState();
+      const forkInstant = "2026-08-01T05:00:00.000Z";
+      const request = (timestamp: string, usage: unknown) =>
+        JSON.stringify({ type: "token_usage_record", timestamp, payload: { usage } });
+      const billed = [
+        meta({ id: "child", timestamp: forkInstant, forkedFromId: "parent" }),
+        stamped(forkInstant, turnContext),
+        request("2026-08-01T05:00:00.001Z", counters(100, 20)),
+        stamped("2026-08-01T05:00:00.001Z", counted(counters(100, 20), counters(100, 20))),
+        request("2026-08-01T05:00:06.000Z", counters(150, 10)),
+        request("2026-08-01T05:00:10.000Z", counters(200, 30)),
+        stamped("2026-08-01T05:00:10.000Z", counted(counters(200, 30), counters(450, 60))),
+      ].flatMap((line) => parseCodexRecords(line, state));
+
+      expect({
+        processed: billed.map((record) => totalTokens(record.totals)),
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed: [160, 230], skipped: 0 });
     });
   });
 });
