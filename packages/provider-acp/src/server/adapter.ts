@@ -7229,6 +7229,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
+        yield* runtime.drainEvents;
         const capabilities = negotiatedCapabilities(
           yield* readCapabilities,
           started,

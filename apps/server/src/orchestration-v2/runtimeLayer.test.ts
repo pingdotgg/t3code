@@ -8024,7 +8024,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.instanceOf(refused, Orchestrator.OrchestratorDispatchError);
         assert.equal(
           refused.cause,
-          "Antigravity accepts /goal followed by an objective. To cancel, send a message asking it to stop the current goal.",
+          "Antigravity accepts /goal followed by an objective. Interrupt the running turn, then ask Antigravity to stop the current goal.",
         );
         assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
       }),

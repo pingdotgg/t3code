@@ -1422,7 +1422,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause:
-            "Antigravity accepts /goal followed by an objective. To cancel, send a message asking it to stop the current goal.",
+            "Antigravity accepts /goal followed by an objective. Interrupt the running turn, then ask Antigravity to stop the current goal.",
         });
       }
       if (goalCommand.type !== "pause" && goalCommand.type !== "resume") return;

@@ -150,7 +150,8 @@ objective. Antigravity keeps working until it completes the goal or you cancel i
 If you still use the older 1.4.5 runtime, update Antigravity in provider settings,
 then refresh provider status.
 
-To cancel a goal, send a follow-up asking Antigravity to stop the current goal.
+Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
+before starting more work. Ordinary follow-ups wait until the running turn ends.
 T3 does not support Antigravity goal status, pause, resume, or clear commands.
 
 ## Check access and troubleshoot
