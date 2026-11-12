@@ -1936,7 +1936,7 @@ export function ThreadsSettingsPanel() {
           serverScoped
           settingKeys={["closeRunningTerminalsOnSettle"]}
           {...searchableSetting("close-running-terminals-on-settle")}
-          description="Stop all of the thread's terminals, including dev servers, when it settles manually or automatically. Off closes only idle terminals."
+          description="Stop all of the thread's terminals, including dev servers, when it settles manually or automatically. Off closes idle terminals and actions configured to stop on settle."
           control={
             <ScopedSwitch
               settingKeys={["closeRunningTerminalsOnSettle"]}
