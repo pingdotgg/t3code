@@ -207,6 +207,31 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
 });
 
+// regression: #20207 the detail panel re-renders on every background poll; code text selected
+// in the diff must survive it so it can still be copied
+it("keeps a text selection in the diff when the tab re-renders with the same props", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  const line = screen.getByText("three()", { exact: true });
+  await expect.element(line).toBeVisible();
+  const selection = document.getSelection()!;
+  selection.selectAllChildren(line.element());
+  expect(selection.toString()).toBe("three()");
+
+  await screen.rerender(tab(0));
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+
+  expect(selection.toString()).toBe("three()");
+});
+
 // regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
 it("keeps a revealed file open when its Viewed mark loads afterwards", async () => {
   setup({ paged: false });
