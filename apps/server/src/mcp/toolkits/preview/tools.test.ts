@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
@@ -50,4 +51,8 @@ it("preview_open accepts a target while preserving open input constraints", () =
   });
   expect(() => decode({ target: { ...target, port: 0 } })).toThrow();
   expect(() => decode({ target, tabId: "tab-1", reuseExistingTab: false })).toThrow();
+});
+
+it("annotates preview_open as non-destructive", () => {
+  expect(Context.get(PreviewToolkit.tools.preview_open.annotations, Tool.Destructive)).toBe(false);
 });
