@@ -79,6 +79,16 @@ function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: stri
   return (tree: MarkdownNode) => visit(tree);
 }
 
+/** An autolink shows its address as written, as hosts do: `<https://a/:tada:/>` keeps `:tada:`. */
+function isLiteralUrlLink(node: MarkdownNode): boolean {
+  const label = node.children?.length === 1 ? node.children[0]!.value : undefined;
+  return (
+    node.type === "link" &&
+    label !== undefined &&
+    (node.url === label || node.url === `http://${label}` || node.url === `mailto:${label}`)
+  );
+}
+
 let emojiByShortcode: ReadonlyMap<string, string> | undefined;
 
 function remarkEmojiShortcodes() {
@@ -87,6 +97,7 @@ function remarkEmojiShortcodes() {
   );
   const emoji = emojiByShortcode;
   const visit = (node: MarkdownNode): void => {
+    if (isLiteralUrlLink(node)) return;
     if (node.type === "text" && node.value !== undefined) {
       node.value = node.value.replace(
         /:([\w+-]+):/gu,

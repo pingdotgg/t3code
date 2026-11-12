@@ -1,4 +1,5 @@
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
@@ -67,6 +68,24 @@ describe("pullRequestMarkdownPlugins", () => {
     };
     visit(tree);
     expect(text.join("")).toBe("Nice 👍 🎉 :tada:");
+
+    const withLinks = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .use(
+        pullRequestMarkdownPlugins({
+          provider: "github",
+          url: "https://github.com/team/repo/pull/8",
+        }),
+      );
+    const linked = (await withLinks.run(
+      withLinks.parse(
+        "https://example.com/:tada:/ <https://example.com/:tada:/> [:tada: docs](https://example.com)",
+      ),
+    )) as Node;
+    text.length = 0;
+    visit(linked);
+    expect(text.join("")).toBe("https://example.com/:tada:/ https://example.com/:tada:/ 🎉 docs");
   });
 });
 
