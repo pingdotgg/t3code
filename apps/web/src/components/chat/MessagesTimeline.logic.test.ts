@@ -4668,6 +4668,44 @@ describe("live subagents after their parent turn settles", () => {
     });
     expect(rows.map((row) => row.id)).toEqual([`attempt-fold:${attempt.id}`, "child"]);
   });
+
+  it.each(["app_owned", "provider_native"] as const)(
+    "does not show Thinking while an open turn waits on a running foreground %s child",
+    (origin) => {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: (
+            [
+              {
+                ...base("user", 0),
+                status: "completed",
+                type: "user_message",
+                messageId: MessageId.make("user"),
+                createdBy: "user",
+                creationSource: "web",
+                inputIntent: "turn_start",
+                text: "Research three things in parallel",
+                attachments: [],
+              },
+              child("child", 1, "running", origin),
+            ] satisfies OrchestrationV2TurnItem[]
+          ).map(projected),
+          optimisticMessages: [],
+        }),
+        latestRun: {
+          runId,
+          status: "running",
+          startedAt: DateTime.formatIso(at(0)),
+          completedAt: null,
+        },
+        isWorking: true,
+        activeTurnStartedAt: DateTime.formatIso(at(0)),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(rows.map((row) => row.kind)).not.toContain("thinking");
+    },
+  );
 });
 
 describe("subagent continued by a later turn", () => {
