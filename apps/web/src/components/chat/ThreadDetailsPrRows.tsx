@@ -124,7 +124,7 @@ export function ThreadDetailsPrRows({
         onClick={() => setExpanded(!expanded)}
         part="row"
         tone="muted"
-        className="w-full active:scale-100"
+        className="w-full"
       >
         {expanded ? (
           <ChevronUpIcon aria-hidden className="size-4 shrink-0" />

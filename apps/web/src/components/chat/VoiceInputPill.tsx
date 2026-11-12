@@ -41,12 +41,22 @@ export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number 
   );
 });
 
-export function VoiceInputPill({ children }: { children: ReactNode }) {
+export function VoiceInputPill({
+  children,
+  compact = false,
+}: {
+  children: ReactNode;
+  compact?: boolean;
+}) {
   return (
     // Same height as the toolbar's icon buttons, so starting a recording never resizes the composer.
     <div
       data-slot="voice-input-pill"
-      className="flex h-8 w-48 min-w-0 shrink-0 items-center gap-2 sm:h-7 sm:w-64"
+      className={
+        compact
+          ? "flex h-8 min-w-0 shrink-0 items-center gap-1 sm:h-7"
+          : "flex h-8 w-48 min-w-0 shrink-0 items-center gap-2 sm:h-7 sm:w-64"
+      }
     >
       {children}
     </div>

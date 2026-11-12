@@ -157,10 +157,14 @@ function LocalVersionStatusLabel() {
 
 /** Environments lists the machines this app connects to; access covers who may reach one of them. */
 export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
-  return view === "access" ? (
-    <AccessSettings />
-  ) : (
-    <ConnectionsSettingsContent view="environments" accessEnvironmentId={null} />
+  return view === "access" ? <AccessSettings /> : <EnvironmentsSettings />;
+}
+
+/** The environments page opens with this machine's overview. */
+function EnvironmentsSettings() {
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  return (
+    <ConnectionsSettingsContent view="environments" accessEnvironmentId={primaryEnvironmentId} />
   );
 }
 
@@ -198,11 +202,7 @@ function AccessSettings() {
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
             {candidates.map((environment) => (
-              <SelectItem
-                hideIndicator
-                key={environment.environmentId}
-                value={environment.environmentId}
-              >
+              <SelectItem key={environment.environmentId} value={environment.environmentId}>
                 <span className="flex min-w-0 items-center gap-2">
                   <EnvironmentMachineIcon
                     aria-hidden
@@ -958,16 +958,12 @@ function ConnectionsSettingsContent({
                 <SelectValue>{selectLabel}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={BACKEND_VALUE_WSL_OFF}>
-                  Off
-                </SelectItem>
+                <SelectItem value={BACKEND_VALUE_WSL_OFF}>Off</SelectItem>
                 {desktopWslState.distros.length === 0 ? (
-                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
-                    Default distro
-                  </SelectItem>
+                  <SelectItem value={BACKEND_VALUE_DEFAULT_WSL}>Default distro</SelectItem>
                 ) : (
                   desktopWslState.distros.map((distro) => (
-                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
+                    <SelectItem key={distro.name} value={distro.name}>
                       {distro.name}
                       {distro.isDefault ? " (default)" : ""}
                     </SelectItem>
@@ -1603,14 +1599,14 @@ function ConnectionsSettingsContent({
             </DialogPopup>
           </Dialog>
         </>
-      ) : (
+      ) : showsAccess ? (
         <SettingsSection {...searchableSetting("connections-environment")}>
           <SettingsRow
             title="No environment selected"
             description="Connect an environment to view its settings and access."
           />
         </SettingsSection>
-      )}
+      ) : null}
     </>
   );
 
