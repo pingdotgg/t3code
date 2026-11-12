@@ -276,14 +276,15 @@ export interface ClaudeAccountUsage {
   readonly sharesByWindowId: ReadonlyMap<string, ClaudeWindowShare>;
 }
 
-// A model's reset gives back what that model used of Weekly, so say how much.
+// A Fable reset gives back what that model used of Weekly, so say how much.
 const describeShare = (
   option: ServerProviderResetCreditOption,
   sharesByWindowId: ReadonlyMap<string, ClaudeWindowShare>,
 ): ServerProviderResetCreditOption => {
-  const share = option.scope
-    ? option.clearsWindowIds?.flatMap((id) => sharesByWindowId.get(id) ?? [])[0]
-    : undefined;
+  const share =
+    option.scope && option.label === RESET_KINDS.fable.label
+      ? option.clearsWindowIds?.flatMap((id) => sharesByWindowId.get(id) ?? [])[0]
+      : undefined;
   if (!share || !option.scope) return option;
   const used = Math.round(share.usedPercent);
   return {

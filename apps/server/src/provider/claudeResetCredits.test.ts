@@ -44,6 +44,7 @@ const usageBody = {
     grants: [
       grant({}),
       grant({ id: "fable_a", clears: ["seven_day_overage_included"], gives_back_weekly: true }),
+      grant({ id: "model_weekly", clears: ["seven_day_overage_included"] }),
     ],
   },
   limits: [
@@ -195,6 +196,7 @@ effectIt.layer(NodeServices.layer)("readClaudeAccountUsage", (it) => {
       expect(usage?.resetCredits).toMatchObject({ nextCreditId: "grant_a" });
       expect([...(usage?.sharesByWindowId ?? [])]).toEqual([["seven_day_fable", fableShare]]);
       expect(usage?.resetCredits?.options?.map((option) => option.description)).toEqual([
+        "Refills your Fable weekly allowance.",
         "Refills your Fable allowance and gives back the 8% of your weekly limit Fable used. It doesn't reset the rest of your weekly limit.",
         "Refills your 5-hour and weekly limits.",
       ]);
