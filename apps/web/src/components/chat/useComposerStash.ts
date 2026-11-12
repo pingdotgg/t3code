@@ -34,6 +34,7 @@ import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
+  isResponseContextRecord,
   previewAnnotationContextRecord,
   reviewCommentContextRecord,
   terminalContextRecord,
@@ -127,6 +128,7 @@ export function useComposerStash(input: {
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftReplyTo = useComposerDraftStore((store) => store.setReplyTo);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftPreviewAnnotation = useComposerDraftStore(
@@ -208,6 +210,17 @@ export function useComposerStash(input: {
     const rewrittenContextIds = entry.records
       ? importContextRecords(entry.records, null, composerDraftTarget)
       : new Map<string, string>();
+    // A reply only makes sense in the thread that holds the response, and one already pending wins.
+    const stashedReply = entry.records?.find(isResponseContextRecord);
+    if (
+      stashedReply &&
+      !getComposerDraft(composerDraftTarget)?.replyTo &&
+      typeof composerDraftTarget !== "string" &&
+      stashedReply.citation.threadId === composerDraftTarget.threadId &&
+      stashedReply.citation.environmentId === composerDraftTarget.environmentId
+    ) {
+      setComposerDraftReplyTo(composerDraftTarget, stashedReply);
+    }
     const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
       const contextId = rewrittenContextIds.get(reference.contextId);
       return contextId
@@ -456,6 +469,7 @@ export function useComposerStash(input: {
       });
       return;
     }
+    const replyTo = getComposerDraft(composerDraftTarget)?.replyTo;
     const trimmedPrompt = promptRef.current.trim();
     // A trailing chip only parses with whitespace after it, so keep one space to restore it.
     const endsWithChip =
@@ -466,6 +480,7 @@ export function useComposerStash(input: {
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
     const stashedRecords: ComposerContextRecord[] = [
+      ...(replyTo ? [replyTo] : []),
       ...composerThreadContexts,
       ...readTerminalContexts().map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
@@ -570,6 +585,7 @@ export function useComposerStash(input: {
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
       setComposerDraftThreadContexts(stashTarget, []);
+      setComposerDraftReplyTo(stashTarget, null);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
       }
