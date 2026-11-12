@@ -953,7 +953,8 @@ const make = Effect.gen(function* () {
       fileChooser: null,
       dialog: null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
-      colorScheme: "system",
+      // Playwright emulates a light scheme on a page it attaches to over CDP.
+      colorScheme: desktop ? "light" : "system",
       zoomFactor: 1,
       desktopViewport: null,
       desktopViewportRead: Promise.resolve(null),

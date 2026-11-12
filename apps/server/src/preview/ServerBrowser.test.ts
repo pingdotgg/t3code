@@ -799,6 +799,17 @@ it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop"
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a desktop tab following the system appearance clears Playwright's light default", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* ready;
+      const { context } = yield* openDesktopViewer;
+
+      expect(context.page.emulateMedia).toHaveBeenCalledExactlyOnceWith({ colorScheme: null });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a desktop page that loaded before the server attached reports its loaded title", () =>
   Effect.scoped(
     Effect.gen(function* () {
