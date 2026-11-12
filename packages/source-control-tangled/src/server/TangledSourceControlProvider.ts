@@ -358,6 +358,32 @@ export const make = Effect.gen(function* () {
           context: input.context,
         });
 
+        // A fork names its source; without it `tg` takes the target as the source.
+        const sourceRepository = source?.repository;
+        // An `owner:branch` selector names a fork's owner but not its repository.
+        const sourceOwner = sourceRepository === undefined ? source?.owner : undefined;
+        if (
+          sourceOwner !== undefined &&
+          (isTangledRepositoryDid(address) || sourceOwner !== address.split("/")[0])
+        ) {
+          return yield* notNamed(
+            "createChangeRequest",
+            input.cwd,
+            `${headBranch} is on ${sourceOwner}'s fork, which tg must be given as handle/repo. Create this pull request with \`tg pr create --source-repo handle/repo\`.`,
+          );
+        }
+        const forkSource =
+          sourceRepository !== undefined && sourceRepository !== address
+            ? sourceRepository
+            : undefined;
+        if (forkSource !== undefined && isTangledRepositoryDid(forkSource)) {
+          return yield* notNamed(
+            "createChangeRequest",
+            input.cwd,
+            `The tg CLI names a fork's source repository as handle/repo, not by DID (${forkSource}). Create this pull request with \`tg pr create --source-repo handle/repo\`.`,
+          );
+        }
+
         const open = yield* cli
           .runJson({
             cwd: input.cwd,
@@ -393,30 +419,7 @@ export const make = Effect.gen(function* () {
         ];
         // `-repo` takes `handle/repo`; a repository DID is only ever resolved from the checkout.
         if (!isTangledRepositoryDid(address)) args.push("--repo", address);
-        // A fork names its source; without it `tg` takes the target as the source.
-        const sourceRepository = source?.repository;
-        // An `owner:branch` selector names a fork's owner but not its repository.
-        const sourceOwner = sourceRepository === undefined ? source?.owner : undefined;
-        if (
-          sourceOwner !== undefined &&
-          (isTangledRepositoryDid(address) || sourceOwner !== address.split("/")[0])
-        ) {
-          return yield* notNamed(
-            "createChangeRequest",
-            input.cwd,
-            `${headBranch} is on ${sourceOwner}'s fork, which tg must be given as handle/repo. Create this pull request with \`tg pr create --source-repo handle/repo\`.`,
-          );
-        }
-        if (sourceRepository !== undefined && sourceRepository !== address) {
-          if (isTangledRepositoryDid(sourceRepository)) {
-            return yield* notNamed(
-              "createChangeRequest",
-              input.cwd,
-              `The tg CLI names a fork's source repository as handle/repo, not by DID (${sourceRepository}). Create this pull request with \`tg pr create --source-repo handle/repo\`.`,
-            );
-          }
-          args.push("--source-repo", sourceRepository);
-        }
+        if (forkSource !== undefined) args.push("--source-repo", forkSource);
         yield* cli
           .run({ cwd: input.cwd, args })
           .pipe(Effect.mapError((cause) => fail("createChangeRequest", input.cwd, cause)));

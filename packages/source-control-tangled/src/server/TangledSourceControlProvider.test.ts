@@ -368,6 +368,8 @@ describe("createChangeRequest", () => {
         .pipe(Effect.flip);
       assert.match(ownerOnly.detail, /bob\.example's fork/u);
       assert.strictEqual(tg.calls.filter((call) => call.includes("create")).length, 1);
+      // Refused before the duplicate check, so a branch-pair collision cannot mask the reason.
+      assert.strictEqual(tg.calls.filter((call) => call.includes("list")).length, 1);
     }).pipe(serve(tg));
   });
 
