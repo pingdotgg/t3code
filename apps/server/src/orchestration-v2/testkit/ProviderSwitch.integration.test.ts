@@ -1624,6 +1624,9 @@ describe("orchestration v2 provider switching", () => {
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const refuseStarts = yield* Ref.make(0);
         const generation = yield* Ref.make(0);
+        const runtimeRestarts = yield* Ref.make<ReadonlyArray<string>>([]);
+        const staleBackgroundWork =
+          refusalCause._tag === "ClaudeBackgroundWorkBlocksQueryReplacementError";
         const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CLAUDE_MODEL_SELECTION.instanceId,
@@ -1635,6 +1638,9 @@ describe("orchestration v2 provider switching", () => {
             refuseStarts,
             refusalCause,
             nativeThreadGeneration: generation,
+            ...(staleBackgroundWork
+              ? { backgroundWork: yield* Ref.make(true), runtimeRestarts }
+              : {}),
           }),
         ]);
         yield* Effect.gen(function* () {
@@ -1683,6 +1689,16 @@ describe("orchestration v2 provider switching", () => {
           yield* Ref.set(refuseStarts, 2);
           assert.equal(yield* run(2), "failed");
           assert.equal(yield* run(3), "failed");
+          if (staleBackgroundWork) {
+            // regression: #35240 the refusal says to press Stop, so Stop must restart the runtime
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("refused-start:stop"),
+              threadId,
+            });
+            yield* worker.drain();
+            assert.lengthOf(yield* Ref.get(runtimeRestarts), 1);
+          }
           assert.equal(yield* run(4), "completed");
 
           const turns = yield* Ref.get(capturedTurns);

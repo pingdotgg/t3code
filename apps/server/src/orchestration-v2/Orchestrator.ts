@@ -13172,14 +13172,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         session === undefined ||
         session.status === "stopped" ||
         session.status === "error" ||
-        run.activeAttemptId === null ||
         !(yield* sessionHasBackgroundWork(session, projection.providerThreads))
       ) {
         return;
       }
+      // A refused start records no provider turn, so reach the thread's latest accepted one.
       const { providerTurns } = yield* projectionStore
         .getThreadRecords(command.threadId, ["providerTurns"], {
-          providerTurnAttemptIds: [run.activeAttemptId],
+          providerTurnThreadIds: [providerThread.id],
         })
         .pipe(mapDispatchError(command));
       const providerTurn = providerTurns.findLast(
