@@ -965,6 +965,7 @@ it.effect("a side chat of a busy parent points history recovery at the parent", 
     const coverage = handoff?.history?.coverage ?? "";
     assert.include(coverage, `t3_thread_read({threadId:"${parentId}"`);
     assert.notInclude(coverage, `threadId:"${sideChatId}"`);
+    assert.isFalse(started.turnItems.some((item) => item.type === "handoff"));
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
