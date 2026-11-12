@@ -83,7 +83,11 @@ vi.mock("../state/use-atom-command", () => ({
 vi.mock("../state/server", async () => {
   const Atom = await import("effect/reactivity/Atom");
   const config = Atom.make(null);
-  return { serverEnvironment: { configValueAtom: () => config } };
+  return {
+    serverEnvironment: { configValueAtom: () => config },
+    // The pane notch reads the theme (black chrome keeps the notch), which reads server themes.
+    themeServerEnvironmentThemesAtom: Atom.make([]),
+  };
 });
 vi.mock("../state/terminal", () => ({ terminalEnvironment: { write: {}, resize: {} } }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));

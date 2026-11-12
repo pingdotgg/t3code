@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
+import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { useAtomValue } from "@effect/atom-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -25,6 +26,7 @@ import {
   memo,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -83,33 +85,97 @@ import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
 import { setWheelScroller, wheelDeltaPx } from "../motion/gesture";
-import { observeResize } from "../lib/observeResize";
+import { useClientSettings } from "../hooks/useSettings";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { surfaceTabTitle, terminalTabTitle } from "./surfaceTabLabels";
 
 const EMPTY_TABS: readonly LayoutTab[] = [];
 
-/** Keep overflow reachable by wheel and touch, and reveal the selected tab without moving its pane. */
-export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
-  const { tabId } = useLayoutPane();
-  const stripRef = useRef<HTMLDivElement>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the tab scroller's wheel routing and reveal its active tab after header resizing.
-  useLayoutEffect(() => {
-    const strip = stripRef.current;
-    if (!strip) return;
-    const tab = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].find(
-      (candidate) => candidate.dataset.layoutPaneTab === tabId,
-    );
-    const reveal = () => {
-      if (!tab) return;
-      const bounds = strip.getBoundingClientRect();
-      const rect = tab.getBoundingClientRect();
-      // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
-      if (rect.width > bounds.width && tab.dataset.layoutTabReveal === "end")
-        strip.scrollLeft += rect.right - bounds.right;
-      else if (rect.left < bounds.left) strip.scrollLeft -= bounds.left - rect.left;
-      else if (rect.right > bounds.right) strip.scrollLeft += rect.right - bounds.right;
-    };
-    const wheel = (event: WheelEvent) => {
+/**
+ * A pane's tab strip, one DOM node per pane that outlives its tabs' headers:
+ * the shown tab's header portals its tabs into it and holds it in its row, so
+ * a tab switch keeps the strip, its scroll and the joined tab shape, which
+ * then moves to the new active tab (index.css, [data-pane-join]).
+ */
+interface PaneStrip {
+  readonly strip: HTMLDivElement;
+  readonly join: HTMLSpanElement;
+  /** Where the joined shape sits or is heading, in the strip's scrolled content. */
+  shown: { tabId: string | null; x: number; w: number } | null;
+  /** The tab whose label reads as joined: the shape's, once it has landed there. */
+  joinedId: string | null;
+  /** The slide in flight, if any. */
+  slide: Animation | null;
+  /** The holding header's panel animation duration, for a slide begun on a press. */
+  motionMs: number;
+}
+
+const paneStrips = new Map<string, PaneStrip>();
+/** How the header holding a strip places its joined tab, with or without motion. */
+const stripPlacers = new WeakMap<HTMLElement, (motionMs: number) => void>();
+const stripEntries = new WeakMap<HTMLElement, PaneStrip>();
+const pendingPlacements = new Map<HTMLElement, number>();
+let placementFrame: number | null = null;
+
+/**
+ * Place a strip's joined tab in the next frame, before it paints: reading the
+ * tabs' boxes inside a tab switch's commit would lay the incoming chat out
+ * there and again once the commit's other effects had run.
+ */
+function schedulePlacement(strip: HTMLElement, motionMs: number): void {
+  pendingPlacements.set(strip, Math.max(motionMs, pendingPlacements.get(strip) ?? 0));
+  placementFrame ??= requestAnimationFrame(() => {
+    placementFrame = null;
+    const placements = [...pendingPlacements];
+    pendingPlacements.clear();
+    for (const [pending, motion] of placements) stripPlacers.get(pending)?.(motion);
+  });
+}
+
+const PANE_JOIN_RADIUS_PX = 10;
+const PANE_JOIN_EAR_PX = 10;
+const PANE_JOIN_TAIL_PX = 36;
+/** The strip's edge fade (index.css), which the revealed tab's ears stay clear of. */
+const PANE_STRIP_FADE_PX = 24;
+
+function joinPiece(name: string, value = ""): HTMLElement {
+  const piece = document.createElement("i");
+  piece.setAttribute(name, value);
+  return piece;
+}
+
+function joinCap(side: "l" | "r"): HTMLElement {
+  const cap = joinPiece("data-jc", side);
+  cap.append(
+    joinPiece("data-jf"),
+    joinPiece("data-jr"),
+    joinPiece("data-je"),
+    joinPiece("data-jer"),
+    joinPiece("data-jt"),
+  );
+  return cap;
+}
+
+function createPaneStrip(): PaneStrip {
+  const strip = document.createElement("div");
+  strip.dataset.layoutTabStrip = "";
+  strip.className =
+    "relative flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
+  // The joined tab: two caps (corner, side, ear, rim) and a middle that
+  // scales, so it moves by transform alone; the pill shows it unfocused.
+  const join = document.createElement("span");
+  join.dataset.paneJoin = "";
+  join.setAttribute("aria-hidden", "true");
+  join.hidden = true;
+  const body = joinPiece("data-jb");
+  body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
+  join.append(body, joinPiece("data-jp"));
+  strip.append(join);
+  const entry: PaneStrip = { strip, join, shown: null, joinedId: null, slide: null, motionMs: 0 };
+  stripEntries.set(strip, entry);
+  strip.addEventListener(
+    "wheel",
+    (event) => {
       if (
         event.ctrlKey ||
         event.metaKey ||
@@ -121,26 +187,324 @@ export function LayoutPaneTabStrip({ children }: { children: ReactNode }) {
       event.preventDefault();
       event.stopPropagation();
       strip.scrollLeft += wheelDeltaPx(event.deltaY, event);
-    };
-    setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
-    strip.addEventListener("wheel", wheel, { passive: false });
-    const stop = observeResize(tab ? [strip, tab] : [strip], reveal);
-    reveal();
-    return () => {
-      stop();
-      setWheelScroller(strip, null);
-      strip.removeEventListener("wheel", wheel);
-    };
-  }, [tabId]);
-  return (
-    <div
-      ref={stripRef}
-      data-layout-tab-strip=""
-      className="flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-    >
-      {children}
-    </div>
+    },
+    { passive: false },
   );
+  strip.addEventListener("scroll", () => markStripOverflow(strip), { passive: true });
+  // The shape leaves on the press, before the switch's render: a click lands
+  // on its release, after the incoming chat has been laid out.
+  strip.addEventListener("pointerdown", (event) => slideOnPress(entry, event));
+  setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
+  // A tab opening, closing or changing size moves the others without a render here.
+  // Not observeResize: no React state changes, and its flushSync would force the
+  // incoming chat's pending render into the tab switch's task.
+  // oxlint-disable-next-line t3code/no-raw-resize-observer -- Places a DOM node only; see above.
+  const resize = new ResizeObserver(() => {
+    stripPlacers.get(strip)?.(0);
+    markStripOverflow(strip);
+  });
+  resize.observe(strip);
+  new MutationObserver(() => {
+    for (const tab of strip.querySelectorAll(":scope > [data-strip-layer] > *")) {
+      resize.observe(tab);
+    }
+    // A tab rendered again (a header swap) reads as joined from its first frame.
+    markJoinedLabel(entry);
+    schedulePlacement(strip, 0);
+  }).observe(strip, { childList: true, subtree: true });
+  return entry;
+}
+
+/** How much of the strip is scrolled out at each end, for its edge fade. */
+function markStripOverflow(strip: HTMLElement): void {
+  const end = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
+  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, strip.scrollLeft)}px`);
+  strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
+  strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
+}
+
+function paneStripFor(key: string): PaneStrip {
+  let entry = paneStrips.get(key);
+  if (!entry) {
+    entry = createPaneStrip();
+    paneStrips.set(key, entry);
+  }
+  return entry;
+}
+
+/** The shown header places the strip's joined tab, with its own motion setting. */
+function holdPaneStrip(
+  entry: PaneStrip,
+  place: (motionMs: number) => void,
+  motionMs: number,
+): void {
+  stripPlacers.set(entry.strip, place);
+  entry.motionMs = motionMs;
+  schedulePlacement(entry.strip, motionMs);
+}
+
+/** Forget a pane's strip once no header holds it, after the commit that may hand it on. */
+function releasePaneStrip(key: string, entry: PaneStrip): void {
+  queueMicrotask(() => {
+    if (entry.strip.isConnected || paneStrips.get(key) !== entry) return;
+    setWheelScroller(entry.strip, null);
+    paneStrips.delete(key);
+  });
+}
+
+/** A header's tabs: in the pane's strip while its header shows, hidden in its own row otherwise. */
+function showStripLayer(layer: HTMLElement, parent: HTMLElement, shown: boolean): void {
+  layer.style.display = shown ? "contents" : "none";
+  if (layer.parentNode !== parent) moveInto(parent, layer);
+}
+
+function moveInto(parent: HTMLElement, node: HTMLElement): void {
+  // moveBefore keeps the node's scroll and running transitions where it exists.
+  const atomic = (parent as { moveBefore?: (node: Node, child: Node | null) => void }).moveBefore;
+  if (atomic && node.isConnected) atomic.call(parent, node, null);
+  else parent.append(node);
+}
+
+const PANE_JOIN_EASING = "ease-out";
+const STRIP_TAB_SELECTOR = "[data-layout-pane-tab], [data-tab-key]";
+
+/** A layout tab by its id, or a panel's own tab (RightPanelTabs) by its surface. */
+function stripTabId(tab: HTMLElement): string | null {
+  return tab.dataset.layoutPaneTab ?? tab.dataset.tabKey ?? null;
+}
+
+function findStripTab(strip: HTMLElement, tabId: string | null): HTMLElement | null {
+  if (tabId === null) return null;
+  return (
+    [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].find(
+      (candidate) => candidate.dataset.layoutPaneTab === tabId,
+    ) ?? null
+  );
+}
+
+/** The label under the landed shape reads as the active one (index.css, [data-joined]). */
+function markJoinedLabel(entry: PaneStrip): void {
+  for (const tab of entry.strip.querySelectorAll<HTMLElement>(STRIP_TAB_SELECTOR)) {
+    const joined = entry.joinedId !== null && stripTabId(tab) === entry.joinedId;
+    if (tab.hasAttribute("data-joined") !== joined) tab.toggleAttribute("data-joined", joined);
+  }
+}
+
+function stripBoxOf(strip: HTMLElement, tab: HTMLElement): { x: number; w: number } | null {
+  const bounds = strip.getBoundingClientRect();
+  // Layout pixels, also while the overview scales the pane.
+  const scale = strip.offsetWidth > 0 ? bounds.width / strip.offsetWidth : 1;
+  if (scale <= 0) return null;
+  const rect = tab.getBoundingClientRect();
+  return {
+    x: Math.round((rect.left - bounds.left) / scale + strip.scrollLeft),
+    w: Math.round(rect.width / scale),
+  };
+}
+
+/**
+ * Put the joined shape on a tab, sliding there from where it is when motion
+ * is on, transform only. The label switches when the shape lands.
+ */
+function moveJoin(
+  entry: PaneStrip,
+  to: { tabId: string | null; x: number; w: number },
+  motionMs: number,
+): void {
+  const { join } = entry;
+  const was = entry.shown;
+  // Already heading there (a slide begun on the press): let it land.
+  if (entry.slide && was?.tabId === to.tabId && was.x === to.x && was.w === to.w) return;
+  entry.shown = to;
+  join.hidden = false;
+  const middle = (width: number) => Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX);
+  join.style.setProperty("--jx", `${to.x}px`);
+  join.style.setProperty("--jw", `${to.w}px`);
+  join.style.setProperty("--jm", String(middle(to.w)));
+  const land = () => {
+    entry.slide = null;
+    entry.joinedId = to.tabId;
+    markJoinedLabel(entry);
+  };
+  // Under black chrome and on phones the notch draws the tab and no shape shows.
+  if (!was || motionMs <= 0 || join.getClientRects().length === 0) {
+    entry.slide?.cancel();
+    land();
+    return;
+  }
+  // From where the shape is drawn now, mid-slide included.
+  const capBox = join.querySelector('[data-jc="l"]')?.getBoundingClientRect();
+  const stripBox = entry.strip.getBoundingClientRect();
+  const fromX =
+    entry.slide && capBox
+      ? Math.round(capBox.left - stripBox.left + entry.strip.scrollLeft + PANE_JOIN_EAR_PX)
+      : was.x;
+  const from = { x: fromX, w: was.w };
+  entry.slide?.cancel();
+  const timing = { duration: motionMs, easing: PANE_JOIN_EASING };
+  const r = PANE_JOIN_RADIUS_PX;
+  const e = PANE_JOIN_EAR_PX;
+  const piece = (selector: string) => join.querySelector<HTMLElement>(selector);
+  for (const animation of join.getAnimations({ subtree: true })) animation.cancel();
+  piece('[data-jc="l"]')?.animate(
+    [{ translate: `${from.x - e}px 0` }, { translate: `${to.x - e}px 0` }],
+    timing,
+  );
+  piece('[data-jc="r"]')?.animate(
+    [{ translate: `${from.x + from.w - r - 1}px 0` }, { translate: `${to.x + to.w - r - 1}px 0` }],
+    timing,
+  );
+  const slide = piece("[data-jm]")?.animate(
+    [
+      { translate: `${from.x + r}px 0`, scale: `${middle(from.w)} 1` },
+      { translate: `${to.x + r}px 0`, scale: `${middle(to.w)} 1` },
+    ],
+    timing,
+  );
+  if (!slide) {
+    land();
+    return;
+  }
+  entry.slide = slide;
+  void slide.finished.then(
+    () => {
+      if (entry.slide === slide) land();
+    },
+    () => {},
+  );
+}
+
+/** Place the joined shape under the header's active tab. Reads layout once. */
+function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number): void {
+  const { strip, join } = entry;
+  const active =
+    findStripTab(strip, tabId) ?? strip.querySelector<HTMLElement>("[data-active-tab='true']");
+  if (!active) {
+    join.hidden = true;
+    entry.shown = null;
+    entry.joinedId = null;
+    markJoinedLabel(entry);
+    return;
+  }
+  const box = stripBoxOf(strip, active);
+  if (!box) return;
+  const activeId = stripTabId(active);
+  // Only a change of tab moves it; a tab growing or the strip scrolling places it.
+  moveJoin(entry, { tabId: activeId, ...box }, entry.shown?.tabId === activeId ? 0 : motionMs);
+}
+
+/**
+ * A press on another tab sends the shape there at once. A press that does
+ * not end in that tab showing (a drag, a press that slides off) brings the
+ * shape back once the release has been handled.
+ */
+function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+    return;
+  if (!(event.target instanceof Element) || event.target.closest("[data-tab-close]")) return;
+  const tab = event.target.closest<HTMLElement>(STRIP_TAB_SELECTOR);
+  if (!tab || !entry.strip.contains(tab)) return;
+  const tabId = stripTabId(tab);
+  if (tabId === null || tabId === entry.shown?.tabId) return;
+  const box = stripBoxOf(entry.strip, tab);
+  if (!box) return;
+  moveJoin(entry, { tabId, ...box }, entry.motionMs);
+  const settle = () => {
+    window.removeEventListener("pointerup", settle, true);
+    window.removeEventListener("pointercancel", settle, true);
+    window.setTimeout(() => schedulePlacement(entry.strip, entry.motionMs), 0);
+  };
+  window.addEventListener("pointerup", settle, true);
+  window.addEventListener("pointercancel", settle, true);
+}
+
+/** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
+function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
+  const tab = findStripTab(strip, tabId);
+  if (!tab) return;
+  const bounds = strip.getBoundingClientRect();
+  const rect = tab.getBoundingClientRect();
+  // Room for the joined tab's ears inside the strip's clip, and at the end for
+  // its rim's tail, which the next control on the bar overlaps.
+  const start = bounds.left + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
+  const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
+  // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
+  if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
+    strip.scrollLeft += rect.right - end;
+  else if (rect.left < start) strip.scrollLeft -= start - rect.left;
+  else if (rect.right > end) strip.scrollLeft += rect.right - end;
+}
+
+/**
+ * Keep overflow reachable by wheel and touch, and reveal the selected tab
+ * without moving its pane. Inside a layout pane the strip is the pane's own
+ * (see PaneStrip); `role` names a second strip in the same pane.
+ */
+export function LayoutPaneTabStrip({
+  children,
+  role,
+}: {
+  children: ReactNode;
+  role?: "panel" | undefined;
+}) {
+  const { tabId, paneId, visible } = useLayoutPane();
+  const key = paneId === null ? null : role ? `${paneId}:${role}` : paneId;
+  const [own] = useState(() => (key === null ? createPaneStrip() : null));
+  const entry = own ?? paneStripFor(key!);
+  const holds = own !== null || visible;
+  const motionMs = usePaneJoinMotionMs();
+  const slotRef = useRef<HTMLSpanElement>(null);
+  // This header's tabs. They stay mounted while the header is hidden, as a
+  // hidden tab's whole header does; only the shown header's layer sits in the
+  // pane's strip.
+  const [layer] = useState(() => {
+    const element = document.createElement("div");
+    element.dataset.stripLayer = "";
+    element.style.display = "contents";
+    return element;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hold the pane's persistent strip node in this header's row and place its joined tab after each commit.
+  useLayoutEffect(() => {
+    const slot = slotRef.current;
+    if (!slot) return;
+    const { strip } = entry;
+    if (!holds) {
+      showStripLayer(layer, slot, false);
+      return;
+    }
+    if (strip.parentNode !== slot) moveInto(slot, strip);
+    showStripLayer(layer, strip, true);
+    const place = (motion: number) => {
+      revealPaneTab(strip, tabId);
+      placePaneJoin(entry, tabId, motion);
+    };
+    holdPaneStrip(entry, place, motionMs);
+  }, [entry, holds, layer, motionMs, tabId]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
+  useLayoutEffect(
+    () => () => {
+      layer.remove();
+      if (key !== null) releasePaneStrip(key, entry);
+    },
+    [entry, key, layer],
+  );
+  return (
+    <>
+      <span ref={slotRef} data-layout-tab-strip-slot="" className="contents" />
+      {createPortal(children, layer)}
+    </>
+  );
+}
+
+/**
+ * The panel animation duration for the joined tab, or 0 when panel motion is
+ * off. Not usePanelAnimationSettings: its route suppression holds every tab
+ * switch, which navigates, and the tab's slide is that switch's only motion.
+ */
+function usePaneJoinMotionMs(): number {
+  const durationMs = useClientSettings((settings) => settings.panelAnimationDurationMs);
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  return reducedMotion ? 0 : durationMs;
 }
 
 /**
