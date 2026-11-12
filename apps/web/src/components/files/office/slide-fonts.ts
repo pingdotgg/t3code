@@ -38,8 +38,13 @@ export function slideFonts(deck: PresentationHandle, fonts: FontFaceSet) {
 
     if (!source) return;
 
-    // A family without the requested style gets the face it has, which the browser then slants or emboldens.
-    const style = { bold: source.weight === 700, italic: source.style === "italic" };
+    // A family without the requested style gets the face it has, which the browser then slants or emboldens. The engine
+    // draws a bold run with a family's regular face but never the reverse, so a heavier stand-in, such as Arial Black's
+    // bold one, registers at the requested style.
+    const style = {
+      bold: requested.bold && source.weight === 700,
+      italic: requested.italic && source.style === "italic",
+    };
     // The worker holds this deck's faces alone, so the names only need to differ from each other.
     const css = names.get(wantKey(want)) ?? `slide-${names.size}`;
     const key = faceKey(want, style);
@@ -119,6 +124,9 @@ export function slideFonts(deck: PresentationHandle, fonts: FontFaceSet) {
           runs: line.runs.map((run) => ({
             ...run,
             fontFamily: faces.get(run.fontId)?.css ?? run.fontFamily,
+            // The engine places glyphs no bundled face has, such as Thai ones or emoji, a missing glyph's width apart,
+            // but the browser draws them from its own fonts. Without positions a run is drawn whole.
+            glyphs: run.glyphs.some((glyph) => glyph.glyphId === 0) ? [] : run.glyphs,
           })),
         })),
       };
