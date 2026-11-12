@@ -2950,7 +2950,7 @@ describe("ClaudeAdapterV2 SDK query runner", () => {
       }),
   );
 
-  it.effect("drains buffered messages when the child exits before stream consumption", () =>
+  it.effect.each([false, true])("drains messages written after process exit: %s", (afterExit) =>
     Effect.gen(function* () {
       const cli = makeFakeClaudeCli();
       const session = yield* openWith(cli);
@@ -2961,10 +2961,23 @@ describe("ClaudeAdapterV2 SDK query runner", () => {
         uuid: "00000000-0000-4000-8000-000000000001",
         session_id: "native-thread-claude-mcp-channel",
       };
+      const collected = afterExit
+        ? yield* session.messages.pipe(Stream.runCollect, Effect.forkChild)
+        : undefined;
+      if (afterExit) {
+        cli.processes[0]!.exit(0, false);
+        yield* TestClock.adjust("500 millis");
+      }
       cli.processes[0]!.stdout.write(`${JSON.stringify(message)}\n`);
-      cli.processes[0]!.exit(0, true);
+      if (afterExit) cli.processes[0]!.stdout.end();
+      else cli.processes[0]!.exit(0, true);
 
-      assert.deepEqual(yield* session.messages.pipe(Stream.runCollect), [message]);
+      assert.deepEqual(
+        collected === undefined
+          ? yield* session.messages.pipe(Stream.runCollect)
+          : yield* Fiber.join(collected),
+        [message],
+      );
       yield* session.close;
     }),
   );
