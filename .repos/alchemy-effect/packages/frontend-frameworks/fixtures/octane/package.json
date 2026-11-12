@@ -12,13 +12,14 @@
   "dependencies": {
     "@octanejs/adapter-cloudflare": "catalog:",
     "@octanejs/vite-plugin": "catalog:",
+    "@tsrx/oxc": "catalog:",
     "octane": "catalog:",
     "vite": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:node24"
   },
