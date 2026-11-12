@@ -416,6 +416,7 @@ describe("machineControls", () => {
       readd: false,
       readdVia: null,
       needsReadd: false,
+      reconnecting: false,
       left: false,
       forgetHosts: [studio],
       limitHosts: [studio],
@@ -457,7 +458,7 @@ describe("machineControls", () => {
   it("offers only re-adding for a member the server left unbound after the update", () => {
     // The scan still knows the node; only the roster entry says it is unbound.
     const unbound = [
-      host(studio, { devices: [device(box, { member: member(box) })] }),
+      host(studio, { devices: [device(box, { member: member(box), outgoing: null })] }),
       host(laptop, { self: null, devices: [] }),
     ];
     const [group] = view(unbound, studio);
@@ -475,6 +476,7 @@ describe("machineControls", () => {
       readd: true,
       readdVia: studio,
       needsReadd: true,
+      reconnecting: false,
       left: false,
       forgetHosts: [studio],
       limitHosts: [],
@@ -488,11 +490,24 @@ describe("machineControls", () => {
     expect(
       readOnly && readOnlyGroup ? machineControls(readOnly, readOnlyGroup) : null,
     ).toMatchObject({ readd: false, readdVia: null, needsReadd: true });
+    // Still linked both ways, it binds on its next handshake: nothing to re-add.
+    const [linkedGroup] = view(
+      [host(studio, { devices: [device(box, { member: member(box) })] }), unbound[1]!],
+      studio,
+    );
+    const linked = linkedGroup?.machines.find((row) => row.entry.environmentId === box);
+    expect(linked && linkedGroup ? machineControls(linked, linkedGroup) : null).toMatchObject({
+      readd: false,
+      needsReadd: false,
+      reconnecting: true,
+      revoke: true,
+    });
   });
 
   it("re-adds an unbound machine through another one, and avoids it as the authority", () => {
     const bound = (id: EnvironmentId) => member(id, "full-access", `n-${id}`);
-    const unboundStudio = device(studio, { member: member(studio) });
+    // No link left between them, so neither binds the other on its own.
+    const unboundStudio = device(studio, { member: member(studio), outgoing: null });
     // Box's roster has studio unbound; studio's has box bound.
     const hosts = [
       host(studio, { self: bound(studio), devices: [device(box)] }),
@@ -506,7 +521,10 @@ describe("machineControls", () => {
     expect(machinesToReadd(view(hosts, studio))).toEqual(new Set([studio]));
     // Both unbound in each other's roster: each is re-added through the other.
     const both = [
-      host(studio, { self: bound(studio), devices: [device(box, { member: member(box) })] }),
+      host(studio, {
+        self: bound(studio),
+        devices: [device(box, { member: member(box), outgoing: null })],
+      }),
       host(box, { self: bound(box), devices: [unboundStudio] }),
     ];
     const [mutual] = view(both, studio);

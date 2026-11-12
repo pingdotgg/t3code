@@ -558,7 +558,12 @@ function MachineRow(props: {
             : entry.inApp?.kind === "refused"
               ? `${readdState}. ${refusedInApp(entry.inApp.left)}`
               : `${readdState}: allow joining on it, then add it again`
-          : machineDetail(group, machine, now, entry.inApp?.kind === "open" && !operatesHere)
+          : [
+              controls.reconnecting ? "Reconnecting after the update" : null,
+              machineDetail(group, machine, now, entry.inApp?.kind === "open" && !operatesHere),
+            ]
+              .filter((part) => part !== null && part.length > 0)
+              .join(" · ")
       }
       danger={entry.status === "revoked" || readdState !== null}
       value={

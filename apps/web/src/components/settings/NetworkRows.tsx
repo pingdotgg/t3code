@@ -234,6 +234,7 @@ function linkStatus(link: PeerLinkSummary, now: DateTime.Utc): string {
 
 const NEEDS_READD = "Needs re-adding after the update";
 const LEFT = "Left the network";
+const RECONNECTING = "Reconnecting after the update";
 /** Where the joining switch lives on this platform. */
 const ALLOW_JOINING_PATH = "Settings → Environments → Device network";
 
@@ -246,6 +247,7 @@ function machineDetails(
   openHint: ReturnType<typeof openAccessHint>,
   /** Opened in this app and its session there cannot change anything. */
   readOnlyHere: boolean,
+  reconnecting: boolean,
 ): ReadonlyArray<string | null> {
   const { entry } = machine;
   if (readd !== null) {
@@ -276,6 +278,7 @@ function machineDetails(
   );
   return [
     STATUS_LABEL[entry.status],
+    reconnecting ? RECONNECTING : null,
     machine.kind === "found" ? "Not in your network" : null,
     showAccess && access !== null && access !== "revoked" ? accessLabel(access) : null,
     ...limits,
@@ -399,6 +402,7 @@ export function DeviceMachineRow({
         readdReason,
         openAccessHint(machine, group),
         entry.inApp?.kind === "open" && !operatesHere,
+        controls.reconnecting,
       )}
       actions={
         <>

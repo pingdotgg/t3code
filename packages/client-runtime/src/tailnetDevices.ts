@@ -142,6 +142,9 @@ const inAppOf = (
 const isUnbound = (device: TailnetDevice) =>
   isLiveMember(device.member) && device.member.nodeId === null;
 
+/** Linked both ways with this host, so its next handshake binds it without the user. */
+const rebindsItself = (device: TailnetDevice) => device.outgoing !== null && device.incoming;
+
 const inNetwork = (host: DeviceNetworkHost) => isLiveMember(host.snapshot?.selfMember);
 
 const listsAsMember = (host: DeviceNetworkHost, environmentId: EnvironmentId) =>
@@ -479,8 +482,10 @@ export interface MachineControls {
   readonly linkHere: boolean;
   /** Linked to one host only: add it to the network. */
   readonly promote: boolean;
-  /** A member from before the update that a host has not bound to a Tailscale node yet. */
+  /** A member from before the update that a host has not bound and cannot bind on its own. */
   readonly needsReadd: boolean;
+  /** Unbound on a host it is still linked with both ways: it binds when it next connects. */
+  readonly reconnecting: boolean;
   /** It left the network itself. */
   readonly left: boolean;
   /** Unbound or left: add it again through the authority, once it allows joining. */
@@ -520,8 +525,12 @@ export function machineControls(
   const { authority } = group;
   const member = machine.kind === "member";
   // The server refuses a member it holds no node for until it is added again.
-  const needsReadd =
-    member && isLiveMember(entry.member) && entry.views.some((view) => isUnbound(view.device));
+  const unbound =
+    member && isLiveMember(entry.member)
+      ? entry.views.filter((view) => isUnbound(view.device))
+      : [];
+  const needsReadd = unbound.some((view) => !rebindsItself(view.device));
+  const reconnecting = unbound.length > 0 && !needsReadd;
   const left = member && entry.member !== null && hasLeftNetwork(entry.member);
   const live = member && isLiveMember(entry.member) && !needsReadd;
   const manages = authority !== null && authority !== entry.environmentId;
@@ -552,6 +561,7 @@ export function machineControls(
     linkHere: machine.kind === "found" && authority !== null,
     promote: machine.kind === "linked" && authority !== null && group.addsToNetwork,
     needsReadd,
+    reconnecting,
     left,
     readd: readdVia !== null,
     readdVia,
