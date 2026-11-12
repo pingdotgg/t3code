@@ -1791,16 +1791,15 @@ describe("providerQuotaStatus", () => {
     expect(providerQuotaStatus(proxy.instanceId, [spent, proxy], [], now)).toBeNull();
   });
 
-  it("counts a Codex Free or Go monthly allowance", () => {
-    const selected = provider({
-      usageLimits: {
-        checkedAt,
-        windows: [
-          { ...window, id: "primary", kind: "monthly", label: "Monthly", usedPercent: 100 },
-        ],
-      },
-    });
-    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)?.state).toBe("exhausted");
+  const monthly = { ...window, id: "primary", kind: "monthly", label: "Monthly" } as const;
+  const creditCap = { ...window, id: "individual", label: "Credits", usedPercent: 100 } as const;
+  it.each([
+    ["a Free or Go monthly allowance", [{ ...monthly, usedPercent: 100 }], "exhausted"],
+    ["a credit cap without plan windows", [creditCap], "exhausted"],
+    ["a credit cap beside seat-based plan windows", [monthly, creditCap], "available"],
+  ] as const)("judges Codex by %s", (_name, windows, state) => {
+    const selected = provider({ usageLimits: { checkedAt, windows } });
+    expect(providerQuotaStatus(selected.instanceId, [selected], [], now)?.state).toBe(state);
   });
 
   it("claims nothing for drivers whose windows are per model family", () => {

@@ -1022,14 +1022,21 @@ export type ProviderQuotaStatus =
 
 /**
  * Only windows that stop every model. Codex has no model-scoped windows (Free/Go
- * allowances are monthly); Claude's others are model-scoped or extra spend.
- * Antigravity and Cursor split quota by model family, so none count.
+ * allowances are monthly), but seat-based plans spend credits only past their plan
+ * windows; Claude's others are model-scoped or extra spend. Antigravity and Cursor
+ * split quota by model family, so none count.
  */
 function gatesProvider(
   driver: ServerProvider["driver"],
   window: ServerProviderUsageWindow,
+  windows: readonly ServerProviderUsageWindow[],
 ): boolean {
-  if (driver === "codex") return true;
+  if (driver === "codex") {
+    return (
+      window.id !== "individual" ||
+      !windows.some((other) => other.id === "primary" || other.id === "secondary")
+    );
+  }
   if (driver === "claudeAgent") return window.id === "five_hour" || window.id === "seven_day";
   return false;
 }
@@ -1125,7 +1132,9 @@ export function providerQuotaStatus(
   const snapshots = accountSnapshots(provider, providers, sources);
   const limits = [...snapshots.native, ...snapshots.hub].sort(newestFirst)[0]?.limits;
   if (!limits) return null;
-  const gates = limits.windows.filter((window) => gatesProvider(provider.driver, window));
+  const gates = limits.windows.filter((window) =>
+    gatesProvider(provider.driver, window, limits.windows),
+  );
   if (gates.length === 0) return null;
   // A reset that passed before the read is a stale clock, not a refill.
   const checked = Date.parse(limits.checkedAt);
