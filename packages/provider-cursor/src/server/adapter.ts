@@ -96,7 +96,11 @@ export const CursorProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
-    supportsActiveSteering: false,
+    supportsActiveSteering: true,
+    // A steer can move a foreground subagent to the background. Mailbox wakes
+    // stay queued so a notification does not cut into the live turn.
+    activeSteeringInterruptsTools: true,
+    activeSteeringAcceptsAttachments: false,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
@@ -2292,6 +2296,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
 
         let cursorSkillNames: ReadonlySet<string> | undefined;
+        const resolveCursorSkillText = Effect.fn("CursorAdapterV2.resolveCursorSkillText")(
+          function* (rawText: string, cwd: string | undefined) {
+            if (hasCursorSkillMention(rawText) && cursorSkillNames === undefined) {
+              const skills = yield* discoverCursorSkills(cwd, adapterOptions.environment).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              );
+              cursorSkillNames = new Set(
+                skills
+                  .filter((skill) => skill.enabled && skill.userInvocable !== false)
+                  .map((skill) => skill.name),
+              );
+            }
+            return cursorSkillNames === undefined
+              ? rawText
+              : rewriteCursorSkillMentions(rawText, cursorSkillNames);
+          },
+        );
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
@@ -2303,26 +2325,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
             return { message: "/compress", prompt: undefined };
           }
-          if (hasCursorSkillMention(rawText) && cursorSkillNames === undefined) {
-            const skills = yield* discoverCursorSkills(
-              turnInput.runtimePolicy.cwd ?? undefined,
-              adapterOptions.environment,
-            ).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-            );
-            cursorSkillNames = new Set(
-              skills
-                .filter((skill) => skill.enabled && skill.userInvocable !== false)
-                .map((skill) => skill.name),
-            );
-          }
           const newText = t3OrchestrationPrompt({
             prompt: yield* providerMessageTextWithAttachmentPaths({
-              text:
-                cursorSkillNames === undefined
-                  ? rawText
-                  : rewriteCursorSkillMentions(rawText, cursorSkillNames),
+              text: yield* resolveCursorSkillText(
+                rawText,
+                turnInput.runtimePolicy.cwd ?? undefined,
+              ),
               attachments: turnInput.message.attachments,
               resolveAttachmentPath: host.resolveAttachmentPath,
               resolveExtractedTextPath: host.resolveExtractedTextPath,
@@ -2699,13 +2707,68 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ...turnInput,
               message: { ...turnInput.message, text: "/compress" },
             }),
-          steerTurn: (turnInput) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterSteerRunUnsupportedError({
+          steerTurn: Effect.fn("CursorAdapterV2.steerTurn")(
+            function* (turnInput: ProviderAdapter.ProviderAdapterV2SteerInput) {
+              const context = yield* Ref.get(activeTurn);
+              if (
+                context === null ||
+                context.finalized ||
+                context.providerTurnId !== turnInput.providerTurnId
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: `Cursor provider turn ${turnInput.providerTurnId} is not active.`,
+                });
+              }
+              // The live run already has the runtime instructions from startTurn.
+              const text = yield* providerMessageTextWithAttachmentPaths({
+                text: yield* resolveCursorSkillText(
+                  turnInput.message.text,
+                  context.input.runtimePolicy.cwd ?? undefined,
+                ),
+                attachments: turnInput.message.attachments,
+                resolveAttachmentPath: host.resolveAttachmentPath,
+                resolveExtractedTextPath: host.resolveExtractedTextPath,
+              });
+              if (text.trim().length === 0) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: "Cursor steer requires non-empty text.",
+                });
+              }
+              const outcome =
+                context.run.steer === undefined
+                  ? "revert_to_followup"
+                  : yield* context.run.steer(text);
+              if (outcome === "complete_delivered") {
+                return;
+              }
+              if (context.interrupted) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: "Cursor steer was interrupted before the run could take it.",
+                });
+              }
+              return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
                 driver: CursorAgentSdk.CURSOR_PROVIDER,
                 providerThreadId: turnInput.providerThread.id,
-              }),
-            ),
+                providerTurnId: turnInput.providerTurnId,
+              });
+            },
+            (effect, turnInput) =>
+              effect.pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterSteerDeclinedError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterSteerRunError({
+                        driver: CursorAgentSdk.CURSOR_PROVIDER,
+                        providerThreadId: turnInput.providerThread.id,
+                        providerTurnId: turnInput.providerTurnId,
+                        cause,
+                      }),
+                ),
+              ),
+          ),
           interruptTurn: Effect.fn("CursorAdapterV2.interruptTurn")(
             function* (turnInput: ProviderAdapter.ProviderAdapterV2InterruptInput) {
               const context = yield* Ref.get(activeTurn);
