@@ -1,3 +1,4 @@
+import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useReviewThreadActions } from "./useReviewThreadActions";
@@ -326,7 +327,8 @@ export function ReviewThreadCard({
     thread.comments,
     currentPage?.comments ?? [],
   );
-  const pendingComments = usePendingReviewComments(environmentId, reference, [
+  const reviewKey = usePullRequestReviewKey(environmentId, reference);
+  const pendingComments = usePendingReviewComments(reviewKey, [
     { ...thread, comments: receivedComments },
   ]);
   const pendingById = new Map(

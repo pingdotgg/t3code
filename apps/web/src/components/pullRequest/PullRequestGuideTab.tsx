@@ -74,7 +74,7 @@ export function PullRequestGuideTab({
   });
   const runKey = guideRunKey(environmentId, reference);
   const reviewKey = usePullRequestReviewKey(environmentId, reference);
-  const pending = usePendingReviewComments(environmentId, reference, detail.reviewThreads);
+  const pending = usePendingReviewComments(reviewKey, detail.reviewThreads);
   const { add: addComment } = usePendingReviewCommentActions(environmentId, reference);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const commenting: ExcerptCommenting | null =

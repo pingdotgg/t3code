@@ -1106,11 +1106,13 @@ export function PullRequestDiffContent({
     params.path === "" && (params.commit ?? null) === pullRequestLinkCommit(params.navigationUrl)
       ? parsePullRequestAnchor(params.navigationUrl)
       : null;
-  const linkPath =
+  const matchedLinkPath =
     linkAnchor?.kind === "diff" && result.parsed.kind === "files"
       ? result.parsed.files.find((file) => pullRequestDiffPathMatches(linkAnchor.digest, file.path))
           ?.path
       : undefined;
+  // String conversion stops the compiler aliasing this path to mutable parsed data.
+  const linkPath = matchedLinkPath === undefined ? undefined : `${matchedLinkPath}`;
   const [filesOpen, setFilesOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
