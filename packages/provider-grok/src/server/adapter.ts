@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -29,10 +30,12 @@ import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeL
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  GROK_DEFAULT_MODEL_SLUG,
   grokApprovalOptions,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "./acpSupport.ts";
+import { grokReasoningOptionsFromModel } from "./status.ts";
 import {
   extractGrokPlanMarkdownFromToolCallData,
   extractXAiAcpBackgroundToolMutation,
@@ -78,6 +81,8 @@ import {
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
+
+const isXAiPromptFailureText = Schema.is(XAiPromptFailureText);
 
 export const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_DRIVER_KIND = GROK_PROVIDER;
@@ -219,6 +224,93 @@ export function grokLaunchRuntimeMode(
     : "approval-required";
 }
 
+/** The capability id the composer stores Grok's reasoning effort under. */
+const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+
+// Protocol 1 sends the effort as `session/set_model` metadata on every call: that response
+// carries no config options, so there is no live effort to compare against. Newer protocols
+// write the `thought_level` config option after the model switch. An effort the model does
+// not offer, or that Grok refuses, is skipped with a warning and Grok's default applies.
+const applyGrokSessionModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelection"]> =
+  Effect.fn("GrokAdapter.applyModelSelection")(function* ({
+    runtime,
+    startResult,
+    modelSelection,
+  }) {
+    const requestedModelId = resolveGrokAcpBaseModelId(modelSelection.model);
+    const requestedEffort = getModelSelectionStringOptionValue(
+      modelSelection,
+      GROK_REASONING_EFFORT_OPTION_ID,
+    );
+    const skipEffort = (detail: string) =>
+      Effect.logWarning("Grok session skipped the requested reasoning effort", {
+        sessionId: startResult.sessionId,
+        reasoningEffort: requestedEffort,
+        detail,
+      });
+
+    if (startResult.initializeResult.protocolVersion === 1) {
+      const setup = startResult.sessionSetupResult;
+      const currentModelId = currentGrokModelIdFromSessionSetup(setup);
+      const targetModelId =
+        requestedModelId === GROK_DEFAULT_MODEL_SLUG ? currentModelId : requestedModelId;
+      const targetModel = setup.models?.availableModels.find(
+        (model) => model.modelId.trim() === targetModelId,
+      );
+      const offeredEfforts =
+        targetModel === undefined
+          ? []
+          : grokReasoningOptionsFromModel(targetModel).options.map((option) => option.value);
+      const effort =
+        requestedEffort !== undefined &&
+        (offeredEfforts.length === 0 || offeredEfforts.includes(requestedEffort))
+          ? requestedEffort
+          : undefined;
+      if (requestedEffort !== undefined && effort === undefined) {
+        yield* skipEffort(`${targetModelId} does not offer it`);
+      }
+      const apply = (requestedReasoningEffort: string | undefined) =>
+        applyGrokAcpModelSelection({
+          runtime,
+          currentModelId,
+          requestedModelId,
+          requestedReasoningEffort,
+          mapError: (cause) => cause,
+        });
+      return yield* effort === undefined
+        ? apply(undefined)
+        : apply(effort).pipe(
+            Effect.catchTags({
+              AcpRequestError: (error) =>
+                skipEffort(error.message).pipe(Effect.andThen(apply(undefined))),
+            }),
+          );
+    }
+
+    const appliedModelId = yield* applyGrokAcpModelSelection({
+      runtime: { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
+      currentModelId: findModelConfigOption(yield* runtime.getConfigOptions)?.currentValue,
+      requestedModelId,
+      mapError: (cause) => cause,
+    });
+    if (requestedEffort === undefined) {
+      return appliedModelId;
+    }
+    // Read after the model switch: the effort choices belong to the new model.
+    const effortOption = (yield* runtime.getConfigOptions).find(
+      (option) => option.type === "select" && option.category === "thought_level",
+    );
+    if (effortOption === undefined) {
+      yield* skipEffort("the session has no reasoning effort option");
+      return appliedModelId;
+    }
+    // setConfigOption rejects a value the option does not offer and skips the current one.
+    yield* runtime
+      .setConfigOption(effortOption.id, requestedEffort)
+      .pipe(Effect.catchTags({ AcpRequestError: (error) => skipEffort(error.message) }));
+    return appliedModelId;
+  });
+
 export function makeGrokAcpAdapterFlavor(
   options: GrokAdapterV2Options,
   homeDirectory: string,
@@ -268,25 +360,8 @@ export function makeGrokAcpAdapterFlavor(
         ? window
         : undefined;
     },
-    applyModelSelection: Effect.fn("GrokAdapter.applyModelSelection")(function* ({
-      runtime,
-      startResult,
-      modelSelection,
-    }) {
-      const legacy = startResult.initializeResult.protocolVersion === 1;
-      const options = legacy ? [] : yield* runtime.getConfigOptions;
-      const configuredModel = findModelConfigOption(options)?.currentValue;
-      return yield* applyGrokAcpModelSelection({
-        runtime: legacy
-          ? runtime
-          : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
-        currentModelId: legacy
-          ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
-          : configuredModel,
-        requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
-        mapError: (cause) => cause,
-      });
-    }),
+    applyModelSelection: applyGrokSessionModelSelection,
+    ownedModelOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
     makeRuntime:
       options.makeRuntime ??
       (({ runtimePolicy, ...input }) =>
@@ -306,10 +381,9 @@ export function makeGrokAcpAdapterFlavor(
         cause,
         ...(isAcpRequestError(cause)
           ? {
-              message:
-                cause.cause instanceof XAiPromptFailureText
-                  ? cause.cause.message
-                  : cause.errorMessage,
+              message: isXAiPromptFailureText(cause.cause)
+                ? cause.cause.message
+                : cause.errorMessage,
               code: String(cause.code),
               class: cause.code === xAiRateLimitedErrorCode ? "usage_limit" : "provider_error",
             }

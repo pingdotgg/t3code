@@ -5,6 +5,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -20,7 +21,11 @@ import * as Layer from "effect/Layer";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
+import {
+  isAutoSettlementCandidate,
+  isSnoozed,
+  resolveAutoSettlementAt,
+} from "./ThreadSettlementService.ts";
 
 const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
@@ -135,6 +140,75 @@ const createItem = Effect.fn(function* (
     },
   });
 });
+
+it.effect.each([["sql", layerSql]] as const)(
+  "%s: pending approvals wake a snoozed question even with older creation times",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* createThread("snoozed-question-approval", {
+        snoozedAt: now,
+        snoozedUntil: DateTime.add(now, { days: 1 }),
+      });
+      const question: OrchestrationV2RuntimeRequest = {
+        id: RuntimeRequestId.make("question"),
+        nodeId: NodeId.make("node:question"),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: DateTime.subtract(now, { hours: 1 }),
+        resolvedAt: null,
+      };
+      const approval: OrchestrationV2RuntimeRequest = {
+        ...question,
+        id: RuntimeRequestId.make("approval"),
+        kind: "command",
+        createdAt: old,
+      };
+      const newerApproval = {
+        ...approval,
+        id: RuntimeRequestId.make("newer-approval"),
+        createdAt: DateTime.add(old, { hours: 1 }),
+      };
+      const setRequest = (request: OrchestrationV2RuntimeRequest) =>
+        store.apply({
+          id: EventId.make(`event:${request.id}:${request.status}`),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: request,
+        });
+      const assertPending = (expected: RuntimeRequestId, snoozed: boolean) =>
+        Effect.gen(function* () {
+          const snapshot = yield* store.getShellSnapshot();
+          const shell = snapshot.threads.find((thread) => thread.id === threadId)!;
+          const projection = yield* store.getThreadProjection(threadId);
+          for (const candidate of [shell, ProjectionStore.threadShellFromProjection(projection)]) {
+            assert.equal(candidate.pendingRuntimeRequest?.id, expected);
+            assert.equal(isSnoozed(candidate, DateTime.toEpochMillis(now)), snoozed);
+          }
+        });
+      yield* setRequest({
+        ...question,
+        id: RuntimeRequestId.make("older-question"),
+        createdAt: old,
+      });
+      yield* setRequest(question);
+      yield* assertPending(question.id, true);
+
+      // A request becoming pending can retain a creation time older than the snooze.
+      yield* setRequest(approval);
+      yield* assertPending(approval.id, false);
+      yield* setRequest(newerApproval);
+      yield* assertPending(newerApproval.id, false);
+      yield* setRequest({ ...newerApproval, status: "resolved", resolvedAt: now });
+      yield* assertPending(approval.id, false);
+      yield* setRequest({ ...approval, status: "resolved", resolvedAt: now });
+      yield* assertPending(question.id, true);
+    }).pipe(Effect.provide(testLayer)),
+);
 
 it.effect(
   "sql: discovers settlement work with the same activity and background semantics as the shell",
@@ -402,5 +476,47 @@ it.effect("sql: an unsettled-only shell read skips settled threads", () =>
     assert.equal(shell.archivedThreads.length, 0);
     const all = yield* store.getShellSnapshot({ location: "active" });
     assert.equal(all.threads.length, 4);
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: a subagent thread becomes a candidate once its parent is done", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("subagent-parent");
+    const child = yield* createThread("subagent-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    assert.deepEqual(yield* ids(), [parent]);
+
+    const parentThread = yield* store.getThread(parent);
+    for (const [type, overrides] of [
+      ["thread.settled", { settledOverride: "settled", settledAt: now }],
+      ["thread.archived", { archivedAt: now }],
+      ["thread.deleted", { deletedAt: now }],
+    ] satisfies ReadonlyArray<
+      readonly [
+        "thread.settled" | "thread.archived" | "thread.deleted",
+        Partial<OrchestrationV2AppThread>,
+      ]
+    >) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:subagent-parent:${type}`),
+        type,
+        threadId: parent,
+        occurredAt: now,
+        payload: { ...parentThread, ...overrides, updatedAt: now },
+      });
+      assert.deepEqual(yield* ids(), [child]);
+    }
+    const orphan = yield* createThread("orphan", {
+      lineage: {
+        parentThreadId: ThreadId.make("missing-parent"),
+        relationshipToParent: "subagent",
+        rootThreadId: parent,
+      },
+    });
+    assert.deepEqual(new Set(yield* ids()), new Set([child, orphan]));
   }).pipe(Effect.provide(layerSql)),
 );

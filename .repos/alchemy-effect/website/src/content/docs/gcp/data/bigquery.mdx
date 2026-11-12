@@ -1,0 +1,120 @@
+---
+title: BigQuery
+description: Create BigQuery datasets and tables, stream rows in, and run parameterized queries from Cloud Run with ReadTable and WriteTable bindings.
+---
+
+BigQuery is Google's data warehouse. Declare a dataset and a table,
+stream rows into it from one service, and query it from another.
+
+## Create a dataset and a table
+
+A table needs its dataset's id, so build it inside an `Effect.gen`:
+
+```typescript
+// src/resources.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export const Analytics = GCP.BigQuery.Dataset("Analytics", {
+  forceDestroy: true,
+});
+
+export const Events = Effect.gen(function* () {
+  const dataset = yield* Analytics;
+  return yield* GCP.BigQuery.Table("Events", {
+    datasetId: dataset.datasetId,
+    tableId: "events",
+    schema: [
+      { name: "id", type: "STRING", mode: "REQUIRED" },
+      { name: "type", type: "STRING", mode: "REQUIRED" },
+      { name: "occurredAt", type: "TIMESTAMP", mode: "REQUIRED" },
+      { name: "payload", type: "JSON" },
+    ],
+  });
+});
+```
+
+`forceDestroy` deletes the tables with the dataset. A `JSON` column
+lets producers add fields without changing the schema.
+
+## Write and query from a service
+
+```typescript
+// src/Api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Events } from "./resources.ts";
+
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const table = yield* Events;
+    const writer = yield* GCP.BigQuery.WriteTable(table);
+    const reader = yield* GCP.BigQuery.ReadTable(table);
+    const tableId = yield* table.tableId;
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+
+        if (request.method === "POST") {
+          const id = crypto.randomUUID();
+          yield* writer.insert(
+            [{ id, type: "signup", occurredAt: new Date(), payload: "{}" }],
+            { insertIds: [id] },
+          );
+          return yield* HttpServerResponse.json({ id }, { status: 202 });
+        }
+
+        const rows = yield* reader.query(
+          `SELECT COUNT(*) AS n FROM \`${yield* tableId}\` WHERE type = @type`,
+          { type: "signup" },
+        );
+        return yield* HttpServerResponse.json({ count: Number(rows[0]?.n ?? 0) });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(
+    Effect.provide([GCP.BigQuery.WriteTableHttp, GCP.BigQuery.ReadTableHttp]),
+  ),
+) {}
+```
+
+`insert` takes plain row objects. `insertIds` drops a repeated row
+within BigQuery's dedup window, so a retried insert doesn't
+double-count.
+
+`query` runs SQL with named parameters, so input never lands in the
+SQL text. Table names resolve against the bound table's dataset, and
+rows come back as plain JavaScript.
+
+`yield* table.tableId` in the constructor gives you an accessor.
+`yield*` it again inside the handler to read the value.
+
+## What each binding grants
+
+| Binding | Roles |
+| --- | --- |
+| `ReadTable` | `bigquery.dataViewer` on the table, `bigquery.jobUser` on the project |
+| `WriteTable` | `bigquery.dataEditor` on the table |
+| `ReadWriteTable` | both of the above |
+
+Running a query is a project permission in BigQuery, so `jobUser`
+can't be narrower.
+
+## Example
+
+[`examples/gcp-event-pipeline`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-event-pipeline)
+publishes events to Pub/Sub and drains them into BigQuery with a
+Cloud Run job.
+[`examples/gcp-cron`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-cron)
+records scheduled runs in a table.
+
+## Where next
+
+- [Pub/Sub](/gcp/messaging/pubsub) — the ingestion pipeline that feeds
+  BigQuery.
+- [BigQuery reference](/providers/gcp/bigquery#table) — every prop and
+  attribute.
