@@ -27,6 +27,8 @@ import type {
 } from "@t3tools/contracts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
 const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
@@ -284,6 +286,51 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
   return [...entryByPath.values()];
 }
 
+function isUnderIgnoredPath(ignoredPaths: ReadonlySet<string>, relativePath: string): boolean {
+  if (ignoredPaths.size === 0) return false;
+  const normalizedPath = trimDirectorySeparator(toPosixPath(relativePath));
+  if (ignoredPaths.has(normalizedPath) || ignoredPaths.has(`${normalizedPath}/`)) return true;
+  for (let index = normalizedPath.indexOf("/"); index !== -1;) {
+    if (ignoredPaths.has(normalizedPath.slice(0, index + 1))) return true;
+    index = normalizedPath.indexOf("/", index + 1);
+  }
+  return false;
+}
+
+// fff only reads .gitignore and .ignore files, so ask Git for paths ignored by
+// .git/info/exclude and core.excludesFile too. Ignored folders come back as `name/`.
+const loadGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.loadGitIgnoredPaths")(function* (
+  vcsProcess: VcsProcess.VcsProcess["Service"],
+  cwd: string,
+): Effect.fn.Return<ReadonlySet<string>> {
+  const result = yield* vcsProcess
+    .run({
+      operation: "WorkspaceSearchIndex.loadGitIgnoredPaths",
+      command: "git",
+      args: [
+        "-c",
+        "core.fsmonitor=false",
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--no-empty-directory",
+        "-z",
+      ],
+      cwd,
+      allowNonZeroExit: true,
+      timeoutMs: WORKSPACE_INDEX_SCAN_TIMEOUT_MS,
+      maxOutputBytes: 16 * 1024 * 1024,
+    })
+    .pipe(Effect.orElseSucceed(() => undefined));
+  if (!result || result.exitCode !== 0) return new Set<string>();
+  const entries = result.stdout.split("\0");
+  // A truncated listing ends mid-path; the remaining entries are still whole.
+  if (result.stdoutTruncated) entries.pop();
+  return new Set(entries.filter((entry) => entry.length > 0));
+});
+
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
@@ -346,7 +393,15 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }).pipe(Effect.orDie),
   );
   let initialScanTimedOut = false;
-  yield* waitForIndexReady(
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  let ignoredPaths: ReadonlySet<string> = new Set();
+  const isIgnored = (relativePath: string) => isUnderIgnoredPath(ignoredPaths, relativePath);
+  const loadIgnoredPaths = loadGitIgnoredPaths(vcsProcess, cwd).pipe(
+    Effect.map((paths) => {
+      ignoredPaths = paths;
+    }),
+  );
+  const initialScan = waitForIndexReady(
     cwd,
     finder,
     ({ reason, cause }) =>
@@ -365,6 +420,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           : Effect.fail(error),
     }),
   );
+  yield* Effect.all([loadIgnoredPaths, initialScan], { concurrency: "unbounded" });
+
+  const withoutIgnoredMixedItems = (result: MixedSearchResult): MixedSearchResult => ({
+    ...result,
+    items: result.items.filter((item) => !isIgnored(item.item.relativePath)),
+  });
 
   const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
 
@@ -417,7 +478,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
     // A rescan that outlasts the wait keeps running, and the finder answers
     // from its previous index until it finishes, so the index stays usable.
-    yield* waitForIndexReady(
+    const rescan = waitForIndexReady(
       cwd,
       finder,
       ({ reason, cause }) =>
@@ -427,6 +488,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
+    yield* Effect.all([loadIgnoredPaths, rescan], { concurrency: "unbounded" });
   });
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
@@ -435,7 +497,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
-      const mapped = mapMixedSearchResult(result, WORKSPACE_INDEX_MAX_ENTRIES);
+      const mapped = mapMixedSearchResult(
+        withoutIgnoredMixedItems(result),
+        WORKSPACE_INDEX_MAX_ENTRIES,
+      );
       const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
         left.path.localeCompare(right.path),
       );
@@ -459,18 +524,25 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      return mapFileSearchResult(result, limit, imageOnly);
+      return mapFileSearchResult(
+        { ...result, items: result.items.filter((item) => !isIgnored(item.relativePath)) },
+        limit,
+        imageOnly,
+      );
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      return mapDirectorySearchResult(result, limit);
+      return mapDirectorySearchResult(
+        { ...result, items: result.items.filter((item) => !isIgnored(item.relativePath)) },
+        limit,
+      );
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    return mapMixedSearchResult(result, limit);
+    return mapMixedSearchResult(withoutIgnoredMixedItems(result), limit);
   });
 
   const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
@@ -523,6 +595,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
 
       for (const match of result.items) {
+        if (isIgnored(match.relativePath)) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );

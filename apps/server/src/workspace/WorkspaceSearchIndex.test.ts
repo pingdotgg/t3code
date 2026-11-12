@@ -10,10 +10,17 @@ import { afterEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+
+const testLayer = Layer.mergeAll(
+  VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)),
+  NodeServices.layer,
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -64,7 +71,7 @@ it.effect("filters image searches before applying the result limit", () =>
       expect(fileSearch).toHaveBeenCalledTimes(2);
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("continues whole-word searches after a filtered grep page", () =>
@@ -141,7 +148,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       expect(grep).toHaveBeenCalledTimes(2);
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
 );
 
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
@@ -172,5 +179,5 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
         expect(result).toBe("WorkspaceSearchIndexCreateFailed");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(testLayer)),
 );
