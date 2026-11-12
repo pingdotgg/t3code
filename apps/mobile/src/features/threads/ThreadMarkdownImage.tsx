@@ -11,9 +11,9 @@ import { parse, SvgAst, type JsxAST } from "react-native-svg";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
+import { useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { AppText as Text } from "../../components/ui/AppText";
-import type { FilePreviewSource } from "../../components/FilePreviewModal";
+import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
@@ -74,7 +74,9 @@ const svgDocumentAtom = Atom.family((uri: string) =>
     if (cached !== null) return Effect.succeed(cached);
     return Effect.tryPromise({
       try: async (signal): Promise<SvgDocument> => {
-        const ast = parse(await readSvgXml(uri, signal));
+        const xml = await readSvgXml(uri, signal);
+        signal.throwIfAborted();
+        const ast = parse(xml);
         if (!ast) throw new Error("SVG has no root element");
         return { ast, size: resolveSvgImageSize(ast.props) };
       },

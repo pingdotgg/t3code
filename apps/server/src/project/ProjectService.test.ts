@@ -205,8 +205,8 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(layerMetadata),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -452,15 +452,12 @@ it.layer(layerTest)("ProjectService", (it) => {
         ],
       };
       const first = yield* service.update(invalid).pipe(Effect.flip);
-      assert.equal(first._tag, "ProjectOperationError");
+      assert.equal(first._tag, "ProjectInvalidError");
+      assert.include(first.message, "Script IDs must be 1-24 lowercase letters");
       const replayed = yield* service
         .update({ ...invalid, scripts: [{ ...invalid.scripts[0]!, id: "valid" }] })
         .pipe(Effect.flip);
-      assert.equal(replayed._tag, "ProjectOperationError");
-      assert.include(
-        String(replayed._tag === "ProjectOperationError" && replayed.cause),
-        "Script ID",
-      );
+      assert.deepEqual(replayed, first);
       const receipts = yield* sql<{ readonly status: string; readonly aggregate_id: string }>`
         SELECT status, aggregate_id FROM orchestration_command_receipts
         WHERE command_id = ${invalid.commandId}
