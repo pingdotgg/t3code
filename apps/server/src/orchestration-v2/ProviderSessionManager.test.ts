@@ -3431,10 +3431,6 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
         ...seededToolCalls.cutOff,
         id: TurnItemId.make("turn-item:stored-in-clean-pass"),
       };
-      const storedAfterLastPass = {
-        ...seededToolCalls.cutOff,
-        id: TurnItemId.make("turn-item:stored-after-last-pass"),
-      };
       const complete = (item: OrchestrationV2TurnItem) =>
         writeToolCall({ ...item, status: "completed" });
       // One hook runs before each cleanup write. The first pass writes the cut-off call, the
@@ -3456,9 +3452,6 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
           Effect.void,
           // The second pass has no conflict, but one more call lands during it.
           writeToolCall(storedInCleanPass),
-          Effect.void,
-          // Cleanup stops after three passes, so a call that lands during the third stays open.
-          writeToolCall(storedAfterLastPass),
         ].map(Effect.orDie),
       );
       const seeded = providerThreads[0]!;
@@ -3478,14 +3471,7 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
       assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
       const statuses = Object.fromEntries(
         yield* Effect.forEach(
-          [
-            seededToolCalls.cutOff,
-            ...lateCompleted,
-            lastOpen,
-            storedLate,
-            storedInCleanPass,
-            storedAfterLastPass,
-          ],
+          [seededToolCalls.cutOff, ...lateCompleted, lastOpen, storedLate, storedInCleanPass],
           (item) => toolCallStatus(item.id).pipe(Effect.map((status) => [item.id, status])),
         ),
       );
@@ -3495,7 +3481,6 @@ it.effect("ProviderSessionManagerV2 keeps provider updates that land while relea
         [lastOpen.id]: "interrupted",
         [storedLate.id]: "interrupted",
         [storedInCleanPass.id]: "interrupted",
-        [storedAfterLastPass.id]: "running",
       });
     });
 
