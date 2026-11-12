@@ -657,52 +657,36 @@ describe("formatSubagentEffort", () => {
   const pi = { driver: ProviderDriverKind.make("pi"), models: [piModel] };
   const piUncatalogued = { driver: ProviderDriverKind.make("pi"), models: [] };
   const claude = { driver: ProviderDriverKind.make("claudeAgent"), models: [claudeModel] };
+  const opencode = {
+    driver: ProviderDriverKind.make("opencode"),
+    models: [
+      {
+        ...piModel,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "variant",
+              label: "Variant",
+              type: "select",
+              options: [{ id: "high", label: "High", isDefault: true }],
+            },
+          ],
+        }),
+      },
+    ],
+  };
 
   it.each([
     [
       "never invents an unknown OpenCode variant when none was stated",
-      {
-        driver: ProviderDriverKind.make("opencode"),
-        models: [
-          {
-            ...piModel,
-            capabilities: createModelCapabilities({
-              optionDescriptors: [
-                {
-                  id: "variant",
-                  label: "Variant",
-                  type: "select",
-                  options: [{ id: "high", label: "High", isDefault: true }],
-                },
-              ],
-            }),
-          },
-        ],
-      },
+      opencode,
       piModel.slug,
       [],
       null,
     ],
     [
       "keeps a stated OpenCode variant the catalog no longer offers",
-      {
-        driver: ProviderDriverKind.make("opencode"),
-        models: [
-          {
-            ...piModel,
-            capabilities: createModelCapabilities({
-              optionDescriptors: [
-                {
-                  id: "variant",
-                  label: "Variant",
-                  type: "select",
-                  options: [{ id: "high", label: "High", isDefault: true }],
-                },
-              ],
-            }),
-          },
-        ],
-      },
+      opencode,
       piModel.slug,
       [{ id: "variant", value: "medium" }],
       "medium",

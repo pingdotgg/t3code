@@ -3912,7 +3912,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ? sql`AND subagent.rowid IN (${unsettledSubagentRowids(threadId)})`
                   : filter?.omitSettledSubagents !== undefined
                     ? sql`AND (
-                      subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.omitSettledSubagents.except)}))
+                      subagent.subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.omitSettledSubagents.except)}))
                       OR NOT ${settledSubagent(sql`subagent`)}
                     )`
                     : sql``
