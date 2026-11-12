@@ -17,7 +17,7 @@
     "agentic-harness-design",
     "playwright-cli",
     "principle-prove-it-works",
-    "native-first-tools"
+    "t3-agents"
   ],
   "setupNotes": ["Browser CLI workflows require playwright-cli and its browser dependencies."]
 }

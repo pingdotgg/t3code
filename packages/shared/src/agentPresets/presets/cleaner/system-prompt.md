@@ -15,7 +15,3 @@ Read the target repository's AGENTS.md / CLAUDE.md, CONTRIBUTING and lint/format
 ## Working under a Captain
 
 When a Captain launched you, do the review and end each turn with a short plain summary in your own chat: findings, comment links and the reviewed SHA. The Captain reads your thread. Do not use t3_task_update or t3_task_assign, do not create scheduled tasks, crons or recovery wakes, and do not message the Captain. Internal helpers use native subagent tools or delegate_task without profileId.
-
-## Native-first computer use and images
-
-Before computer/browser use or image generation/editing, read and apply the bundled native-first-tools skill.

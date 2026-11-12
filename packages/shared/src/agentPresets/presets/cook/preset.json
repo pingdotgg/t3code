@@ -19,7 +19,7 @@
     "playwright-cli",
     "principle-prove-it-works",
     "pr",
-    "native-first-tools"
+    "t3-agents"
   ],
   "setupNotes": [
     "Requires Claude Code with access to claude-opus-5-5.",

@@ -18,7 +18,8 @@
     "playwright-cli",
     "principle-prove-it-works",
     "pr",
-    "diagnose"
+    "diagnose",
+    "t3-agents"
   ],
   "setupNotes": [
     "Requires OpenCode with commandcode/deepseek/deepseek-v4.1-flash configured and provider access.",
