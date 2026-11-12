@@ -42,6 +42,12 @@ const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 const DECORATOR_CALL_REFERENCE_REGEX = /^[\p{ID_Start}_$][\p{ID_Continue}.$\u200c\u200d]*\(/u;
 
+/** Only a local SKILL.md can bind a mention, so `[$PATH](https://…)` stays an ordinary link. */
+export function isLinkableSkillPath(path: string): boolean {
+  const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
+  return !hasExternalScheme && /(?:^|[\\/])SKILL\.md$/.test(path);
+}
+
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
 
@@ -78,6 +84,7 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     try {
       path = decodeURIComponent(encodedPath);
     } catch {}
+    if (!isLinkableSkillPath(path)) continue;
     const start = (match.index ?? 0) + prefix.length;
     const end = start + match[0].length - prefix.length;
     matches.push({

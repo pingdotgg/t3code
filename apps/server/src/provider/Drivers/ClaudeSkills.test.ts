@@ -688,42 +688,51 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("prefers user skills on name collisions even with a stray .agents copy", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
+  it.effect(
+    "lists user then project copies on name collisions, ignoring a stray .agents copy",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+        const configDir = path.join(tempDir, "claude-home");
+        const workspace = path.join(tempDir, "workspace");
 
-      yield* writeSkill(
-        path.join(configDir, "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".claude", "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: Claude deploy.", "---"].join("\n"),
-      );
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          "deploy",
+          ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(workspace, ".agents", "skills"),
+          "deploy",
+          ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(workspace, ".claude", "skills"),
+          "deploy",
+          ["---", "name: deploy", "description: Claude deploy.", "---"].join("\n"),
+        );
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+        const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
 
-      assert.deepEqual(skills, [
-        {
-          name: "deploy",
-          path: path.join(configDir, "skills", "deploy", "SKILL.md"),
-          enabled: true,
-          scope: "user",
-          description: "User deploy.",
-        },
-      ]);
-    }),
+        assert.deepEqual(skills, [
+          {
+            name: "deploy",
+            path: path.join(configDir, "skills", "deploy", "SKILL.md"),
+            enabled: true,
+            scope: "user",
+            description: "User deploy.",
+          },
+          {
+            name: "deploy",
+            path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
+            enabled: true,
+            scope: "project",
+            description: "Claude deploy.",
+          },
+        ]);
+      }),
   );
 
   it.effect("recovers colon-bearing descriptions with invocation metadata intact", () =>

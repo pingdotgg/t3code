@@ -43,6 +43,9 @@ describe("collectComposerInlineTokens", () => {
         end: 95,
       },
     ]);
+    for (const link of ["[$PATH](https://example.com/env-docs)", "[$x](/tmp/notes.md)"]) {
+      expect(collectComposerInlineTokens(`Explain ${link} please`)).toEqual([]);
+    }
   });
 
   it.each(["$", "€", "𑿝"])("collects %s skill names that begin with a digit", (prefix) => {

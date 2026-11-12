@@ -664,7 +664,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     ...(yield* discoverPluginSkillRoots(configDirPath, cwd, enabledPlugins, syncedBucket, env)),
   ];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  // Same-name files all stay, in precedence order: the first is the one Claude's `/name` runs.
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
     const singleSkill =
       root.prefix !== undefined &&
@@ -708,7 +709,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         if (mention?.[2] !== name) continue;
       }
 
-      if (skillsByName.has(name)) {
+      if (skillsByPath.has(skillPath)) {
         continue;
       }
 
@@ -716,7 +717,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
-      skillsByName.set(name, {
+      skillsByPath.set(skillPath, {
         name,
         path: skillPath,
         enabled: override?.enabled ?? true,
@@ -732,5 +733,5 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

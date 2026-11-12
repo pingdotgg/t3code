@@ -8,7 +8,10 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { formatLinkedSkillMention } from "@t3tools/shared/composerInlineTokens";
+import {
+  formatLinkedSkillMention,
+  isLinkableSkillPath,
+} from "@t3tools/shared/composerInlineTokens";
 import { Atom } from "effect/reactivity";
 
 import { deadlineStore } from "./clock.ts";
@@ -53,7 +56,7 @@ export function formatProviderSkillMention(
   skill: Pick<ServerProviderSkill, "name" | "path">,
   skills: ReadonlyArray<ServerProviderSkill>,
 ): string {
-  return isProviderSkillNameShared(skill, skills)
+  return isLinkableSkillPath(skill.path) && isProviderSkillNameShared(skill, skills)
     ? formatLinkedSkillMention(skill)
     : `$${skill.name}`;
 }
