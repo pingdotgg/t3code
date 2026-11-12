@@ -513,6 +513,7 @@ const make = Effect.gen(function* () {
   const launchersDir = NodePath.join(config.stateDir, "server-browser", "launchers");
 
   const tabs = new Map<string, ServerTab>();
+  const retiringContexts = new Map<string, Promise<void>>();
   const pendingTabs = new Map<
     string,
     { readonly agentId: string | null; promise?: Promise<ServerTab> }
@@ -899,6 +900,7 @@ const make = Effect.gen(function* () {
       desktop === null &&
       ((snapshot.automationOwner !== undefined && snapshot.profileId === undefined) ||
         snapshot.profileId === INCOGNITO_BROWSER_PROFILE_ID);
+    if (isolatedContext) await retiringContexts.get(tabKey(snapshot.threadId, snapshot.tabId));
     const context =
       adopted?.page.context() ??
       desktop?.page.context() ??
@@ -1129,6 +1131,15 @@ const make = Effect.gen(function* () {
       ).then((reopened) => {
         if (tabs.get(key) !== tab) return;
         dropTab(tab, false, true);
+        // The pool caches an isolated context under this tab's key; a replacement opened in it
+        // would close with it.
+        if (tab.isolatedContext) {
+          const retired = page.context().close().catch(constVoid);
+          retiringContexts.set(key, retired);
+          void retired.then(() => {
+            if (retiringContexts.get(key) === retired) retiringContexts.delete(key);
+          });
+        }
         if (reopened) void ensureTab(reopened).catch(constVoid);
       });
     });
