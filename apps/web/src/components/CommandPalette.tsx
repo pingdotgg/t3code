@@ -442,6 +442,7 @@ function OpenCommandPaletteDialog(props: {
   ) => void;
   readonly initialContext: CommandPaletteReturnContext | undefined;
 }) {
+  const composerHandleRef = useComposerHandleContext();
   const navigate = useNavigate();
   const openLayoutPage = useOpenLayoutPage();
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -1351,7 +1352,22 @@ function OpenCommandPaletteDialog(props: {
     if (firstOption) startNewProject(firstOption.environmentId, null);
   };
 
+  const chooseWorkspace = useStableCallback(async () => {
+    composerHandleRef?.current?.openControl("composer.workspace");
+  });
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  if (activeThread || activeDraftThread) {
+    actionItems.push({
+      kind: "action",
+      value: "action:choose-workspace",
+      title: "Choose workspace",
+      searchTerms: ["branch", "worktree", "checkout", "workspace"],
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "composer.workspace",
+      run: chooseWorkspace,
+    });
+  }
 
   if (projects.length > 0) {
     const activeProjectTitle =

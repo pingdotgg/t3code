@@ -316,7 +316,11 @@ import GitActionsControl from "./GitActionsControl";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import { PanelLayoutControls, type PanelLayoutControlsProps } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
-import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import { ThreadDetailsPanel, type ThreadDetailsPanelHandle } from "./chat/ThreadDetailsPanel";
+import {
+  resolveThreadDetailsVisibility,
+  shouldShowComposerWorkspace,
+} from "./chat/threadDetailsItems";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -665,6 +669,8 @@ export default function ChatView(props: ChatViewProps) {
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const [headerControlsInset, measureHeaderControls] = useHeaderControlsInset();
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
+  const threadDetailsPanelRef = useRef<ThreadDetailsPanelHandle>(null);
+  const detailsVisibility = useClientSettings(resolveThreadDetailsVisibility);
   const [composerStashHost, setComposerStashHost] = useState<HTMLDivElement | null>(null);
   const [composerTrayControlsHost, setComposerTrayControlsHost] = useState<HTMLDivElement | null>(
     null,
@@ -1999,6 +2005,18 @@ export default function ChatView(props: ChatViewProps) {
         detailsCardInlineOpen: threadPanelInlineOpen,
       }).detailsCardMode,
   );
+  const workspaceInDetails = !shouldShowComposerWorkspace({
+    isServerThread,
+    embedded,
+    visibility: detailsVisibility,
+  });
+  const openWorkspaceDetailsStable = useStableCallback(() => {
+    threadDetailsPanelRef.current?.openBranch(threadPanelPresentation);
+  });
+  const openStartedWorkspaceStable = useStableCallback(() => {
+    if (workspaceInDetails) openWorkspaceDetailsStable();
+    else branchToolbarRef.current?.openBranchPicker();
+  });
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(
       state.threadPanelVisibilityByThreadKey,
@@ -3753,6 +3771,9 @@ export default function ChatView(props: ChatViewProps) {
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
+                              onWorkspaceRequest={
+                                isServerThread ? openStartedWorkspaceStable : undefined
+                              }
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}
@@ -3916,6 +3937,9 @@ export default function ChatView(props: ChatViewProps) {
                           {composerMounted && (
                             <div className="pointer-events-auto">
                               <BranchToolbar
+                                onOpenWorkspaceDetails={
+                                  workspaceInDetails ? openWorkspaceDetailsStable : undefined
+                                }
                                 forceNewWorktree={multipleModelSelections !== null}
                                 ref={branchToolbarRef}
                                 environmentId={activeThread.environmentId}
@@ -4000,6 +4024,7 @@ export default function ChatView(props: ChatViewProps) {
                 />
 
                 <ThreadDetailsPanel
+                  ref={threadDetailsPanelRef}
                   anchor={threadPanelPopoverAnchorRef}
                   handle={threadPanelPopoverHandle}
                   forceNewWorktree={multipleModelSelections !== null}
