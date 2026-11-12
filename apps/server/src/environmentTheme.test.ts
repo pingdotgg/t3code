@@ -156,6 +156,28 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect.skipIf(!symlinksSupported)("does not write through a symlink at its staging path", () =>
+    withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        const outside = path.join(environmentThemesDir, "..", "outside.txt");
+        yield* fs.writeFileString(outside, "keep");
+        yield* fs.symlink(
+          outside,
+          path.join(environmentThemesDir, `look.json.staging-${process.pid}`),
+        );
+
+        yield* themes.apply({ themeId: "look", theme: NIGHTFALL_THEME });
+        assert.strictEqual(yield* fs.readFileString(outside), "keep");
+        assert.deepEqual(yield* themes.current, [{ id: "look", ...NIGHTFALL_THEME }]);
+      }),
+    ),
+  );
+
   it.effect.skipIf(!symlinksSupported)("ignores a symlinked theme file", () =>
     withEnvironmentThemes(
       {},

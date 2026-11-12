@@ -269,8 +269,10 @@ const make = Effect.gen(function* () {
     const destination = `${environmentThemesDir}/${themeId}${THEME_FILE_SUFFIX}`;
     // The watcher reads only .json names, so it never sees a half-written file.
     const staging = `${destination}.staging-${process.pid}`;
+    // Exclusive create: a link left at the staging path is removed, never written through.
     const replace = (next: string) =>
-      fs.writeFileString(staging, next).pipe(
+      fs.remove(staging, { force: true }).pipe(
+        Effect.andThen(fs.writeFileString(staging, next, { flag: "wx" })),
         Effect.andThen(fs.rename(staging, destination)),
         Effect.tapError(() => fs.remove(staging, { force: true }).pipe(Effect.ignore)),
       );
