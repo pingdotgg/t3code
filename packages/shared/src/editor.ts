@@ -27,16 +27,14 @@ const isVersionedBundle = (entry: string, name: string) => {
   return /^\d[\d.]*$/.test(entry.slice(name.length + 1, -".app".length));
 };
 
-/**
- * The program a Toolbox script line runs: its first word, or the operand of `exec`, `open -na` or
- * `start`. Other paths on the line, such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, say nothing
- * about whether the IDE is still installed. */
 const scriptWords = (line: string) =>
   [...line.replace(/^\s*\(/, "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((match) => ({
     text: match[1] ?? match[2] ?? match[3] ?? "",
     quoted: match[3] === undefined,
   }));
 
+/** Only the launched program shows whether the IDE is still installed; other paths on the line,
+ * such as `> /dev/null` or `JAVA_HOME="/opt/jdk"`, do not. */
 const launchedProgram = (line: string) => {
   const words = scriptWords(line);
   const launcher = words.shift();
