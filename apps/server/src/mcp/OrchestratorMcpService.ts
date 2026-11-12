@@ -260,6 +260,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const BOUND_TARGET_REFUSAL =
+  "`target` sets the model for runs that start a new thread. This task's runs post in its bound thread, which uses that thread's model. Set bindToCurrentThread: false to choose one.";
+
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
     scheduledTaskId: task.id,
@@ -269,9 +272,14 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
-    providerInstanceId: task.modelSelection.instanceId,
-    model: task.modelSelection.model,
-    options: task.modelSelection.options ?? [],
+    // A bound run follows its thread's current model, not the stored selection.
+    ...(task.threadId !== null
+      ? {}
+      : {
+          providerInstanceId: task.modelSelection.instanceId,
+          model: task.modelSelection.model,
+          options: task.modelSelection.options ?? [],
+        }),
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -2059,6 +2067,9 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
+      if (input.target !== undefined && bindToCurrentThread) {
+        return yield* failure("invalid_request", BOUND_TARGET_REFUSAL);
+      }
       const modelSelection = yield* resolveScheduledTaskSelection(
         project,
         parent?.thread.modelSelection ?? null,
@@ -2159,6 +2170,9 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
+        if (input.target !== undefined && threadId !== null) {
+          return yield* failure("invalid_request", BOUND_TARGET_REFUSAL);
+        }
         // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
         const workspaceStrategy =
           (threadId === null) === (existing.threadId === null)

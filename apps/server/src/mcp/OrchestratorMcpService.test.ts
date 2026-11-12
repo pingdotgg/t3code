@@ -3207,6 +3207,26 @@ describe("OrchestratorMcpService provider resolution", () => {
           providerInstanceId: existing.modelSelection.instanceId,
           model: existing.modelSelection.model,
         });
+
+        // A bound run follows its thread's model, so a stored target would never apply.
+        const bound = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              { ...existing, threadId: ThreadId.make("thread:bound") },
+            ),
+          ),
+        );
+        const { tasks: boundTasks } = yield* bound.listScheduledTasks(client, { projectId });
+        assert.notProperty(boundTasks[0], "model");
+        const refused = yield* bound
+          .updateScheduledTask(client, {
+            scheduledTaskId: existing.id,
+            target: { model: "gpt-6" },
+          })
+          .pipe(Effect.flip);
+        assert.equal(refused.code, "invalid_request");
       }),
     );
 
