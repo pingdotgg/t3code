@@ -2288,6 +2288,36 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a viewer gets its control state while the renderer never answers the screencast", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const stalledStarts = yield* Queue.unbounded<void>();
+      const openSession = context.newCDPSession;
+      context.newCDPSession = async (target: unknown) => {
+        const session = await openSession(target);
+        const answer = session.send.getMockImplementation()!;
+        session.send.mockImplementation(async (method: string, input?: unknown) => {
+          if (method !== "Page.startScreencast") return answer(method, input);
+          Queue.offerUnsafe(stalledStarts, undefined);
+          return new Promise<never>(() => {});
+        });
+        return session;
+      };
+      const attaching = yield* browser
+        .attachViewer(viewerInput(tabId, true))
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(stalledStarts);
+      yield* TestClock.adjust("30 seconds");
+      const viewer = yield* Fiber.join(attaching);
+      expect(yield* Queue.takeAll(viewer.output)).toContainEqual(
+        expect.objectContaining({ _tag: "control" }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a stalled desktop viewer still gets its size, control and reconnect", () =>
   Effect.scoped(
     Effect.gen(function* () {
