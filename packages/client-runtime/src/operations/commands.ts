@@ -34,7 +34,9 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -287,6 +289,34 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
+class MessageDispatchUnansweredError extends Schema.TaggedError<MessageDispatchUnansweredError>()(
+  "MessageDispatchUnansweredError",
+  { message: Schema.String },
+) {}
+
+// Pings keep a socket alive while one stalled command never answers. The deadline bounds only
+// the wait: interrupting the request would cancel a server handler that may be committing it.
+const MESSAGE_ANSWER_TIMEOUT = "2 minutes";
+
+const awaitMessageAnswer = Effect.fn("EnvironmentCommands.awaitMessageAnswer")(function* <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+) {
+  const answer = yield* Effect.forkDetach(effect, { startImmediately: true });
+  return yield* Fiber.join(answer).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_ANSWER_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new MessageDispatchUnansweredError({
+            message:
+              "The server did not confirm this message. It may still arrive; check the thread before sending it again.",
+          }),
+        ),
+    }),
+    Effect.onInterrupt(() => Fiber.interrupt(answer)),
+  );
+});
+
 // The socket can close after the server accepted the frame but before it answered.
 // The server replays an accepted commandId from its receipt, so the same command
 // waits out reconnect backoff until the supervisor stops trying. The resend cap
@@ -297,11 +327,11 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
   command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
   resendAfterSocketLoss: boolean,
 ) {
-  if (!resendAfterSocketLoss) return yield* dispatch(command);
+  if (!resendAfterSocketLoss) return yield* awaitMessageAnswer(dispatch(command));
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   for (let resends = 0; ; resends += 1) {
     const attemptSession = yield* SubscriptionRef.get(supervisor.session);
-    const exit = yield* Effect.exit(dispatch(command));
+    const exit = yield* Effect.exit(awaitMessageAnswer(dispatch(command)));
     if (Exit.isSuccess(exit)) return exit.value;
     // Closing the session interrupts the request, which can beat the protocol error.
     const lostTransport =
@@ -759,25 +789,27 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                 ? {}
                 : { branch: bootstrap.branch }),
             };
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
-      commandId,
-      creationSource: input.creationSource ?? "web",
-      threadId: input.threadId,
-      ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
-      projectId: thread.projectId,
-      title: input.titleSeed ?? thread.title,
-      generateTitle: input.titleSeed !== undefined,
-      modelSelection: input.modelSelection ?? thread.modelSelection,
-      runtimeMode: input.runtimeMode,
-      interactionMode: input.interactionMode,
-      workspaceStrategy,
-      initialMessage: {
-        messageId: input.message.messageId,
-        text: input.message.text,
-        ...(context ? { context } : {}),
-        attachments,
-      },
-    });
+    return yield* awaitMessageAnswer(
+      request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+        commandId,
+        creationSource: input.creationSource ?? "web",
+        threadId: input.threadId,
+        ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
+        projectId: thread.projectId,
+        title: input.titleSeed ?? thread.title,
+        generateTitle: input.titleSeed !== undefined,
+        modelSelection: input.modelSelection ?? thread.modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        workspaceStrategy,
+        initialMessage: {
+          messageId: input.message.messageId,
+          text: input.message.text,
+          ...(context ? { context } : {}),
+          attachments,
+        },
+      }),
+    );
   }
 
   const requestedMode = input.dispatchMode ?? "auto";
