@@ -1024,7 +1024,10 @@ function makeLocalCommandHarness(input: {
             ),
         }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
-        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({
+          startRootRun,
+          forkBaseline: () => Effect.succeed(Effect.void),
+        }),
         Layer.succeed(ProviderUsageAnalytics.ProviderTurnAnalytics, {
           runStarted: () => Effect.void,
           turnCompleted: () => Effect.void,
