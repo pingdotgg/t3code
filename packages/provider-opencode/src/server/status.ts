@@ -527,15 +527,20 @@ export interface OpenCode2Workspace {
 }
 
 /**
- * A server scans a directory it has not served yet in the background: its first read lists
- * no commands at all (not even the built-ins), and `command.updated` plus `skill.updated`
- * for the directory end the scan. `scanned` must be listening before `read` runs, since
- * the read is what starts the scan.
+ * Reading a location the server has not loaded boots its scan, and only reads after the scan's
+ * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`. A
+ * loaded location listing no commands is still scanning. OpenCode exposes no readiness signal,
+ * so one another caller booted moments earlier can still read partial.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
-  function* <E>(read: Effect.Effect<OpenCode2Workspace, E>, scanned: Effect.Effect<void>) {
+  function* <E>(
+    read: Effect.Effect<OpenCode2Workspace, E>,
+    scanned: Effect.Effect<void>,
+    loaded: Effect.Effect<boolean>,
+  ) {
+    const wasLoaded = yield* loaded;
     const first = yield* read;
-    if (first.commands.length > 0) return first;
+    if (wasLoaded && first.commands.length > 0) return first;
     yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
     return yield* read;
   },
