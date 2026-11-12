@@ -200,7 +200,61 @@ describe("resolveInitialServerAuthGateState", () => {
       _tag: "PrimaryEnvironmentRequestError",
       operation: "fetch-session-state",
     });
+    expect((failure as Error).message).toBe(
+      "Primary environment request failed during fetch-session-state (timed out).",
+    );
     expect(testApi.calls.session).toBe(1);
+    await settled;
+  });
+
+  it("holds a desktop bootstrap until its starting backend answers", async () => {
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const refused = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({ request, description: "connection refused" }),
+    });
+    let backendReady = false;
+    let attempts = 0;
+    __setPrimaryHttpRunnerForTests(() => {
+      attempts += 1;
+      return backendReady
+        ? (Promise.resolve(authenticatedSession(DESKTOP_AUTH)) as Promise<never>)
+        : Promise.reject(refused);
+    });
+    const testWindow = installTestBrowser("http://localhost/");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Local",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        },
+      ],
+    } as unknown as DesktopBridge;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    let outcome: unknown;
+    const settled = resolveInitialServerAuthGateState().then(
+      (state) => {
+        outcome = state;
+      },
+      (error: unknown) => {
+        outcome = error;
+      },
+    );
+    // A first launch after an update can migrate for well over a minute.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(outcome).toBeUndefined();
+    const attemptsWhileStarting = attempts;
+    expect(attemptsWhileStarting).toBeGreaterThan(1);
+
+    backendReady = true;
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(outcome).toEqual({ status: "authenticated" });
+    expect(attempts).toBe(attemptsWhileStarting + 1);
     await settled;
   });
 

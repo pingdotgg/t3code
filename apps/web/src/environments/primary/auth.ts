@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClientError } from "effect/http";
@@ -37,7 +38,8 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   "PrimaryEnvironmentRequestError",
   {
     operation: PrimaryEnvironmentRequestOperation,
-    status: Schema.Number,
+    // Absent when no HTTP response arrived (timeout or unreachable server).
+    status: Schema.optional(Schema.Number),
     pairingLinkId: Schema.optional(Schema.String),
     sessionId: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -49,10 +51,10 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
     readonly pairingLinkId?: string;
     readonly sessionId?: string;
   }): PrimaryEnvironmentRequestError {
-    const status = readHttpApiStatus(input.cause) ?? 500;
+    const status = readHttpApiStatus(input.cause);
     return new PrimaryEnvironmentRequestError({
       operation: input.operation,
-      status,
+      ...(status !== null ? { status } : {}),
       ...(input.pairingLinkId !== undefined ? { pairingLinkId: input.pairingLinkId } : {}),
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       cause: input.cause,
@@ -60,7 +62,13 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   }
 
   override get message(): string {
-    return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+    const reason =
+      this.status !== undefined
+        ? `HTTP ${this.status}`
+        : Cause.isTimeoutError(this.cause)
+          ? "timed out"
+          : "server unreachable";
+    return `Primary environment request failed during ${this.operation} (${reason}).`;
   }
 }
 
@@ -172,25 +180,30 @@ function getDesktopBootstrapCredential(): string | null {
 
 // An unpaired browser waits on this fetch before it can show pairing, so a
 // stalled or restarting server fails into the boot error instead of the splash.
+// Desktop opens its window while its own backend starts and shows a recovery
+// window if that start fails, so its renderer waits however long startup takes.
 const SESSION_STATE_FETCH_TIMEOUT_MS = 5_000;
 const SESSION_STATE_RETRY_TIMEOUT_MS = 3_000;
 
 export async function fetchSessionState(): Promise<AuthSessionState> {
-  return retryTransientBootstrap(async () => {
-    try {
-      return await runPrimaryHttp(
-        PrimaryEnvironmentHttpClient.pipe(
-          Effect.flatMap((client) => client.auth.session({ headers: {} })),
-          Effect.timeout(SESSION_STATE_FETCH_TIMEOUT_MS),
-        ),
-      );
-    } catch (error) {
-      throw PrimaryEnvironmentRequestError.fromCause({
-        operation: "fetch-session-state",
-        cause: error,
-      });
-    }
-  }, SESSION_STATE_RETRY_TIMEOUT_MS);
+  return retryTransientBootstrap(
+    async () => {
+      try {
+        return await runPrimaryHttp(
+          PrimaryEnvironmentHttpClient.pipe(
+            Effect.flatMap((client) => client.auth.session({ headers: {} })),
+            Effect.timeout(SESSION_STATE_FETCH_TIMEOUT_MS),
+          ),
+        );
+      } catch (error) {
+        throw PrimaryEnvironmentRequestError.fromCause({
+          operation: "fetch-session-state",
+          cause: error,
+        });
+      }
+    },
+    getDesktopBootstrapCredential() === null ? SESSION_STATE_RETRY_TIMEOUT_MS : Infinity,
+  );
 }
 
 function readHttpApiStatus(error: unknown): number | null {
@@ -299,15 +312,10 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 }
 
 function isTransientBootstrapError(error: unknown): boolean {
-  if (isPrimaryEnvironmentRequestError(error)) {
-    return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
-  }
-
-  if (error instanceof TypeError) {
-    return true;
-  }
-
-  return error instanceof DOMException && error.name === "AbortError";
+  return (
+    isPrimaryEnvironmentRequestError(error) &&
+    (error.status === undefined || TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status))
+  );
 }
 
 async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {
