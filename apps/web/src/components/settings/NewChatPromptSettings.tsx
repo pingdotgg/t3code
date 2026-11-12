@@ -7,6 +7,7 @@ import { SettingsRow, SettingResetButton } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
 import {
+  useClearScopedSettings,
   useScopedSettings,
   useScopedSettingsMixed,
   useScopedSettingsWriteAllowed,
@@ -21,6 +22,7 @@ export function NewChatPromptSettings() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const draft = useRef<{ scopeKey: string; value: string } | null>(null);
   const updateSettings = useUpdateScopedSettings();
+  const clearSettings = useClearScopedSettings();
   const mixed = useScopedSettingsMixed(["newChatPrompt"]);
   const enabledMixed = useScopedSettingsMixed(["newChatPromptEnabled"]);
   const canWrite = useScopedSettingsWriteAllowed();
@@ -28,19 +30,30 @@ export function NewChatPromptSettings() {
     .map((environment) => environment.serverConfig?.managedPolicy)
     .find((policy) => isManagedSettingPath(policy, "newChatPrompt"));
   const policyDescriptionId = useId();
+  const pendingPromptPatch = () => {
+    const pending = draft.current;
+    return promptPolicy === undefined &&
+      pending?.scopeKey === scopeKey &&
+      inputRef.current?.value.trim() === pending.value
+      ? { newChatPrompt: pending.value }
+      : undefined;
+  };
 
   return (
     <>
       <SettingsRow
         serverScoped
         settingKeys={["newChatPromptEnabled"]}
+        onResetOverride={() => clearSettings(["newChatPromptEnabled"], pendingPromptPatch())}
         {...searchableSetting("new-chat-prompt")}
         description="Append saved instructions to your first message in each new chat. Off by default. Later messages and existing conversations are unchanged."
         resetAction={
           enabledMixed || settings.newChatPromptEnabled ? (
             <SettingResetButton
               label="new chat prompt"
-              onClick={() => updateSettings({ newChatPromptEnabled: false })}
+              onClick={() =>
+                updateSettings({ newChatPromptEnabled: false, ...pendingPromptPatch() })
+              }
             />
           ) : null
         }
@@ -48,17 +61,12 @@ export function NewChatPromptSettings() {
           <ScopedSwitch
             settingKeys={["newChatPromptEnabled"]}
             checked={settings.newChatPromptEnabled}
-            onCheckedChange={(checked) => {
-              const pending = draft.current;
+            onCheckedChange={(checked) =>
               updateSettings({
                 newChatPromptEnabled: Boolean(checked),
-                ...(promptPolicy === undefined &&
-                pending?.scopeKey === scopeKey &&
-                inputRef.current?.value.trim() === pending.value
-                  ? { newChatPrompt: pending.value }
-                  : {}),
-              });
-            }}
+                ...pendingPromptPatch(),
+              })
+            }
             aria-label="Enable new chat prompt"
           />
         }

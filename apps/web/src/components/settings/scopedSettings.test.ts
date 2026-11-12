@@ -491,6 +491,16 @@ describe("scoped settings writes", () => {
         ["defaultAutoPull", "enableAgentBrowserAccess"],
       ).serverWrites[0]?.patch,
     ).toEqual({ projectSettingsOverrides: { [projectId]: null } });
+    expect(
+      planScopedSettingsClear(
+        checkout,
+        [laptop, withOverrides],
+        ["defaultAutoPull", "enableAgentBrowserAccess"],
+        { newChatPrompt: "Pending project instructions" },
+      ).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: { [projectId]: { newChatPrompt: "Pending project instructions" } },
+    });
   });
 
   it("never substitutes an environment-default write for an invalid scope", () => {
