@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import * as Struct from "effect/Struct";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
@@ -690,8 +689,10 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
     }),
   ),
   target: Schema.optional(
-    OrchestratorMcpTarget.mapFields(Struct.omit(["environmentId", "projectId"])).annotate({
-      description: "Provider, model and options each run uses. Default: yours, or the project's.",
+    Schema.Struct({
+      providerInstanceId: Schema.optional(ProviderInstanceId),
+      model: Schema.optional(TrimmedNonEmptyString),
+      options: Schema.optional(OrchestratorMcpTargetOptionsFromRecord),
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
