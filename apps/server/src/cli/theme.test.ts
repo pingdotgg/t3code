@@ -94,7 +94,7 @@ describe("t3 theme", () => {
           port: 4888,
           origin: "http://127.0.0.1:4888",
           devUrl: "http://127.0.0.1:5999",
-          startedAt: new Date(0).toISOString(),
+          startedAt: "1970-01-01T00:00:00.000Z",
         })}\n`,
       );
 
