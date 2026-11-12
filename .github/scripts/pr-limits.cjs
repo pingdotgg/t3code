@@ -11,6 +11,8 @@ const MAX_CLOSES_PER_RUN = 50;
 const WRITE_PAUSE_MS = 1_000;
 // Measured here: about two and a half minutes until every open PR has an answer.
 const MERGEABLE_WAIT_MS = 150_000;
+const READ_ATTEMPTS = 4;
+const READ_RETRY_MS = 5_000;
 // GitHub stamps a label event and the PR's updatedAt a second or two apart.
 const SAME_MOMENT_MS = 15_000;
 
@@ -27,7 +29,7 @@ const LOGIN_PATTERN = /^github:([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38
 const SWEEP_QUERY = `
   query ($owner: String!, $repo: String!, $labels: [String!], $cursor: String) {
     repository(owner: $owner, name: $repo) {
-      pullRequests(states: OPEN, labels: $labels, first: 100, after: $cursor) {
+      pullRequests(states: OPEN, labels: $labels, first: 50, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
           number
@@ -62,6 +64,21 @@ const AUTHOR_OPEN_PRS_QUERY = `
       nodes { ... on PullRequest { number } }
     }
   }`;
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// GitHub answers a heavy list request with a 502 now and then, and one of those must not end the
+// run. Only reads go through here: repeating a read is safe, repeating a comment is not.
+async function read(github, query, variables) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await github.graphql(query, variables);
+    } catch (error) {
+      if (attempt === READ_ATTEMPTS || !(error.status >= 500)) throw error;
+      await pause(attempt * READ_RETRY_MS);
+    }
+  }
+}
 
 // Fails closed: a missing, empty, or malformed list must never read as "nobody is exempt".
 function parseExemptions(text) {
@@ -141,13 +158,12 @@ async function closeWithComment(github, context, number, body) {
 async function sweep({ github, context, core, dryRun }) {
   const exemptions = parseExemptions(fs.readFileSync(EXEMPTIONS_PATH, "utf8"));
   const repo = { owner: context.repo.owner, repo: context.repo.repo };
-  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const list = async () => {
     const prs = [];
     for (let cursor = null; ;) {
       const page = (
-        await github.graphql(SWEEP_QUERY, {
+        await read(github, SWEEP_QUERY, {
           ...repo,
           cursor,
           labels: [UNVOUCHED_LABEL, REBASE_LABEL, CLOSING_LABEL],
@@ -182,8 +198,7 @@ async function sweep({ github, context, core, dryRun }) {
         continue;
       }
       // The list is minutes old by now. Closing is the one step worth a second look.
-      const fresh = (await github.graphql(RECHECK_QUERY, { ...repo, number })).repository
-        .pullRequest;
+      const fresh = (await read(github, RECHECK_QUERY, { ...repo, number })).repository.pullRequest;
       if (fresh.state !== "OPEN") continue;
       // A merge to the base can resolve a conflict without touching the PR, so this is re-read
       // too. An answer that is not ready yet reads as "not conflicting" and waits for tomorrow.
@@ -265,7 +280,7 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
   if (reopened && context.payload.sender.login.toLowerCase() !== author.toLowerCase()) return;
 
   const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open author:${author} sort:created-asc`;
-  const { search } = await github.graphql(AUTHOR_OPEN_PRS_QUERY, { q });
+  const { search } = await read(github, AUTHOR_OPEN_PRS_QUERY, { q });
   // A new PR counts only the older ones, so two opened together cannot close each other.
   const others = search.nodes.filter(
     (node) => node.number && (reopened ? node.number !== pr.number : node.number < pr.number),
