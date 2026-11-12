@@ -4876,6 +4876,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
     );
 
+    // regression: #23918 the CLI drops the session rule in Plan mode and asks again
+    it.effect("answers a repeated Plan MCP call from a session grant without a card", () =>
+      Effect.gen(function* () {
+        const turn = yield* openPlanTurn("full-access");
+        const toolName = "mcp__t3-code__t3_thread_read";
+        const first = yield* requestWrite(
+          turn,
+          toolName,
+          { threadId: "thread-other" },
+          { toolUseID: "read-page-1" },
+        );
+        assert.equal(first.first.type, "request");
+        if (first.first.type !== "request") return;
+        yield* turn.runtime.respondToRuntimeRequest({
+          requestId: first.first.event.runtimeRequest.id,
+          decision: "acceptForSession",
+        });
+        assert.equal((yield* Fiber.join(first.decision))?.behavior, "allow");
+
+        const second = yield* requestWrite(
+          turn,
+          toolName,
+          { threadId: "thread-other", afterPosition: 50 },
+          { toolUseID: "read-page-2" },
+        );
+        assert.equal(second.first.type, "decision", "the session grant asked again");
+        if (second.first.type !== "decision") return;
+        assert.equal(second.first.result?.behavior, "allow");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("denies Plan writes without asking when approvals are never allowed", () =>
       Effect.gen(function* () {
         const turn = yield* openPlanTurn("full-access", "never");
