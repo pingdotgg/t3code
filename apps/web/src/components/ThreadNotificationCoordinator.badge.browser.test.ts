@@ -279,6 +279,23 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   },
 );
 
+it.each(["approval", "user_input"] as const)(
+  "notifies once for a subagent's pending %s, not again as queued runs start on the parent",
+  async (request) => {
+    await using app = setup();
+    app.setEnvironmentIds(["one"]);
+    app.start();
+    const running = (turnId: string) =>
+      shell({ latestTurn: { turnId, state: "running", completedAt: null } });
+    state.shells.set("one", running("turn-1"));
+    registry.set(noRequestsAtom, new Map([["thread", request]]));
+    state.shells.set("one", running("turn-2"));
+    state.shells.set("one", running("turn-3"));
+    const title = request === "approval" ? "Approval needed" : "Input needed";
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([title]);
+  },
+);
+
 it("presents completion notifications and sound as soon as the shell completes", async () => {
   await using app = setup();
   state.mode = "notifications-and-sound";
