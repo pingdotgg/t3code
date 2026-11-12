@@ -10,15 +10,16 @@ in once, and you choose what it may do.
 
 Open the command palette (`Cmd/Ctrl+K`) and choose **Use T3 Code in another
 app (MCP)**, or use the button in **Settings → Sharing & access**. Pick the
-app, choose what it may do, and follow the step for that app. Assistants like
+app and follow the step for that app. Assistants like
 Poke and Claude run in the cloud, so the wizard first asks you to sign in to T3
 Connect and turn it on for the environment. To reach your other machines through
 the same connection, turn on **Linked environments** in Labs and
 [link them](./remote-access.md#link-another-environment).
 
-When the app opens the sign-in page, choose **Get code** in the wizard and paste
-the code there. A code works once, for 5 minutes, and approves only the level
-you chose.
+When the app opens the sign-in page, choose what it may do and approve with your
+T3 Connect account. On an older environment, the wizard asks for the level and
+gives you a code to paste instead. A code works once, for 5 minutes, and
+approves only that level.
 
 For an app that is not listed, choose **Something else…**, add a remote MCP
 server with OAuth in that app, and paste the URL. Apps that require their own
@@ -51,18 +52,22 @@ device is connected over, so an agent on the same device can reach it.
 
 ## Approve a sign-in
 
-The first time an agent connects, it opens a sign-in page on the environment.
-The page names the agent and where its access goes:
+The first time an agent connects, it opens a sign-in page. When the agent
+reaches the environment through T3 Connect, the page opens on the T3 Code web
+app: sign in with the T3 Connect account the environment is linked to and
+approve there, without a code. Otherwise the page opens on the environment.
+Either page names the agent and where its access goes:
 
 - For an agent on your computer, approval returns to a `localhost` address on
   the computer that opened the page.
 - For a hosted agent, approval goes to that service, such as `chatgpt.com`.
   Anyone who runs that service gets the access.
 
-Only approve a sign-in you just started. To approve, enter a code from
-**Use T3 Code in another app (MCP)**, **Settings → Sharing & access**, or
-`t3 auth pairing create` on the host. A browser already signed in to the
-environment with permission to manage access can approve without a code.
+Only approve a sign-in you just started. On the environment's own page, enter a
+code from **Use T3 Code in another app (MCP)**, **Settings → Sharing & access**,
+or `t3 auth pairing create` on the host. A browser already signed in to the
+environment with permission to manage access can approve without a code. On the
+web app, **Use a sign-in code instead** opens the environment's own page.
 
 A code from **Use T3 Code in another app (MCP)** already carries the level you
 picked there. With another code, choose what the agent may do here: **Auto** is
@@ -74,6 +79,22 @@ policy. Approving without a code starts at **Read only**:
 - **Supervised** through **Full access** also let it start, message and stop
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
+
+## What outside agents can call
+
+Some tools only work for an agent running inside a T3 thread, because they act
+as that thread: subagents, secret requests, rendered HTML, the browser preview,
+devices, and worktree handoff. They still appear in an outside agent's tool
+list, but calling one returns an error saying it needs an agent running inside
+T3 Code.
+
+- To hand off work, start a thread with `t3_thread_launch`, then follow it with
+  `t3_thread_wait` or `t3_thread_read`, instead of `create_threads` or
+  `delegate_task`.
+- Tools that default to the caller's own project or thread need an explicit
+  `projectId` or `threadId`.
+- To list threads across projects, call `t3_thread_list` with
+  `allProjects: true`, or use `t3_thread_search`.
 
 ## Claude Code
 
@@ -126,11 +147,11 @@ t3 thread show "$id"
 t3 thread list
 ```
 
-`.` means the project that contains the current folder; a project id also
-works. A new thread uses the project's default model and permission mode, and
-runs in the project folder unless you pass `--worktree <base-branch>`. `send`
-never interrupts: a busy thread gets the message as its next turn. Pass `-` as
-the message to read it from stdin.
+`.` means the project that contains the current folder, or a git worktree of
+its repository; a project id also works. A new thread uses the project's
+default model and permission mode, and runs in the project folder unless you
+pass `--worktree <base-branch>`. `send` never interrupts: a busy thread gets
+the message as its next turn. Pass `-` as the message to read it from stdin.
 
 `--wait` prints the agent's reply. It exits 1 when the run fails or stops, and
 2 when the agent waits for an answer you give in the app. Add `--json` for a
