@@ -58,9 +58,11 @@ describe("htmlRenderTheme graphic contrast", () => {
     { canvas: "#161515", accent: "rgb(255 255 255 / 80%)" },
     { canvas: "#161515", accent: "var(--brand)" },
     { canvas: "rgb(0 0 0 / 50%)", accent: "#111111" },
-  ])("preserves passthrough accent $accent on $canvas", ({ canvas, accent }) => {
+    // No color reaches 3:1 on both; keep the one that already reads on the canvas.
+    { canvas: "#505050", surface: "#aaaaaa", accent: "#ffffff" },
+  ])("preserves passthrough accent $accent on $canvas", ({ canvas, surface = canvas, accent }) => {
     const { variables } = htmlRenderTheme(
-      { ...T3_CODE_DARK_THEME_COLORS, canvas, surface: canvas, accent },
+      { ...T3_CODE_DARK_THEME_COLORS, canvas, surface, accent },
       "dark",
     );
 

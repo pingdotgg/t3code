@@ -26,9 +26,10 @@ export function readableHtmlRenderColor(
     g: foreground.g * alpha + background.g * (1 - alpha),
     b: foreground.b * alpha + background.b * (1 - alpha),
   });
-  const originalWorst = Math.min(
-    ...opaque.map((background) => wcagContrast(paintedOn(background), background)),
+  const originalContrasts = opaque.map((background) =>
+    wcagContrast(paintedOn(background), background),
   );
+  const originalWorst = Math.min(...originalContrasts);
   if (originalWorst >= minimum) return color;
 
   const base = toOklch(paintedOn(opaque[0]!));
@@ -41,13 +42,18 @@ export function readableHtmlRenderColor(
     const lightness = step / LIGHTNESS_STEPS;
     // Measure the encoded sRGB paint so rounding cannot put it below the threshold.
     const candidate = formatHex(clampChroma({ ...base, l: lightness }, "oklch", "rgb"));
-    const worst = Math.min(...opaque.map((background) => wcagContrast(candidate, background)));
+    const contrasts = opaque.map((background) => wcagContrast(candidate, background));
+    const worst = Math.min(...contrasts);
     const distance = Math.abs(lightness - base.l);
     if (worst >= minimum && distance < nearestDistance) {
       nearest = candidate;
       nearestDistance = distance;
     }
-    if (worst > strongestWorst) {
+    // A fallback must not give up a surface the original color already reads on.
+    const keepsSatisfied = contrasts.every(
+      (contrast, index) => contrast >= minimum || originalContrasts[index]! < minimum,
+    );
+    if (keepsSatisfied && worst > strongestWorst) {
       strongest = candidate;
       strongestWorst = worst;
     }
