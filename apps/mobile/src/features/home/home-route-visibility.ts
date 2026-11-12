@@ -3,7 +3,10 @@ import { useNavigation } from "@react-navigation/native";
 import { useContext, useRef, useSyncExternalStore } from "react";
 import type { Atom } from "effect/reactivity";
 
-import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
+import {
+  NativePrimaryColumnContext,
+  NativeWorkspaceTabActivityContext,
+} from "../../native/v5-workspace-context";
 
 /**
  * Home stays mounted under a pushed Thread, and native-stack never freezes the
@@ -34,8 +37,12 @@ export function recordHomeTransitionStart(closing: boolean): void {
   if (!closing) setHomeVisible(true);
 }
 
-export function recordHomeTransitionEnd(closing: boolean): void {
-  if (closing) setHomeVisible(false);
+/**
+ * Each iOS tab slot shows its own copy of the Home route, and the slot a tab switch leaves
+ * disappears last. So a disappear hides Home only when another route has the focus.
+ */
+export function recordHomeTransitionEnd(closing: boolean, homeFocused: boolean): void {
+  if (closing && !homeFocused) setHomeVisible(false);
 }
 
 /** Popping a sheet or a deep-linked route above Home has no appear event. */
@@ -46,10 +53,13 @@ export function recordHomeFocus(): void {
 export function useHomeRouteVisible(): boolean {
   const navigation = useNavigation();
   const primaryColumn = useContext(NativePrimaryColumnContext);
+  const tabActive = useContext(NativeWorkspaceTabActivityContext)?.active ?? true;
   const visible = useSyncExternalStore(subscribeHomeVisibility, () => homeVisible);
   // Every tab slot's primary column reports to the one Home route, so a tab
   // switch can end on the leaving slot's disappear. Trust this column instead.
   if (primaryColumn) return primaryColumn.presented;
+  // The store is true for the Home route of every tab; this list shows in one of them.
+  if (!tabActive) return false;
   // Before Home's first navigation event: a cold deep link mounts Home under
   // its Thread without ever showing it.
   return visible ?? navigation.isFocused();

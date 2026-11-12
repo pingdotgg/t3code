@@ -396,6 +396,38 @@ describe("threadHistoryPaging", () => {
     expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
       items.map((row) => row.sourceItemId),
     );
+
+    // A caller that holds only the newest rows gets the same page when it says what it left
+    // out: a user turn, and run 3, whose late notification is then not a new turn.
+    const late = items.with(402, inRun(402, 3, notification("Late")));
+    const cursor = encodeThreadHistoryCursor({
+      snapshotSequence: 1,
+      sourceThreadId: THREAD,
+      sourceItemId: late.at(-1)!.sourceItemId,
+      position: late.length - 1,
+    });
+    const prefix = { hasUserTurn: true, startedRuns: new Set(["run-3"]) };
+    const whole = selectHistoryPageFromCursor({ items: late, cursor, snapshotSequence: 1, policy });
+    expect(whole.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
+    expect(
+      selectHistoryPageFromCursor({
+        items: late.slice(22),
+        cursor,
+        snapshotSequence: 1,
+        policy,
+        prefix,
+      }),
+    ).toEqual({ ...whole, oldestScanned: late[45] });
+    // A part that ends above the page reports its first row, so the caller reads further back.
+    expect(
+      selectHistoryPageFromCursor({
+        items: late.slice(60),
+        cursor,
+        snapshotSequence: 1,
+        policy,
+        prefix,
+      }).oldestScanned,
+    ).toBe(late[60]);
   });
 
   it("pages agent-only child transcripts instead of dropping their earlier activity", () => {
