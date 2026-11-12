@@ -4607,14 +4607,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: null,
       });
-      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 14 };
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 16 };
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-placeholder-start"),
         threadId,
         ...key,
         watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+        link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
       });
 
       let reads = 0;
@@ -4622,13 +4622,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
-          detail: () =>
+          detail: (input) =>
             Effect.sync(() => {
-              reads += 1;
+              if (input.number === key.number) reads += 1;
               return {
                 ...watchedPullRequestDetail({
                   projectId,
-                  number: 14,
+                  number: 16,
                   at: "2026-10-02T12:00:00.000Z",
                 }),
                 headSha: "6074dd48ff",
