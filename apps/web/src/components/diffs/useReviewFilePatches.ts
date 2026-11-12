@@ -61,7 +61,8 @@ export function useReviewFilePatches({
     ignoreWhitespace,
   ]);
   const scope = JSON.stringify([family, source?.diffHash]);
-  const lazy = source?.truncated === true && source.files !== undefined;
+  const lazy =
+    (source?.truncated === true || source?.patchesDeferred === true) && source.files !== undefined;
   const files = lazy ? sortedReviewFiles(source) : [];
   const [requested, setRequested] = useState<{ family: string; paths: readonly string[] }>({
     family,
@@ -70,12 +71,19 @@ export function useReviewFilePatches({
   const [retained, setRetained] = useState(() => ({
     family,
     source,
-    byPath:
+    byKey:
       !lazy && preview?.kind === "files"
         ? retainLoadedReviewFiles(EMPTY_RETAINED_FILES, preview.files)
         : EMPTY_RETAINED_FILES,
   }));
-  const previousByPath = retained.family === family ? retained.byPath : EMPTY_RETAINED_FILES;
+  const previousByKey = retained.family === family ? retained.byKey : EMPTY_RETAINED_FILES;
+  const previousByPath = new Map<string, FileDiffMetadata[]>();
+  for (const file of previousByKey.values()) {
+    const path = resolveFileDiffPath(file);
+    const entries = previousByPath.get(path) ?? [];
+    entries.push(file);
+    previousByPath.set(path, entries);
+  }
   const requestedPaths = new Set([
     ...files.slice(0, PAGE_SIZE).map((file) => file.path),
     ...(requested.family === family ? requested.paths : []),
@@ -115,37 +123,42 @@ export function useReviewFilePatches({
         : { family, paths: [...paths] };
     });
   const renderableFiles = lazy
-    ? files.map((file, index): FileDiffMetadata => {
+    ? files.flatMap((file, index): FileDiffMetadata[] => {
         const result = patches.get(index);
         const loaded =
           result?._tag === "Success" && result.value.patch?.kind === "files"
-            ? (result.value.patch.files.find(
+            ? result.value.patch.files.filter(
                 (candidate) => resolveFileDiffPath(candidate) === file.path,
-              ) ?? null)
-            : null;
-        return retainedReviewFile({
-          loaded,
-          previous: previousByPath.get(file.path),
-          sameFamily: true,
-          pending:
-            result === undefined ||
-            result._tag === "Initial" ||
-            (result._tag === "Success" && result.waiting),
-          placeholder: {
-            name: file.path,
-            ...(file.previousPath ? { prevName: file.previousPath } : {}),
-            type: file.previousPath ? "rename-changed" : "change",
-            hunks: [],
-            additionLines: [],
-            deletionLines: [],
-            additionCharacterCount: 0,
-            deletionCharacterCount: 0,
-            splitLineCount: 0,
-            unifiedLineCount: 0,
-            isPartial: true,
-            cacheKey: `${scope}:${file.path}:pending`,
-          },
-        });
+              )
+            : [];
+        if (loaded.length > 0) return loaded;
+        const pending =
+          result === undefined ||
+          result._tag === "Initial" ||
+          (result._tag === "Success" && result.waiting);
+        const previous = pending ? previousByPath.get(file.path) : undefined;
+        return (previous ?? [undefined]).map((previous) =>
+          retainedReviewFile({
+            loaded: null,
+            previous,
+            sameFamily: true,
+            pending,
+            placeholder: {
+              name: file.path,
+              ...(file.previousPath ? { prevName: file.previousPath } : {}),
+              type: file.previousPath ? "rename-changed" : "change",
+              hunks: [],
+              additionLines: [],
+              deletionLines: [],
+              additionCharacterCount: 0,
+              deletionCharacterCount: 0,
+              splitLineCount: 0,
+              unifiedLineCount: 0,
+              isPartial: true,
+              cacheKey: `${scope}:${file.path}:pending`,
+            },
+          }),
+        );
       })
     : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
         filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
@@ -153,22 +166,21 @@ export function useReviewFilePatches({
   const nextRetained = !source
     ? EMPTY_RETAINED_FILES
     : !lazy && retained.family === family && retained.source === source
-      ? previousByPath
-      : retainLoadedReviewFiles(previousByPath, renderableFiles);
-  if (
-    retained.family !== family ||
-    retained.source !== source ||
-    retained.byPath !== nextRetained
-  ) {
-    setRetained({ family, source, byPath: nextRetained });
+      ? previousByKey
+      : retainLoadedReviewFiles(previousByKey, renderableFiles);
+  if (retained.family !== family || retained.source !== source || retained.byKey !== nextRetained) {
+    setRetained({ family, source, byKey: nextRetained });
   }
+  const retainedPaths = new Set(
+    renderableFiles.filter((file) => !file.cacheKey?.endsWith(":pending")).map(resolveFileDiffPath),
+  );
   const readyFilePaths = new Set(
     files
       .filter((_, index) => {
         const result = patches.get(index);
         return (
           (result !== undefined && result._tag !== "Initial") ||
-          !renderableFiles[index]?.cacheKey?.endsWith(":pending")
+          retainedPaths.has(files[index]!.path)
         );
       })
       .map((file) => file.path),
@@ -204,10 +216,10 @@ export function useReviewFilePatches({
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
-    requestFile: (index: number) => requestFiles([index]),
+    requestFile: (path: string) => requestFiles([files.findIndex((file) => file.path === path)]),
     readyFilePaths,
     renderableFiles,
-    settledFileCount,
+    remainingFileCount: lazy ? files.length - settledFileCount : 0,
     loadNextFiles: () => {
       if (queries.some(({ index }) => index === settledFileCount)) return;
       requestFiles(Array.from({ length: PAGE_SIZE }, (_, index) => settledFileCount + index));
@@ -252,6 +264,7 @@ function reviewFileQueries({
                 request: {
                   cwd,
                   ...(baseRef ? { baseRef } : {}),
+                  ...(source.kind === "commit" ? { commitSha: source.id } : {}),
                   ignoreWhitespace,
                   file: {
                     path: file.path,

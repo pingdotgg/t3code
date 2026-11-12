@@ -235,7 +235,7 @@ export function retainLoadedReviewFiles(
   const next = new Map(
     files
       .filter((file) => !file.cacheKey?.endsWith(":pending"))
-      .map((file) => [resolveFileDiffPath(file), file]),
+      .map((file) => [buildFileDiffIdentityKey(file), file]),
   );
   return next.size === previous.size &&
     [...next].every(([path, file]) => previous.get(path) === file)
