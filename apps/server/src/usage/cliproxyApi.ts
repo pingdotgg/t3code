@@ -1,5 +1,6 @@
 import {
   ProviderDriverKind,
+  TrimmedNonEmptyString,
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
@@ -105,6 +106,9 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.Struct({ uuid: TrimmedNonEmptyString }),
+});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -121,6 +125,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -308,9 +313,18 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         "User-Agent": "claude-code/2.1.273",
       }),
       read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
-        const usage = yield* decodeClaudeUsage(
-          yield* call("https://api.anthropic.com/api/oauth/usage"),
+        const [usageBody, organization] = yield* Effect.all(
+          [
+            call("https://api.anthropic.com/api/oauth/usage"),
+            call("https://api.anthropic.com/api/oauth/profile").pipe(
+              Effect.flatMap(decodeClaudeProfile),
+              Effect.map((profile) => profile.organization.uuid),
+              Effect.option,
+            ),
+          ],
+          { concurrency: "unbounded" },
         );
+        const usage = yield* decodeClaudeUsage(usageBody);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
             ? [
@@ -331,6 +345,11 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         };
         return {
           ...listedIdentity(account),
+          // One email can hold several Claude organizations; local Claude keys by organization too.
+          ...Option.match(organization, {
+            onNone: () => ({}),
+            onSome: (workspaceId) => ({ workspaceId }),
+          }),
           plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
