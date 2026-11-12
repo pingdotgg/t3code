@@ -77,8 +77,9 @@ function advanceCodexUsage(previous: CodexTokenUsage | null, last: CodexTokenUsa
 }
 
 /** A rewind is a new baseline when the timestamp held and the snapshot still contains the request it
- * reports; stale and out-of-order records fail that test. A delayed replay of an older snapshot with
- * a fresh timestamp is indistinguishable from a rewind in the fields Codex writes. */
+ * reports; stale and out-of-order records fail that test, as does a baseline of unknown age (scan
+ * states cached before v15). A delayed replay of an older snapshot with a fresh timestamp is
+ * indistinguishable from a rewind in the fields Codex writes. */
 function isRewoundBaseline(
   previous: CodexTokenUsage | null,
   previousTimestampMs: number | undefined,
@@ -88,7 +89,8 @@ function isRewoundBaseline(
 ) {
   return (
     previous !== null &&
-    (previousTimestampMs === undefined || timestampMs >= previousTimestampMs) &&
+    previousTimestampMs !== undefined &&
+    timestampMs >= previousTimestampMs &&
     cumulative.total_tokens < previous.total_tokens &&
     CODEX_USAGE_FIELDS.every((key) => cumulative[key] >= last[key])
   );

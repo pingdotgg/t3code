@@ -740,6 +740,20 @@ describe("parseCodexLine", () => {
     ).toEqual(processed);
   });
 
+  it("does not treat a rewind as ordered when a cached state has no baseline timestamp", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const at = (line: string, time: string) =>
+      line.replace("2026-08-01T05:17:49.919Z", `2026-08-01T${time}.000Z`);
+    const replay = at(counted(counters(20, 4), counters(120, 24)), "10:00:05");
+    parseCodexLine(at(counted(counters(100, 20), counters(100, 20)), "10:00:00"), state);
+    parseCodexLine(replay, state);
+    parseCodexLine(at(counted(counters(30, 6), counters(150, 30)), "10:00:10"), state);
+    // Scan states cached before v15 resume without the timestamp.
+    delete state.lastCumulativeTimestampMs;
+    expect(parseCodexLine(replay, state)).toBeNull();
+  });
+
   it.each([
     {
       reset: true,
