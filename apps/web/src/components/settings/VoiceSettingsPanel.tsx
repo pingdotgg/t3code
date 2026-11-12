@@ -240,9 +240,7 @@ function ModelCard(props: ModelCardProps) {
             ) : null}
           </div>
           {model.description ? (
-            <p className="mt-0.5 text-meta text-muted-foreground">
-              {model.description}
-            </p>
+            <p className="mt-0.5 text-meta text-muted-foreground">{model.description}</p>
           ) : null}
           {model.linkedFrom ? (
             <p className="mt-0.5 break-all text-caption text-muted-foreground">
