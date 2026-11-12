@@ -417,6 +417,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         switch (input.action) {
           case "assign": {
             const title = yield* required(input.title, "title");
+            if (input.assigneeThreadId !== undefined) {
+              yield* readThread(input.assigneeThreadId);
+            }
             const random = yield* SecureRandom.SecureRandom;
             const itemId =
               input.itemId ?? OwnedWorkItemId.make(`owned-work:${yield* random.uuidV4()}`);
@@ -453,6 +456,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           case "handoff": {
             const itemId = yield* required(input.itemId, "itemId");
             const toThreadId = yield* required(input.toThreadId, "toThreadId");
+            yield* readThread(toThreadId);
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
               type: "owned-work.handoff",

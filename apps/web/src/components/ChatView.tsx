@@ -3140,7 +3140,7 @@ export default function ChatView(props: ChatViewProps) {
               providers={providerStatuses}
               pending={stagedProviderSwitch === null}
               nextTurn={stagedProviderSwitch !== null}
-              {...(stagedProviderSwitch === null || activeThread === undefined
+              {...(stagedProviderSwitch === null || activeThread === undefined || !canOperateThread
                 ? {}
                 : {
                     onCancel: () => {

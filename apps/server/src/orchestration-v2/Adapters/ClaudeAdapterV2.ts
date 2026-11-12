@@ -2044,13 +2044,11 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-          (input.mcpServers === undefined
-            ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+          (input.mcpServers !== undefined && "t3-code" in input.mcpServers
+            ? T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
+              (deviceInstructions ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : "")
+            : ""),
         ...(input.specialistRoleLoadout === undefined ? [] : [input.specialistRoleLoadout]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),

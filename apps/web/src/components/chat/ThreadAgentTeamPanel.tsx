@@ -757,7 +757,7 @@ function ThreadAgentTeamPanelInner(props: {
           <DialogHeader>
             <DialogTitle>Assign work</DialogTitle>
             <DialogDescription>
-              Add an item to this thread’s work board. Teammates claim it from their seat.
+              Add an item to this thread’s work board. Claim it here when ready to take it.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
