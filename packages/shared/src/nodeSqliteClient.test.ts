@@ -623,6 +623,8 @@ it.effect("keeps checkpoints off the writer after a transient lock", () =>
     const filename = path.join(directory, "state.sqlite");
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      // Small pages carry the same writes past the 32,768-frame backpressure ceiling.
+      yield* sql`PRAGMA page_size = 1024`;
       yield* sql`PRAGMA journal_mode = WAL`;
       yield* sql`CREATE TABLE pages(value BLOB NOT NULL)`;
       // Past the backpressure ceiling a write waits until the worker checkpoints,
@@ -636,7 +638,7 @@ it.effect("keeps checkpoints off the writer after a transient lock", () =>
       }>`PRAGMA wal_autocheckpoint`;
       assert.equal(autocheckpoint?.wal_autocheckpoint, 0);
       const [wal] = yield* sql<{ log: number; checkpointed: number }>`PRAGMA wal_checkpoint(NOOP)`;
-      assert.isBelow(wal?.log ?? Infinity, 10_000);
+      assert.isBelow(wal?.log ?? Infinity, 32_768);
     }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
   }).pipe(
     Effect.ensuring(Effect.sync(() => (lockedCheckpointStatements.count = 0))),

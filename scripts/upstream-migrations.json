@@ -78,5 +78,6 @@
   [77, "RepairBooleanSettledOverride"],
   [78, "DropOrchestrationEventCorrelationIndex"],
   [79, "DelegatedRecoveryIndexes"],
-  [80, "ScheduledTaskThreadMode"]
+  [80, "ScheduledTaskThreadMode"],
+  [81, "ProjectionMessageSearchText"]
 ]

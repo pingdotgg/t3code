@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the Windows launch smoke tests use filesystem notifications to observe real PowerShell launches.
+import * as NodeFS from "node:fs";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -24,6 +26,8 @@ import * as ExternalLauncher from "./externalLauncher.ts";
 
 // Windows drive letters break mocked POSIX PATH splitting; these tests also require /bin/sh stubs.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+// Editor lookup also scans the host's /Applications, where a real stable VS Code would count.
+const hostHasStableVsCode = NodeFS.existsSync("/Applications/Visual Studio Code.app");
 
 interface MockSpawnResult {
   readonly spawnError?: PlatformError.PlatformError;
@@ -700,44 +704,47 @@ it.effect("matches macOS bundles on the name boundary only", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-insiders-" });
-    // The real Insiders bundle ships both `code-insiders` and `code`.
-    const bin = path.join(
-      home,
-      "Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin",
-    );
-    yield* fs.makeDirectory(bin, { recursive: true });
-    for (const name of ["code", "code-insiders"]) {
-      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
-      yield* fs.chmod(path.join(bin, name), 0o755);
-    }
+it.effect(
+  "keeps the macOS VS Code Insiders bundle out of stable VS Code",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-insiders-" });
+      // The real Insiders bundle ships both `code-insiders` and `code`.
+      const bin = path.join(
+        home,
+        "Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin",
+      );
+      yield* fs.makeDirectory(bin, { recursive: true });
+      for (const name of ["code", "code-insiders"]) {
+        yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(bin, name), 0o755);
+      }
 
-    let spawned: ChildProcess.StandardCommand | undefined;
-    const editors = yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      const available = yield* launcher.resolveAvailableEditors();
-      yield* launcher.launchEditor({ editor: "vscode-insiders", cwd: "/workspace/file.ts" });
-      return available;
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          platform: "darwin",
-          env: { HOME: home, PATH: path.join(home, "empty") },
-          onSpawn: (command) => {
-            spawned = command;
-          },
-        }),
-      ),
-    );
+      let spawned: ChildProcess.StandardCommand | undefined;
+      const editors = yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        const available = yield* launcher.resolveAvailableEditors();
+        yield* launcher.launchEditor({ editor: "vscode-insiders", cwd: "/workspace/file.ts" });
+        return available;
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { HOME: home, PATH: path.join(home, "empty") },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
 
-    assert.notInclude(editors, "vscode");
-    assert.include(editors, "vscode-insiders");
-    assert.equal(spawned?.command, path.join(bin, "code-insiders"));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      assert.notInclude(editors, "vscode");
+      assert.include(editors, "vscode-insiders");
+      assert.equal(spawned?.command, path.join(bin, "code-insiders"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  { skip: hostHasStableVsCode },
 );
 
 for (const { platform, installPath, onPath } of [
