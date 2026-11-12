@@ -360,6 +360,14 @@ export function createThreadEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.projectId, input.source]),
       },
     }),
+    readAgentTeam: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:read-agent-team",
+      tag: ORCHESTRATION_V2_WS_METHODS.readAgentTeam,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.projectId]),
+      },
+    }),
     interruptTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:interrupt-turn",
       execute: interruptTurn,

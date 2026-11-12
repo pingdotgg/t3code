@@ -93,6 +93,10 @@ import {
   OrchestrationV2PreviewSpecialistTemplateResult,
 } from "./teamTemplates.ts";
 import {
+  OrchestrationV2ReadAgentTeamInput,
+  OrchestrationV2ReadAgentTeamResult,
+} from "./agentTeam.ts";
+import {
   TurnTokenUsage,
   ToolActivitySurface,
   ToolActivityIcon,
@@ -3855,6 +3859,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   launchThread: "orchestration.launchThread",
   previewSpecialistTemplate: "orchestration.previewSpecialistTemplate",
   addSpecialistsFromTemplate: "orchestration.addSpecialistsFromTemplate",
+  readAgentTeam: "orchestration.readAgentTeam",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
@@ -4572,6 +4577,10 @@ export const OrchestrationV2RpcSchemas = {
   addSpecialistsFromTemplate: {
     input: OrchestrationV2AddSpecialistsFromTemplateInput,
     output: OrchestrationV2AddSpecialistsFromTemplateResult,
+  },
+  readAgentTeam: {
+    input: OrchestrationV2ReadAgentTeamInput,
+    output: OrchestrationV2ReadAgentTeamResult,
   },
   subscribeShell: {
     input: OrchestrationV2SubscribeShellInput,

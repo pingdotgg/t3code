@@ -49,6 +49,7 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
+import { ProjectAgentTeamSettings } from "./ProjectAgentTeamSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import {
   defaultProjectIcon,
@@ -650,6 +651,9 @@ function ProjectDetail({
           ) : null}
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
+        <ProjectAgentTeamSettings
+          projectRef={scopeProjectRef(filePickerProject.environmentId, filePickerProject.id)}
+        />
         <ProjectActionsSettings />
         {checkoutChoices}
         <SettingsSection title="Danger">

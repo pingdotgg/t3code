@@ -281,6 +281,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["name icon emoji image checkout remove delete"],
   },
   {
+    id: "project-agent-team",
+    title: "Agent team",
+    to: "/settings/projects",
+    scope: "project",
+    searchTerms: ["workshop", "specialist", "lead", "builder", "team", "openrig", "contributor"],
+  },
+  {
     id: "default-model",
     title: "Default model",
     to: "/settings/threads",

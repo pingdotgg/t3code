@@ -56,6 +56,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
+import * as AgentTeamService from "./AgentTeamService.ts";
 import * as TeamTemplateService from "./TeamTemplateService.ts";
 import * as ContributorBundleLoader from "../project/ContributorBundleLoader.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
@@ -293,12 +294,16 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   ),
 );
 const layerContributorBundleLoaderProvided = ContributorBundleLoader.layer;
+const layerAgentTeamProvided = AgentTeamService.layer.pipe(
+  Layer.provide(layerThreadManagementProvided),
+);
 const layerTeamTemplateProvided = TeamTemplateService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerProjectService,
       layerContributorBundleLoaderProvided,
       layerThreadManagementProvided,
+      layerAgentTeamProvided,
       IdAllocator.layer,
     ),
   ),
@@ -427,6 +432,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerAgentTeamProvided,
   layerTeamTemplateProvided,
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,

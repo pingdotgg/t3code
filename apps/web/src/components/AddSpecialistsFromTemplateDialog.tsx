@@ -273,7 +273,7 @@ function AddSpecialistsFromTemplateDialog({
           <DialogTitle>
             <span className="flex items-center gap-2">
               <UsersIcon className="size-4" />
-              Add specialists from template
+              Add agent team…
             </span>
           </DialogTitle>
           <DialogDescription>
@@ -386,7 +386,7 @@ function AddSpecialistsFromTemplateDialog({
             Cancel
           </Button>
           <Button size="sm" onClick={() => void onSubmit()} disabled={!canSubmit}>
-            {submitting ? "Adding…" : "Add specialists"}
+            {submitting ? "Adding…" : "Add agent team"}
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -1,3 +1,4 @@
+import { AgentTeam } from "./agentTeam.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -1421,6 +1422,9 @@ export const ServerSettings = Schema.Struct({
   projectAutoPullOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  agentTeams: Schema.Record(ProjectId, AgentTeam).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1869,6 +1873,7 @@ export const ServerSettingsPatch = Schema.Struct({
   projectAutoPullOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
+  agentTeams: Schema.optionalKey(Schema.Record(ProjectId, AgentTeam)),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   permissionRouting: Schema.optionalKey(PermissionRoutingPolicy),

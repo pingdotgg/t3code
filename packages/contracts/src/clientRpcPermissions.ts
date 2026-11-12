@@ -72,6 +72,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.addSpecialistsFromTemplate]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.readAgentTeam]: AuthOrchestrationReadScope,
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksLink]: AuthAccessWriteScope,

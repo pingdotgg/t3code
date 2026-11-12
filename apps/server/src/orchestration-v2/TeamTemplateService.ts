@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ContributorBundleLoader from "../project/ContributorBundleLoader.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as AgentTeamService from "./AgentTeamService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 type ResolvedSpecialistRecipe = {
@@ -62,6 +63,7 @@ const make = Effect.gen(function* () {
   const bundles = yield* ContributorBundleLoader.ContributorBundleLoader;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const agentTeams = yield* AgentTeamService.AgentTeamService;
 
   const requireProject = <E>(
     projectId: ProjectId,
@@ -305,12 +307,20 @@ const make = Effect.gen(function* () {
       return yield* toError("Template produced no specialists.");
     }
 
-    return {
+    const result = {
       source: input.source,
       name: recipe.name,
       leadPrompt: recipe.leadPrompt,
       specialists: [lead, ...rest],
     } satisfies OrchestrationV2AddSpecialistsFromTemplateResult;
+
+    yield* agentTeams
+      .recordInstall({ projectId: input.projectId, result })
+      .pipe(
+        Effect.mapError((cause) => toError("Unable to persist the installed agent team.", cause)),
+      );
+
+    return result;
   });
 
   return TeamTemplateService.of({ preview, add });
@@ -323,4 +333,5 @@ export const layer: Layer.Layer<
   | ContributorBundleLoader.ContributorBundleLoader
   | IdAllocator.IdAllocatorV2
   | ThreadManagement.ThreadManagementService
+  | AgentTeamService.AgentTeamService
 > = Layer.effect(TeamTemplateService, make);

@@ -1939,6 +1939,12 @@ const WsOrchestrationV2AddSpecialistsFromTemplateRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2ReadAgentTeamRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.readAgentTeam, {
+  payload: OrchestrationV2RpcSchemas.readAgentTeam.input,
+  success: OrchestrationV2RpcSchemas.readAgentTeam.output,
+  error: Schema.Union([OrchestrationV2GetShellSnapshotError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2SubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeShell, {
   payload: OrchestrationV2RpcSchemas.subscribeShell.input,
   success: OrchestrationV2RpcSchemas.subscribeShell.output,
@@ -2309,6 +2315,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2LaunchThreadRpc,
   WsOrchestrationV2PreviewSpecialistTemplateRpc,
   WsOrchestrationV2AddSpecialistsFromTemplateRpc,
+  WsOrchestrationV2ReadAgentTeamRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,

@@ -22,6 +22,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as AgentTeam from "./AgentTeamService.ts";
 import * as TeamTemplate from "./TeamTemplateService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -99,13 +100,24 @@ function makeHarness(bundle: ContributorBundle | null = null) {
   const layerLoader = Layer.succeed(ContributorBundleLoader.ContributorBundleLoader, {
     load: () => Effect.succeed(bundle === null ? Option.none() : Option.some(bundle)),
   });
+  const layerAgentTeam = AgentTeam.layer.pipe(
+    Layer.provide(Layer.mergeAll(layerThreadManagement, layerServerSettings)),
+  );
   const layerTeamTemplate = TeamTemplate.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerProjects, layerLoader, layerThreadManagement, IdAllocator.layer),
+      Layer.mergeAll(
+        layerProjects,
+        layerLoader,
+        layerThreadManagement,
+        layerAgentTeam,
+        IdAllocator.layer,
+      ),
     ),
   );
   return Layer.mergeAll(
     layerTeamTemplate,
+    layerAgentTeam,
+    layerServerSettings,
     layerThreadManagement,
     layerRegistry,
     ProviderRegistryMock.layer(),
@@ -159,6 +171,14 @@ it.effect("adds pinned Workshop specialists with durable bindings", () =>
       assert.equal(shell?.specialist?.label, entry.specialist.label);
       assert.equal(shell?.specialist?.instructions, entry.specialist.instructions);
     }
+
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const stored = yield* settings.getSettings;
+    const team = stored.agentTeams[projectId];
+    assert.isDefined(team);
+    assert.equal(team?.name, "Workshop");
+    assert.deepEqual(team?.seatKeys, ["lead", "builder", "qa", "reviewer"]);
+    assert.equal(team?.leadKey, "lead");
   }).pipe(Effect.provide(makeHarness())),
 );
 

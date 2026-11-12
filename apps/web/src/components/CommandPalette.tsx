@@ -1379,7 +1379,7 @@ function OpenCommandPaletteDialog(props: {
         "multi agent",
         "openrig",
       ],
-      title: "Add specialists from template…",
+      title: "Add agent team…",
       description: "Workshop or repo t3.contributor-bundle.json, with a preview first",
       icon: <UsersIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
