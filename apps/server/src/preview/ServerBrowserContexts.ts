@@ -26,6 +26,8 @@ interface Options {
   ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
+  /** Variables that let Chrome trust the host's local root certificates. */
+  readonly trustEnvironment?: () => Promise<Record<string, string>>;
   /** Closes the shared browser once it has held no context for this long. */
   readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
@@ -91,7 +93,10 @@ export class ServerBrowserContexts {
 
   private async launchOptions() {
     const executable = await this.options.executable();
-    const env = this.options.env ?? process.env;
+    const env = {
+      ...(this.options.env ?? process.env),
+      ...(await this.options.trustEnvironment?.()),
+    };
     return {
       executable,
       env,

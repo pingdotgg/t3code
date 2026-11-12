@@ -383,13 +383,19 @@ const make = Effect.gen(function* () {
     "--base-dir",
     config.baseDir,
   ]);
+  const trustDirectory = path.join(config.baseDir, "tools", "chrome-headless-shell", "trust");
 
   const launching = <A>(
     executable: string,
-    run: (noSandbox: boolean) => Effect.Effect<A, HeadlessChrome.HtmlRenderBrowserError>,
+    run: (
+      noSandbox: boolean,
+      environment: Record<string, string>,
+    ) => Effect.Effect<A, HeadlessChrome.HtmlRenderBrowserError>,
   ) =>
     browsers.withPermits(1)(
-      run(noSandbox).pipe(
+      PreviewBrowserHost.trustEnvironment(trustDirectory).pipe(
+        Effect.provideContext(services),
+        Effect.flatMap((environment) => run(noSandbox, environment)),
         Effect.catchTags({
           HtmlRenderBrowserError: (error) =>
             error.output === undefined
@@ -410,10 +416,11 @@ const make = Effect.gen(function* () {
     function* (html: string) {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
-      const heights = yield* launching(executable.value, (noSandbox) =>
+      const heights = yield* launching(executable.value, (noSandbox, environment) =>
         HeadlessChrome.measureHtmlHeights({
           executable: executable.value,
           noSandbox,
+          environment,
           html,
           widths: HTML_RENDER_MEASURE_WIDTHS,
           urlFragment: MEASURE_FRAGMENT,
@@ -579,10 +586,11 @@ const make = Effect.gen(function* () {
       appearance,
       HTML_RENDER_MEASURE_FONTS,
     );
-    const screenshot = yield* launching(executable, (noSandbox) =>
+    const screenshot = yield* launching(executable, (noSandbox, environment) =>
       HeadlessChrome.captureHtmlScreenshot({
         executable,
         noSandbox,
+        environment,
         html: inlined.html,
         width,
         urlFragment: htmlRenderThemeFragment(theme),

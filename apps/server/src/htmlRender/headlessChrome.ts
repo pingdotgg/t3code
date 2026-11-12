@@ -179,6 +179,7 @@ interface PageEvents {
 const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;
+  readonly environment: Record<string, string>;
   readonly profileDirectory: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -214,6 +215,8 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           stdin: "ignore",
           stdout: "ignore",
           stderr: "pipe",
+          env: input.environment,
+          extendEnv: true,
           forceKillAfter: "2 seconds",
           additionalFds: {
             fd3: { type: "input", stream: Stream.fromQueue(outgoing) },
@@ -573,6 +576,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
   function* (input: {
     readonly executable: string;
     readonly noSandbox: boolean;
+    readonly environment: Record<string, string>;
     readonly html: string;
     readonly width: number;
     readonly urlFragment: string;
@@ -583,6 +587,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
     const browser = yield* launchBrowser({
       executable: input.executable,
       noSandbox: input.noSandbox,
+      environment: input.environment,
       profileDirectory: path.join(directory, "profile"),
     });
     const page = yield* browser.openPage(input.width, input.appearance);
@@ -612,6 +617,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;
+  readonly environment: Record<string, string>;
   readonly html: string;
   readonly widths: ReadonlyArray<number>;
   readonly urlFragment: string;
@@ -621,6 +627,7 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
   const browser = yield* launchBrowser({
     executable: input.executable,
     noSandbox: input.noSandbox,
+    environment: input.environment,
     profileDirectory: path.join(directory, "profile"),
   });
   const body = pageBody(input.html);

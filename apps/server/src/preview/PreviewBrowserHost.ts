@@ -1,9 +1,13 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect has no X.509 parsing or system CA store.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NodeCrypto from "node:crypto";
+import * as NodeTls from "node:tls";
 
 export const SETUP_SUBCOMMAND = "browser setup";
 
@@ -136,3 +140,130 @@ export const sandboxBlocked = Effect.gen(function* () {
   if (!restricted) return false;
   return !(yield* fs.exists(APPARMOR_PROFILE_PATH).pipe(Effect.orElseSucceed(() => false)));
 }).pipe(Effect.withSpan("PreviewBrowserHost.sandboxBlocked"));
+
+/**
+ * Admin-added roots on Debian, Fedora, Arch and SUSE. Not the whole system store: distro
+ * bundles still carry roots Chrome distrusts, such as Entrust and Chunghwa ePKI.
+ */
+const LOCAL_ANCHOR_DIRECTORIES = [
+  "/usr/local/share/ca-certificates",
+  "/etc/pki/ca-trust/source/anchors",
+  "/etc/ca-certificates/trust-source/anchors",
+  "/etc/pki/trust/anchors",
+];
+const PEM_CERTIFICATE = /-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g;
+
+const parseCertificates = (bytes: Uint8Array) => {
+  const pems = Buffer.from(bytes).toString("latin1").match(PEM_CERTIFICATE);
+  const certificates: Array<NodeCrypto.X509Certificate> = [];
+  for (const source of pems ?? [bytes]) {
+    try {
+      certificates.push(new NodeCrypto.X509Certificate(source));
+    } catch {
+      // Not a certificate, like the README some distros ship beside them.
+    }
+  }
+  return certificates;
+};
+
+/** Local roots the system store trusts; anchors not yet activated by update-ca-certificates are left out. */
+export const localTrustAnchors = Effect.gen(function* () {
+  if ((yield* HostProcess.Platform) !== "linux") return [];
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const system = new Set(
+    NodeTls.getCACertificates("system").map(
+      (pem) => new NodeCrypto.X509Certificate(pem).fingerprint256,
+    ),
+  );
+  const anchors = new Map<string, NodeCrypto.X509Certificate>();
+  for (const directory of LOCAL_ANCHOR_DIRECTORIES) {
+    const entries = yield* fs
+      .readDirectory(directory, { recursive: true })
+      .pipe(Effect.orElseSucceed(() => []));
+    for (const entry of entries) {
+      const bytes = yield* fs
+        .readFile(path.join(directory, entry))
+        .pipe(Effect.orElseSucceed(() => new Uint8Array()));
+      for (const certificate of parseCertificates(bytes)) {
+        if (system.has(certificate.fingerprint256)) {
+          anchors.set(certificate.fingerprint256, certificate);
+        }
+      }
+    }
+  }
+  return [...anchors.values()].sort((a, b) => a.fingerprint256.localeCompare(b.fingerprint256));
+}).pipe(Effect.withSpan("PreviewBrowserHost.localTrustAnchors"));
+
+class CertutilError extends Schema.TaggedError<CertutilError>()("CertutilError", {
+  args: Schema.Array(Schema.String),
+  exitCode: Schema.Number,
+}) {}
+
+/**
+ * Chrome on Linux trusts only its own roots and `$HOME/.pki/nssdb`, so local roots such as a
+ * TLS-inspecting proxy's need an NSS database under a T3-owned HOME. Empty when none are needed.
+ */
+export const trustEnvironment = Effect.fn("PreviewBrowserHost.trustEnvironment")(function* (
+  directory: string,
+) {
+  const anchors = yield* localTrustAnchors;
+  if (anchors.length === 0) return {};
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const env = yield* HostProcess.Environment;
+  const realHome = yield* HostProcess.HomeDirectory;
+  const key = NodeCrypto.createHash("sha256")
+    .update(anchors.map((anchor) => anchor.fingerprint256).join(","))
+    .digest("hex")
+    .slice(0, 16);
+  const home = path.join(directory, key);
+  const ready = (root: string) =>
+    fs.exists(path.join(root, ".pki", "nssdb", "cert9.db")).pipe(Effect.orElseSucceed(() => false));
+
+  if (!(yield* ready(home))) {
+    // Build aside and rename, so a crash or a concurrent launch never sees a partial database.
+    const attempt = yield* Effect.gen(function* () {
+      yield* fs.makeDirectory(directory, { recursive: true });
+      const staging = yield* fs.makeTempDirectory({ directory, prefix: `${key}-` });
+      const database = `sql:${path.join(staging, ".pki", "nssdb")}`;
+      const certutil = Effect.fnUntraced(function* (args: ReadonlyArray<string>) {
+        const exitCode = yield* spawner
+          .exitCode(
+            ChildProcess.make("certutil", ["-d", database, ...args], {
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+            }),
+          )
+          .pipe(Effect.timeout("10 seconds"));
+        if (exitCode !== 0) return yield* new CertutilError({ args, exitCode });
+      });
+      yield* Effect.gen(function* () {
+        yield* fs.makeDirectory(path.join(staging, ".pki", "nssdb"), { recursive: true });
+        yield* certutil(["-N", "--empty-password"]);
+        for (const anchor of anchors) {
+          const file = path.join(staging, "anchor.pem");
+          yield* fs.writeFileString(file, anchor.toString());
+          yield* certutil(["-A", "-a", "-t", "C,,", "-n", anchor.fingerprint256, "-i", file]);
+        }
+        yield* fs.rename(staging, home);
+      }).pipe(Effect.onError(() => fs.remove(staging, { recursive: true }).pipe(Effect.ignore)));
+    }).pipe(Effect.exit);
+    // A failed rename can mean a concurrent launch put its copy in place first.
+    if (!(yield* ready(home))) {
+      yield* Effect.logWarning(
+        "T3's browser could not trust this host's local root certificates. If certutil is missing, `t3 browser setup` installs it.",
+        attempt,
+      );
+      return {};
+    }
+  }
+  // Fonts and fontconfig settings stay in the real home.
+  return {
+    HOME: home,
+    XDG_CONFIG_HOME: env.XDG_CONFIG_HOME ?? path.join(realHome, ".config"),
+    XDG_DATA_HOME: env.XDG_DATA_HOME ?? path.join(realHome, ".local", "share"),
+  };
+});

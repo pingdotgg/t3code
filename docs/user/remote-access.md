@@ -294,6 +294,11 @@ any missing libraries and system fonts with apt; pages that load without text
 can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
 reports what it would change.
 
+The browser trusts root certificates you added to the host's certificate store,
+such as `/usr/local/share/ca-certificates` on Debian and Ubuntu, for example on a
+network that inspects HTTPS. That needs `certutil`, which setup installs when
+such a certificate is present.
+
 The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
 as root. If your T3 server runs as root, run it as a nonroot user to keep
 sandboxing enabled. `t3 browser setup` does not fix this root restriction.

@@ -64,6 +64,8 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 import type {
   BrowserContext,
   CDPSession,
@@ -503,7 +505,9 @@ const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const runSyncExit = Effect.runSyncExitWith(yield* Effect.context<never>());
-  const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
+  const launchServices = yield* Effect.context<
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  >();
   // sudo resets the environment, so the command has to name this server's home.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND, [
     "--base-dir",
@@ -528,6 +532,12 @@ const make = Effect.gen(function* () {
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
     idleBrowserMs: 5 * 60_000,
     executable: () => runPromise(previewBrowser.executable),
+    trustEnvironment: () =>
+      Effect.runPromiseWith(launchServices)(
+        PreviewBrowserHost.trustEnvironment(
+          NodePath.join(config.baseDir, "tools", "chrome-headless-shell", "trust"),
+        ),
+      ),
     // An agent scope keeps Chrome out of the server's memory protection and OOM score.
     launcher: async (executable) => {
       const launch = await runPromise(
