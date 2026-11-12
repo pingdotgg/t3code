@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -167,6 +168,10 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
     }),
   ),
 );
+
+// Claude's OAuth usage endpoint answers bursts of reads with 429, so readings are reused this long.
+const USAGE_READ_INTERVAL_MS = 60_000;
+const RATE_LIMITED_DETAIL = "The provider is rate limiting the hub's usage requests.";
 
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
@@ -453,6 +458,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
     });
     const response = yield* decodeApiResponse(raw);
+    if (response.status_code === 429) {
+      return yield* new UsageLimitSourceError({
+        detail: RATE_LIMITED_DETAIL,
+      });
+    }
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
@@ -461,26 +471,57 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return response.body;
   });
 
+  // Per hub account: when it was last probed and what to show until the next probe.
+  const usageReads = new Map<
+    string,
+    { readonly probedAt: number; readonly reading: UsageLimitSourceAccount; readonly good: boolean }
+  >();
+  const usageReadKey = (hub: CliproxyHub, accountId: string) =>
+    JSON.stringify([hub.url, accountId]);
+
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     hub: CliproxyHub,
     account: AuthFile,
     provider: HubProvider,
   ) {
+    const key = usageReadKey(hub, account.id);
+    const now = yield* Clock.currentTimeMillis;
+    const previous = usageReads.get(key);
+    if (previous && now - previous.probedAt < USAGE_READ_INTERVAL_MS) return previous.reading;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const call: HubCall = (url, data) =>
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
-    const reading = yield* provider.read({ account, call, checkedAt }).pipe(
-      Effect.provideService(Digest.Digest, digest),
-      Effect.orElseSucceed(() => ({
-        ...listedIdentity(account),
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
-        }),
-      })),
-    );
-    return { id: account.id, driver: provider.driver, ...reading };
+    const result = yield* provider
+      .read({ account, call, checkedAt })
+      .pipe(Effect.provideService(Digest.Digest, digest), Effect.result);
+    const entry =
+      result._tag === "Success"
+        ? {
+            reading: { id: account.id, driver: provider.driver, ...result.success },
+            good: true,
+          }
+        : previous?.good
+          ? // Keep the last known bars; their checkedAt still says how old they are.
+            previous
+          : {
+              reading: {
+                id: account.id,
+                driver: provider.driver,
+                ...listedIdentity(account),
+                usageLimits: makeUnavailableUsageLimits({
+                  checkedAt,
+                  reason: "probeFailed",
+                  message:
+                    isUsageLimitSourceError(result.failure) &&
+                    result.failure.detail === RATE_LIMITED_DETAIL
+                      ? RATE_LIMITED_DETAIL
+                      : "The hub could not read this account's usage.",
+                }),
+              },
+              good: false,
+            };
+    usageReads.set(key, { probedAt: now, reading: entry.reading, good: entry.good });
+    return entry.reading;
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
@@ -552,6 +593,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       } as const;
     });
     return yield* operation.pipe(
+      Effect.ensuring(Effect.sync(() => usageReads.delete(usageReadKey(hub, accountId)))),
       Effect.mapError((error) =>
         isUsageLimitSourceError(error)
           ? error
