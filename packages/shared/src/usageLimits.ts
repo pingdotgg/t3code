@@ -127,12 +127,12 @@ export const CURSOR_USAGE_WINDOWS = [
   {
     id: "totalPercentUsed",
     label: "Overall",
-    description: "Combined usage across both allowances, not a third quota.",
+    description: "All usage on your plan this billing cycle.",
   },
   {
     id: "autoPercentUsed",
     label: "Cursor Models",
-    description: "Grok and Composer use this first. Auto can use either pool.",
+    description: "Grok, Composer, and Auto use this allowance.",
   },
   {
     id: "apiPercentUsed",

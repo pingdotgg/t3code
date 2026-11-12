@@ -379,7 +379,7 @@ export function isOpenFavoriteEditorShortcut(
  * Whether the keypress should bold text in the rich-text composer: Mod+B
  * without extra modifiers, with text selected. Tiptap binds the same chord, so
  * app shortcuts captured ahead of the editor yield only in that case. With no
- * selection the chord stays with the app (the sidebar toggle by default).
+ * selection an app binding on the chord wins (the sidebar toggle by default).
  */
 export function isRichTextBoldShortcut(
   event: ShortcutEventLike,

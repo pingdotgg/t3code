@@ -2500,6 +2500,7 @@ describe("EnvironmentThreads", () => {
         environmentId: TARGET.environmentId,
         threadId: THREAD_ID,
         pendingRequestIds: [],
+        unansweredRequestIds: [],
       });
       expect(yield* Queue.size(announced)).toBe(0);
     }),
