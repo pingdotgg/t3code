@@ -2,6 +2,8 @@ import type { ModelSelection, ThreadId } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom } from "effect/reactivity";
 import {
   WS_METHODS,
@@ -9,7 +11,7 @@ import {
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 
-import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
+import { createOptimisticThreadLifecycle, type QueuedThreadCommand } from "./threadLifecycle.ts";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -119,6 +121,28 @@ export function createThreadEnvironmentAtoms<R, E>(
     );
   });
 
+  // Offline, the command is queued so its optimistic change shows now; it sends on reconnect.
+  const sendOnReconnect =
+    <I, E, R>(execute: (input: I) => Effect.Effect<{ readonly sequence: number }, E, R>) =>
+    (input: I) =>
+      Effect.gen(function* (): Effect.fn.Return<
+        { readonly sequence: number } | QueuedThreadCommand<E>,
+        E,
+        R | EnvironmentSupervisor.EnvironmentSupervisor
+      > {
+        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+        if (Option.isSome(yield* SubscriptionRef.get(supervisor.session))) {
+          return yield* execute(input);
+        }
+        const fiber = yield* SubscriptionRef.changes(supervisor.session).pipe(
+          Stream.filter(Option.isSome),
+          Stream.runHead,
+          Effect.andThen(execute(input)),
+          Effect.forkDetach,
+        );
+        return { sent: fiber };
+      });
+
   const commands = {
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
@@ -158,7 +182,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     settle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:settle",
-      execute: settleThread,
+      execute: sendOnReconnect(settleThread),
       scheduler,
       concurrency,
     }),
@@ -170,7 +194,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     snooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:snooze",
-      execute: snoozeThread,
+      execute: sendOnReconnect(snoozeThread),
       scheduler,
       concurrency,
     }),

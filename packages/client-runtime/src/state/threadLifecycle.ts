@@ -5,9 +5,16 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Exit from "effect/Exit";
+import type * as Fiber from "effect/Fiber";
 import { Atom } from "effect/reactivity";
 
 import type { AtomCommand } from "./runtime.ts";
+
+/** A command made while its environment was offline; `sent` ends once it is sent on reconnect. */
+export interface QueuedThreadCommand<E> {
+  readonly sent: Fiber.Fiber<{ readonly sequence: number }, E>;
+}
 
 interface PendingThreadUpdate {
   readonly threadId: ThreadId;
@@ -59,7 +66,7 @@ export function createOptimisticThreadLifecycle(
   function wrap<Input extends { readonly threadId: ThreadId }, E>(
     command: AtomCommand<
       { readonly environmentId: EnvironmentId; readonly input: Input },
-      { readonly sequence: number },
+      { readonly sequence: number } | QueuedThreadCommand<E>,
       E
     >,
     apply: (
@@ -81,26 +88,36 @@ export function createOptimisticThreadLifecycle(
         };
         const remove = () =>
           registry.update(pending, (current) => current.filter((item) => item !== update));
+        const confirm = (sequence: number) => {
+          update.sequence = sequence;
+          registry.update(pending, (current) => [...current]);
+          const reconcile = (snapshot: OrchestrationV2ShellSnapshot | null) => {
+            if (snapshot === null || snapshot.snapshotSequence >= sequence) {
+              remove();
+              unsubscribe();
+            }
+          };
+          const unsubscribe = registry.subscribe(source, reconcile);
+          reconcile(registry.get(source));
+        };
         registry.update(pending, (current) => [...current, update]);
-        let confirmed = false;
+        let kept = false;
         try {
           const result = await command.run(registry, target);
           if (result._tag === "Success") {
-            update.sequence = result.value.sequence;
-            registry.update(pending, (current) => [...current]);
-            const reconcile = (snapshot: OrchestrationV2ShellSnapshot | null) => {
-              if (snapshot === null || snapshot.snapshotSequence >= result.value.sequence) {
-                remove();
-                unsubscribe();
-              }
-            };
-            const unsubscribe = registry.subscribe(source, reconcile);
-            reconcile(registry.get(source));
-            confirmed = true;
+            const value = result.value;
+            if ("sent" in value) {
+              value.sent.addObserver((exit) =>
+                Exit.isSuccess(exit) ? confirm(exit.value.sequence) : remove(),
+              );
+            } else {
+              confirm(value.sequence);
+            }
+            kept = true;
           }
           return result;
         } finally {
-          if (!confirmed) remove();
+          if (!kept) remove();
         }
       },
     };
