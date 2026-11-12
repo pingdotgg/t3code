@@ -226,12 +226,13 @@ function htmlTagMarkdown(
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
+  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
+  const cellBreak = "&#10;";
   // A blank line inside an open link label would end the paragraph before its "]".
-  const blockBreak = anchors.open === 0 ? "\n\n" : " ";
+  const blockBreak = anchors.open > 0 ? " " : options.inTableCell ? cellBreak : "\n\n";
   if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
   if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
-  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
-  if (/^<br\b/i.test(tag)) return options.inTableCell ? "&#10;" : "  \n";
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? cellBreak : "  \n";
   if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
   return "";
 }
