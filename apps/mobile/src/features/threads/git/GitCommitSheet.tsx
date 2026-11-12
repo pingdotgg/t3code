@@ -3,7 +3,8 @@ import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
-import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -25,8 +26,9 @@ type GitCommitSheetProps = StaticScreenProps<{
 export function GitCommitSheet(_props: GitCommitSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
-  const { selectedThread } = useThreadSelection();
+  const android = Platform.OS === "android";
+  const [footerHeight, setFooterHeight] = useState(0);
+  const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -66,7 +68,30 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     });
   };
 
-  const android = Platform.OS === "android";
+  const footer = (
+    <View
+      className="shrink-0 gap-2 border-t border-border-subtle bg-sheet-solid px-5 pt-3"
+      onLayout={android ? (event) => setFooterHeight(event.nativeEvent.layout.height) : undefined}
+      style={{ paddingBottom: Math.max(insets.bottom, 18) }}
+    >
+      <Button
+        label="Commit changes"
+        icon="checkmark"
+        tone="primary"
+        fullWidth
+        disabled={!canWriteSourceControl || noneSelected || busy}
+        onPress={() => void runCommitAction(false)}
+      />
+      <Button
+        label="Commit on a new branch"
+        icon="arrow.branch"
+        tone="text"
+        fullWidth
+        disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+        onPress={() => void runCommitAction(true)}
+      />
+    </View>
+  );
   const header = (
     <SheetHeader
       title="Commit changes"
@@ -81,19 +106,35 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     // header's Compose button is one, so Android renders content first and reverses the column.
     <View
       collapsable={false}
-      className="bg-sheet ios:flex-1 android:flex-col-reverse"
-      style={android ? { maxHeight: windowHeight * 0.92 } : undefined}
+      className="bg-sheet ios:flex-1 android:absolute android:inset-0 android:flex-col-reverse"
     >
-      <ScreenContent fitToContents>
+      {android ? (
+        <NativeStackScreenOptions
+          options={{ unstable_sheetFooter: () => footer }}
+          optionsVersion={{
+            threadId: selectedThread?.id,
+            cwd: selectedThreadCwd,
+            hasProject: selectedThreadProject !== null,
+            commitMessage: dialogCommitMessage,
+            filePaths: selectedFiles.map((file) => file.path),
+            allSelected,
+            busy,
+            canWriteSourceControl,
+            canChangeThreadBranch,
+            bottomInset: insets.bottom,
+          }}
+        />
+      ) : null}
+      <ScreenContent>
         <ScrollView
           nestedScrollEnabled
           contentInsetAdjustmentBehavior="automatic"
-          className="android:shrink android:grow-0 ios:flex-1"
+          className="flex-1"
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           automaticallyAdjustKeyboardInsets
           contentContainerClassName="px-5 pt-4 pb-6 gap-5"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+          contentContainerStyle={android ? { paddingBottom: footerHeight + 24 } : undefined}
         >
           {isDefaultRef ? (
             <Text className="text-sm text-warning-foreground">
@@ -207,25 +248,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               })
             )}
           </View>
-          <View className="gap-2">
-            <Button
-              label="Commit changes"
-              icon="checkmark"
-              tone="primary"
-              fullWidth
-              disabled={!canWriteSourceControl || noneSelected || busy}
-              onPress={() => void runCommitAction(false)}
-            />
-            <Button
-              label="Commit on a new branch"
-              icon="arrow.branch"
-              tone="text"
-              fullWidth
-              disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
-              onPress={() => void runCommitAction(true)}
-            />
-          </View>
         </ScrollView>
+        {android ? null : footer}
       </ScreenContent>
       {header}
     </View>
