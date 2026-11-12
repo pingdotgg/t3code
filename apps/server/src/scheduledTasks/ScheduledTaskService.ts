@@ -1200,18 +1200,22 @@ export const layer = Layer.effect(
         missedRunAt: task.nextRunAt,
         rescheduledTo: next,
       });
-      yield* sql`
+      // `task` can be a stale batch snapshot; a run or edit since then already moved the row on.
+      const updated = yield* sql`
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
             ${runError === undefined ? sql`` : sql`, last_run_status = 'failed', last_run_error = ${runError}`}
         WHERE task_id = ${task.id}
+          AND next_run_at IS ${task.nextRunAt}
+          AND last_run_at IS ${task.lastRunAt}
+        RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
         ),
       );
-      yield* notifyChanged;
+      if (updated.length > 0) yield* notifyChanged;
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
