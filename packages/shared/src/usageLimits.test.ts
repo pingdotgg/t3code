@@ -126,34 +126,88 @@ describe("new thread model fallback", () => {
     ).toBeDefined();
   });
   it.each([
-    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false],
-    ["cursor", ["autoPercentUsed"], "composer-2.5", false],
-    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true],
-    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false],
-    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true],
-    ["antigravity", ["gemini-weekly"], "antigravity-default", true],
-    ["codex", ["individual"], "gpt-5.5", true],
-    ["opencode", ["go_weekly"], "opencode/big-pickle", false],
-    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true],
-  ] as const)("matches %s pools %s to %s", (driver, ids, model, usesFallback) => {
-    const defaultSelection = { ...selection, model };
-    expect(
-      resolveNewThreadModelSelection({
-        ...defaults,
-        defaultSelection,
-        providers: [
-          provider({
-            driver: ProviderDriverKind.make(driver),
-            usageLimits: {
-              checkedAt: limited.checkedAt,
-              windows: ids.map((id) => ({ ...window, id, usedPercent: 100 })),
-            },
-          }),
-          available,
-        ],
-      }).selection,
-    ).toEqual(usesFallback ? fallback : defaultSelection);
-  });
+    ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined, undefined],
+    ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined, undefined],
+    ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined, undefined],
+    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, undefined, undefined],
+    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true, undefined, undefined],
+    ["antigravity", ["gemini-weekly"], "antigravity-default", true, undefined, undefined],
+    ["codex", ["individual"], "gpt-5.5", true, undefined, undefined],
+    ["opencode", ["go_weekly"], "opencode/big-pickle", false, undefined, undefined],
+    ["opencode", ["go_weekly"], "opencode-go/big-pickle", true, undefined, undefined],
+    ["opencode", ["budget_model"], "opencode/other", false, ["opencode/limited"], undefined],
+    ["opencode", ["budget_model"], "opencode/limited", true, ["opencode/limited"], undefined],
+    [
+      "opencode",
+      ["budget_set"],
+      "other/model",
+      false,
+      ["opencode/limited", "opencode/second"],
+      undefined,
+    ],
+    [
+      "opencode",
+      ["budget_set"],
+      "opencode/second",
+      true,
+      ["opencode/limited", "opencode/second"],
+      undefined,
+    ],
+    ["opencode", ["budget_empty"], "opencode/other", false, [], undefined],
+    [
+      "opencode",
+      ["budget_all"],
+      "anthropic/claude",
+      false,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    [
+      "opencode",
+      ["budget_all"],
+      "opencode-go/model",
+      false,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    ["opencode", ["budget_all"], "opencode/model", true, undefined, ["opencode", "console-custom"]],
+    [
+      "opencode",
+      ["budget_all"],
+      "console-custom/model",
+      true,
+      undefined,
+      ["opencode", "console-custom"],
+    ],
+    ["opencode", ["budget_all"], "opencode/model", false, undefined, []],
+  ] as const)(
+    "matches %s pools %s to %s",
+    (driver, ids, model, usesFallback, modelIds, providerIds) => {
+      const defaultSelection = { ...selection, model };
+      expect(
+        resolveNewThreadModelSelection({
+          ...defaults,
+          defaultSelection,
+          providers: [
+            provider({
+              driver: ProviderDriverKind.make(driver),
+              usageLimits: {
+                checkedAt: limited.checkedAt,
+                windows: ids.map((id) => ({
+                  ...window,
+                  id,
+                  usedPercent: 100,
+                  ...(modelIds === undefined ? {} : { modelIds }),
+                  ...(providerIds === undefined ? {} : { providerIds }),
+                })),
+              },
+            }),
+            available,
+          ],
+        }).selection,
+      ).toEqual(usesFallback ? fallback : defaultSelection);
+    },
+  );
 });
 
 describe("pace", () => {
@@ -802,6 +856,52 @@ describe("pools", () => {
         (window) => window.id,
       ),
     ).toEqual(["weekly", "weekly:secondary"]);
+  });
+
+  it("weights pooled Codex quota and resets by each account's plan capacity", () => {
+    const [pool] = collectLimitPools(
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      ["pro", "ChatGPT Pro 200 Subscription", 100],
+                      ["plus", "ChatGPT Plus Subscription", 0],
+                    ].map(([id, plan, usedPercent]) => ({
+                      id: String(id),
+                      email: `${id}@example.com`,
+                      driver: ProviderDriverKind.make("codex"),
+                      plan: String(plan),
+                      usageLimits: {
+                        checkedAt,
+                        windows: [{ ...weekly, id: "secondary", usedPercent: Number(usedPercent) }],
+                      },
+                    })),
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+      now,
+    );
+    const [pooledWeekly] = pool?.windows ?? [];
+    // Pro 20x holds 20 of the pool's 21 capacity parts.
+    expect(pooledWeekly?.remainingPercent).toBe(5);
+    expect(
+      pooledWeekly?.resets.map(({ member, restoresPercent }) => [
+        member.account.email,
+        restoresPercent,
+      ]),
+    ).toContainEqual(["pro@example.com", 95]);
   });
 
   it("pools windows by id across accounts and orders resets by when they land", () => {
