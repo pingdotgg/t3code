@@ -412,6 +412,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
     <PullRequestCodeTab
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
+      environmentConnected
       reference={detail}
       detail={{
         ...detail,
