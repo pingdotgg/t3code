@@ -343,6 +343,13 @@ export function useComposerCommandMenu({
         ? detectComposerTrigger(draftMessage, selection.end)
         : null,
   }));
+  // Searches for the stored trigger: a change below re-renders before commit, so the committed
+  // render searches the current query while the update can check the previous results.
+  const pathSearch = useComposerPathSearch({
+    environmentId,
+    cwd: previousSearch.trigger?.kind === "path" ? projectCwd : null,
+    query: previousSearch.trigger?.kind === "path" ? previousSearch.trigger.query : null,
+  });
   let trigger = previousSearch.trigger;
   if (
     previousSearch.ownerKey !== ownerKey ||
@@ -368,6 +375,7 @@ export function useComposerCommandMenu({
       previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
       previousSearch.draftMessage,
       previousSearch.queryEnd,
+      pathSearch.isPending ? null : pathSearch.entries.map((entry) => entry.path),
     );
     trigger =
       enabled && selection.start === selection.end
@@ -389,11 +397,6 @@ export function useComposerCommandMenu({
       trigger,
     });
   }
-  const pathSearch = useComposerPathSearch({
-    environmentId,
-    cwd: trigger?.kind === "path" ? projectCwd : null,
-    query: trigger?.kind === "path" ? trigger.query : null,
-  });
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
     trigger?.kind === "path" && environmentId ? [environmentId] : [],

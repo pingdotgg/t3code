@@ -45,13 +45,19 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
-/** Continue an already open @ search across spaces without finding old mentions in prose. */
+/**
+ * Continue an already open @ search across spaces without finding old mentions in prose.
+ * A spaced query stays open only while a settled result path contains it literally, since
+ * the fuzzy path search would otherwise turn a typed sentence into a mention on Enter.
+ * `resultPaths` is the latest settled results, or null while they are still loading.
+ */
 export function continueComposerPathTrigger(
   text: string,
   cursorInput: number,
   previous: ComposerTrigger | null,
   previousText: string,
   previousQueryEnd: number,
+  resultPaths: readonly string[] | null,
 ): { trigger: ComposerTrigger & { kind: "path" }; queryEnd: number } | null {
   if (previous?.kind !== "path") return null;
   const cursor = clampCursor(text, cursorInput);
@@ -69,6 +75,13 @@ export function continueComposerPathTrigger(
     return null;
   const query = text.slice(start + 1, cursor);
   if (/[\r\n\t\uFFFC]/u.test(query)) return null;
+  const needle = query.toLowerCase();
+  if (
+    query.includes(" ") &&
+    resultPaths !== null &&
+    !resultPaths.some((path) => path.toLowerCase().includes(needle))
+  )
+    return null;
   return {
     trigger: { kind: "path", query, rangeStart: start, rangeEnd: cursor },
     queryEnd,

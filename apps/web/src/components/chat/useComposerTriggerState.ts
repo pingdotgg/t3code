@@ -14,7 +14,7 @@ export function useComposerTriggerState(initialText: string, initialEnabled = tr
   });
   const dismissedTriggerRef = useRef<ComposerTrigger | null>(null);
 
-  const detectTrigger = (text: string, cursor: number) => {
+  const detectTrigger = (text: string, cursor: number, resultPaths: readonly string[] | null) => {
     const previous = previousSearchRef.current;
     const continued = continueComposerPathTrigger(
       text,
@@ -22,6 +22,7 @@ export function useComposerTriggerState(initialText: string, initialEnabled = tr
       previous.trigger,
       previous.text,
       previous.queryEnd,
+      resultPaths,
     );
     const candidate = detectComposerTrigger(text, cursor) ?? continued?.trigger ?? null;
     const queryEnd =

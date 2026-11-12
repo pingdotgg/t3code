@@ -932,7 +932,7 @@ it("continues an active path search through literal paste and keeps Escape dismi
         isPathQueryActive={() => state.trigger?.kind === "path"}
         onChange={(value, _cursor, expandedCursor) => {
           setPrompt(value);
-          state.setTrigger(state.detectTrigger(value, expandedCursor));
+          state.setTrigger(state.detectTrigger(value, expandedCursor, null));
         }}
         onPaste={() => {}}
         onCommandKeyDown={(key) => {

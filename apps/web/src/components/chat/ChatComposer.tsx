@@ -1129,6 +1129,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
 
+  const composerPathResults = isComposerMenuLoading
+    ? null
+    : composerMenuItems.flatMap((item) => (item.type === "path" ? [item.path] : []));
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
@@ -1567,7 +1570,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectActiveComposerTrigger(nextPrompt, expandedCursor, composerPathResults),
         undefined,
         hasSelection,
       );
@@ -1692,7 +1697,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
+      cursorAdjacentToMention
+        ? null
+        : detectActiveComposerTrigger(nextPrompt, expandedCursor, composerPathResults),
       undefined,
       hasSelection,
     );
@@ -1874,7 +1881,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       trigger: isLiteralPendingAnswer
         ? null
         : resolveComposerTrigger(
-            detectActiveComposerTrigger(snapshot.value, snapshot.expandedCursor),
+            detectActiveComposerTrigger(
+              snapshot.value,
+              snapshot.expandedCursor,
+              composerPathResults,
+            ),
             composerEditorRef.current?.hasSelection() === true,
           ),
     };
