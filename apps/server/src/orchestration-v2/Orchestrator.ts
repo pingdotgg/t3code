@@ -15062,14 +15062,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (parentThreadId === undefined) return;
       if (
         sourceRunId === undefined &&
-        !(yield* projectionStore.hasPendingDelegatedResult(threadId))
+        !(yield* projectionStore.hasPendingDelegatedCompletion(threadId))
       )
         return;
       yield* threadDispatch.withLock(
         parentThreadId,
-        finalizeAppOwnedSubagent(
-          threadId,
-          sourceRunId === undefined ? undefined : { settledContinuationOf: sourceRunId },
+        offerDelegatedCompletionDeliveries(parentThreadId).pipe(
+          Effect.andThen(
+            finalizeAppOwnedSubagent(
+              threadId,
+              sourceRunId === undefined ? undefined : { settledContinuationOf: sourceRunId },
+            ),
+          ),
         ),
       );
     },

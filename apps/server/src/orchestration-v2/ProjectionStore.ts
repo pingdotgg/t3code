@@ -477,7 +477,7 @@ export interface ProjectionStoreV2Shape {
   readonly listAppOwnedChildThreadIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
-  readonly hasPendingDelegatedResult: (
+  readonly hasPendingDelegatedCompletion: (
     childThreadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
@@ -5812,12 +5812,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => [...new Set(rows.map((row) => ThreadId.make(row.child_thread_id)))]),
         Effect.mapError(controlReadError(threadId)),
       );
-    const hasPendingDelegatedResult: ProjectionStoreV2Shape["hasPendingDelegatedResult"] = (
+    const hasPendingDelegatedCompletion: ProjectionStoreV2Shape["hasPendingDelegatedCompletion"] = (
       childThreadId,
     ) =>
-      sql`SELECT 1 FROM orchestration_v2_projection_subagents
-        WHERE child_thread_id = ${childThreadId} AND origin = 'app_owned'
-          AND json_extract(payload_json, '$.result') IS NULL
+      sql`SELECT 1 FROM orchestration_v2_projection_subagents AS task
+        LEFT JOIN orchestration_v2_projection_runs AS owner ON owner.run_id = task.run_id
+        WHERE task.child_thread_id = ${childThreadId} AND task.origin = 'app_owned'
+          AND (json_extract(task.payload_json, '$.result') IS NULL
+            OR (task.completion_delivery_state = 'claimed'
+              AND json_extract(owner.payload_json, '$.delegatedCompletion.disposition') = 'open'
+              AND json_type(owner.payload_json, '$.delegatedCompletion.delivery') = 'object'))
         LIMIT 1`.pipe(
         Effect.map((rows) => rows.length > 0),
         Effect.mapError(controlReadError(childThreadId)),
@@ -7845,7 +7849,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getMessageCount: readOnReader(getMessageCount),
       getSubagentCount: readOnReader(getSubagentCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
-      hasPendingDelegatedResult: readOnReader(hasPendingDelegatedResult),
+      hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
       getMessagesById: readOnReader(getMessagesById),

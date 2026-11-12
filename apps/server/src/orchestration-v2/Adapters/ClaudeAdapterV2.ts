@@ -6073,6 +6073,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             type: "provider_thread.updated",
             driver: CLAUDE_PROVIDER,
             providerThread,
+            pendingBackgroundWork: (input.owedWakeTasks?.length ?? 0) > 0,
           });
         });
 

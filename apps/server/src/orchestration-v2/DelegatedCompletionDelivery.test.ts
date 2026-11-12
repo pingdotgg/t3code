@@ -1,3 +1,4 @@
+import * as Exit from "effect/Exit";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -2431,7 +2432,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
-    it.effect.each(["live", "checkpoint-retry"] as const)(
+    it.effect.each(["live", "checkpoint-retry", "checkpoint-offer-retry"] as const)(
       "delivers the run a background command's wake starts after the original result (%s)",
       (delivery) =>
         Effect.gen(function* () {
@@ -2521,7 +2522,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             delivery === "live"
               ? CommandId.make(`command:background-wake-finished-${delivery}`)
               : reconcileCommandId(`background-wake-finished-${delivery}`);
-          if (delivery === "checkpoint-retry") {
+          if (delivery !== "live") {
             const outbox = yield* EffectOutbox.EffectOutboxV2;
             yield* outbox.cancelUnsettled({
               threadId: child.childThreadId,
@@ -2585,9 +2586,25 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               },
             ],
           });
-          if (delivery === "checkpoint-retry") {
+          if (delivery !== "live") {
             const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-            yield* worker.drain();
+            if (delivery === "checkpoint-offer-retry") {
+              using offer = vi
+                .spyOn(requests, "offer")
+                .mockImplementationOnce(() => Effect.die("wake offer failed"));
+              const first = yield* Effect.exit(
+                orchestrator.recoverDelegatedTask(child.childThreadId),
+              );
+              assert.isTrue(Exit.isFailure(first));
+              const committed = (yield* orchestrator.getThreadProjection(
+                parentThreadId,
+              )).subagents.find((task) => task.id === run.delegatedTaskId)!;
+              assert.equal(committed.result, "The background command finished cleanly.");
+              yield* worker.drain();
+              assert.lengthOf(offer.mock.calls, 2);
+            } else {
+              yield* worker.drain();
+            }
           } else {
             yield* eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
               Stream.filter(
@@ -2600,9 +2617,16 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               Stream.runDrain,
             );
           }
-          const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
-            (task) => task.id === run.delegatedTaskId,
-          )!;
+          const completed = yield* orchestrator.getThreadProjection(parentThreadId);
+          const followup = completed.subagents.find((task) => task.id === run.delegatedTaskId)!;
+          assert.lengthOf(
+            completed.contextTransfers.filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === child.childThreadId,
+            ),
+            2,
+          );
           assert.equal(followup.status, "completed");
           assert.equal(followup.result, "The background command finished cleanly.");
           assert.equal(followup.completionDelivery?.state, "claimed");

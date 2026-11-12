@@ -14677,6 +14677,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               ? [
                   {
                     beforeWake: index < wakeStart,
+                    pendingWork: event.pendingBackgroundWork === true,
                     taskIds: (event.providerThread.pendingBackgroundTasks ?? []).map((task) => [
                       task.taskId,
                       task.awaited === true,
@@ -14688,6 +14689,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.deepEqual(
             rosters.filter((roster) => roster.beforeWake).map((roster) => roster.taskIds),
             rosters.filter((roster) => roster.beforeWake).map(() => [[WAKE_TASK_ID, true]]),
+          );
+          assert.isTrue(
+            rosters.filter((roster) => roster.beforeWake).every((roster) => roster.pendingWork),
           );
           assert.deepEqual(rosters.at(-1)?.taskIds, []);
         }).pipe(
