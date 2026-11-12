@@ -1929,7 +1929,7 @@ export function makeClaudeQueryOptions(input: {
   readonly onElicitation?: ClaudeQueryOptions["onElicitation"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
-  readonly appendSystemPromptFileText?: string;
+  readonly appendSystemPromptFile?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
@@ -1947,12 +1947,11 @@ export function makeClaudeQueryOptions(input: {
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
   // Claude Code replaces all CLI append text with an initialize appendSystemPrompt,
   // which would drop a wrapper binary's own --append-system-prompt-file, so the
-  // append text goes on the command line. The CLI puts file text before inline
-  // text and trims one trailing newline.
-  const launchAppendSystemPrompt = [
-    input.appendSystemPromptFileText?.replace(/\r?\n$/, ""),
-    launchArgAppendSystemPrompt,
-  ].filter((text): text is string => typeof text === "string" && text.length > 0);
+  // append text goes on the command line. The file goes by path to keep argv small.
+  const launchAppendSystemPrompt =
+    typeof launchArgAppendSystemPrompt === "string" && launchArgAppendSystemPrompt.length > 0
+      ? [launchArgAppendSystemPrompt]
+      : [];
   const requestThinkingSummaries =
     compiledSelection.settings.alwaysThinkingEnabled !== false &&
     extraArgs["thinking-display"] !== "omitted";
@@ -2044,6 +2043,9 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     extraArgs: {
       ...extraArgs,
+      ...(input.appendSystemPromptFile === undefined
+        ? {}
+        : { "append-system-prompt-file": input.appendSystemPromptFile }),
       "append-system-prompt": [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
           (input.mcpServers === undefined
@@ -2068,12 +2070,12 @@ export function makeClaudeQueryOptions(input: {
 }
 
 /**
- * Checks the append launch arguments the way the Claude CLI would and reads the
- * file (leading ~ expanded) relative to the thread's cwd. makeClaudeQueryOptions
+ * Checks the append launch arguments the way the Claude CLI would and resolves
+ * the file (leading ~ expanded) against the thread's cwd. makeClaudeQueryOptions
  * folds these flags out of extraArgs, so a value the CLI would have rejected has
  * to be rejected here or it silently disappears.
  */
-const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
+const resolveClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
   readonly settings: ClaudeSettings | undefined;
   readonly cwd: string | null;
   readonly fileSystem: FileSystem.FileSystem;
@@ -2100,11 +2102,10 @@ const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
     input.cwd ?? ".",
     expandHomePath(file, yield* HostProcess.HomeDirectory),
   );
-  return yield* input.fileSystem
-    .readFileString(filePath)
-    .pipe(
-      Effect.mapError((cause) => new ClaudeAppendSystemPromptFileError({ path: filePath, cause })),
-    );
+  return yield* input.fileSystem.readFileString(filePath).pipe(
+    Effect.as(filePath),
+    Effect.mapError((cause) => new ClaudeAppendSystemPromptFileError({ path: filePath, cause })),
+  );
 });
 
 const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
@@ -11731,7 +11732,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           // Read before closing the live process so a bad path leaves it running.
-          const appendSystemPromptFileText = yield* readClaudeAppendSystemPromptFile({
+          const appendSystemPromptFile = yield* resolveClaudeAppendSystemPromptFile({
             settings: adapterOptions.settings,
             cwd: turnInput.runtimePolicy.cwd,
             fileSystem,
@@ -11805,7 +11806,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onUserDialog,
             onElicitation,
             supportedDialogKinds: ["resume_return"],
-            ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(appendSystemPromptFile === undefined ? {} : { appendSystemPromptFile }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const resolvedTurnCwd = yield* fileSystem

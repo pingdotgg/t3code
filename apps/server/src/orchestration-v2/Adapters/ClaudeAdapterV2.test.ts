@@ -1134,9 +1134,13 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         assert.lengthOf(opened, 1);
         assert.equal(
           appendSystemPrompt(opened[0]),
-          `${appendSystemPrompt(plain.opened[0])}\n\nFile sentinel\n\nInline sentinel`,
+          `${appendSystemPrompt(plain.opened[0])}\n\nInline sentinel`,
         );
-        assert.isUndefined(opened[0]!.extraArgs?.["append-system-prompt-file"]);
+        // By path: file contents in argv can pass the OS argument-size limit.
+        assert.equal(
+          opened[0]!.extraArgs?.["append-system-prompt-file"],
+          NodePath.join(cwd, "rules.md"),
+        );
         assert.equal(opened[0]!.extraArgs?.["system-prompt"], "Replacement");
       }).pipe(
         Effect.provide(
@@ -1193,8 +1197,11 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     ],
     [
       "--append-system-prompt-file ~/.claude/settings.json",
-      (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions) =>
-        assert.include(appendSystemPrompt(options), '{"skillOverrides":{"lint":"off"}}'),
+      (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions, home: string) =>
+        assert.equal(
+          options.extraArgs?.["append-system-prompt-file"],
+          NodePath.join(home, ".claude", "settings.json"),
+        ),
     ],
   ] as const)("reads %s from the home directory", ([launchArgs, assertOptions]) =>
     Effect.scoped(
@@ -1214,7 +1221,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
           assert.fail(makeProviderFailure({ cause: exit.cause, class: "provider_error" }).message);
         }
         assert.lengthOf(opened, 1);
-        assertOptions(opened[0]!);
+        assertOptions(opened[0]!, home);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
