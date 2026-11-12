@@ -332,19 +332,19 @@ describe("workspace card beside chat", () => {
       container: { width, height: 900 },
       maxChatWidth,
       composerHeight: 180,
-      detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
+      detailsCard: { left: width - 296, right: width - 16, bottom: 400 },
       preview: player,
     });
   it("keeps chat centered while the card fits beside it", () => {
     expect(withCard(1500).chat).toEqual({ left: 382, width: 736, insetStart: 0, insetEnd: 0 });
   });
   it("narrows chat only after it reaches the left padding", () => {
-    expect(withCard(1108).chat).toMatchObject({ left: 48, width: 736 });
-    expect(withCard(1028).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 276 });
-    expect(withCard(1012).chat).toMatchObject({ left: 48, width: 640 });
+    expect(withCard(1112).chat).toMatchObject({ left: 48, width: 736 });
+    expect(withCard(1032).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 280 });
+    expect(withCard(1016).chat).toMatchObject({ left: 48, width: 640 });
   });
   it("reserves the marker gutter across widths where the details card fits", () => {
-    for (let width = 1012; width <= 1440; width++) {
+    for (let width = 1016; width <= 1440; width++) {
       const container = { width, height: 900 };
       const card = resolveThreadDetailsCardLayout({
         container,
