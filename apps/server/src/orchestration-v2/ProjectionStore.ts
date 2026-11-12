@@ -96,6 +96,7 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import type { WorkspaceActivity } from "../checkpointing/Diffs.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
 import {
   isThreadHistoryUserTurn,
@@ -270,6 +271,11 @@ export interface ProjectionCheckpointCaptureContext {
   readonly preservedCheckpointOrdinals: ReadonlyArray<number>;
   /** Side chats share their parent's worktree and never snapshot it. */
   readonly sideChat: boolean;
+  /**
+   * This run's work items, and other threads' in the same checkout since its baseline. Paths are as
+   * providers reported them: absolute, or relative to the cwd.
+   */
+  readonly workspaceActivity: WorkspaceActivity;
 }
 
 const RollbackTargetAttempts = Schema.Array(
@@ -5554,6 +5560,59 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    const getWorkspaceActivity = Effect.fn("ProjectionStoreV2.getWorkspaceActivity")(function* (
+      threadId: ThreadId,
+      run: OrchestrationV2Run | undefined,
+      scopeId: CheckpointScopeId,
+      scopeRow: PayloadRow | undefined,
+    ) {
+      if (run === undefined || scopeRow === undefined) {
+        return {
+          ranCommands: false,
+          editedPaths: [],
+          otherThreadsWorked: false,
+          otherThreadsEditedPaths: [],
+        } satisfies WorkspaceActivity;
+      }
+      const scope = yield* decodeCheckpointScopePayload(scopeRow.payload_json);
+      const requestedAt = yield* encodePayloadTimestamp(run.requestedAt);
+      const rows = yield* sql<{
+        readonly own: number;
+        readonly type: string;
+        readonly path: string | null;
+      }>`
+        WITH items AS (
+          SELECT 1 AS own, type, payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND run_id = ${run.id}
+            AND type IN ('file_change', 'command_execution', 'dynamic_tool')
+          UNION ALL
+          SELECT 0 AS own, type, payload_json FROM orchestration_v2_projection_turn_items
+          WHERE type IN ('file_change', 'command_execution', 'dynamic_tool')
+            AND thread_id IN (
+              SELECT thread_id FROM orchestration_v2_projection_checkpoint_scopes
+              WHERE thread_id <> ${threadId} AND json_extract(payload_json, '$.cwd') = ${scope.cwd})
+            AND updated_at >= COALESCE(
+              (SELECT captured_at FROM orchestration_v2_projection_checkpoints
+                WHERE scope_id = ${scopeId} AND ordinal_within_scope = ${run.ordinal - 1}),
+              ${requestedAt})
+        )
+        SELECT items.own, items.type, json_extract(items.payload_json, '$.fileName') AS path FROM items
+        UNION
+        SELECT items.own, items.type, json_extract(change.value, '$.path') FROM items, json_each(items.payload_json, '$.changes') AS change
+        UNION
+        SELECT items.own, items.type, json_extract(change.value, '$.oldPath') FROM items, json_each(items.payload_json, '$.changes') AS change`;
+      const pathsWhere = (own: number) =>
+        rows.flatMap((row) =>
+          row.own === own && row.type === "file_change" && row.path !== null ? [row.path] : [],
+        );
+      return {
+        ranCommands: rows.some((row) => row.own === 1 && row.type !== "file_change"),
+        editedPaths: pathsWhere(1),
+        otherThreadsWorked: rows.some((row) => row.own === 0),
+        otherThreadsEditedPaths: pathsWhere(0),
+      };
+    });
+
     const getCheckpointCaptureContext: ProjectionStoreV2Shape["getCheckpointCaptureContext"] = (
       threadId,
       target,
@@ -5605,6 +5664,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               preservedCheckpointOrdinals: preservedRows.map(({ ordinal }) => ordinal),
               sideChat: threadRows[0].side_chat === 1,
+              workspaceActivity: yield* getWorkspaceActivity(
+                threadId,
+                run,
+                target.scopeId,
+                scopeRows[0],
+              ),
             };
           }),
         )

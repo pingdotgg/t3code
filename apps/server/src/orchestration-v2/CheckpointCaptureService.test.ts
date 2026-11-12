@@ -15,6 +15,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1119,5 +1120,275 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
       assert.equal(checkpoint?.status, "missing");
     }),
+  );
+  it.effect.each([
+    { name: "edited nothing", own: [], otherEditedEarlier: false, files: [] },
+    {
+      name: "edited a file",
+      own: [{ type: "file_change", fileName: "a.txt" }],
+      otherEditedEarlier: false,
+      files: ["a.txt"],
+    },
+    {
+      name: "ran a command",
+      own: [{ type: "command_execution", input: "make" }],
+      otherEditedEarlier: false,
+      files: ["a.txt", "c.txt"],
+    },
+    {
+      name: "edited nothing alone",
+      own: [],
+      otherEditedEarlier: true,
+      files: ["a.txt", "b.txt", "c.txt"],
+    },
+  ] as const)(
+    "leaves another thread's edits in a shared checkout out of a turn that $name",
+    ({ name, own, otherEditedEarlier, files }) =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const key = name.replaceAll(" ", "-");
+        const cwd = `/shared-${key}`;
+        const ownThreadId = ThreadId.make(`thread:shared-checkout-own:${key}`);
+        const otherThreadId = ThreadId.make(`thread:shared-checkout-other:${key}`);
+        const ownRunId = RunId.make(`run:shared-checkout-own:${key}`);
+        const otherRunId = RunId.make(`run:shared-checkout-other:${key}`);
+        const ownScopeId = CheckpointScopeId.make(`scope:shared-checkout-own:${key}`);
+        const otherScopeId = CheckpointScopeId.make(`scope:shared-checkout-other:${key}`);
+        const ownNodeId = NodeId.make(`node:shared-checkout-own:${key}`);
+        const otherNodeId = NodeId.make(`node:shared-checkout-other:${key}`);
+        const ownProviderThreadId = ProviderThreadId.make(`provider-thread:shared-checkout:${key}`);
+        const thread = (id: ThreadId): OrchestrationV2DomainEvent => ({
+          id: EventId.make(`event:${id}:thread`),
+          type: "thread.created",
+          threadId: id,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id,
+            projectId,
+            title: "Shared checkout",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        const scope = (
+          id: CheckpointScopeId,
+          threadId: ThreadId,
+          runId: RunId,
+          nodeId: NodeId,
+        ): OrchestrationV2DomainEvent => ({
+          id: EventId.make(`event:${id}`),
+          type: "checkpoint-scope.created",
+          threadId,
+          runId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId,
+            runId,
+            nodeId,
+            parentScopeId: null,
+            providerThreadId: null,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd,
+            createdAt: now,
+          },
+        });
+        const item = (
+          threadId: ThreadId,
+          runId: RunId,
+          nodeId: NodeId,
+          index: number,
+          at: DateTime.Utc,
+          body:
+            | { readonly type: "file_change"; readonly fileName: string }
+            | { readonly type: "command_execution"; readonly input: string },
+        ): OrchestrationV2DomainEvent => ({
+          id: EventId.make(`event:${threadId}:item:${index}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: at,
+          payload: {
+            id: TurnItemId.make(`turn-item:${threadId}:${index}`),
+            threadId,
+            runId,
+            nodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 100 + index,
+            status: "completed",
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            ...body,
+          },
+        });
+        const otherEditedAt = DateTime.add(now, { seconds: otherEditedEarlier ? -1 : 1 });
+        const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+          thread(ownThreadId),
+          thread(otherThreadId),
+          scope(otherScopeId, otherThreadId, otherRunId, otherNodeId),
+          item(otherThreadId, otherRunId, otherNodeId, 0, otherEditedAt, {
+            type: "file_change",
+            fileName: "b.txt",
+          }),
+          {
+            id: EventId.make(`event:${ownThreadId}:provider-thread`),
+            type: "provider-thread.updated",
+            threadId: ownThreadId,
+            driver,
+            providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: ownProviderThreadId,
+              driver,
+              providerInstanceId,
+              providerSessionId: null,
+              appThreadId: ownThreadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make(`event:${ownRunId}`),
+            type: "run.updated",
+            threadId: ownThreadId,
+            runId: ownRunId,
+            occurredAt: now,
+            payload: {
+              id: ownRunId,
+              threadId: ownThreadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: ownProviderThreadId,
+              userMessageId: MessageId.make(`message:shared-checkout:${key}`),
+              rootNodeId: ownNodeId,
+              activeAttemptId: null,
+              status: "waiting",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: EventId.make(`event:${ownNodeId}`),
+            type: "node.updated",
+            threadId: ownThreadId,
+            runId: ownRunId,
+            nodeId: ownNodeId,
+            occurredAt: now,
+            payload: {
+              id: ownNodeId,
+              threadId: ownThreadId,
+              runId: ownRunId,
+              parentNodeId: null,
+              rootNodeId: ownNodeId,
+              kind: "root_turn",
+              status: "waiting",
+              countsForRun: true,
+              providerThreadId: ownProviderThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: ownScopeId,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          scope(ownScopeId, ownThreadId, ownRunId, ownNodeId),
+          ...own.map((body, index) =>
+            item(
+              ownThreadId,
+              ownRunId,
+              ownNodeId,
+              index,
+              DateTime.add(now, { seconds: 1 }),
+              body.type === "file_change" ? { ...body, fileName: `${cwd}/${body.fileName}` } : body,
+            ),
+          ),
+        ];
+        yield* Effect.forEach(events, (event) => projectionStore.apply(event));
+
+        const numstat = ["1\t0\ta.txt", "2\t0\tb.txt", "3\t0\tc.txt", ""].join("\0");
+        const layerCapture = CheckpointCaptureService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              CheckpointService.layer.pipe(
+                Layer.provide(
+                  Layer.mergeAll(
+                    IdAllocator.layer,
+                    NodeCrypto.layer,
+                    Layer.mock(CheckpointStore.CheckpointStore)({
+                      isGitRepository: () => Effect.succeed(true),
+                      captureCheckpoint: () => Effect.void,
+                      hasCheckpointRef: () => Effect.succeed(true),
+                      diffCheckpoints: () => Effect.succeed(numstat),
+                      listAuthoredPaths: () => Effect.succeed(null),
+                    }),
+                  ),
+                ),
+              ),
+              Layer.mock(EventSink.EventSinkV2)({
+                commitCommand: (input) =>
+                  Effect.forEach(input.events, (committed) =>
+                    projectionStore.apply(committed),
+                  ).pipe(Effect.as({ committed: true } as never), Effect.orDie),
+              }),
+            ),
+          ),
+        );
+
+        yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+          service.execute({ threadId: ownThreadId, runId: ownRunId, scopeId: ownScopeId }),
+        ).pipe(Effect.provide(layerCapture));
+
+        const { checkpoints, runs } = yield* projectionStore.getThreadRecords(ownThreadId, [
+          "runs",
+          "checkpoints",
+        ]);
+        const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
+        assert.deepEqual(
+          checkpoint?.files.map((file) => file.path),
+          [...files],
+        );
+      }),
   );
 });

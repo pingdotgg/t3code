@@ -19,7 +19,12 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
+import {
+  isGitImport,
+  isOtherThreadsChange,
+  parseTurnDiffFilesFromNumstat,
+  type WorkspaceActivity,
+} from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -135,6 +140,8 @@ export interface CheckpointServiceV2Shape {
     readonly appRunOrdinal: number | null;
     readonly capturedAt: DateTime.Utc;
     readonly forceMissing?: boolean;
+    /** Lets a shared checkout leave out the changes other threads made during the run. */
+    readonly workspaceActivity?: WorkspaceActivity;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
   readonly restore: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
@@ -481,7 +488,12 @@ export const layer: Layer.Layer<
               ]).pipe(
                 Effect.map(([diff, authoredPaths]) =>
                   parseTurnDiffFilesFromNumstat(diff)
-                    .filter((file) => !isGitImport(file, authoredPaths))
+                    .filter(
+                      (file) =>
+                        !isGitImport(file, authoredPaths) &&
+                        (input.workspaceActivity === undefined ||
+                          !isOtherThreadsChange(file, input.scope.cwd, input.workspaceActivity)),
+                    )
                     .map((file) => ({
                       path: file.path,
                       kind: "modified",

@@ -44,3 +44,42 @@ export function isGitImport(
     (file.previousPath === undefined || !authoredPaths.has(file.previousPath))
   );
 }
+
+export interface WorkspaceActivity {
+  readonly ranCommands: boolean;
+  readonly editedPaths: ReadonlyArray<string>;
+  readonly otherThreadsWorked: boolean;
+  readonly otherThreadsEditedPaths: ReadonlyArray<string>;
+}
+
+// Diff paths are repository-relative; providers report paths absolute or relative to the cwd.
+function namesDiffPath(cwd: string, editedPath: string, diffPath: string): boolean {
+  const normalizedCwd = cwd.replaceAll("\\", "/");
+  const root = normalizedCwd.endsWith("/") ? normalizedCwd : `${normalizedCwd}/`;
+  let edited = editedPath.replaceAll("\\", "/");
+  if (edited.startsWith(root)) edited = edited.slice(root.length);
+  else if (edited.startsWith("/") || /^[A-Za-z]:\//.test(edited)) {
+    return edited.endsWith(`/${diffPath}`);
+  }
+  edited = edited.replace(/^(\.\/)+/, "");
+  return edited === diffPath || diffPath.endsWith(`/${edited}`);
+}
+
+/** A change another thread in a shared checkout made, which this run neither edited nor could have. */
+export function isOtherThreadsChange(
+  file: TurnDiffFileSummary,
+  cwd: string,
+  activity: WorkspaceActivity,
+): boolean {
+  const named = (paths: ReadonlyArray<string>) =>
+    paths.some(
+      (path) =>
+        namesDiffPath(cwd, path, file.path) ||
+        (file.previousPath !== undefined && namesDiffPath(cwd, path, file.previousPath)),
+    );
+  return (
+    activity.otherThreadsWorked &&
+    !named(activity.editedPaths) &&
+    (!activity.ranCommands || named(activity.otherThreadsEditedPaths))
+  );
+}
