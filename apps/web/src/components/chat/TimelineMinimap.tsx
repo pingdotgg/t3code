@@ -209,12 +209,13 @@ export function TimelineMinimap({
               const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
               const activeDistance =
                 resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
+              // Thinned strips stay mounted so hover and in-view highlights keep their exact row.
               const painted = paintedMarkSet === null || paintedMarkSet.has(index);
               return (
-                // In-view state and the hover fisheye animate constantly, so
-                // the strip animates only transform and opacity. Unpainted
-                // strips stay mounted so the highlight can land on the exact
-                // message.
+                // Compositor-friendly on purpose: in-view state and the hover
+                // fisheye animate constantly (every scroll tick and streaming
+                // update flips a band of strips), so the strip animates only
+                // transform and opacity.
                 <span
                   aria-hidden="true"
                   className={cn(
