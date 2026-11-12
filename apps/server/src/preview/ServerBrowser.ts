@@ -885,6 +885,8 @@ const make = Effect.gen(function* () {
         ? await connectDesktop(snapshot)
         : null;
     if (desktop) opened.push(desktop.close);
+    // Attaching over CDP emulates a light scheme; a tab on System follows the desktop's.
+    if (desktop) await desktop.page.emulateMedia({ colorScheme: null });
     // Otherwise a desktop that attaches late shows its own page, and the agent drives another.
     if (!desktop && desktopChannel.available) {
       await runPromise(

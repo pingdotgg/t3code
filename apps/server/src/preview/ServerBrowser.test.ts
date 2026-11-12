@@ -799,6 +799,17 @@ it.effect("an agent's tab the reloaded desktop dropped goes back to the desktop"
   ).pipe(Effect.provide(layer)),
 );
 
+// Playwright emulates a light color scheme on every page it attaches to.
+it.effect("a desktop tab left on the system appearance clears Playwright's light emulation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { context } = yield* openDesktopViewer;
+
+      expect(context.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: null });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a desktop page that loaded before the server attached reports its loaded title", () =>
   Effect.scoped(
     Effect.gen(function* () {
