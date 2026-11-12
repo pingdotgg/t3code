@@ -75,20 +75,15 @@ connection nor overwrite newer live data during a reconnect. Loading and
 resuming snapshots belongs to the shared state services, so every view agrees
 on which data is current.
 
-The shell snapshot loads over HTTP, which needs only the prepared connection.
-When the server's public descriptor names its shell flags, the
-[shell state](../../packages/client-runtime/src/state/shell.ts) asks for the
-shell as soon as the connection is prepared, while the socket opens and the
-config downloads. The request names held rows that may resume (`resumeFrom`), and
-the server answers `resumable` instead of a snapshot when the socket can replay
-from them, so a cold start costs one shell request plus the subscription. The
-live config stays the authority: rows loaded for a build or with omissions it
-does not confirm are replaced, never resumed. A server whose descriptor does not
-name the flags is asked only after its config arrives. The subscription waits
-for that answer, so a snapshot never lands on rows the socket has moved on. When
-held rows can resume, the wait ends 3 seconds after the socket is ready: the
-request is interrupted and the socket resumes the rows, so a proxy that drops
-`/api` without an answer does not hold the connect for the HTTP timeout.
+The shell snapshot loads over HTTP, which needs only the prepared connection, so
+the [shell state](../../packages/client-runtime/src/state/shell.ts) can ask for
+it before the socket and the config are ready. Two constraints follow. The live
+config stays the authority: rows loaded early for a build or with omissions that
+it does not confirm are replaced, never resumed. And an HTTP answer must never
+land on rows the socket has moved on: the subscription waits for the answer, and
+when held rows can resume, it ends the request 3 seconds after the socket is
+ready. A proxy that drops `/api` without an answer then does not hold the
+connect for the HTTP timeout.
 
 Each environment synchronizes at its own time, so a thread list that follows every
 snapshot moves once per environment on each cold start and resume. Mobile lists read
