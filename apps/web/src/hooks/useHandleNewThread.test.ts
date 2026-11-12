@@ -184,10 +184,6 @@ vi.mock("react", () => ({
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(factory: () => T) => factory(),
 }));
-vi.mock("../components/sidebar/mainAppLocation", () => ({
-  getAppModalReturnThreadTarget: () => null,
-  isAppModalPage: () => false,
-}));
 vi.mock("../components/Sidebar.logic", () => ({
   orderItemsByPreferredIds: ({ items }: { items: unknown[] }) => items,
 }));
