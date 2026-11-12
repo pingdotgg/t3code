@@ -55,6 +55,8 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...original, execFile: nativeProbe.execFile.mockImplementation(original.execFile) };
 });
 
+vi.mock("node:fs", { spy: true });
+
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   readEnvironment: (
@@ -143,6 +145,8 @@ describe("readEnvironmentFromLoginShell", () => {
           ].join("\n"),
         );
 
+        const statSync = vi.mocked(NodeFS.statSync).mockClear();
+        const accessSync = vi.mocked(NodeFS.accessSync).mockClear();
         expect(
           readEnvironmentFromLoginShell(
             "/bin/bash",
@@ -155,6 +159,8 @@ describe("readEnvironmentFromLoginShell", () => {
               }),
           ),
         ).toEqual({ PATH: shellPath });
+        expect(statSync).not.toHaveBeenCalled();
+        expect(accessSync).not.toHaveBeenCalled();
       } finally {
         vi.unstubAllEnvs();
         NodeFS.rmSync(home, { recursive: true, force: true });
