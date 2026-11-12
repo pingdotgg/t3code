@@ -6879,15 +6879,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* harness.offerAndWait(stream({ type: "content_block_stop", index: 0 }));
-      assert.isTrue(
-        harness.events.some(
-          (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.type === "assistant_message" &&
-            event.turnItem.text.includes("First paragraph."),
-        ),
-        "no assistant text was emitted before the SDK assistant snapshot",
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "text-snapshot",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "text-message",
+            model: "claude-sonnet-4-6",
+            content: [{ type: "text", text: "First paragraph.\n\nSecond paragraph." }],
+          },
+        }),
       );
+      yield* Queue.offer(harness.sdkMessages, makeResultFrame({ uuid: "text-result", result: "" }));
+      yield* Queue.take(harness.terminalReceipts);
+      const replies = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem]
+          : [],
+      );
+      // The stream's own item carries the reply; the block's snapshot does not repeat it.
+      assert.deepEqual(
+        [...new Set(replies.map((item) => item.nativeItemRef?.nativeId))],
+        ["text-message:text:0"],
+      );
+      assert.equal(replies.at(-1)?.text, "First paragraph.\n\nSecond paragraph.");
+      assert.equal(replies.at(-1)?.status, "completed");
     }).pipe(
       Effect.scoped,
       Effect.provide(
