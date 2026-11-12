@@ -579,7 +579,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
     ...(settings.historySwipeNavigation !== DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation
-      ? ["Swipe to go back and forward"]
+      ? ["Swipe to navigate"]
       : []),
     ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
@@ -919,15 +919,12 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
-      {isElectron ? (
+      {isElectron && isMacPlatform(navigator.platform) ? (
         <SettingsSection id="navigation" title={gt("Navigation")}>
           <SettingsRow
             {...setting("history-swipe-navigation")}
             description={
-              <T>
-                Two-finger horizontal swipes move through your thread history. Turn off if a mouse
-                with a horizontal wheel switches threads by accident.
-              </T>
+              <T>Swipe horizontally with two fingers on a trackpad to go back or forward.</T>
             }
             resetAction={
               settings.historySwipeNavigation !==
@@ -948,7 +945,7 @@ export function GeneralSettingsPanel() {
                 onCheckedChange={(checked) =>
                   updateSettings({ historySwipeNavigation: Boolean(checked) })
                 }
-                aria-label={gt("Swipe to go back and forward")}
+                aria-label={gt("Swipe to navigate")}
               />
             }
           />

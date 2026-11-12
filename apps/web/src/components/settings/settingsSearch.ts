@@ -848,10 +848,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "history-swipe-navigation",
-    title: "Swipe to go back and forward",
+    title: msg("Swipe to navigate"),
     to: "/settings/general",
-    searchTerms: ["two-finger horizontal trackpad gesture mouse wheel thread history navigation"],
+    searchTerms: [
+      "two-finger horizontal trackpad gesture mouse wheel back forward thread history navigation",
+    ],
     desktopOnly: true,
+    macOnly: true,
   },
   {
     id: "text-generation-model",
