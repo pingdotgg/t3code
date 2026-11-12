@@ -1,3 +1,4 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   DEFAULT_CLIENT_SETTINGS,
@@ -12,6 +13,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
@@ -113,6 +115,77 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+});
+
+// regression: unsent drafts were listed above threads but skipped by mod+1..9.
+describe("sidebar numbered jumps", () => {
+  it("number unsent drafts from the top, keep the open draft's number, and open them", async () => {
+    const initial = useComposerDraftStore.getState();
+    using stack = new DisposableStack();
+    stack.defer(() => useComposerDraftStore.setState(initial, true));
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const web = project("web");
+    vi.mocked(useProjects).mockReturnValue([web]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    const projectRef = scopeProjectRef(web.environmentId, web.id);
+    const older = DraftId.make("older-draft");
+    const newer = DraftId.make("newer-draft");
+    // The newer draft is open; the test router has no draft route to read it from.
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "draft", draftId: newer });
+    stack.defer(() => vi.mocked(useThreadRouteTarget).mockRestore());
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+    });
+    for (const [draftId, createdAt] of [
+      [older, "2026-01-01T00:00:00.000Z"],
+      [newer, "2026-01-02T00:00:00.000Z"],
+    ] as const) {
+      initial.setProjectDraftThreadId(projectRef, draftId, {
+        threadId: ThreadId.make(`${draftId}-thread`),
+        createdAt,
+      });
+      initial.setPrompt(draftId, `${draftId} prompt`);
+    }
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const rows = screen.getByTestId("sidebar-draft-row");
+    await expect.element(rows.nth(1)).toHaveAccessibleName("older-draft prompt, Unsent draft, web");
+    await userEvent.keyboard("{Control>}");
+    await expect.element(rows.nth(0).getByText("Ctrl+1")).toBeVisible();
+    await expect.element(rows.nth(1).getByText("Ctrl+2")).toBeVisible();
+    await userEvent.keyboard("{/Control}");
+
+    // Clearing the open draft keeps its row and number, even after search hides the list.
+    await act(() => initial.setPrompt(newer, ""));
+    const search = screen.getByRole("combobox", { name: "Search threads" });
+    await userEvent.fill(search, "older");
+    await expect.element(rows.first()).not.toBeInTheDocument();
+    await userEvent.clear(search);
+    await expect.element(rows.nth(0)).toHaveAccessibleName("newer-draft prompt, Unsent draft, web");
+    await userEvent.keyboard("{Control>}");
+    await expect.element(rows.nth(0).getByText("Ctrl+1")).toBeVisible();
+    await expect.element(rows.nth(1).getByText("Ctrl+2")).toBeVisible();
+    await userEvent.keyboard("2{/Control}");
+
+    await vi.waitFor(() => expect(screen.router!.state.location.pathname).toBe(`/draft/${older}`));
   });
 });
 
