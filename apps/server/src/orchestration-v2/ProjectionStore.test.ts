@@ -3024,18 +3024,30 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       for (let index = 0; index < THREAD_HISTORY_INLINE_WORK_ITEM_LIMIT; index += 1)
         yield* write(`bulk-${index}`, tool({ index }), 20 + index);
 
+      // The raw SQL edits below stand in for committed writes, which always append a thread event.
+      let revision = 0;
       const page = () =>
-        store.getThreadHistoryPage(
-          threadId,
-          encodeThreadHistoryCursor({
-            snapshotSequence: 0,
-            sourceThreadId: threadId,
-            sourceItemId: "item:inline-output-flag:end",
-            position: 1_000,
-          }),
-          undefined,
-          false,
-          "deferred",
+        sql`INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${`event:inline-output-flag:revision:${++revision}`}, 'thread', ${threadId}, ${revision},
+          'turn-item.updated', ${DateTime.formatIso(now)}, 'user', '{}', '{}', 2
+        )`.pipe(
+          Effect.andThen(
+            store.getThreadHistoryPage(
+              threadId,
+              encodeThreadHistoryCursor({
+                snapshotSequence: 0,
+                sourceThreadId: threadId,
+                sourceItemId: "item:inline-output-flag:end",
+                position: 1_000,
+              }),
+              undefined,
+              false,
+              "deferred",
+            ),
+          ),
         );
       const stored = yield* page();
       assert.isTrue(stored.items.some((row) => row.item.deferredWork !== undefined));
@@ -3051,7 +3063,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET persistent_output = NULL
         WHERE thread_id = ${threadId}`;
-      assert.deepEqual(yield* page(), stored);
+      assert.deepEqual({ ...(yield* page()), snapshotSequence: stored.snapshotSequence }, stored);
     }),
   );
 
