@@ -4,9 +4,11 @@ import {
   DesktopServerExposureStateSchema,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
+import * as DesktopHomeOwner from "../../backend/DesktopHomeOwner.ts";
 import * as DesktopServerExposure from "../../backend/DesktopServerExposure.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -22,7 +24,11 @@ export const getServerExposureState = DesktopIpc.makeIpcMethod({
   result: DesktopServerExposureStateSchema,
   handler: Effect.fn("desktop.ipc.serverExposure.getState")(function* () {
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-    return yield* serverExposure.getState;
+    const state = yield* serverExposure.getState;
+    if (!state.tailscaleServeEnabled) return state;
+    const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
+    const tailscaleServeError = Option.getOrUndefined(owner)?.tailscaleServeError;
+    return tailscaleServeError === undefined ? state : { ...state, tailscaleServeError };
   }),
 });
 

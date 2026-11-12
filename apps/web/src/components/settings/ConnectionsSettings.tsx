@@ -1000,11 +1000,12 @@ function ConnectionsSettingsContent({
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
       description={
-        tailscaleHttpsEndpoint
-          ? tailscaleHttpsEndpoint.status === "available"
-            ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
-          : missingTailscaleEndpointDescription(desktopServerExposureState)
+        tailscaleHttpsEndpoint?.status === "available"
+          ? tailscaleHttpsEndpoint.httpBaseUrl
+          : (desktopServerExposureState?.tailscaleServeError ??
+            (tailscaleHttpsEndpoint
+              ? "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+              : missingTailscaleEndpointDescription(desktopServerExposureState)))
       }
       control={
         tailscaleHttpsEndpoint ? (

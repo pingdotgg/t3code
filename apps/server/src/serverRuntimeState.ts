@@ -22,6 +22,8 @@ export const PersistedServerRuntimeState = Schema.Struct({
   startedAt: Schema.String,
   serviceManaged: Schema.optional(Schema.Boolean),
   serverVersion: Schema.optional(Schema.String),
+  // Why Tailscale Serve is not set up yet, with the fix; absent once it is or when not requested.
+  tailscaleServeError: Schema.optional(Schema.String),
   // The managed policy this server loaded at startup, null for none; absent from older servers.
   managedPolicy: Schema.optional(
     Schema.NullOr(

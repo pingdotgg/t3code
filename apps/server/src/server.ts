@@ -18,6 +18,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -209,7 +210,10 @@ import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestS
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
-import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
+import {
+  makePersistedServerRuntimeState,
+  type PersistedServerRuntimeState,
+} from "./serverRuntimeState.ts";
 import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
@@ -856,6 +860,11 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(ServerHttp.layerHttpCompression),
 );
 
+interface RuntimePublication {
+  readonly state: PersistedServerRuntimeState | undefined;
+  readonly tailscaleServeError: string | undefined;
+}
+
 const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -879,6 +888,29 @@ const layerMakeServer = Layer.unwrap(
         yield* startup.markHttpListening;
       }),
     );
+    // Serve setup outlives the first publish, so its outcome is merged into the same record.
+    const runtimePublication = yield* SynchronizedRef.make<RuntimePublication>({
+      state: undefined,
+      tailscaleServeError: undefined,
+    });
+    const publishRuntimeState = (update: (current: RuntimePublication) => RuntimePublication) =>
+      SynchronizedRef.updateEffect(runtimePublication, (current) => {
+        const next = update(current);
+        if (next.state === undefined) return Effect.succeed(next);
+        return ownership
+          .publish({
+            ...next.state,
+            ...(next.tailscaleServeError === undefined
+              ? {}
+              : { tailscaleServeError: next.tailscaleServeError }),
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to persist server runtime state", { cause }),
+            ),
+            Effect.as(next),
+          );
+      });
     const layerRuntimeState = Layer.effectDiscard(
       Effect.gen(function* () {
         yield* Deferred.succeed(runtimeStateParked, undefined).pipe(Effect.orDie);
@@ -896,13 +928,7 @@ const layerMakeServer = Layer.unwrap(
           serviceManaged: launcher.managed,
           managedPolicy: yield* ManagedPolicy.loadedPolicy(yield* ManagedPolicy.ManagedPolicy),
         });
-        yield* ownership
-          .publish(state)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Failed to persist server runtime state", { cause }),
-            ),
-          );
+        yield* publishRuntimeState((current) => ({ ...current, state }));
       }),
     );
     const layerTailscaleServe = config.tailscaleServeEnabled
@@ -969,18 +995,30 @@ const layerMakeServer = Layer.unwrap(
             );
             yield* retryTailscaleServe(
               ensureTailscaleServe({ localPort, servePort, localHost }),
-              (cause) =>
-                Effect.logWarning("Failed to configure Tailscale Serve; retrying", {
-                  hint: tailscaleServeFailureHint(cause),
+              (cause) => {
+                const hint = tailscaleServeFailureHint(cause);
+                return Effect.logWarning("Failed to configure Tailscale Serve; retrying", {
+                  hint,
                   cause,
                   localPort,
                   servePort,
-                }),
+                }).pipe(
+                  Effect.andThen(
+                    publishRuntimeState((current) => ({
+                      ...current,
+                      tailscaleServeError: `${cause.message} ${hint}`,
+                    })),
+                  ),
+                );
+              },
             ).pipe(
               Effect.tap(() =>
                 Effect.sync(() => {
                   serveConfigured = true;
                 }),
+              ),
+              Effect.tap(() =>
+                publishRuntimeState((current) => ({ ...current, tailscaleServeError: undefined })),
               ),
               Effect.tap(() =>
                 Effect.logInfo("Tailscale Serve configured", { localPort, servePort }),
