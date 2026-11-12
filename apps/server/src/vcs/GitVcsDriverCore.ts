@@ -4579,11 +4579,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     const lexical = path.resolve(cwd, worktreePath);
     const destination = yield* realLocation(lexical);
-    if (checkouts.linked.some((linked) => isPathWithinRoot(linked, destination))) {
-      return yield* refuse(
-        "The worktree folder is inside another worktree. Choose another folder.",
-      );
-    }
     const { main, listedMain } = checkouts;
     if (main === null || listedMain === null) return;
     // Lexical first, so a link inside the checkout is caught below instead of followed out of it.
@@ -4594,7 +4589,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : isPathWithinRoot(main, destination)
           ? path.relative(main, destination)
           : null;
+    // Destinations outside the main checkout are git's to place, as before relative locations existed.
     if (relative === null) return;
+    if (checkouts.linked.some((linked) => isPathWithinRoot(linked, destination))) {
+      return yield* refuse(
+        "The worktree folder is inside another worktree. Choose another folder.",
+      );
+    }
     const segments = relative.split(path.sep);
     // The folder holding the worktree is ignored as a whole; one directly in the checkout ignores itself.
     const storage = segments.length > 1 ? segments.slice(0, -1) : segments;
@@ -4742,6 +4743,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const repoName = path.basename(path.resolve(input.cwd));
     const checkouts = yield* readCheckouts(input.cwd);
     let worktreePath = input.path;
+    // Absolute and default roots are left to git, as before relative locations existed.
+    let guarded = worktreePath != null;
     if (worktreePath == null) {
       const setting = options?.worktreesDirectory ?? "";
       const absoluteParent = resolveWorktreesDirectory(
@@ -4772,6 +4775,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       } else {
         // Anchored at the main checkout, never the linked one asking; one repository needs no repo level.
         parentDir = path.join(checkouts.main, ...relativeSegments);
+        guarded = true;
       }
       const identity = `${yield* readGitCommonDir(input.cwd)}\0${targetBranch}`;
       const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(identity));
@@ -4792,7 +4796,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         worktreePath = `${basePath}-${suffix}`;
       }
     }
-    yield* guardWorktreeDestination(input.cwd, worktreePath, checkouts);
+    if (guarded) yield* guardWorktreeDestination(input.cwd, worktreePath, checkouts);
     const newRefName = input.newRefName;
     if (newRefName) {
       // Kept apart from the checkout so the shared-config lock only covers the tracking write.

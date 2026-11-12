@@ -5886,7 +5886,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
       );
 
-      it.effect("guards explicit and absolute destinations inside the checkout", () =>
+      it.effect("guards explicit destinations and leaves absolute roots to git", () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const pathService = yield* Path.Path;
@@ -5902,23 +5902,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             refName: initialBranch,
             newRefName: "feature/revived",
           });
+          assert.includeMembers((yield* readExclude(repo)).split("\n"), ["/.agents/wt/"]);
+          // Absolute roots stay git's to place, even inside a linked worktree (a dev T3 home).
+          const absoluteRoot = pathService.join(revived.worktree.path, ".t3", "worktrees");
           const absolute = yield* driver.createWorktree(
             { cwd: repo, path: null, refName: initialBranch, newRefName: "feature/absolute" },
-            { worktreesDirectory: pathService.join(repo, ".wt") },
+            { worktreesDirectory: absoluteRoot },
           );
           assert.equal(
             pathService.dirname(absolute.worktree.path),
-            pathService.join(repo, ".wt", pathService.basename(repo)),
+            pathService.join(absoluteRoot, pathService.basename(repo)),
           );
-          assert.match(
-            pathService.basename(absolute.worktree.path),
-            /^feature-absolute-[0-9a-f]{16}$/,
-          );
-          const excludeLines = (yield* readExclude(repo)).split("\n");
-          assert.includeMembers(excludeLines, [
-            "/.agents/wt/",
-            `/.wt/${pathService.basename(repo)}/`,
-          ]);
+          // So are explicit paths outside the checkout, as turn start recreates them.
+          const outer = yield* driver.createWorktree({
+            cwd: repo,
+            path: pathService.join(yield* makeTmpDir(), "outer"),
+            refName: initialBranch,
+            newRefName: "feature/outer",
+          });
+          yield* driver.createWorktree({
+            cwd: repo,
+            path: pathService.join(outer.worktree.path, ".t3", "worktrees", "nested"),
+            refName: initialBranch,
+            newRefName: "feature/nested",
+          });
           assert.deepEqual(yield* stagedPaths(repo), ["README.md"]);
 
           yield* fileSystem.makeDirectory(pathService.join(storage, "occupied"));
