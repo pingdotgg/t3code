@@ -304,11 +304,6 @@ interface RuntimeState {
   readonly tailscaleServePort: number;
 }
 
-type TailscaleServeSettings = Pick<
-  DesktopAppSettings.DesktopSettings,
-  "tailscaleServeEnabled" | "tailscaleServePort"
->;
-
 interface ResolvedRuntimeState {
   readonly state: RuntimeState;
   readonly unavailable: boolean;
@@ -353,7 +348,7 @@ const toResolvedExposure = (state: RuntimeState): ResolvedDesktopServerExposure 
 
 function runtimeStateFromResolvedExposure(input: {
   readonly requestedMode: DesktopServerExposureMode;
-  readonly settings: TailscaleServeSettings;
+  readonly settings: DesktopAppSettings.DesktopSettings;
   readonly exposure: ResolvedDesktopServerExposure;
   readonly port: number;
 }): RuntimeState {
@@ -374,7 +369,7 @@ function runtimeStateFromResolvedExposure(input: {
 
 function resolveRuntimeState(input: {
   readonly requestedMode: DesktopServerExposureMode;
-  readonly settings: TailscaleServeSettings;
+  readonly settings: DesktopAppSettings.DesktopSettings;
   readonly port: number;
   readonly networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces;
   readonly advertisedHostOverride: Option.Option<string>;
@@ -500,28 +495,12 @@ export const make = Effect.gen(function* () {
       ? settings
       : { ...settings, serverExposureMode: "local-only" as const, tailscaleServeEnabled: false };
 
-  // Saved network access that fell back to loopback for lack of an address resumes once one
-  // appears; the new binding takes effect when the backend next starts.
   const readCurrentState = (currentNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces) =>
-    Ref.modify(stateRef, (state) => {
-      if (state.requestedMode === state.mode) {
-        const current = withCurrentAdvertisedHost(
-          state,
-          currentNetworkInterfaces,
-          config.desktopLanHostOverride,
-        );
-        return [current, state] as const;
-      }
-      const resolved = resolveRuntimeState({
-        requestedMode: state.requestedMode,
-        settings: state,
-        port: state.port,
-        networkInterfaces: currentNetworkInterfaces,
-        advertisedHostOverride: config.desktopLanHostOverride,
-      });
-      const next = resolved.unavailable ? state : resolved.state;
-      return [next, next] as const;
-    });
+    Ref.get(stateRef).pipe(
+      Effect.map((state) =>
+        withCurrentAdvertisedHost(state, currentNetworkInterfaces, config.desktopLanHostOverride),
+      ),
+    );
 
   const getState = readNetworkInterfaces.pipe(
     Effect.flatMap(readCurrentState),
@@ -532,17 +511,23 @@ export const make = Effect.gen(function* () {
   const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
     function* ({ port }: { readonly port: number }) {
       yield* Effect.annotateCurrentSpan({ port });
-      const settings = yield* desktopSettings.get;
-      const currentNetworkInterfaces = yield* readNetworkInterfaces;
-      const resolved = resolveRuntimeState({
-        requestedMode: withinPolicy(settings).serverExposureMode,
-        settings: withinPolicy(settings),
+      const settings = withinPolicy(yield* desktopSettings.get);
+      const advertisedHostOverride = Option.getOrUndefined(config.desktopLanHostOverride);
+      // Saved network access binds every interface even before an address exists, so a network
+      // that connects later is served without restarting the backend.
+      const state = runtimeStateFromResolvedExposure({
+        requestedMode: settings.serverExposureMode,
+        settings,
+        exposure: resolveDesktopServerExposure({
+          mode: settings.serverExposureMode,
+          port,
+          networkInterfaces: yield* readNetworkInterfaces,
+          ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
+        }),
         port,
-        networkInterfaces: currentNetworkInterfaces,
-        advertisedHostOverride: config.desktopLanHostOverride,
       });
-      yield* Ref.set(stateRef, resolved.state);
-      return toContractState(resolved.state);
+      yield* Ref.set(stateRef, state);
+      return toContractState(state);
     },
   );
 

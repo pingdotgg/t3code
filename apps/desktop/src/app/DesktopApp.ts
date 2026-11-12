@@ -1,10 +1,8 @@
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as NetService from "@t3tools/shared/Net";
@@ -46,7 +44,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
-const NETWORK_ADDRESS_POLL_INTERVAL = Duration.seconds(5);
 
 const LinuxDesktopSessionConfig = Config.all({
   current: Config.String("XDG_CURRENT_DESKTOP").pipe(Config.option),
@@ -269,30 +266,6 @@ const bootstrap = Effect.gen(function* () {
     yield* logBootstrapInfo("bootstrap enabled network access", {
       endpointUrl: serverExposureState.endpointUrl,
     });
-  } else if (
-    settings.serverExposureMode === "network-accessible" &&
-    serverExposureState.mode === "local-only"
-  ) {
-    yield* logBootstrapWarning(
-      "bootstrap fell back to local-only because no advertised network host was available",
-    );
-    // Rebind once an address appears; getState adopts the saved mode when it can.
-    yield* Effect.forkScoped(
-      serverExposure.getState.pipe(
-        Effect.repeat({
-          schedule: Schedule.spaced(NETWORK_ADDRESS_POLL_INTERVAL),
-          until: (current) => current.mode === "network-accessible",
-        }),
-        Effect.andThen(
-          Effect.gen(function* () {
-            if (yield* Ref.get(state.quitting)) return;
-            yield* logBootstrapInfo("network address available; restarting backend");
-            yield* primaryBackend.stop();
-            yield* primaryBackend.start;
-          }),
-        ),
-      ),
-    );
   }
 
   if (!(yield* Ref.get(state.quitting))) {

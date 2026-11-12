@@ -189,27 +189,6 @@ describe("DesktopServerExposure", () => {
     );
   });
 
-  it.effect("falls back to local-only without losing the requested network preference", () =>
-    withHarness(
-      emptyNetworkInterfaces,
-      Effect.gen(function* () {
-        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-
-        yield* settings.setServerExposureMode("network-accessible");
-
-        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
-        assert.equal(state.mode, "local-only");
-        assert.equal(state.endpointUrl, null);
-        assert.equal((yield* settings.get).serverExposureMode, "network-accessible");
-
-        const backendConfig = yield* serverExposure.backendConfig;
-        assert.equal(backendConfig.bindHost, "127.0.0.1");
-        assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
-      }),
-    ),
-  );
-
   it.effect("recovers saved network access when an address appears after launch", () => {
     let current = emptyNetworkInterfaces;
     return withHarness(
