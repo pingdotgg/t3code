@@ -82,6 +82,7 @@ export const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
 export interface CursorAgentSdkOpenInput {
   readonly operation: "create" | "resume";
   readonly agentId?: string;
+  readonly storeCwd?: string;
   readonly options: AgentOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -366,6 +367,31 @@ function makeCursorAgentSdkProtocolLogger(input: {
       .pipe(Effect.ignore);
 }
 
+interface CursorShellStreamOutput {
+  readonly conversationId?: unknown;
+  readonly toolCallId?: unknown;
+  readonly event: {
+    readonly case: "stdout" | "stderr";
+    readonly value: { readonly data: unknown };
+  };
+}
+
+// The SDK reports shell-output-delta only for user-started shell commands, so
+// patches/@cursor__sdk@1.2.0.patch publishes agent shell output on this hook.
+const SHELL_STREAM_OUTPUT_HOOK = Symbol.for("@cursor/sdk.shellStreamOutput");
+const shellStreamListeners = new Set<(output: CursorShellStreamOutput) => void>();
+
+function subscribeShellStreamOutput(listener: (output: CursorShellStreamOutput) => void) {
+  const hooks = globalThis as Record<symbol, unknown>;
+  hooks[SHELL_STREAM_OUTPUT_HOOK] ??= (output: CursorShellStreamOutput) => {
+    for (const notify of shellStreamListeners) notify(output);
+  };
+  shellStreamListeners.add(listener);
+  return () => {
+    shellStreamListeners.delete(listener);
+  };
+}
+
 export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(function* (
   protocolLoggerFor: (input: CursorAgentSdkOpenInput) => CursorAgentSdkProtocolLogger | undefined,
 ) {
@@ -402,7 +428,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
 
   return CursorAgentSdkRunner.of({
     open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
-      const { Agent } = yield* Effect.try({
+      const { Agent, createAgentPlatform } = yield* Effect.try({
         try: sdk.load,
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
       });
@@ -424,11 +450,30 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         },
       });
 
+      // Cursor uses cwd for both execution and store lookup; a moved thread keeps its original store.
+      const storeCwd = input.storeCwd;
+      const storePlatform =
+        input.operation === "resume" &&
+        storeCwd !== undefined &&
+        storeCwd !== input.options.local?.cwd
+          ? yield* Effect.tryPromise({
+              try: () =>
+                createAgentPlatform({
+                  workspaceRef: storeCwd,
+                  ...(input.options.local?.store === undefined
+                    ? {}
+                    : { localStore: input.options.local.store }),
+                }),
+              catch: (cause) => runnerError(cause, "agent.resume"),
+            })
+          : undefined;
       const agent = yield* Effect.tryPromise({
         try: () =>
           input.operation === "create"
             ? Agent.create(input.options)
-            : Agent.resume(input.agentId!, input.options),
+            : storePlatform === undefined
+              ? Agent.resume(input.agentId!, input.options)
+              : storePlatform.resumeAgent(input.agentId!, input.options),
         catch: (cause) => runnerError(cause, `agent.${input.operation}`),
       });
 
@@ -525,10 +570,15 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                   do {
                     const page = yield* Effect.tryPromise({
                       try: () =>
-                        Agent.listRuns(agent.agentId, {
-                          ...runOptions,
-                          ...(cursor === undefined ? {} : { cursor }),
-                        }),
+                        storePlatform === undefined
+                          ? Agent.listRuns(agent.agentId, {
+                              ...runOptions,
+                              ...(cursor === undefined ? {} : { cursor }),
+                            })
+                          : storePlatform.listRuns(
+                              agent.agentId,
+                              cursor === undefined ? {} : { cursor },
+                            ),
                       catch: (cause) => runnerError(cause, "agent.listRuns"),
                     });
                     activeRun =
@@ -545,7 +595,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                     payload: { type: "run.cancel", runId: activeRun.id },
                   });
                   yield* Effect.tryPromise({
-                    try: () => Agent.cancelRun(activeRun.id, runOptions),
+                    try: () =>
+                      storePlatform === undefined
+                        ? Agent.cancelRun(activeRun.id, runOptions)
+                        : storePlatform.cancelRun(activeRun.id),
                     catch: (cause) => runnerError(cause, "agent.cancelRun"),
                   });
                   return yield* startRun();
@@ -564,6 +617,15 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             },
           });
           callbacksReady = true;
+          const unsubscribeShellOutput = subscribeShellStreamOutput((output) => {
+            if (output.conversationId !== agent.agentId || typeof output.toolCallId !== "string") {
+              return;
+            }
+            void dispatchUpdate({
+              type: "shell-output-delta",
+              event: { ...output.event, toolCallId: output.toolCallId },
+            });
+          });
           for (const update of pendingUpdates) {
             yield* Effect.tryPromise({
               try: () => dispatchUpdate(update),
@@ -585,6 +647,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               },
               catch: (cause) => runnerError(cause, "run.wait"),
             }).pipe(
+              Effect.ensuring(Effect.sync(unsubscribeShellOutput)),
               Effect.tap((result) =>
                 log({
                   direction: "incoming",
@@ -661,10 +724,15 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           Effect.andThen(
             Effect.tryPromise({
               try: () =>
-                Agent.messages.list(agent.agentId, {
-                  runtime: "local",
-                  ...(cwd === undefined ? {} : { cwd }),
-                }),
+                storePlatform === undefined
+                  ? Agent.messages.list(agent.agentId, {
+                      runtime: "local",
+                      ...(cwd === undefined ? {} : { cwd }),
+                      ...(input.options.local?.store === undefined
+                        ? {}
+                        : { store: input.options.local.store }),
+                    })
+                  : storePlatform.getAgentMessages(agent.agentId),
               catch: (cause) => runnerError(cause, "agent.messages.list"),
             }),
           ),
