@@ -53,18 +53,17 @@ const ItemNotification = Schema.Struct({
     truncated: Schema.optionalKey(Schema.Boolean),
   }),
 });
+const TurnError = Schema.Struct({
+  kind: Schema.optionalKey(Schema.String),
+  message: Schema.String,
+  quota: Schema.optionalKey(Schema.Unknown),
+});
 const TurnCompleted = Schema.Struct({
   sessionId: Schema.String,
   turnId: Schema.String,
   terminal: Schema.String,
   reason: Schema.optionalKey(Schema.String),
-  error: Schema.optionalKey(
-    Schema.Struct({
-      kind: Schema.optionalKey(Schema.String),
-      message: Schema.String,
-      quota: Schema.optionalKey(Schema.Unknown),
-    }),
-  ),
+  error: Schema.optionalKey(TurnError),
 });
 const ApprovalRequested = Schema.Struct({
   sessionId: Schema.String,
@@ -88,21 +87,18 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 type Operation = keyof ProviderTextGeneration;
-type TurnError = NonNullable<(typeof TurnCompleted.Type)["error"]>;
-// @effect-diagnostics-next-line extendsNativeError:off - rejects a plain promise; MuseSdkError carries it as its cause.
-class MuseTurnFailure extends Error {
-  readonly turnError: TurnError;
-  constructor(turnError: TurnError) {
-    super(turnError.message);
-    this.turnError = turnError;
+class MuseTurnFailure extends Schema.TaggedError<MuseTurnFailure>()("MuseTurnFailure", {
+  turnError: TurnError,
+}) {
+  override get message() {
+    return this.turnError.message;
   }
 }
+const isMuseTurnFailure = Schema.is(MuseTurnFailure);
 
 function museFailureDetail(cause: unknown): string {
   const error =
-    isMuseSdkError(cause) && cause.cause instanceof MuseTurnFailure
-      ? cause.cause.turnError
-      : undefined;
+    isMuseSdkError(cause) && isMuseTurnFailure(cause.cause) ? cause.cause.turnError : undefined;
   // Muse sends `quota` only for quota exhaustion, which it still labels `modelError`.
   if (error?.quota !== undefined || isMuseUsageLimitFailure(error?.message))
     return "Muse Code usage limit reached. Try again after it resets.";
@@ -181,7 +177,9 @@ async function generateMuseText(
             completed.error ??
             (completed.reason !== undefined ? { message: completed.reason } : undefined);
           rejectCompletion(
-            error ? new MuseTurnFailure(error) : new Error(`Muse turn ${completed.terminal}.`),
+            error
+              ? new MuseTurnFailure({ turnError: error })
+              : new Error(`Muse turn ${completed.terminal}.`),
           );
         }
       } else if (
