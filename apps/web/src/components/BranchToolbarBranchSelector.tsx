@@ -79,6 +79,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
+  focus: () => void;
 }
 
 interface BranchToolbarBranchSelectorProps {
@@ -210,6 +211,7 @@ export function BranchToolbarBranchSelector({
 }: BranchToolbarBranchSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const toolbarAnchorRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
@@ -730,6 +732,7 @@ export function BranchToolbarBranchSelector({
   useImperativeHandle(
     ref,
     () => ({
+      focus: () => triggerRef.current?.focus({ preventScroll: true }),
       open: () => {
         if (isInitialBranchesLoadPending || isBranchActionPending) return;
         setFocusBranchSearch(true);
@@ -988,6 +991,7 @@ export function BranchToolbarBranchSelector({
         >
           {displayMode === "toolbar" && renderWorkspaceMenu ? null : (
             <ComboboxTrigger
+              ref={triggerRef}
               render={
                 displayMode === "panel" ? (
                   <ThreadDetailsControl part="row" />
