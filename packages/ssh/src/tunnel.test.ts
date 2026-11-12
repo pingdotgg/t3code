@@ -527,6 +527,55 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
+  it.effect("connects through a tunnel whose responses take longer than a second", () =>
+    Effect.gen(function* () {
+      // Over a ~1s RTT link each request through the forward takes a few round trips.
+      const RESPONSE_MS = 2_500;
+      const tunnelSpawned = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        commandArgs(command).includes("-N")
+          ? Deferred.succeed(tunnelSpawned, undefined).pipe(
+              Effect.as(makeRunningProcess(() => undefined)),
+            )
+          : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
+      );
+      const httpClient = HttpClient.make((request) =>
+        Effect.sleep(Duration.millis(RESPONSE_MS)).pipe(
+          Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
+        ),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          Effect.result(
+            manager.ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            }),
+          ),
+        );
+        yield* Deferred.await(tunnelSpawned);
+        yield* TestClock.adjust(Duration.seconds(60));
+        const result = yield* Fiber.join(ensure);
+        assert.isTrue(
+          Result.isSuccess(result),
+          Result.isFailure(result) ? result.failure.message : undefined,
+        );
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.effect("reconnects a saved alias through the port its ssh config names now", () =>
     Effect.gen(function* () {
       let configPort = 53_791;
