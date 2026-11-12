@@ -1,7 +1,7 @@
+import { env } from "../src/Env.ts";
 import { Card } from "./components/Card.tsx";
 import { Counter } from "./components/Counter";
 import { LocalTime } from "./components/LocalTime.tsx";
-import { env } from "../src/Env.ts";
 
 export const dynamic = "force-dynamic";
 
