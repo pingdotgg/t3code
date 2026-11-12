@@ -1225,6 +1225,97 @@ it.live("reports a pending dialog without evaluating the page and resolves it ex
   ).pipe(Effect.provide(layer)),
 );
 
+const basicChallenge = {
+  requestId: "auth-1",
+  frameId: "main",
+  resourceType: "Document",
+  request: { url: "http://localhost:18914/", method: "GET", headers: {} },
+  authChallenge: {
+    source: "Server",
+    origin: "http://localhost:18914",
+    scheme: "basic",
+    realm: "test",
+  },
+};
+
+it.live("an HTTP Basic challenge asks for credentials and sends them to Chromium", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const session = contexts[0]!.sessions[0]!;
+      // Without handleAuthRequests, Chromium renders the 401 body and never asks.
+      expect(session.send).toHaveBeenCalledWith(
+        "Fetch.enable",
+        expect.objectContaining({ handleAuthRequests: true }),
+      );
+      const signedIn = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => signedIn.resolve()));
+      // Chromium holds the navigation until the challenge is answered.
+      page.goto.mockImplementationOnce(async () => {
+        session.emit("Fetch.authRequired", basicChallenge);
+        await signedIn.promise;
+      });
+      yield* broker.invoke({
+        scope,
+        tabId,
+        operation: "navigate",
+        input: { url: "http://localhost:18914/" },
+      });
+      const pending = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(pending.dialog).toMatchObject({
+        type: "auth",
+        message: "http://localhost:18914 asks you to sign in. It says: test",
+      });
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({
+        type: "dialog",
+        accept: true,
+        username: "tester",
+        password: "hunter2",
+      });
+      expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
+        requestId: "auth-1",
+        authChallengeResponse: {
+          response: "ProvideCredentials",
+          username: "tester",
+          password: "hunter2",
+        },
+      });
+      expect(yield* Queue.clear(viewer.output)).toContainEqual(
+        expect.objectContaining({ _tag: "control", dialog: null }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("dismissing an HTTP Basic challenge cancels it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const session = contexts[0]!.sessions[0]!;
+      session.emit("Fetch.authRequired", basicChallenge);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "dialog",
+        input: { accept: false },
+      });
+      expect(session.send).toHaveBeenCalledWith("Fetch.continueWithAuth", {
+        requestId: "auth-1",
+        authChallengeResponse: { response: "CancelAuth" },
+      });
+      expect(status.dialog).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("closing an isolated tab closes its context only after the page closes", () =>
   Effect.scoped(
     Effect.gen(function* () {
