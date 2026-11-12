@@ -11172,6 +11172,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             if (message.type === "result") {
               for (const batch of liveQuery.boundaryBatches) batch.accepting = false;
+            }
+            // Transcript writes can finish after started; complete root frames retry without per-delta I/O.
+            if (
+              message.type === "result" ||
+              ((lifecycle?.state === "started" ||
+                (message.type !== "stream_event" && isClaudeRootTurnFrame(message))) &&
+                liveQuery.boundaryBatches.some(
+                  (batch) =>
+                    batch.reserved &&
+                    batch.offers.some(
+                      (offer) => !batch.saved.has(offer.id) && !batch.withdrawn.has(offer.id),
+                    ),
+                ))
+            ) {
               yield* reconcileBoundaryReceipts(liveQuery);
             }
           }

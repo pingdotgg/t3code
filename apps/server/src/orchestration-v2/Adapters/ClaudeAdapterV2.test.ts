@@ -3705,10 +3705,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isDefined(store);
         if (hook === undefined || store === undefined) return;
         const signal = yield* Effect.abortSignal;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const transcriptPath = (yield* Path.Path).join(harness.attachmentsDir, "boundary.jsonl");
+        yield* fileSystem.writeFileString(transcriptPath, "{}\n");
         const hookInput = {
           hook_event_name: "PostToolBatch" as const,
           session_id: WAKE_NATIVE_SESSION,
-          transcript_path: "/repo/session.jsonl",
+          transcript_path: transcriptPath,
           cwd: "/repo",
           tool_calls: [],
         };
@@ -3799,23 +3802,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             harness.events.filter((event) => event.type === "boundary_messages.updated").length >=
             2,
         );
+        yield* fileSystem.writeFileString(
+          transcriptPath,
+          `{}\n${offers.map((offer) => JSON.stringify(receipt(offer.id))).join("\n")}\n`,
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "boundary-reply",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Working on the updates." }],
+            },
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "boundary_messages.updated" &&
+              event.step === "receipt" &&
+              event.offers.some((offer) => offer.id === offers[1]!.id),
+          ),
+        );
+        assert.lengthOf(
+          harness.events.filter((event) => event.type === "boundary_messages.updated"),
+          3,
+        );
         yield* Effect.promise(() =>
           store.append(
             key,
             offers.map((offer) => receipt(offer.id)),
           ),
         );
-        yield* harness.until(
-          () =>
-            harness.events.filter((event) => event.type === "boundary_messages.updated").length >=
-            3,
-        );
-        yield* Effect.promise(() =>
-          store.append(
-            key,
-            offers.map((offer) => receipt(offer.id)),
-          ),
-        );
+        assert.lengthOf(harness.terminalEvents(), 0);
         const deliveryEvents = harness.events.filter(
           (event) => event.type === "boundary_messages.updated",
         );
