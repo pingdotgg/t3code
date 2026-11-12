@@ -407,6 +407,55 @@ const make = Effect.gen(function* () {
       });
   });
 
+  /**
+   * A recorded worktree strategy can outlive the ref it names: tasks saved before
+   * the base followed the repo's default branch kept `"main"`, and a base branch
+   * can be deleted after it was recorded. Re-base on the remote's default branch,
+   * then on the checked-out commit, instead of failing every launch.
+   */
+  const worktreeFallbackBase = Effect.fn("ThreadLaunchService.worktreeFallbackBase")(function* (
+    cwd: string,
+    remoteName: string | null,
+  ) {
+    if (remoteName !== null) {
+      const defaultBranch = yield* git.resolveDefaultBranchName(cwd, remoteName);
+      if (defaultBranch !== null) {
+        // Fetch freshens the default branch the way the recorded base would have been.
+        const remoteBase = yield* git
+          .fetchWorktreeBaseCommit({
+            cwd,
+            refName: defaultBranch,
+            remote: { remoteName, branchName: defaultBranch },
+          })
+          .pipe(
+            Effect.map((base) => ({ fetchFailed: false as const, base })),
+            Effect.orElseSucceed(() => ({ fetchFailed: true as const, base: null })),
+          );
+        if (remoteBase.base !== null) {
+          return {
+            startRef: remoteBase.base.commitSha,
+            baseRefName: `refs/remotes/${remoteBase.base.remoteRefName}`,
+          };
+        }
+        // A completed fetch that found no branch means the branch is gone and its
+        // tracking ref is stale; only a failed fetch can fall back to it.
+        if (remoteBase.fetchFailed) {
+          const trackingRef = `refs/remotes/${remoteName}/${defaultBranch}`;
+          if (yield* git.hasCommit({ cwd, refName: trackingRef })) {
+            return { startRef: trackingRef, baseRefName: trackingRef };
+          }
+        }
+      }
+    }
+    const currentBranch = yield* git.currentBranch(cwd);
+    if (currentBranch !== null) {
+      return { startRef: currentBranch, baseRefName: currentBranch };
+    }
+    return (yield* git.hasCommit({ cwd, refName: "HEAD" }))
+      ? { startRef: "HEAD", baseRefName: "HEAD" }
+      : null;
+  });
+
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
     input: PreparationInput,
     threadId: ThreadId,
@@ -539,6 +588,35 @@ const make = Effect.gen(function* () {
           }
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        // `:/text` bases are commit searches, not refs; `hasCommit` treats the appended
+        // `^{commit}` as part of the pattern (same guard as checkWorktreeBase).
+        const recordedBaseResolves =
+          startRef.startsWith(":") ||
+          (yield* git
+            .hasCommit({
+              cwd: project.workspaceRoot,
+              // `git worktree add` reads `-` as the previous checkout.
+              refName: startRef === "-" ? "@{-1}" : startRef,
+            })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))));
+        if (!recordedBaseResolves) {
+          const remoteName =
+            remote?.remoteName ??
+            (yield* git
+              .resolvePrimaryRemoteName(project.workspaceRoot)
+              .pipe(Effect.orElseSucceed(() => null)));
+          const fallback = yield* worktreeFallbackBase(project.workspaceRoot, remoteName).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+          if (fallback !== null) {
+            startRef = fallback.startRef;
+            baseRefName = fallback.baseRefName;
+            yield* setupTracker.update(threadId, (snapshot) => ({
+              ...snapshot,
+              baseRef: fallback.baseRefName,
+            }));
+          }
+        }
         if (
           branch !== null &&
           isTemporaryWorktreeBranch(branch) &&

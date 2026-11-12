@@ -213,6 +213,9 @@ function makeHarness(options: HarnessOptions = {}) {
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
       currentBranch: () => Effect.succeed(null),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
+      resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+      resolveDefaultBranchName: () => Effect.succeed("main"),
+      currentBranch: () => Effect.succeed("main"),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
       listLocalBranchNames: () => Effect.succeed([]),
@@ -1175,6 +1178,298 @@ it.effect.each(["stable", "upstream/release"])(
         ),
       ),
     ),
+);
+
+it.effect("re-bases a scheduled task's stored main on the remote default branch", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-stale-base-" });
+    const cwd = `${directory}/repo`;
+    const remote = `${directory}/remote.git`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "master"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+    yield* command(cwd, ["init", "--bare", remote]);
+    yield* command(cwd, ["remote", "add", "origin", remote]);
+    yield* command(cwd, ["push", "-u", "origin", "master"]);
+    yield* command(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master"]);
+    const remoteHead = (yield* command(cwd, ["rev-parse", "master"])).stdout.trim();
+
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      git: {
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+        resolvePrimaryRemoteName: () => git.resolvePrimaryRemoteName(cwd),
+        resolveDefaultBranchName: (_cwd, remoteName) =>
+          git.resolveDefaultBranchName(cwd, remoteName),
+        hasRefNamed: () => Effect.succeed(false),
+      },
+      fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+    });
+    const layerScheduledTasks = ScheduledTasks.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          harness.layer,
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          ManagedPolicy.layerTest(),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      // Unbound tasks saved before the base followed the default branch still record "main".
+      const { task } = yield* tasks.upsert(
+        scheduledTaskInput("scheduled-task:stale-base", projectId),
+      );
+      const ran = yield* tasks.runNow({ id: task.id });
+      assert.equal(ran.task.lastRunStatus, "succeeded");
+      const [thread] = yield* threads.listProjectThreads({
+        projectId,
+        includeSubagents: false,
+      });
+      assert.isDefined(thread);
+      const projection = yield* preparationSettled(thread!.id);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, worktreePath);
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), remoteHead);
+    }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-stale-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
+it.effect("re-bases a stored worktree base on the checked-out branch without a remote", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-local-base-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "beta"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+    const betaHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      git: {
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+        resolvePrimaryRemoteName: () => git.resolvePrimaryRemoteName(cwd),
+        resolveDefaultBranchName: (_cwd, remoteName) =>
+          git.resolveDefaultBranchName(cwd, remoteName),
+        currentBranch: () =>
+          command(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim() || null),
+            Effect.orElseSucceed(() => null),
+          ),
+        hasRefNamed: () => Effect.succeed(false),
+      },
+      fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:local-base",
+          thread: "thread:launch:local-base",
+          message: "Build the feature",
+          workspace: {
+            type: "worktree",
+            baseRef: "main",
+            branch: "feature",
+            startFromOrigin: true,
+          },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, worktreePath);
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), betaHead);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-local-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
+it.effect("keeps a `:/` commit-search base instead of re-basing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-search-base-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "beta"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "searched base"]);
+    const searchedHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "later work"]);
+
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      git: {
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+        resolvePrimaryRemoteName: () => git.resolvePrimaryRemoteName(cwd),
+        resolveDefaultBranchName: (_cwd, remoteName) =>
+          git.resolveDefaultBranchName(cwd, remoteName),
+        currentBranch: () =>
+          command(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim() || null),
+            Effect.orElseSucceed(() => null),
+          ),
+        hasRefNamed: () => Effect.succeed(false),
+      },
+      fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:search-base",
+          thread: "thread:launch:search-base",
+          message: "Build the feature",
+          workspace: {
+            type: "worktree",
+            baseRef: ":/searched",
+            branch: "feature",
+            startFromOrigin: false,
+          },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, worktreePath);
+      assert.equal(
+        (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
+        searchedHead,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-search-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
+it.effect("skips a stale tracking ref when the remote reports the base branch is gone", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-gone-base-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "beta"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "stale point"]);
+    const staleHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "current work"]);
+    const betaHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    // The deleted remote branch leaves its tracking ref (and origin/HEAD) behind.
+    yield* command(cwd, ["update-ref", "refs/remotes/origin/gone", staleHead]);
+    yield* command(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
+
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      git: {
+        resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+        resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+        resolveDefaultBranchName: (_cwd, remoteName) =>
+          git.resolveDefaultBranchName(cwd, remoteName),
+        currentBranch: () =>
+          command(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+            Effect.map((result) => result.stdout.trim() || null),
+            Effect.orElseSucceed(() => null),
+          ),
+        hasRefNamed: () => Effect.succeed(false),
+      },
+      // A completed fetch that found no branch, as when the branch was deleted.
+      fetchWorktreeBaseCommit: () => Effect.succeed(null),
+      createWorktree: (input, options) =>
+        git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:gone-base",
+          thread: "thread:launch:gone-base",
+          message: "Build the feature",
+          workspace: {
+            type: "worktree",
+            baseRef: "main",
+            branch: "feature",
+            startFromOrigin: true,
+          },
+        }),
+      );
+      const projection = yield* preparationSettled(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.equal(projection.thread.worktreePath, worktreePath);
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), betaHead);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-gone-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("fetches the origin base from the remote it already resolved", () => {
