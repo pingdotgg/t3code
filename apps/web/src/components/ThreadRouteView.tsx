@@ -18,6 +18,7 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentCatalog } from "../connection/catalog";
 import { useEnvironmentShellStatus } from "../state/shell";
 import { environmentThreadShells, threadFamilies, useEnvironmentThread } from "../state/threads";
 import {
@@ -71,6 +72,12 @@ export function ThreadRouteView({
   const shellStatus = useEnvironmentShellStatus(serverThreadRef?.environmentId ?? null);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
   const bootstrapComplete = isThreadRouteSnapshotAuthoritative(shellStatus);
+  // A thread on a machine this client has no connection to would wait on its shell forever.
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const environmentUnknown =
+    serverThreadRef !== null &&
+    catalog.isReady &&
+    !catalog.entries.has(serverThreadRef.environmentId);
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
@@ -208,7 +215,7 @@ export function ThreadRouteView({
     } else {
       redirect = <Navigate to="/" replace />;
     }
-  } else if (hiddenByTagFilter) {
+  } else if (hiddenByTagFilter || environmentUnknown) {
     redirect = <Navigate to="/" replace />;
   } else if (offShellBlocked) {
     // Before the shell bootstraps, a listed visible thread can still look off-shell.
