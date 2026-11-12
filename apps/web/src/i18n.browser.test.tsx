@@ -3,11 +3,12 @@ import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../test/render";
+import { SettingsBreadcrumb } from "./components/settings/SettingsBreadcrumb";
 import { UiLocaleSettingsRow } from "./components/settings/UiLocaleSettingsRow";
 import { writeUiLocale } from "./hooks/useUiLocale";
 import { AppAtomRegistryProvider, appAtomRegistry } from "./rpc/atomRegistry";
 import { serverEnvironment } from "./state/server";
-import { nextUiLocale, resolveUiLanguage, startUiLocaleSync } from "./i18n";
+import { i18n, nextUiLocale, resolveUiLanguage, startUiLocaleSync } from "./i18n";
 
 const state = vi.hoisted(() => ({
   configs: new Map<EnvironmentId, ServerConfig>(),
@@ -64,6 +65,29 @@ describe("nextUiLocale", () => {
     expect(nextUiLocale("system")).toBe("en");
     expect(nextUiLocale("en")).toBe("zh-Hans");
     expect(nextUiLocale("zh-Hans")).toBe("system");
+  });
+});
+
+describe("settings and palette namespaces", () => {
+  it("localizes both namespaces and re-renders components on language change", async () => {
+    expect(i18n.t("palette:placeholders.root")).toBe("Search commands, projects, and threads...");
+    await using screen = await render(<SettingsBreadcrumb pathname="/settings/general" />);
+    expect(screen.getByText("General")).toBeTruthy();
+
+    await act(async () => {
+      await i18n.changeLanguage("zh-Hans");
+    });
+    expect(i18n.t("palette:placeholders.root")).toBe("搜索命令、项目和线程...");
+    await vi.waitFor(() => {
+      expect(screen.getByText("通用")).toBeTruthy();
+    });
+
+    await act(async () => {
+      await i18n.changeLanguage("en");
+    });
+    await vi.waitFor(() => {
+      expect(screen.getByText("General")).toBeTruthy();
+    });
   });
 });
 

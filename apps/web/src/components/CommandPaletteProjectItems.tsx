@@ -1,5 +1,7 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
+import { translateDynamic } from "../i18n";
+
 import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
 import {
@@ -21,7 +23,7 @@ export interface CommandPaletteProjectLocation {
 
 const UNKNOWN_PROJECT_LOCATION: CommandPaletteProjectLocation = {
   kind: "remote",
-  label: "Remote",
+  label: translateDynamic("palette:labels.remote"),
   machine: "server",
 };
 

@@ -4,6 +4,7 @@ import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, type RefObject, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -37,12 +38,11 @@ interface CommandPaletteResultsProps {
 }
 
 function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActionsOnly: boolean }) {
+  const { t } = useTranslation("palette");
   return (
     <div className="py-10 text-center text-sm text-muted-foreground">
       {props.emptyStateMessage ??
-        (props.isActionsOnly
-          ? "No matching actions."
-          : "No matching commands, projects, or threads.")}
+        (props.isActionsOnly ? t("results.emptyActions") : t("results.empty"))}
     </div>
   );
 }
@@ -241,6 +241,7 @@ function CommandPaletteResultRow(props: {
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
 }) {
+  const { t } = useTranslation("palette");
   const shortcutLabel = props.item.shortcutCommand
     ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
     : null;
@@ -256,7 +257,9 @@ function CommandPaletteResultRow(props: {
             event.nativeEvent,
             props.item.threadRef,
             props.item.searchTitle ??
-              (typeof props.item.title === "string" ? props.item.title : "Thread"),
+              (typeof props.item.title === "string"
+                ? props.item.title
+                : t("results.threadFallback")),
           );
         }
       }}

@@ -44,7 +44,9 @@ export function useCommandPaletteUiLocaleItems() {
           icon: <LanguagesIcon className={ITEM_ICON_CLASS} />,
           titleTrailingContent:
             uiLocale === locale ? (
-              <span className="text-xs text-muted-foreground/70">Current</span>
+              <span className="text-xs text-muted-foreground/70">
+                {i18n.t("palette:labels.current") as string}
+              </span>
             ) : undefined,
           run: async () => {
             writeUiLocale(locale);
