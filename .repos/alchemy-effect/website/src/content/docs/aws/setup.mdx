@@ -1,52 +1,25 @@
 ---
 title: Setup
-description: Connect Alchemy to AWS with SSO, stored access keys, or CI environment credentials.
+description: Connect Alchemy to AWS with SSO, console login, stored access keys, or CI environment credentials.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
-import { effectVersion } from "../../../versions";
+import PackageManagers from "../../../components/PackageManagers.astro";
 
-export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+export const pkgs = `alchemy@latest @alchemy.run/aws@latest effect @effect/platform-bun @effect/platform-node`;
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) or Node.js 22+
+- [Bun](https://bun.sh) or Node.js 24.11.1+
 - An AWS account and an IAM identity with permission to create
   the resources you plan to deploy
 
 ## Create a project
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="mkdir my-app && cd my-app && bun init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="mkdir my-app && cd my-app && npm init -y" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="mkdir my-app && cd my-app && pnpm init" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="mkdir my-app && cd my-app && yarn init -y" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers init dir="my-app" />
 
 ## Install
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pkgs}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pkgs}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={pkgs} />
 
 ## How Alchemy gets AWS credentials
 
@@ -56,15 +29,26 @@ authentication method. The choice is saved to your **`default`**
 command; a deploy with nothing configured fails with that exact
 command to run. Authentication changes only through the `profile` command.
 
-There are two local profile methods:
+There are three local profile methods:
 
 ### SSO (recommended)
 
 Alchemy runs `aws sso login --profile <name>` for you and loads
 credentials from the AWS SSO cache. You pick which profile from
 `~/.aws/config` to use; the account ID and region come from that
-profile. When the SSO session expires, run
-`alchemy profile edit --reconfigure AWS` to refresh it.
+profile. Use this when your org signs in through IAM Identity
+Center. When the SSO session expires, run
+`alchemy profile refresh` to refresh it.
+
+### Console login
+
+Alchemy runs `aws login --profile <name>` (AWS CLI v2.32+) and
+loads credentials from the console-login session that command
+writes to `~/.aws/config` (`login_session`). Use this when you
+sign into the AWS Management Console as a root user, IAM user,
+or through IAM federation — the same identity, without long-lived
+access keys. When the session expires, run `alchemy profile refresh`
+to refresh it.
 
 ### Stored access keys
 
@@ -92,7 +76,7 @@ The region is required. The account ID is taken from
 ## Managing credentials
 
 Re-run the setup at any time (e.g. to switch from stored keys to
-SSO, or to configure a separate `prod` profile):
+SSO or console login, or to configure a separate `prod` profile):
 
 ```sh
 alchemy profile edit --reconfigure AWS
@@ -112,12 +96,15 @@ profiles with `--profile` or `$ALCHEMY_PROFILE`.
 ## State storage
 
 For AWS stacks, pass `AWS.state()` as the Stack's `state`
-option. Deploy state is stored in an account-regional S3 bucket
-(`alchemy-state-{accountId}-{region}-an`), created lazily on the
-first deploy — the same configuration works locally and in CI
-with no extra setup. For purely local iteration,
-`Alchemy.localState()` writes state under `.alchemy/` next to
-your code instead.
+option. Deploy state is stored in a DynamoDB table
+(`alchemy-state`), created lazily on the first deploy. In CI,
+provision it once with `alchemy state bootstrap --backend aws`.
+For purely local iteration, `Alchemy.localState()` writes state
+under `.alchemy/` next to your code instead.
+
+State from earlier versions lives in an S3 bucket; move it with
+`alchemy state migrate`. See
+[Migrating from the S3 store](/state-store#migrating-from-the-s3-store).
 
 ## Next steps
 

@@ -1,24 +1,40 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ProjectId,
   RunId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type Project,
+  type RepositoryIdentity,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ProcessRunner from "../processRunner.ts";
+import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
-import * as ThreadManagement from "./ThreadManagementService.ts";
+
+// Without a project the observer never touches enrichment, so its methods stay unimplemented.
+const layerNoProject = Layer.mergeAll(
+  Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+  Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
+);
 
 it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
@@ -42,7 +58,6 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
               checkpoints: [],
             }),
         }),
-        Layer.mock(ThreadManagement.ThreadManagementService)({}),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh: () =>
             Effect.gen(function* () {
@@ -75,14 +90,6 @@ it.effect.each(
         expected: ["/repo"],
       },
       {
-        label: "discovers the renamed branch's PR in the same refresh",
-        branch: "feature",
-        checkedOut: "renamed",
-        follow: true,
-        activeRun: null,
-        expected: ["/repo"],
-      },
-      {
         label: "leaves the default branch's PR cache alone",
         branch: "main",
         checkedOut: "main",
@@ -97,6 +104,22 @@ it.effect.each(
         expected: [],
       },
       {
+        label: "discovers the PR of a branch renamed in the thread's own worktree",
+        branch: "feature",
+        checkedOut: "renamed",
+        worktree: "/repo",
+        activeRun: null,
+        expected: ["/repo"],
+      },
+      {
+        label: "does not refresh a renamed branch in a checkout the thread does not own",
+        branch: "feature",
+        checkedOut: "renamed",
+        worktree: "/elsewhere",
+        activeRun: null,
+        expected: [],
+      },
+      {
         label: "does not refresh during a newer active run",
         branch: "feature",
         checkedOut: "feature",
@@ -107,13 +130,13 @@ it.effect.each(
   ).map((scenario) => [scenario.label, scenario] as const),
 )("%s", ([, scenario]) => {
   const refreshed: string[] = [];
-  let branch: string = scenario.branch;
   const lookedUp = Deferred.makeUnsafe<void>();
   const threadId = ThreadId.make("thread-pr-refresh");
   const runId = RunId.make("completed-run");
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
@@ -140,7 +163,8 @@ it.effect.each(
           getThreadShell: () =>
             Effect.succeed({
               id: threadId,
-              branch,
+              branch: scenario.branch,
+              worktreePath: "worktree" in scenario ? scenario.worktree : null,
               activeRunId: scenario.activeRun === null ? null : RunId.make(scenario.activeRun),
             } as OrchestrationV2ThreadShell),
         }),
@@ -149,19 +173,7 @@ it.effect.each(
   );
   return Effect.gen(function* () {
     const observer = yield* RunFinalization.RunFinalizationObserver;
-    yield* observer.refresh({
-      cwd: "/repo",
-      threadId,
-      runId,
-      ...("follow" in scenario
-        ? {
-            followBranch: (checkedOutBranch: string) =>
-              Effect.sync(() => {
-                branch = checkedOutBranch;
-              }),
-          }
-        : {}),
-    });
+    yield* observer.refresh({ cwd: "/repo", threadId, runId });
     if (scenario.expected.length > 0) yield* Deferred.await(lookedUp);
     assert.deepEqual(refreshed, [...scenario.expected]);
   }).pipe(Effect.provide(layer));
@@ -173,6 +185,7 @@ it.effect("returns from the post-turn refresh without waiting for the PR lookup"
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
@@ -223,6 +236,7 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
   const layer = RunFinalization.layerObserver.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerNoProject,
         Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
         Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: () => Effect.void,
@@ -265,119 +279,137 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
   }).pipe(Effect.provide(layer));
 });
 
-it.effect.each(
-  (
-    [
-      {
-        label: "follows a branch the agent renamed in the thread's own worktree",
-        checkedOut: "feat/renamed",
-        worktreePath: "/repo",
-        otherWorktrees: [],
-        expected: ["feat/renamed"],
-      },
-      {
-        label: "keeps the recorded branch while the worktree is on its temporary branch",
-        checkedOut: "t3/abcd1234",
-        worktreePath: "/repo",
-        otherWorktrees: [],
-        expected: [],
-      },
-      {
-        label: "preserves a temporary recorded branch during worktree adoption",
-        branch: "t3/abcd1234",
-        checkedOut: "feat/renamed",
-        worktreePath: "/repo",
-        otherWorktrees: [],
-        expected: [],
-      },
-      {
-        label: "keeps the recorded branch when the checkout is not the thread's worktree",
-        checkedOut: "feat/renamed",
-        worktreePath: "/elsewhere",
-        otherWorktrees: [],
-        expected: [],
-      },
-      {
-        label: "keeps the recorded branch in a worktree another thread shares",
-        checkedOut: "feat/renamed",
-        worktreePath: "/repo",
-        otherWorktrees: ["/repo"],
-        expected: [],
-      },
-    ] as const
-  ).map((scenario) => [scenario.label, scenario] as const),
-)("%s", ([, scenario]) => {
-  const threadId = ThreadId.make("thread-branch-drift");
-  const runId = RunId.make("run-branch-drift");
-  const scopeId = CheckpointScopeId.make("scope-branch-drift");
-  const followed: string[] = [];
-  const updates: Array<{
-    branch: unknown;
-    expectedBranch: unknown;
-    expectedWorktreePath: unknown;
-  }> = [];
-  const layer = RunFinalization.layer.pipe(
-    Layer.provide(
+const identityProjectId = ProjectId.make("project-identity-refresh");
+const identityThreadId = ThreadId.make("thread-identity-refresh");
+const identityRunId = RunId.make("completed-run");
+
+const layerIdentityRefresh = <R>(
+  workspaceRoot: string,
+  resolver: Layer.Layer<RepositoryIdentityResolver.RepositoryIdentityResolver, never, R>,
+) =>
+  RunFinalization.layerObserver.pipe(
+    Layer.provideMerge(
       Layer.mergeAll(
-        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: () => Effect.void }),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getCheckpointContext: () =>
+        Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make()).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              resolver,
+              Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+                invalidate: () => Effect.void,
+                resolvePath: () => Effect.succeed(null),
+              }),
+            ),
+          ),
+        ),
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(PullRequestService.PullRequestService)({ refreshAfterTurn: () => Effect.void }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: () =>
             Effect.succeed({
-              runs: [],
-              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
-              checkpoints: [],
+              isRepo: true,
+              hasPrimaryRemote: true,
+              isDefaultRef: true,
+              refName: "main",
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
             }),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () =>
             Effect.succeed({
-              id: threadId,
-              branch: "branch" in scenario ? scenario.branch : "fix/original",
-              worktreePath: scenario.worktreePath,
+              id: identityThreadId,
+              projectId: identityProjectId,
+              branch: "main",
+              activeRunId: null,
             } as OrchestrationV2ThreadShell),
-          getThreadWorktreePaths: () =>
-            Effect.succeed([
-              { threadId, worktreePath: scenario.worktreePath },
-              ...scenario.otherWorktrees.map((worktreePath) => ({
-                threadId: ThreadId.make("thread-other"),
-                worktreePath,
-              })),
-            ]),
         }),
-        Layer.mock(ThreadManagement.ThreadManagementService)({
-          dispatch: (command) =>
-            Effect.sync(() => {
-              assert.equal(command.type, "thread.metadata.update");
-              if (command.type === "thread.metadata.update") {
-                updates.push({
-                  branch: command.branch,
-                  expectedBranch: command.expectedBranch,
-                  expectedWorktreePath: command.expectedWorktreePath,
-                });
-              }
-              return {} as never;
-            }),
-        }),
-        Layer.succeed(RunFinalization.RunFinalizationObserver, {
-          refresh: ({ followBranch }) =>
-            Effect.gen(function* () {
-              if (followBranch) yield* followBranch(scenario.checkedOut);
-              followed.push(scenario.checkedOut);
-            }),
-          refreshAfterTurn: () => Effect.void,
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeedSome({ id: identityProjectId, workspaceRoot } as Project),
         }),
       ),
     ),
   );
-  return Effect.gen(function* () {
-    const service = yield* RunFinalization.RunFinalizationService;
-    yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(
-      updates,
-      scenario.expected.map((branch) => ({
-        branch,
-        expectedBranch: "fix/original",
-        expectedWorktreePath: "/repo",
-      })),
+
+it.effect("resolves the identity of a project whose remote was added during the turn", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const processRunner = yield* ProcessRunner.ProcessRunner;
+    const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-run-finalization-identity-test-",
+    });
+    const git = (args: ReadonlyArray<string>) =>
+      processRunner.run({ command: "git", args: ["-C", workspaceRoot, ...args] });
+    yield* git(["init"]);
+
+    yield* Effect.gen(function* () {
+      const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
+      // A shell read before the turn caches the folder as having no repository.
+      assert.isNull(yield* enrichment.readRepositoryIdentity(workspaceRoot));
+
+      yield* git(["remote", "add", "origin", "https://github.com/t3-triage/example-29929.git"]);
+      const changes = yield* enrichment.subscribeChanges;
+      const observer = yield* RunFinalization.RunFinalizationObserver;
+      yield* observer.refresh({
+        cwd: workspaceRoot,
+        threadId: identityThreadId,
+        runId: identityRunId,
+      });
+
+      const change = yield* PubSub.take(changes);
+      assert.strictEqual(
+        change.enrichment.repositoryIdentity?.locator.remoteUrl,
+        "https://github.com/t3-triage/example-29929.git",
+        "the project's repository identity is still null after the turn added a remote",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerIdentityRefresh(workspaceRoot, RepositoryIdentityResolver.layer)),
     );
-    assert.deepEqual(followed, [scenario.checkedOut]);
-  }).pipe(Effect.provide(layer));
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+  ),
+);
+
+it.effect("returns from the post-turn refresh while the identity resolver is still running", () => {
+  const workspaceRoot = "/repo-stubbed-identity";
+  const identity: RepositoryIdentity = {
+    canonicalKey: "example.test/stubbed-identity",
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: "https://example.test/stubbed-identity.git",
+    },
+  };
+  const releaseResolver = Deferred.makeUnsafe<void>();
+  let remoteAdded = false;
+  const resolver = Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+    resolve: (_cwd, options) =>
+      options?.refresh
+        ? Deferred.await(releaseResolver).pipe(
+            Effect.map(() => {
+              remoteAdded = true;
+              return identity;
+            }),
+          )
+        : Effect.sync(() => (remoteAdded ? identity : null)),
+  });
+  return Effect.gen(function* () {
+    const enrichment = yield* ProjectEnrichment.ProjectEnrichmentService;
+    assert.isNull(yield* enrichment.readRepositoryIdentity(workspaceRoot));
+    const changes = yield* enrichment.subscribeChanges;
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    const refresh = yield* observer
+      .refresh({ cwd: workspaceRoot, threadId: identityThreadId, runId: identityRunId })
+      .pipe(Effect.timeoutOption("1 minute"), Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("1 minute");
+    assert.isTrue(
+      Option.isSome(yield* Fiber.join(refresh)),
+      "turn finalization waited on the identity resolver, blocking the thread's next turn",
+    );
+
+    yield* Deferred.succeed(releaseResolver, undefined);
+    const change = yield* PubSub.take(changes);
+    assert.strictEqual(change.enrichment.repositoryIdentity?.canonicalKey, identity.canonicalKey);
+  }).pipe(Effect.scoped, Effect.provide(layerIdentityRefresh(workspaceRoot, resolver)));
 });

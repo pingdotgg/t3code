@@ -143,7 +143,10 @@ export const makeDiscovery = Effect.gen(function* () {
         return fj;
       }
       const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
-      return tea.status === "available" || fj.status === "missing" ? tea : fj;
+      // Discovery keeps the install hint only for an absent executable; a slow or broken fj
+      // explains itself better than tea's install advice.
+      const fjAbsent = fj.status === "missing" && fj.installHint === discovery.installHint;
+      return tea.status === "available" || fjAbsent ? tea : fj;
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {
@@ -343,13 +346,13 @@ export const make = Effect.gen(function* () {
             Schema.Array(ForgejoPullRequestSchema),
           );
           for (const item of items) {
+            const normalized = toForgejoChangeRequest(item);
             if (
-              item.head.ref !== branch ||
+              normalized.headRefName !== branch ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
               (source?.owner && item.head.repo?.owner.login !== source.owner)
             )
               continue;
-            const normalized = toForgejoChangeRequest(item);
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
           if (items.length === 0) break;

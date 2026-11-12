@@ -47,9 +47,12 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-const MIN_MAIN_WINDOW_SIZE = {
-  width: 840,
-  height: 620,
+// Fits half and third tiles of common scaled displays (down to 480x432 DIP) on
+// Wayland, where Electron's client-side frame adds 32x42 DIP to the enforced
+// minimum. The web layout already handles phone widths.
+export const MIN_MAIN_WINDOW_SIZE = {
+  width: 400,
+  height: 360,
 } as const;
 export const DesktopWindowBoundsSchema = Schema.Struct({
   x: Schema.Int,
@@ -442,26 +445,28 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
         }),
     ),
   );
-  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopSettingsWriteError({
-          operation: "write-temporary-file",
-          path: tempPath,
-          cause,
-        }),
-    ),
-  );
-  yield* input.fileSystem.rename(tempPath, targetPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopSettingsWriteError({
-          operation: "replace-settings-file",
-          path: input.settingsPath,
-          cause,
-        }),
-    ),
-  );
+  yield* Effect.gen(function* () {
+    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopSettingsWriteError({
+            operation: "write-temporary-file",
+            path: tempPath,
+            cause,
+          }),
+      ),
+    );
+    yield* input.fileSystem.rename(tempPath, targetPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopSettingsWriteError({
+            operation: "replace-settings-file",
+            path: input.settingsPath,
+            cause,
+          }),
+      ),
+    );
+  }).pipe(Effect.ensuring(input.fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)));
 });
 
 /** @public */
