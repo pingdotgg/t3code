@@ -94,12 +94,18 @@ function modelsFromDiscovery(
     | Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">
     | undefined,
   customModels: ReadonlyArray<string>,
+  previousModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
   const capabilities =
     discovery === undefined || discovery.configOptions.length === 0
       ? EMPTY_CAPABILITIES
       : createModelCapabilities({ optionDescriptors: discovery.configOptions });
+  // ACP configOptions describe only the session's current model.
+  const capabilitiesFor = (slug: string) =>
+    slug === discovery?.currentModelId
+      ? capabilities
+      : (previousModels.find((model) => model.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES);
   const builtInModels: ReadonlyArray<ServerProviderModel> =
     discovered.length === 0
       ? [
@@ -116,7 +122,7 @@ function modelsFromDiscovery(
           name: model.name,
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities,
+          capabilities: capabilitiesFor(model.id),
         }));
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
@@ -284,7 +290,7 @@ export function applyAcpRegistryLiveConfiguration(
     models:
       configuration.models.length === 0 && configuration.configOptions.length === 0
         ? provider.models
-        : modelsFromDiscovery(discovery, customModels),
+        : modelsFromDiscovery(discovery, customModels, probedModels),
   };
 }
 

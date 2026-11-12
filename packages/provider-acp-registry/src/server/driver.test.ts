@@ -222,24 +222,38 @@ describe("acpRegistrySnapshotReadiness", () => {
     ]);
 
     // Session configOptions describe the current model only.
-    const twoModels = applyAcpRegistryLiveConfiguration(
+    const twoModelList = [
+      { id: "glm", name: "GLM", description: null },
+      { id: "opus", name: "Opus", description: null },
+    ];
+    const afterGlm = applyAcpRegistryLiveConfiguration(
       provider,
-      {
-        models: [
-          { id: "glm", name: "GLM", description: null },
-          { id: "opus", name: "Opus", description: null },
-        ],
-        currentModelId: "glm",
-        configOptions: liveOptions,
-      },
+      { models: twoModelList, currentModelId: "glm", configOptions: liveOptions },
       [],
-    ).models;
+    );
+    const twoModels = afterGlm.models;
     expect(twoModels.find((model) => model.slug === "glm")).toMatchObject({
       capabilities: { optionDescriptors: [{ id: "effort" }] },
     });
     expect(
       twoModels.find((model) => model.slug === "opus")?.capabilities?.optionDescriptors ?? [],
     ).toEqual([]);
+    // A later session on another model keeps the options learned for this one.
+    const afterOpus = applyAcpRegistryLiveConfiguration(
+      afterGlm,
+      {
+        models: twoModelList,
+        currentModelId: "opus",
+        configOptions: [{ ...liveOptions[0]!, id: "thinking" }],
+      },
+      [],
+    ).models;
+    expect(afterOpus.find((model) => model.slug === "glm")).toMatchObject({
+      capabilities: { optionDescriptors: [{ id: "effort" }] },
+    });
+    expect(afterOpus.find((model) => model.slug === "opus")).toMatchObject({
+      capabilities: { optionDescriptors: [{ id: "thinking" }] },
+    });
   });
 
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
