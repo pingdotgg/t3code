@@ -282,6 +282,40 @@ describe("GuestPage", () => {
     await expect.element(screen.getByText("notes.txt")).not.toBeInTheDocument();
   });
 
+  it("does not send on the Enter that confirms an IME candidate", async () => {
+    using _page = visit(`/guest?share=${SHARE_ID}`);
+    using fetchSpy = vi
+      .spyOn(window, "fetch")
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    using _stream = vi
+      .spyOn(window, "EventSource")
+      .mockImplementation(fakeEventSource(opening([run("run-1", 1, "completed")], items)) as never);
+    await using screen = await render(<GuestPage />);
+    const textbox = screen.getByRole("textbox", { name: "Message" });
+    await userEvent.fill(textbox, "にほん");
+
+    // Safari ends the composition before the confirming Enter, so only keyCode 229 marks it.
+    const confirm = new KeyboardEvent("keydown", {
+      key: "Enter",
+      keyCode: 229,
+      isComposing: false,
+      bubbles: true,
+      cancelable: true,
+    });
+    textbox.element().dispatchEvent(confirm);
+    expect(confirm.defaultPrevented).toBe(false);
+    await expect.element(textbox).toHaveValue("にほん");
+
+    await userEvent.keyboard("{Enter}");
+    await expect.element(textbox).toHaveValue("");
+    const sends = fetchSpy.mock.calls.filter(
+      ([url]) => url === `/api/guest/messages?share=${SHARE_ID}`,
+    );
+    expect(sends.map(([, init]) => init && (init.body as FormData).get("text"))).toEqual([
+      "にほん",
+    ]);
+  });
+
   it("follows the end as replies stream, and shows the guest's own message even after they scrolled up", async () => {
     using _page = visit(`/guest?share=${SHARE_ID}`);
     using _session = vi
