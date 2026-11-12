@@ -2,6 +2,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
+  DATABASE_MIGRATION_PROGRESS_MESSAGE,
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
   DATABASE_MIGRATIONS_STARTED_MESSAGE,
 } from "@t3tools/shared/databaseMigrationLog";
@@ -266,7 +267,7 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  // The desktop waits past its readiness budget while this is the server's last output.
+  // The desktop waits past its readiness budget until the finished line follows this one.
   if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
@@ -294,7 +295,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
   for (const [index, [id, name]] of pending.entries()) {
     if (latestRecordedId > 0) {
-      yield* Effect.log("Upgrading database").pipe(
+      yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(
         Effect.annotateLogs({
           migration: `${id}_${name}`,
           progress: `${index + 1} of ${pending.length}`,

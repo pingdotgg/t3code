@@ -6,6 +6,7 @@ import {
   DesktopTelemetryControlMessage,
 } from "@t3tools/contracts";
 import {
+  DATABASE_MIGRATION_PROGRESS_MESSAGE,
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
   DATABASE_MIGRATIONS_STARTED_MESSAGE,
 } from "@t3tools/shared/databaseMigrationLog";
@@ -730,7 +731,13 @@ describe("DesktopBackendManager", () => {
         yield* startInstance(
           migratingStatus,
           Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
-          `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n`,
+          // Enough progress lines that the start line scrolls out of the output tail.
+          `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n` +
+            Array.from(
+              { length: 80 },
+              (_, index) =>
+                `INFO ${DATABASE_MIGRATION_PROGRESS_MESSAGE} migration=${index}_Migration progress="${index + 1} of 80"\n`,
+            ).join(""),
         );
         yield* TestClock.adjust(Duration.minutes(10));
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
