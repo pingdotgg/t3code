@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Message } from "capnp-es";
+import { FUSE_CONTAINER_PRIVILEGES } from "../../Docker.ts";
 import * as WorkerdConfig from "../../workerd/Config.ts";
 import { Config as CapnpConfig } from "../../workerd/internal/config.capnp.ts";
 import { serializeConfig } from "../../workerd/internal/config.serialize.ts";
@@ -28,8 +29,7 @@ describe("workerd/Config", () => {
               modules: [
                 {
                   name: "main.js",
-                  esModule:
-                    "export default { fetch: () => new Response('ok') };",
+                  esModule: "export default { fetch: () => new Response('ok') };",
                 },
               ],
             },
@@ -68,9 +68,7 @@ describe("workerd/Config", () => {
                 { name: "main.js", esModule: "export default {}" },
               ],
               bindings: [{ name: "EVAL", unsafeEval: WorkerdConfig.kVoid }],
-              durableObjectNamespaces: [
-                { className: "Foo", ephemeralLocal: WorkerdConfig.kVoid },
-              ],
+              durableObjectNamespaces: [{ className: "Foo", ephemeralLocal: WorkerdConfig.kVoid }],
             },
           },
         ],
@@ -97,8 +95,7 @@ describe("workerd/Config", () => {
               containerEngine: {
                 localDocker: {
                   socketPath: "unix:///var/run/docker.sock",
-                  containerEgressInterceptorImage:
-                    "cloudflare/proxy-everything:latest",
+                  containerEgressInterceptorImage: "cloudflare/proxy-everything:latest",
                 },
               },
             },
@@ -172,8 +169,7 @@ describe("workerd/Config", () => {
               containerEngine: {
                 localDocker: {
                   socketPath: "unix:///var/run/docker.sock",
-                  containerEgressInterceptorImage:
-                    "cloudflare/proxy-everything:test",
+                  containerEgressInterceptorImage: "cloudflare/proxy-everything:test",
                 },
               },
             },
@@ -185,18 +181,62 @@ describe("workerd/Config", () => {
       const decoded = new Message(buffer, false).getRoot(CapnpConfig);
       const worker = decoded.services.get(0).worker;
 
-      expect(worker.containerEngine.localDocker.socketPath).toBe(
-        "unix:///var/run/docker.sock",
+      expect(worker.containerEngine.localDocker.socketPath).toBe("unix:///var/run/docker.sock");
+      expect(worker.containerEngine.localDocker.containerEgressInterceptorImage).toBe(
+        "cloudflare/proxy-everything:test",
       );
-      expect(
-        worker.containerEngine.localDocker.containerEgressInterceptorImage,
-      ).toBe("cloudflare/proxy-everything:test");
 
       const namespace = worker.durableObjectNamespaces.get(0);
       expect(namespace.className).toBe("MyContainer");
-      expect(namespace.container.imageName).toBe(
-        "cloudflare-dev/mycontainer:abc12345",
-      );
+      expect(namespace.container.imageName).toBe("cloudflare-dev/mycontainer:abc12345");
+    });
+
+    it("round-trips container privileges for both image shapes", () => {
+      const privileges = FUSE_CONTAINER_PRIVILEGES;
+      const config: WorkerdConfig.Config = {
+        services: [
+          {
+            name: "user",
+            worker: {
+              compatibilityDate: "2026-03-10",
+              modules: [{ name: "main.js", esModule: "export default {}" }],
+              durableObjectNamespaces: [
+                {
+                  className: "Single",
+                  uniqueKey: "user-Single",
+                  container: { imageName: "alchemy-dev/single:abc12345", privileges },
+                },
+                {
+                  className: "Named",
+                  uniqueKey: "user-Named",
+                  container: {
+                    images: [{ name: "main", image: "alchemy-dev/named:abc12345" }],
+                    privileges,
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      };
+
+      const worker = new Message(serializeConfig(config), false)
+        .getRoot(CapnpConfig)
+        .services.get(0).worker;
+      for (const index of [0, 1]) {
+        const decoded = worker.durableObjectNamespaces.get(index).container.privileges;
+        expect(decoded.capabilities.toArray()).toEqual(["SYS_ADMIN"]);
+        expect(
+          decoded.devices.toArray().map((device) => ({
+            pathOnHost: device.pathOnHost,
+            pathInContainer: device.pathInContainer,
+            cgroupPermissions: device.cgroupPermissions,
+          })),
+        ).toEqual([
+          { pathOnHost: "/dev/fuse", pathInContainer: "/dev/fuse", cgroupPermissions: "rwm" },
+        ]);
+        expect(decoded.securityOpt.toArray()).toEqual(["apparmor:unconfined"]);
+      }
     });
 
     it("throws a useful error when a key does not exist on the capnp struct", () => {

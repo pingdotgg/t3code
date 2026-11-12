@@ -3,10 +3,11 @@ import {
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  settingsSecretLiteral,
 } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -30,10 +31,12 @@ const OPENCODE_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 
-class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
-  readonly cause?: unknown;
-  readonly detail: string;
-}> {}
+class OpenCodeProbeError extends Schema.TaggedError<OpenCodeProbeError>()("OpenCodeProbeError", {
+  cause: Schema.optional(Schema.Defect()),
+  detail: Schema.String,
+}) {}
+
+const isOpenCodeProbeError = Schema.is(OpenCodeProbeError);
 
 function normalizeProbeMessage(message: string): string | undefined {
   const trimmed = message.trim();
@@ -50,7 +53,7 @@ function normalizeProbeMessage(message: string): string | undefined {
 }
 
 function normalizedErrorMessage(cause: unknown): string | undefined {
-  if (cause instanceof OpenCodeProbeError) {
+  if (isOpenCodeProbeError(cause)) {
     return normalizeProbeMessage(cause.detail);
   }
 
@@ -231,9 +234,7 @@ function openCodeCapabilitiesForModel(input: {
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
-  const rawVariantValues = Object.keys(input.model.variants ?? {});
-  const variantValues =
-    rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
+  const variantValues = Object.keys(input.model.variants ?? {});
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -526,15 +527,20 @@ export interface OpenCode2Workspace {
 }
 
 /**
- * A server scans a directory it has not served yet in the background: its first read lists
- * no commands at all (not even the built-ins), and `command.updated` plus `skill.updated`
- * for the directory end the scan. `scanned` must be listening before `read` runs, since
- * the read is what starts the scan.
+ * Reading a location the server has not loaded boots its scan, and only reads after the scan's
+ * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`. A
+ * loaded location listing no commands is still scanning. OpenCode exposes no readiness signal,
+ * so one another caller booted moments earlier can still read partial.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
-  function* <E>(read: Effect.Effect<OpenCode2Workspace, E>, scanned: Effect.Effect<void>) {
+  function* <E>(
+    read: Effect.Effect<OpenCode2Workspace, E>,
+    scanned: Effect.Effect<void>,
+    loaded: Effect.Effect<boolean>,
+  ) {
+    const wasLoaded = yield* loaded;
     const first = yield* read;
-    if (first.commands.length > 0) return first;
+    if (wasLoaded && first.commands.length > 0) return first;
     yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
     return yield* read;
   },
@@ -799,8 +805,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           binaryPath: openCodeSettings.binaryPath,
           directory: cwd,
           serverUrl: openCodeSettings.serverUrl,
-          ...(openCodeSettings.serverPassword
-            ? { serverPassword: openCodeSettings.serverPassword }
+          ...(settingsSecretLiteral(openCodeSettings.serverPassword)
+            ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
             : {}),
         })
         .pipe(Effect.flatMap(loadInventory), Effect.scoped)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cloneUrlForProtocol, cloneUrlProtocol } from "./cloneUrl.ts";
+import { cloneUrlForProtocol, cloneUrlProtocol, cloneUrlRepositoryPath } from "./cloneUrl.ts";
 
 describe("cloneUrlForProtocol", () => {
   it.each([
@@ -117,6 +117,18 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("ssh://git@gitlab.com/group/sub/repo.git", "https")).toBe(
       "https://gitlab.com/group/sub/repo.git",
     );
+    expect(cloneUrlForProtocol("git@[2001:db8::1]:org/repo.git", "https")).toBe(
+      "https://[2001:db8::1]/org/repo.git",
+    );
+    expect(cloneUrlForProtocol("[2001:db8::1]:org/repo.git", "https")).toBe(
+      "https://[2001:db8::1]/org/repo.git",
+    );
+    expect(cloneUrlForProtocol("ssh://git@[2001:db8::1]/org/repo.git", "https")).toBe(
+      "https://[2001:db8::1]/org/repo.git",
+    );
+    expect(cloneUrlForProtocol("https://[2001:db8::1]/org/repo.git", "ssh")).toBe(
+      "git@[2001:db8::1]:org/repo.git",
+    );
   });
 
   it("keeps the URL as is for its own protocol and drops HTTPS credentials on switch", () => {
@@ -134,7 +146,44 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "https")).toBe(
       "https://host.example:8443/a/b.git",
     );
+    expect(cloneUrlForProtocol("ssh://git@[2001:db8::1]:2222/a/b.git", "https")).toBeNull();
+    expect(cloneUrlForProtocol("ssh://git@[2001:db8::1]:2222/a/b.git", "ssh")).toBe(
+      "ssh://git@[2001:db8::1]:2222/a/b.git",
+    );
+    expect(cloneUrlForProtocol("https://[2001:db8::1]:8443/a/b.git", "ssh")).toBeNull();
+    expect(cloneUrlForProtocol("https://[2001:db8::1]:8443/a/b.git", "https")).toBe(
+      "https://[2001:db8::1]:8443/a/b.git",
+    );
+    expect(cloneUrlForProtocol("git@host.example:/srv/repo.git", "https")).toBeNull();
+    expect(cloneUrlForProtocol("git@[2001:db8::1]:/srv/repo.git", "https")).toBeNull();
+    expect(cloneUrlForProtocol("[2001:db8::1]:/srv/repo.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("/srv/git/repo.git", "https")).toBeNull();
     expect(cloneUrlProtocol("file:///srv/git/repo.git")).toBeNull();
+  });
+});
+
+describe("cloneUrlRepositoryPath", () => {
+  it("rejects Windows device names and trailing dots or spaces in every folder", () => {
+    for (const segment of [
+      "CON",
+      "nul.txt",
+      "COM1",
+      "LPT0",
+      "com¹",
+      "CONIN$",
+      "conout$",
+      "aux .txt",
+      "repo.",
+      "repo ",
+    ]) {
+      expect(cloneUrlRepositoryPath(`https://github.com/${segment}/repo.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`https://${segment}/owner/repo.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`https://github.com/owner/${segment}.git`)).toBeNull();
+    }
+    expect(cloneUrlRepositoryPath("https://github.com/acme/repo.git")).toBe("github.com/acme/repo");
+    expect(cloneUrlRepositoryPath("ssh://git@gitlab.com:2222/group/sub/repo.git")).toBe(
+      "gitlab.com/group/sub/repo",
+    );
+    expect(cloneUrlRepositoryPath("C:/repos/project.git")).toBeNull();
   });
 });
