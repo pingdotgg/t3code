@@ -11,7 +11,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { buildSshChildEnvironment, type SshAuthOptions } from "./auth.ts";
+import { buildSshChildEnvironment, SshAuthUrlOpener, type SshAuthOptions } from "./auth.ts";
 import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 
 const DEFAULT_SSH_COMMAND_TIMEOUT_MS = 60_000;
@@ -135,6 +135,40 @@ const collectProcessOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.E
       (acc, chunk) => acc + chunk,
     ),
   );
+
+// Tailscale SSH check mode prints this approval link to stderr and holds the
+// session open until the user approves it in a browser. The lookahead skips a
+// link cut short at a chunk boundary.
+const TAILSCALE_CHECK_URL = /https:\/\/login\.tailscale\.com\/a\/[\w-]+(?=\s)/u;
+const MAX_SCANNED_LINE_LENGTH = 1_024;
+
+const findTailscaleCheckUrl = (stderr: string): string | null =>
+  TAILSCALE_CHECK_URL.exec(stderr)?.[0] ?? null;
+
+const collectStderrOpeningAuthUrl = <E>(
+  stream: Stream.Stream<Uint8Array, E>,
+  open: (url: string) => Effect.Effect<void>,
+): Effect.Effect<string, E> => {
+  let stderr = "";
+  let unscanned = "";
+  let opened = false;
+  return stream.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) => {
+      stderr += chunk;
+      if (opened) return Effect.void;
+      const text = unscanned + chunk;
+      const url = findTailscaleCheckUrl(text);
+      if (url === null) {
+        unscanned = text.slice(text.lastIndexOf("\n") + 1).slice(-MAX_SCANNED_LINE_LENGTH);
+        return Effect.void;
+      }
+      opened = true;
+      return open(url);
+    }),
+    Effect.map(() => stderr),
+  );
+};
 
 function redactSshErrorOutput(output: string, keepTail = false): string {
   const redacted = output.replace(
@@ -285,10 +319,11 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
       ),
     );
 
+  const authUrlOpener = yield* SshAuthUrlOpener;
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
       collectProcessOutput(child.stdout),
-      collectProcessOutput(child.stderr),
+      collectStderrOpeningAuthUrl(child.stderr, authUrlOpener.open),
       child.exitCode.pipe(Effect.map(Number)),
     ],
     { concurrency: "unbounded" },
