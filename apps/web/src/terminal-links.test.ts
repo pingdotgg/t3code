@@ -127,6 +127,9 @@ describe("extractTerminalLinks", () => {
     "src/𐐀.ts:12",
     "src/app/[id]/page.tsx:3:10",
     "src/routes/(app)/+page.svelte:12:4",
+    "src/routes/(app)/+page@.svelte:12:3",
+    "src/contact@support.vue:12:3",
+    String.raw`src\contact@support.ts:12:3`,
     "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
     "app/routes/posts.$id.tsx:5",
   ])("keeps the complete relative path %s", (text) => {

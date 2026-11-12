@@ -47,7 +47,8 @@ const REQUEST_ROUTE_PATTERN =
 // a diff's `+` or `-` may lead, and the lookbehind keeps runs from being rescanned at every suffix.
 const SCHEME_URL_PATTERN = /(?<![A-Za-z\d+.-])[+-]?[A-Za-z][A-Za-z\d+.-]+:\/\/[^\s"'`<>]+/gu;
 // Nor is the tail of an SCP-style Git remote such as `git@github.com:acme/widgets.git`.
-const SCP_REMOTE_PATTERN = /(?<![\w.@-])[\w.-]+@[\w.-]+:[^\s"'`<>]+/gu;
+// It cannot start inside a path segment, so `src/+page@.svelte:12` stays a path.
+const SCP_REMOTE_PATTERN = /(?<![\w.@+/\\-])[\w.-]+@[\w.-]+:[^\s"'`<>]+/gu;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
