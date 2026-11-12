@@ -3378,6 +3378,11 @@ export const OrchestrationV2Command = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
+    /**
+     * Addressable consult: deliver the message without spawning a fresh
+     * `app_owned` follow-up task on a finished delegated child.
+     */
+    consult: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,

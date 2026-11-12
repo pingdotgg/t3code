@@ -461,7 +461,22 @@ Sends a message to any ordinary or delegated thread in the environment:
 
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
-idempotent retries.
+idempotent retries. A send to a finished delegated child normally starts a
+fresh owned task and returns `taskId`. Pass `consult: true` to keep it a
+message only (no owned follow-up), matching addressable messaging rather than
+task creation.
+
+### `t3_thread_ask`
+
+Asks an existing thread a question and waits for that turn's reply. It queues a
+consult message (`consult: true`, delivery `queue`/`started`), waits for the
+run, and returns `reply` text. It does not create a child thread or an
+`app_owned` task. Prefer this over `delegate_task` when a specialist thread can
+answer without taking owned work. On timeout, retry with the same
+`clientRequestId`. To cancel: while the ask is still queued, `t3_queue` with
+`action: "cancel"` and `queuedRunId` set to the ask's `runId`; once that turn
+is active, `t3_thread_interrupt` with the same `runId` (interrupt does not
+cancel a queued run).
 
 ### `t3_thread_wait`
 

@@ -2,6 +2,8 @@ import {
   type EnvironmentId,
   OrchestratorMcpFailure,
   type OrchestratorMcpEnvironmentLinksResult,
+  OrchestratorMcpThreadAskInput,
+  OrchestratorMcpThreadAskResult,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadReadInput,
@@ -11,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -95,6 +98,7 @@ const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
   const links = yield* PeerLinks.PeerLinks;
   const crypto = yield* Digest.Digest;
+  const random = yield* SecureRandom.SecureRandom;
   const threads = yield* ThreadManagement.ThreadManagementService;
 
   /**
@@ -211,6 +215,35 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // Same idle-drop limit as wait: re-invoke ask with a stable clientRequestId so
+  // the send receipts replay and each piece only waits the next chunk.
+  const askThread = Effect.fn("PeerForwarding.askThread")(function* (
+    scope: Scope,
+    environmentId: EnvironmentId,
+    input: OrchestratorMcpThreadAskInput,
+  ) {
+    let remaining = Math.min(
+      MAX_WAIT_TIMEOUT_MS,
+      Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+    );
+    // Stable across chunks so the remote send receipts replay; forward() scopes it.
+    const clientRequestId =
+      input.clientRequestId ?? `ask:${input.threadId}:${yield* random.uuidV4()}`;
+    while (true) {
+      const chunk = Math.min(remaining, FORWARDED_WAIT_CHUNK_MS);
+      const result = yield* forward<OrchestratorMcpThreadAskResult>(
+        scope,
+        "t3_thread_ask",
+        OrchestratorMcpThreadAskInput,
+        OrchestratorMcpThreadAskResult,
+        environmentId,
+        { ...input, timeoutMs: chunk, clientRequestId },
+      );
+      remaining -= chunk;
+      if (!result.timedOut || remaining <= 0) return result;
+    }
+  });
+
   // While the beta is off, agents start nothing over links. Tasks already running there keep
   // following through readThread, waitForThread and interruptThread, so they still finish.
   const requireEnabled = links.enabled.pipe(
@@ -227,7 +260,20 @@ const make = Effect.gen(function* () {
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+      : tool.name === "t3_thread_ask"
+        ? (askThread(
+            scope,
+            environmentId,
+            params as OrchestratorMcpThreadAskInput,
+          ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
+        : forward(
+            scope,
+            tool.name,
+            tool.parametersSchema,
+            tool.successSchema,
+            environmentId,
+            params,
+          );
     return Effect.andThen(requireEnabled, forwarded);
   };
 

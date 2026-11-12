@@ -149,6 +149,8 @@ export interface ThreadManagementSendInput {
   readonly mode: ThreadManagementSendMode;
   /** Start a new provider session; the orchestrator queues it instead of steering. */
   readonly freshContext?: boolean;
+  /** Skip owned follow-up task binding on a finished delegated child. */
+  readonly consult?: boolean;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -870,6 +872,7 @@ const make = Effect.gen(function* () {
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),
+      ...(input.consult === true ? { consult: true } : {}),
       dispatchMode,
       ...(mode === "auto" ? { deliveryIntent: "auto" } : {}),
       createdBy: input.createdBy,
