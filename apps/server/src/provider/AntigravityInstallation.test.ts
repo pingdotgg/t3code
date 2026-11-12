@@ -208,15 +208,18 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
         Effect.suspend(() => {
           requests.push(request.url);
           if (request.url === ACP_REGISTRY_URL) {
-            return Effect.succeed(HttpClientResponse.fromWeb(
-              request,
-              options.registry === undefined
-                ? new Response(null, { status: 503 })
-                : Response.json(options.registry),
-            ));
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                options.registry === undefined
+                  ? new Response(null, { status: 503 })
+                  : Response.json(options.registry),
+              ),
+            );
           }
           const served = options.archives?.[request.url];
-          if (served) return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(served)));
+          if (served)
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(served)));
           if (options.connectTimeout) {
             return Effect.fail(
               new HttpClientError.HttpClientError({
@@ -827,8 +830,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         });
 
         const { installation: windows } = yield* makeHarness({ baseDir, platform: "win32" });
-        for (const name of ["agy.EXE", "agy.cmd"]) {
-          const windowsDirectory = path.join(baseDir, `windows-${name}-${name === name.toLowerCase() ? "lower" : "upper"}`);
+        for (const name of ["agy.EXE", "agy.CMD"]) {
+          const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
           expect(yield* windows.resolve("agy", { PATH: windowsDirectory })).toMatchObject({
