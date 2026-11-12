@@ -128,6 +128,7 @@ function PairingForm({
     }
 
     setScannerLocked(true);
+    let scanned: { readonly host: string; readonly code: string } | undefined;
 
     try {
       const pairingUrl = extractPairingUrlFromQrPayload(data);
@@ -137,6 +138,7 @@ function PairingForm({
       onChangeConnectionPairingUrl(pairingUrl);
       setScanComplete(true);
       setScannerLocked(false);
+      scanned = { host, code };
     } catch (error) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Dialog.alert(
@@ -147,10 +149,13 @@ function PairingForm({
         setScannerLocked(false);
       }, 600);
     }
+    // The parked camera reads as done, so a complete code pairs without the header checkmark.
+    if (scanned?.host && scanned.code && !connecting) {
+      void handleSubmit(buildPairingUrl(scanned.host, scanned.code));
+    }
   };
 
-  const handleSubmit = async () => {
-    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+  const handleSubmit = async (pairingUrl = buildPairingUrl(hostInput, codeInput)) => {
     setOwnAttempt(true);
     setSubmitError(null);
     setIsSubmitting(true);
