@@ -65,6 +65,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
+// Forge CLIs can take seconds per call; cap them together so git, checkpoints included, keeps slots.
+const NON_GIT_PROCESS_CONCURRENCY = VCS_PROCESS_CONCURRENCY / 2;
 
 /** Shown to users when a Git command fails because another process holds the index lock. */
 export const GIT_INDEX_LOCKED_DETAIL =
@@ -132,6 +134,29 @@ export const gitConfigEnv = (
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
+const REPOSITORY_SELECTORS = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+]);
+
+/**
+ * Unsets repository selectors the server inherited, such as a Git hook's `GIT_DIR`, so Git finds
+ * the repository from cwd. Spread it before a command's own env, which may still set them.
+ */
+export const unsetInheritedRepositoryEnv = (
+  inherited: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.keys(inherited)
+      .filter((name) => REPOSITORY_SELECTORS.has(platform === "win32" ? name.toUpperCase() : name))
+      .map((name) => [name, undefined]),
+  );
+
 const classifyNonZeroExit = (
   stderr: string,
   classifyFailure: VcsProcessInput["classifyFailure"],
@@ -183,6 +208,7 @@ export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
+  const nonGitProcesses = yield* Semaphore.make(NON_GIT_PROCESS_CONCURRENCY);
   const keyedProcesses = new Map<string, Semaphore.Semaphore>();
   const keyedPermit = (concurrency: NonNullable<VcsProcessInput["concurrency"]>) => {
     let semaphore = keyedProcesses.get(concurrency.key);
@@ -207,6 +233,12 @@ export const make = Effect.gen(function* () {
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
         env: {
+          ...(input.command === "git"
+            ? unsetInheritedRepositoryEnv(process.env, hostPlatform)
+            : {}),
+          // Failures are read by English patterns; without LANG, macOS Git follows the system language.
+          // LANGUAGE leaves LC_CTYPE, which hooks inherit, alone.
+          ...(input.command === "git" ? { LANGUAGE: "C" } : {}),
           ...input.env,
           ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
         },
@@ -365,9 +397,8 @@ export const make = Effect.gen(function* () {
         }),
       );
     }
-    return yield* input.concurrency === undefined
-      ? bounded
-      : keyedPermit(input.concurrency)(bounded);
+    const shared = input.command === "git" ? bounded : nonGitProcesses.withPermits(1)(bounded);
+    return yield* input.concurrency === undefined ? shared : keyedPermit(input.concurrency)(shared);
   });
 
   return VcsProcess.of({ run });
