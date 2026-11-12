@@ -37,6 +37,14 @@ describe("fileBreadcrumbs", () => {
     expect(isListableHostFolder("~/.claude")).toBe(true);
   });
 
+  it("keeps a literal backslash inside a workspace path segment", () => {
+    expect(fileBreadcrumbs("t3code", "dir\\one/report.txt")).toEqual([
+      { label: "t3code", path: "", kind: "project" },
+      { label: "dir\\one", path: "dir\\one", kind: "directory" },
+      { label: "report.txt", path: "dir\\one/report.txt", kind: "file" },
+    ]);
+  });
+
   it("keeps a project folder named ~ inside the project", () => {
     expect(fileBreadcrumbs("t3code", "~").map((crumb) => crumb.path)).toEqual(["", "~"]);
   });
