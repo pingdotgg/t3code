@@ -4432,6 +4432,13 @@ function claudeToolResultBlocksFromAssistantMessage(
   return message.message.content.filter(isClaudeAssistantToolResultContentBlock);
 }
 
+function isClaudeThinkingOnlyContent(content: ReadonlyArray<{ readonly type: string }>): boolean {
+  return (
+    content.length > 0 &&
+    content.every((block) => block.type === "thinking" || block.type === "redacted_thinking")
+  );
+}
+
 function claudeToolResultBlocksFromUserMessage(
   message: SDKMessage,
 ): ReadonlyArray<ClaudeToolResultContentBlock> {
@@ -5175,6 +5182,8 @@ interface ActiveClaudeTurnContext {
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
+  // Latest root transcript entry a thinking-only assistant frame can fall back to.
+  nativeTranscriptTail: string | null;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
@@ -11264,6 +11273,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
+          if (
+            message.type === "user" &&
+            message.parent_tool_use_id === null &&
+            message.uuid !== undefined &&
+            input.replayed !== true &&
+            claudeToolResultBlocksFromUserMessage(message).length > 0
+          ) {
+            context.nativeTranscriptTail = message.uuid;
+          }
+
           if (message.type === "assistant" && input.replayed !== true) {
             if (message.parent_tool_use_id === null) {
               // CLI notices and API errors arrive as assistant messages from "<synthetic>".
@@ -11275,7 +11294,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 );
               }
               // Subagent uuids exist only in the sidechain transcript, so resume and fork cannot target them.
-              context.nativeMessageCursor = message.uuid;
+              // Claude Code drops a thinking-only entry with no same-id sibling when loading a session,
+              // so resuming at its uuid fails; point at the entry it follows instead.
+              if (isClaudeThinkingOnlyContent(message.message.content)) {
+                context.nativeMessageCursor =
+                  context.nativeTranscriptTail ?? context.nativeMessageCursor;
+              } else {
+                context.nativeMessageCursor = message.uuid;
+                context.nativeTranscriptTail = message.uuid;
+              }
               context.latestAssistantRateLimit =
                 message.error === "rate_limit" ? { type: null, resetAt: null } : null;
               if (message.error === "rate_limit" && isClaudeBlockedAssistantRateLimit(message)) {
@@ -13724,6 +13751,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeThreadId,
               nativeTurnId,
               nativeMessageCursor: null,
+              nativeTranscriptTail: promptUuid,
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
