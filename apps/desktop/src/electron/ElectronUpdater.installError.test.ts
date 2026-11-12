@@ -8,6 +8,7 @@ const { installed } = vi.hoisted(() => ({
 }));
 
 vi.mock("electron-updater", () => ({
+  AppImageUpdater: vi.fn(),
   get autoUpdater() {
     return installed.updater;
   },

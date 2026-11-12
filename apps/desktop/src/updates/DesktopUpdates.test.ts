@@ -30,6 +30,7 @@ const installed = vi.hoisted(() => ({
   updater: undefined as typeof import("electron-updater").autoUpdater | undefined,
 }));
 vi.mock("electron-updater", () => ({
+  AppImageUpdater: vi.fn(),
   get autoUpdater() {
     if (!installed.updater) throw new Error("Unexpected native updater access");
     return installed.updater;
