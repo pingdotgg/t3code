@@ -30,6 +30,7 @@ import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
   applyWslEnableSelection,
   isWslSettingsRowVisible,
+  isTailscaleDetectionSkipped,
   missingTailscaleEndpointDescription,
   resolveLocalVersionStatusLabel,
   resolveTailscaleServeBaseUrl,
@@ -353,8 +354,10 @@ function ConnectionsSettingsContent({
     | { readonly kind: "wsl-only"; readonly nextValue: boolean };
   const [pendingWslChange, setPendingWslChange] = useState<PendingWslChange | null>(null);
   const isWslConfirmDialogOpen = pendingWslChange !== null;
-  const [pendingTailscaleServeEndpoint, setPendingTailscaleServeEndpoint] =
-    useState<AdvertisedEndpoint | null>(null);
+  // An endpoint of null means Tailscale was never detected; enabling Serve triggers detection.
+  const [pendingTailscaleServeSetup, setPendingTailscaleServeSetup] = useState<{
+    readonly endpoint: AdvertisedEndpoint | null;
+  } | null>(null);
   const [disableTailscaleServeDialogOpen, setDisableTailscaleServeDialogOpen] = useState(false);
   const [tailscaleServePortInput, setTailscaleServePortInput] = useState(
     String(DEFAULT_TAILSCALE_SERVE_PORT),
@@ -449,7 +452,7 @@ function ConnectionsSettingsContent({
     parsedTailscaleServePort <= 65_535;
 
   const pendingTailscaleServeBaseUrl = resolveTailscaleServeBaseUrl(
-    pendingTailscaleServeEndpoint,
+    pendingTailscaleServeSetup?.endpoint ?? null,
     parsedTailscaleServePort,
     isTailscaleServePortValid,
   );
@@ -505,7 +508,7 @@ function ConnectionsSettingsContent({
         port: parsedTailscaleServePort,
       });
       refreshDesktopNetworkAccessState();
-      setPendingTailscaleServeEndpoint(null);
+      setPendingTailscaleServeSetup(null);
     });
     if (settled._tag === "Failure") {
       const error = Cause.squash(settled.cause);
@@ -523,11 +526,11 @@ function ConnectionsSettingsContent({
     setIsUpdatingTailscaleServe(false);
   };
 
-  const handleStartTailscaleServeSetup = (endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeSetup = (endpoint: AdvertisedEndpoint | null) => {
     setTailscaleServePortInput(
       String(desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT),
     );
-    setPendingTailscaleServeEndpoint(endpoint);
+    setPendingTailscaleServeSetup({ endpoint });
   };
 
   const handleConfirmTailscaleServeDisable = async () => {
@@ -1020,6 +1023,20 @@ function ConnectionsSettingsContent({
             }}
             aria-label="Enable Tailscale HTTPS"
           />
+        ) : desktopServerExposureState?.tailscaleServeEnabled ||
+          isTailscaleDetectionSkipped(desktopServerExposureState) ? (
+          <Switch
+            checked={desktopServerExposureState?.tailscaleServeEnabled === true}
+            disabled={isUpdatingTailscaleServe}
+            onCheckedChange={(checked) => {
+              if (checked) {
+                handleStartTailscaleServeSetup(null);
+                return;
+              }
+              setDisableTailscaleServeDialogOpen(true);
+            }}
+            aria-label="Enable Tailscale HTTPS"
+          />
         ) : null
       }
       managed={tailscaleHttpsEndpoint?.status === "available" ? undefined : remoteClientsDenial}
@@ -1499,10 +1516,10 @@ function ConnectionsSettingsContent({
             </AlertDialogPopup>
           </AlertDialog>
           <Dialog
-            open={pendingTailscaleServeEndpoint !== null}
+            open={pendingTailscaleServeSetup !== null}
             onOpenChange={(open) => {
               if (isUpdatingTailscaleServe) return;
-              if (!open) setPendingTailscaleServeEndpoint(null);
+              if (!open) setPendingTailscaleServeSetup(null);
             }}
           >
             <DialogPopup className="max-w-md">
