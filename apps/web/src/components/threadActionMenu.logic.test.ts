@@ -74,4 +74,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("offers Mark unread only when the thread is not running", () => {
+    const offersMarkUnread = (isRunning: boolean) =>
+      buildThreadActionMenuItems({ ...baseState, isRunning }).some(
+        (item) => item.id === "mark-unread" && !item.disabled,
+      );
+    expect(offersMarkUnread(false)).toBe(true);
+    expect(offersMarkUnread(true)).toBe(false);
+  });
 });
