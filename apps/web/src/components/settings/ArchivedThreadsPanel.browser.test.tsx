@@ -72,15 +72,17 @@ function setup() {
   }));
 }
 
-it("mounts archived rows near the page scroll position and keeps far rows actionable", async () => {
+it("keeps every archived row findable in page and actionable", async () => {
   setup();
   await using screen = await render(<ArchivedThreadsPanel />);
   await expect.element(screen.getByRole("button", { name: "Unarchive Thread 0" })).toBeVisible();
-  expect(screen.getByRole("button", { name: /^Unarchive / }).elements().length).toBeLessThan(50);
-  expect(screen.getByRole("button", { name: "Unarchive Thread 199" }).query()).toBeNull();
 
-  const scroller = document.querySelector<HTMLElement>("[data-settings-page-scroll]")!;
-  scroller.scrollTop = scroller.scrollHeight;
+  await expect
+    .element(screen.getByRole("button", { name: "Unarchive Thread 199" }))
+    .toBeInTheDocument();
+  // Chromium's find-in-page; absent from the DOM typings.
+  const find: (text: string, ...flags: boolean[]) => boolean = Reflect.get(window, "find");
+  expect(find.call(window, "Thread 199", false, false, true)).toBe(true);
   await userEvent.click(screen.getByRole("button", { name: "Unarchive Thread 199" }));
 
   expect(state.unarchive).toHaveBeenCalledWith(
