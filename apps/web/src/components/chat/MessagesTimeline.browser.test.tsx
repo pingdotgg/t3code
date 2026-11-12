@@ -1552,12 +1552,59 @@ describe("MessagesTimeline automation prompts", () => {
     expect(screen.button(/^Automation/).textContent).toContain("Triage the inbox");
   });
 
-  it("leaves ordinary user messages as full bubbles", async () => {
-    setup();
-    await using screen = await renderTimeline([message(AUTOMATION_PROMPT)]);
-    expect(screen.buttons(/^Automation/)).toHaveLength(0);
-    expect(screen.text()).toContain("Label every new issue and close duplicates.");
-  });
+  it.each([undefined, "model", "effort", "failed", "queued"] as const)(
+    "keeps a %s switch note under the full user bubble",
+    async (change) => {
+      setup();
+      const entry = {
+        ...message(AUTOMATION_PROMPT),
+        ...(change
+          ? {
+              projectedItem: v2Item("user_message", {
+                status: change === "failed" ? "failed" : "completed",
+                inputIntent: change === "queued" ? "queued_turn" : "turn_start",
+                modelSwitch: {
+                  from: {
+                    instanceId: "codex",
+                    model: "before",
+                    options: [{ id: "reasoningEffort", value: "low" }],
+                  },
+                  to: {
+                    instanceId: "codex",
+                    model: change === "effort" ? "before" : "after",
+                    options: [{ id: "reasoningEffort", value: "high" }],
+                  },
+                },
+              }),
+            }
+          : {}),
+      };
+      await using screen = await renderTimeline([entry]);
+      expect(screen.buttons(/^Automation/)).toHaveLength(0);
+      expect(screen.text()).toContain("Label every new issue and close duplicates.");
+      const note = screen.container.querySelector<HTMLElement>("[data-model-switch-note]");
+      if (!change) {
+        expect(note).toBeNull();
+        return;
+      }
+      expect(note?.textContent).toBe(
+        change === "effort" ? "low → high" : "before low → after high",
+      );
+      if (change === "failed")
+        await expect.element(screen.getByText("failed", { exact: true })).toBeVisible();
+      const bubble = screen.container.querySelector<HTMLElement>(".surface-bubble")!;
+      const row = bubble.closest<HTMLElement>('[data-timeline-row-kind="message"]')!;
+      expect(row.contains(note)).toBe(true);
+      expect(bubble.contains(note)).toBe(false);
+      expect(note!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+        bubble.getBoundingClientRect().bottom,
+      );
+      const before = row.getBoundingClientRect().height;
+      await userEvent.hover(bubble);
+      expect(row.getBoundingClientRect().height).toBe(before);
+      expect(screen.buttons("Copy message")).toHaveLength(1);
+    },
+  );
 
   it("reveals a find match beyond the folded automation prompt's initial viewport", async () => {
     setup();
