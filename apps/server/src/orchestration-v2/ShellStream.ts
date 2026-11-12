@@ -94,6 +94,7 @@ const NEWEST_SETTLED_KEPT = 25;
 function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
   const subagentParentIds = new Set<string>();
   const subagentThreadIds = new Set<string>();
+  // A bounded min-heap keeps the 25th newest timestamp at its root.
   const settledTimes: Array<number> = [];
   for (const row of rows) {
     if (row.lineage.relationshipToParent === "subagent") {
@@ -104,12 +105,33 @@ function shellTrimFacts(rows: ReadonlyArray<ShellTrimRow>): ShellTrimFacts {
       row.settledOverride === "settled" &&
       row.settledAt !== null
     ) {
-      settledTimes.push(DateTime.toEpochMillis(row.settledAt));
+      const settledAtMs = DateTime.toEpochMillis(row.settledAt);
+      let position = settledTimes.length;
+      if (position < NEWEST_SETTLED_KEPT) {
+        settledTimes.push(settledAtMs);
+        while (position > 0) {
+          const parent = (position - 1) >>> 1;
+          if (settledTimes[parent]! <= settledAtMs) break;
+          settledTimes[position] = settledTimes[parent]!;
+          position = parent;
+        }
+      } else {
+        if (settledAtMs <= settledTimes[0]!) continue;
+        position = 0;
+        while (position * 2 + 1 < settledTimes.length) {
+          let child = position * 2 + 1;
+          if (child + 1 < settledTimes.length && settledTimes[child + 1]! < settledTimes[child]!)
+            child++;
+          if (settledAtMs <= settledTimes[child]!) break;
+          settledTimes[position] = settledTimes[child]!;
+          position = child;
+        }
+      }
+      settledTimes[position] = settledAtMs;
     }
   }
-  settledTimes.sort((left, right) => right - left);
   // With fewer than 25, the oldest one is the cut, so nothing is older.
-  const olderSettledBeforeMs = settledTimes[NEWEST_SETTLED_KEPT - 1] ?? settledTimes.at(-1);
+  const olderSettledBeforeMs = settledTimes[0];
   const counts = new Map<ProjectId, number>();
   if (olderSettledBeforeMs !== undefined) {
     for (const row of rows) {
