@@ -398,6 +398,13 @@ export function isRichTextBoldShortcut(
   );
 }
 
+/** Mod+B, Mod+I and Mod+E, the mark chords the rich-text composer binds. */
+export function isRichTextFormattingShortcut(event: ShortcutEventLike): boolean {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return false;
+  const keys = resolveEventKeys(event);
+  return keys.has("b") || keys.has("i") || keys.has("e");
+}
+
 export function isTerminalClearShortcut(
   event: ShortcutEventLike,
   platform = navigator.platform,
