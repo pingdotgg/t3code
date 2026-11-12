@@ -96,10 +96,12 @@ export const make = Effect.fn("CodexManagedResponses.make")(function* () {
       expectedProfileKey: options.profileKey,
     });
     yield* auth.access;
-    for (const [token, grant] of grants) {
-      if (grant.instanceId === options.instanceId) grants.delete(token);
-    }
     const token = Hex.encode(yield* random.randomBytes(32));
+    for (const [existingToken, grant] of grants) {
+      if (grant.instanceId !== options.instanceId) continue;
+      if (grant.profileKey === options.profileKey) return existingToken;
+      grants.delete(existingToken);
+    }
     grants.set(token, { ...options, auth });
     return token;
   }, Effect.provideContext(services));

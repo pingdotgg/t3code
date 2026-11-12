@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Digest from "effect/crypto/Digest";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,6 +25,7 @@ const makeHarness = Effect.fnUntraced(function* (
     retryStatus?: number;
     renewalFails?: boolean;
     concurrent?: boolean;
+    concurrentRegistration?: boolean;
     pauseRenewal?: boolean;
     constraint?: "replacement" | "earliestRefreshAt";
   } = {},
@@ -111,11 +113,45 @@ const makeHarness = Effect.fnUntraced(function* (
   const auth = yield* makeCodexChatGptAuth({ instanceId }).pipe(
     Effect.provideService(HttpClient.HttpClient, http),
   );
+  const digest = yield* Digest.Digest;
+  const secondRegistering = yield* Deferred.make<void>();
+  const firstRegistered = yield* Deferred.make<void>();
+  let registrations = 0;
   const bridge = yield* CodexManagedResponses.make().pipe(
     Effect.provideService(HttpClient.HttpClient, http),
+    Effect.provideService(Digest.Digest, {
+      ...digest,
+      digest: (algorithm, input) =>
+        Effect.gen(function* () {
+          // Pause credential-store construction after both registrations miss the grant lookup.
+          if (
+            options.concurrentRegistration &&
+            new TextDecoder().decode(input) ===
+              `${"codex-chatgpt".length}:codex-chatgpt${instanceId}`
+          ) {
+            const registration = ++registrations;
+            if (registration === 1) yield* Deferred.await(secondRegistering);
+            if (registration === 2) {
+              yield* Deferred.succeed(secondRegistering, undefined);
+              yield* Deferred.await(firstRegistered);
+            }
+          }
+          return yield* digest.digest(algorithm, input);
+        }),
+    }),
   );
   const profileKey = yield* auth.profileKey(credentials);
-  const token = yield* bridge.register({ instanceId, profileKey });
+  const register = bridge.register({ instanceId, profileKey });
+  const tokens = options.concurrentRegistration
+    ? yield* Effect.gen(function* () {
+        const first = yield* register.pipe(Effect.forkChild);
+        const second = yield* register.pipe(Effect.forkChild);
+        const token = yield* Fiber.join(first);
+        yield* Deferred.succeed(firstRegistered, undefined);
+        return [token, yield* Fiber.join(second)];
+      })
+    : [yield* register];
+  const token = tokens[0]!;
   const body = JSON.stringify({
     model: "gpt-test",
     input: "same turn",
@@ -138,6 +174,8 @@ const makeHarness = Effect.fnUntraced(function* (
     renewalEntered,
     renewalRelease,
     send,
+    tokens,
+    register,
     auth,
     credentials,
     requests,
@@ -159,6 +197,23 @@ const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       ),
     ),
   );
+
+it.live("keeps concurrent first registrations valid and reuses the matching grant", () =>
+  provide(
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ concurrentRegistration: true });
+      const results = yield* Effect.forEach(h.tokens, (token) => h.send(token));
+      assert.deepEqual(
+        results.map((result) => result.status),
+        [200, 200],
+      );
+      assert.isTrue(h.tokens[0] === h.tokens[1]);
+      assert.isTrue((yield* h.register) === h.tokens[0]);
+      assert.equal(h.requests.length, 3);
+      assert.deepEqual(h.refreshTokens, ["single-use-refresh"]);
+    }),
+  ),
+);
 
 it.live.each([false, true])(
   "renews locally unexpired tokens and replays the same request once (concurrent=%s)",
