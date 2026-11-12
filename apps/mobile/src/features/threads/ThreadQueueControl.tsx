@@ -251,6 +251,18 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               if (busyRef.current) return;
               busyRef.current = true;
               setResuming(true);
+              const resumableRunId = quietThread
+                ? deriveResumableRunId(
+                    quietThread.projection,
+                    deriveThreadStructureRuntime(quietThread.projection),
+                  )
+                : null;
+              // Only a usage-limited run holds queue.resume; a stopped run's queue resumes as is.
+              const limitedRunId =
+                quietThread?.projection.runs.find((run) => run.id === resumableRunId)?.status ===
+                "failed"
+                  ? resumableRunId
+                  : null;
               const result = quietThread
                 ? await resumeThread({
                     thread: {
@@ -259,10 +271,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       runtimeMode: quietThread.projection.thread.runtimeMode,
                       interactionMode: quietThread.projection.thread.interactionMode,
                     },
-                    resumableRunId: deriveResumableRunId(
-                      quietThread.projection,
-                      deriveThreadStructureRuntime(quietThread.projection),
-                    ),
+                    resumableRunId: limitedRunId,
                     queueHeld: true,
                     runtimeMode: quietThread.projection.thread.runtimeMode,
                     interactionMode: quietThread.projection.thread.interactionMode,
