@@ -670,7 +670,7 @@ export const make = Effect.fn("CourseService.make")(function* (stateDir: string)
                 ? undefined
                 : references.length === 0
                   ? "No published solution was found online; graded against my own working."
-                  : `Checked against ${references.map(({ label, url }) => `[${label}](${url})`).join(", ")} (unofficial).`;
+                  : `Checked against ${references.map(({ label, url }) => `[${label}](${url})`).join(", ")}.`;
             const referenceFields =
               references === undefined ? {} : { references, cite, note: referencesNote.trim() };
             if ((!input.reveal && !input.skip) || input.pset === undefined) {
