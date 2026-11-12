@@ -8,6 +8,7 @@ import type {
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  orchestrationV2WorktreePending,
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -62,7 +63,6 @@ import {
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
-  orchestrationV2WorktreePending,
   ProviderInstanceId,
   ProviderInteractionMode,
   isRuntimeModeAbove,
@@ -382,7 +382,10 @@ export interface OrchestratorV2DispatchResult {
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
-  readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
+  readonly recoverDelegatedTask: (
+    threadId: ThreadId,
+    options?: { readonly sourceRunId?: RunId; readonly completedRunId?: RunId },
+  ) => Effect.Effect<void, OrchestratorProjectionError>;
   /** Commits cancellation with the child's Stop after descendants accept stopping. */
   readonly cancelDelegatedTask: <E, R>(input: {
     readonly parentThreadId: ThreadId;
@@ -15054,23 +15057,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   const recoverDelegatedTask = Effect.fn("Orchestrator.recoverDelegatedTask")(
-    function* (threadId: ThreadId, sourceRunId: RunId) {
+    function* (
+      threadId: ThreadId,
+      options?: { readonly sourceRunId?: RunId; readonly completedRunId?: RunId },
+    ) {
+      const completedRunId = options?.completedRunId;
+      if (completedRunId !== undefined) {
+        yield* threadDispatch.withLock(
+          threadId,
+          Effect.gen(function* () {
+            const message = yield* projectionStore.getRunMessage(threadId, completedRunId);
+            if (message?.delegatedCompletion === undefined) return;
+            // A prior attempt may have committed the next generation before offering its wake.
+            yield* offerDelegatedCompletionDelivery(
+              threadId,
+              message.delegatedCompletion.parentRunId,
+            );
+            yield* finalizeDelegatedCompletionDelivery(threadId, completedRunId);
+          }),
+        );
+      }
+      const sourceRunId = options?.sourceRunId;
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
       if (parentThreadId === undefined) return;
+      if (
+        sourceRunId === undefined &&
+        !(yield* projectionStore.hasPendingDelegatedCompletion(threadId))
+      )
+        return;
       yield* threadDispatch.withLock(
         parentThreadId,
-        finalizeAppOwnedSubagent(threadId, { settledContinuationOf: sourceRunId }),
+        offerDelegatedCompletionDeliveries(parentThreadId).pipe(
+          Effect.andThen(
+            finalizeAppOwnedSubagent(
+              threadId,
+              sourceRunId === undefined ? undefined : { settledContinuationOf: sourceRunId },
+            ),
+          ),
+        ),
       );
     },
-    (effect, threadId, _sourceRunId) =>
-      effect.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to recover delegated task after restart", {
-            childThreadId: threadId,
-            cause,
-          }),
-        ),
-      ),
+    (effect, threadId, _options) =>
+      effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
   );
 
   const cancelDelegatedTask: OrchestratorV2Shape["cancelDelegatedTask"] = Effect.fn(

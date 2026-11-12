@@ -615,6 +615,60 @@ it.layer(
   });
 
   describe("ProviderRegistry.layer", () => {
+    it("marks folder catalogs pending when a machine refresh changes the machine models", () => {
+      const machineModel = {
+        slug: "opencode/big-pickle",
+        name: "Big Pickle",
+        isCustom: false,
+        capabilities: null,
+      } satisfies ServerProvider["models"][number];
+      const projectModel = { ...machineModel, slug: "uni/medium-gpt", name: "Medium GPT" };
+      const addedModel = { ...machineModel, slug: "opencode/new", name: "New" };
+      const provider = {
+        instanceId: ProviderInstanceId.make("opencode"),
+        driver: ProviderDriverKind.make("opencode"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-03-25T00:00:00.000Z",
+        version: "2.0.0",
+        models: [machineModel],
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      const withCatalog = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        ProviderRegistry.upsertProviderWorkspaceSnapshot(provider, "/project", {
+          ...provider,
+          workspaceModels: [machineModel, projectModel],
+        }),
+        "/plain",
+        provider,
+      );
+
+      const unchanged = ProviderRegistry.mergeProviderSnapshot(withCatalog, provider);
+      assert.deepStrictEqual(
+        unchanged.workspaceSnapshots?.map((snapshot) => snapshot.cwd),
+        ["/project", "/plain"],
+      );
+      const changed = ProviderRegistry.mergeProviderSnapshot(withCatalog, {
+        ...provider,
+        models: [machineModel, addedModel],
+      });
+      assert.deepStrictEqual(
+        changed.workspaceSnapshots?.map(({ cwd, models, modelsPending }) => ({
+          cwd,
+          models,
+          modelsPending,
+        })),
+        [
+          { cwd: "/project", models: [machineModel, projectModel], modelsPending: true },
+          // Its folder may define a model the machine catalog just dropped.
+          { cwd: "/plain", models: undefined, modelsPending: true },
+        ],
+      );
+    });
+
     it("stores workspace skills, commands and options without changing machine metadata", () => {
       const provider = {
         instanceId: ProviderInstanceId.make("codex"),
@@ -629,11 +683,15 @@ it.layer(
         slashCommands: [{ name: "global" }],
         skills: [{ name: "global", path: "/global/SKILL.md", enabled: true }],
       } satisfies ServerProvider;
+      const projectModels = [
+        { slug: "project-model", name: "Project Model", isCustom: false, capabilities: null },
+      ] satisfies ServerProvider["models"];
       const scopedSnapshot = {
         ...provider,
         checkedAt: "2026-03-25T00:01:00.000Z",
         slashCommands: [{ name: "project" }],
         skills: [{ name: "project", path: "/project/SKILL.md", enabled: true }],
+        workspaceModels: projectModels,
         optionDescriptors: [
           {
             id: "agent",
@@ -661,6 +719,7 @@ it.layer(
           slashCommands: scopedSnapshot.slashCommands,
           skills: scopedSnapshot.skills,
           optionDescriptors: scopedSnapshot.optionDescriptors,
+          models: projectModels,
         },
       ]);
 
@@ -668,6 +727,7 @@ it.layer(
         ...scopedSnapshot,
         slashCommands: [COMPACT_SLASH_COMMAND],
         slashCommandsPending: true,
+        workspaceModelsPending: true,
       } satisfies ProviderWorkspaceSnapshot;
       const partial = ProviderRegistry.upsertProviderWorkspaceSnapshot(
         result,
@@ -676,6 +736,8 @@ it.layer(
       );
       assert.deepStrictEqual(partial.workspaceSnapshots?.[0]?.slashCommands, [{ name: "project" }]);
       assert.strictEqual(partial.workspaceSnapshots?.[0]?.slashCommandsPending, true);
+      assert.deepStrictEqual(partial.workspaceSnapshots?.[0]?.models, projectModels);
+      assert.strictEqual(partial.workspaceSnapshots?.[0]?.modelsPending, true);
       const otherProject = ProviderRegistry.upsertProviderWorkspaceSnapshot(
         partial,
         "/other-project",
@@ -693,6 +755,14 @@ it.layer(
         { name: "replacement" },
       ]);
       assert.strictEqual(recovered.workspaceSnapshots?.[0]?.slashCommandsPending, undefined);
+      assert.deepStrictEqual(recovered.workspaceSnapshots?.[0]?.models, projectModels);
+      assert.strictEqual(recovered.workspaceSnapshots?.[0]?.modelsPending, undefined);
+      const withoutModels = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        recovered,
+        "/project",
+        { ...scopedSnapshot, workspaceModels: undefined },
+      );
+      assert.strictEqual(withoutModels.workspaceSnapshots?.[0]?.models, undefined);
 
       const { optionDescriptors, ...failedSnapshot } = scopedSnapshot;
       const firstFailure = ProviderRegistry.upsertProviderWorkspaceSnapshot(
@@ -1270,6 +1340,9 @@ it.layer(
                   }),
                 ),
               getSnapshot: Ref.get(currentProvider),
+              isAwaitingFirstCheck: Ref.get(currentProvider).pipe(
+                Effect.map((provider) => provider === pendingProvider),
+              ),
               refresh: Ref.get(nextProvider).pipe(
                 Effect.tap((provider) => Ref.set(currentProvider, provider)),
               ),
@@ -1303,6 +1376,23 @@ it.layer(
                 ? retainedModels
                 : [customModel, ...cachedProvider.models];
               assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, expectedModels);
+              if (!restarted) {
+                const probeFields = ({ status, installed, auth, version }: ServerProvider) => ({
+                  status,
+                  installed,
+                  auth,
+                  version,
+                });
+                // Boot reads the probe state from the cache, not the pending snapshot, and never persists the pending one.
+                assert.deepStrictEqual(
+                  probeFields((yield* registry.getProviders)[0]!),
+                  probeFields(cachedProvider),
+                );
+                assert.deepStrictEqual(
+                  probeFields((yield* readProviderStatusCache(filePath))!),
+                  probeFields(cachedProvider),
+                );
+              }
 
               yield* registry.refreshInstance(instance.instanceId);
               assert.deepStrictEqual(
@@ -1331,6 +1421,84 @@ it.layer(
           Effect.provide(
             ServerConfig.layerTest(process.cwd(), {
               prefix: "t3-codex-retired-model-cache-",
+            }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+          ),
+        ),
+      );
+      it.effect("keeps a check that finished before boot over the cached status", () =>
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const filePath = yield* resolveProviderStatusCachePath({
+            cacheDir: config.providerStatusCacheDir,
+            instanceId: cachedProvider.instanceId,
+          });
+          const instance = {
+            instanceId: cachedProvider.instanceId,
+            driverKind: cachedProvider.driver,
+            continuationIdentity: {
+              driverKind: cachedProvider.driver,
+              continuationKey: "codex:instance:codex-personal",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: cachedProvider.driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(failedProvider),
+              isAwaitingFirstCheck: Effect.succeed(false),
+              refresh: Effect.succeed(failedProvider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const layerInstanceRegistry = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (id) =>
+                Effect.succeed(id === instance.instanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+
+          // First boot has no cache file; the second has a stale ready one.
+          for (const hasCache of [false, true]) {
+            if (hasCache) {
+              yield* writeProviderStatusCache({
+                filePath,
+                provider: { ...cachedProvider, status: "ready" },
+              });
+            }
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              assert.strictEqual((yield* registry.getProviders)[0]?.status, failedProvider.status);
+              assert.strictEqual(
+                (yield* readProviderStatusCache(filePath))?.status,
+                failedProvider.status,
+              );
+            }).pipe(
+              Effect.provide(
+                ProviderRegistry.layer.pipe(
+                  Layer.provide(layerInstanceRegistry),
+                  Layer.provide(layerUnusedMutator),
+                ),
+              ),
+              Effect.scoped,
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-codex-probed-before-boot-",
             }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
           ),
         ),
@@ -1990,6 +2158,123 @@ it.layer(
           assert.deepStrictEqual(recovered?.skills, laterSkills);
           assert.deepStrictEqual(recovered?.slashCommands, [COMPACT_SLASH_COMMAND]);
           assert.strictEqual(recovered?.slashCommandsPending, undefined);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("rescans a folder whose model catalog could not be read before its TTL", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("opencode");
+        const instanceId = ProviderInstanceId.make("opencode");
+        const machineModel = {
+          slug: "opencode/big-pickle",
+          name: "Big Pickle",
+          isCustom: false,
+          capabilities: null,
+        } satisfies ServerProvider["models"][number];
+        const projectModel = { ...machineModel, slug: "uni/medium-gpt", name: "Medium GPT" };
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "2.0.0",
+          models: [machineModel],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const machineProvider = yield* Ref.make<ServerProvider>(provider);
+        const scanResult = yield* Ref.make<ProviderWorkspaceSnapshot>({
+          ...provider,
+          slashCommandsPending: false,
+          workspaceModelsPending: true,
+        });
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: {
+            driverKind: driver,
+            continuationKey: "opencode:instance:opencode",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Ref.get(machineProvider),
+            refresh: Ref.get(machineProvider),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          snapshotForCwd: () => Ref.get(scanResult),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-pending-workspace-models-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const workspaceOf = Effect.map(
+            registry.getProviders,
+            (providers) => providers[0]?.workspaceSnapshots?.[0],
+          );
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
+          const unread = yield* workspaceOf;
+          assert.strictEqual(unread?.models, undefined);
+          assert.strictEqual(unread?.modelsPending, true);
+
+          const workspaceModels = [machineModel, projectModel];
+          yield* Ref.set(scanResult, { ...provider, slashCommandsPending: false, workspaceModels });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
+          const recovered = yield* workspaceOf;
+          assert.deepStrictEqual(recovered?.models, workspaceModels);
+          assert.strictEqual(recovered?.modelsPending, undefined);
+
+          // A fresh refresh whose machine models change still publishes the folder read it ran.
+          const addedModel = { ...machineModel, slug: "opencode/new", name: "New" };
+          const nextWorkspaceModels = [machineModel, addedModel, projectModel];
+          yield* Ref.set(machineProvider, { ...provider, models: [machineModel, addedModel] });
+          yield* Ref.set(scanResult, {
+            ...provider,
+            slashCommandsPending: false,
+            workspaceModels: nextWorkspaceModels,
+          });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project", fresh: true });
+          const rescanned = yield* workspaceOf;
+          assert.deepStrictEqual(rescanned?.models, nextWorkspaceModels);
+          assert.strictEqual(rescanned?.modelsPending, undefined);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
