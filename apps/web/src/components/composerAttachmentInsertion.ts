@@ -1,5 +1,4 @@
-import type { Editor } from "@tiptap/core";
-import type { Transaction } from "@tiptap/pm/state";
+import type { Editor, EditorEvents } from "@tiptap/core";
 import {
   flatToMarkdown,
   flatToPm,
@@ -16,12 +15,14 @@ import { markAsClipboardEdit } from "../composer-undo-grouping";
 
 export function captureComposerAttachmentInsertion(editor: Editor) {
   let { from, to } = editor.state.selection;
-  const track = ({ transaction }: { transaction: Transaction }) => {
+  const track = ({ transaction, appendedTransactions }: EditorEvents["transaction"]) => {
     // Keep the attachment before text typed at the paste point while its image is preparing.
-    const start = transaction.mapping.mapResult(from, -1);
-    const end = transaction.mapping.mapResult(to, -1);
-    from = start.pos;
-    to = start.deletedAfter || end.deletedBefore ? from : end.pos;
+    for (const tr of [transaction, ...appendedTransactions]) {
+      const start = tr.mapping.mapResult(from, -1);
+      const end = tr.mapping.mapResult(to, -1);
+      from = start.pos;
+      to = start.deletedAfter || end.deletedBefore ? from : end.pos;
+    }
   };
   editor.on("transaction", track);
   const dispose = () => {
@@ -42,11 +43,15 @@ export function captureComposerAttachmentInsertion(editor: Editor) {
         },
         references,
       );
-      const content = references.flatMap((reference) => [
-        nodeType.create({ ...reference, source: formatInlineContextReference(reference) }),
-        editor.schema.text(" "),
-      ]);
-      if (edit.text.startsWith(" ")) content.unshift(editor.schema.text(" "));
+      const acceptsReference =
+        editor.state.doc.resolve(from).parent.type.contentMatch.matchType(nodeType) !== null;
+      const content = acceptsReference
+        ? references.flatMap((reference) => [
+            nodeType.create({ ...reference, source: formatInlineContextReference(reference) }),
+            editor.schema.text(" "),
+          ])
+        : [editor.schema.text(edit.text)];
+      if (acceptsReference && edit.text.startsWith(" ")) content.unshift(editor.schema.text(" "));
       const tr = editor.state.tr.replaceWith(
         from,
         flatToPm(map, markdownToFlat(map, edit.end)),
