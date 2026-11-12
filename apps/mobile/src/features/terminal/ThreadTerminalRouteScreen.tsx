@@ -26,10 +26,15 @@ import { AsyncResult } from "effect/reactivity";
 import {
   KeyboardController,
   KeyboardStickyView,
+  useGenericKeyboardHandler,
   useKeyboardState,
   useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
-import Animated, { useAnimatedStyle } from "react-native-reanimated";
+import Animated, {
+  useAnimatedStyle,
+  useDerivedValue,
+  useSharedValue,
+} from "react-native-reanimated";
 
 import {
   ComposerToolbarButton,
@@ -591,12 +596,41 @@ function ThreadTerminal(props: {
       : !SHOWCASE_ENABLED;
   const terminalBottomInset =
     (isKeyboardVisible ? keyboardHeight : 0) + (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
-  // Android's keyboard state lands after the IME starts moving, so the inset follows the
-  // keyboard's UI-thread animation instead of stepping to its final height.
+  // Android's keyboard state lands after the IME finishes moving, so the terminal inset, the
+  // accessory and the bar below the terminal all follow the keyboard on the UI thread instead.
   const keyboardAnimation = useReanimatedKeyboardAnimation();
-  const accessoryInset = isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0;
+  const keyboardOpening = useSharedValue(0);
+  useGenericKeyboardHandler(
+    {
+      onStart: (event) => {
+        "worklet";
+        keyboardOpening.set(event.height > 0 ? 1 : 0);
+      },
+    },
+    [],
+  );
+  const [androidBarHeight, setAndroidBarHeight] = useState(0);
+  const accessoryAllowed = canOperateTerminal ? 1 : 0;
+  // Did-only IME repairs never start an animation, so the JS state still shows the accessory.
+  const accessoryShownByState = isAccessoryVisible ? 1 : 0;
+  const androidAccessoryReserve = useDerivedValue(
+    () =>
+      TERMINAL_ACCESSORY_HEIGHT *
+      accessoryAllowed *
+      Math.max(keyboardOpening.value, accessoryShownByState) *
+      keyboardAnimation.progress.value,
+  );
+  // The bar stays laid out under the keyboard, so the terminal only needs what exceeds it.
   const androidTerminalInsetStyle = useAnimatedStyle(() => ({
-    paddingBottom: -keyboardAnimation.height.value + accessoryInset,
+    paddingBottom: Math.max(
+      0,
+      -keyboardAnimation.height.value + androidAccessoryReserve.value - androidBarHeight,
+    ),
+  }));
+  // The accessory rises from under the keyboard's top edge by the height reserved for it.
+  const androidAccessoryStyle = useAnimatedStyle(() => ({
+    opacity: androidAccessoryReserve.value > 0 ? 1 : 0,
+    transform: [{ translateY: TERMINAL_ACCESSORY_HEIGHT - androidAccessoryReserve.value }],
   }));
 
   const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
@@ -862,7 +896,6 @@ function ThreadTerminal(props: {
                 : terminalTheme.background,
             // Measured top reservation is zero when UIKit already inset the body or moved the bar.
             paddingTop: contentTopInset,
-            paddingBottom: Platform.OS === "android" && !isKeyboardVisible ? insets.bottom : 0,
           }}
         >
           {!isEnvironmentReady ? (
@@ -960,20 +993,26 @@ function ThreadTerminal(props: {
                 />
               </Animated.View>
 
-              {Platform.OS === "android" && !isKeyboardVisible ? (
-                <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
-                  {hasNativeTerminalSurface() ? (
-                    <Button label="Attach output" tone="text" onPress={requestCapture} />
-                  ) : null}
-                  <View className="flex-1" />
-                  <IconButton
-                    accessibilityLabel="Show keyboard"
-                    disabled={!canOperateTerminal}
-                    icon="keyboard"
-                    onPress={handleShowKeyboard}
-                  />
+              {Platform.OS === "android" ? (
+                <View
+                  className="bg-card-alt"
+                  onLayout={(event) => setAndroidBarHeight(event.nativeEvent.layout.height)}
+                  style={{ paddingBottom: insets.bottom }}
+                >
+                  <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
+                    {hasNativeTerminalSurface() ? (
+                      <Button label="Attach output" tone="text" onPress={requestCapture} />
+                    ) : null}
+                    <View className="flex-1" />
+                    <IconButton
+                      accessibilityLabel="Show keyboard"
+                      disabled={!canOperateTerminal}
+                      icon="keyboard"
+                      onPress={handleShowKeyboard}
+                    />
+                  </View>
                 </View>
-              ) : Platform.OS !== "android" && hasNativeTerminalSurface() ? (
+              ) : hasNativeTerminalSurface() ? (
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => {
@@ -992,18 +1031,21 @@ function ThreadTerminal(props: {
                   <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
                 </Pressable>
               ) : null}
-              {isAccessoryVisible ? (
+              {isAccessoryVisible || (Platform.OS === "android" && canOperateTerminal) ? (
                 <KeyboardStickyView
                   style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
                   offset={{ closed: 0, opened: 0 }}
                 >
-                  <View
+                  <Animated.View
                     className="border-t"
-                    style={{
-                      backgroundColor: terminalTheme.background,
-                      borderTopColor: terminalTheme.border,
-                      minHeight: TERMINAL_ACCESSORY_HEIGHT,
-                    }}
+                    style={[
+                      {
+                        backgroundColor: terminalTheme.background,
+                        borderTopColor: terminalTheme.border,
+                        minHeight: TERMINAL_ACCESSORY_HEIGHT,
+                      },
+                      Platform.OS === "android" ? androidAccessoryStyle : null,
+                    ]}
                   >
                     <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
                       <ComposerToolbarScroller
@@ -1046,7 +1088,7 @@ function ThreadTerminal(props: {
                         showChevron={false}
                       />
                     </ComposerToolbarRow>
-                  </View>
+                  </Animated.View>
                 </KeyboardStickyView>
               ) : canOperateTerminal && !isKeyboardVisible && Platform.OS !== "android" ? (
                 <Pressable
