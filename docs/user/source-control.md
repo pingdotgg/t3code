@@ -260,6 +260,12 @@ script is also possible, for example `["python3", ".t3code/mr-context.py"]`.
 Add `hooks.afterPush` commands to `.t3code/vcs.json` to run project-specific commands after a
 successful push:
 
+For a stack, these commands run once per changed branch with that branch checked out, including
+when publishing through **Update stack** or **Continue**. Unchanged branches are skipped. If a hook
+fails, the remote push remains complete; **Continue** retries the unfinished branch without rerunning
+hooks for branches that already finished. Git's native `pre-push` hook still runs once for the atomic
+push and receives all of its branch updates together.
+
 ```json
 {
   "hooks": {
@@ -439,6 +445,33 @@ returns to your inbox.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
+
+## Maintaining a local branch stack
+
+Use **Adopt branch stack** in the Git sidebar to give T3 an ordered list of existing branches,
+from the oldest layer to the newest, and their base branch. T3 can suggest the order from local
+branch ancestry, recorded parent relationships, or `glab` stack metadata. Adoption preserves branches and commits; afterward,
+use T3 rather than another stack manager to maintain that stack.
+
+**Edit layers** changes the tracked hierarchy of existing branches without rewriting commits.
+Branches must already follow the selected ancestry; edits do not create branches or restack them.
+Click a branch in the stack to switch the checkout and thread to it. Switching requires a clean
+checkout and a target branch that is not checked out in another worktree.
+
+Commit and Commit dialog still commit only to the current layer. Publishing a middle layer also
+restacks and pushes its descendants, updating their existing reviews without creating new ones.
+At the top of the stack, publishing keeps its usual behavior. Regrouping existing commits defaults
+to the current layer's parent rather than the repository's default branch.
+
+**Update stack** incorporates remote branch updates and removes merged layers from tracking before
+restacking and pushing the remaining branches. Enable **Include latest base** to also bring in new
+changes from the base branch. A conflict pauses the operation in the checkout shown in the sidebar;
+resolve and stage its files, then choose **Continue**, or **Abort** to restore local branches.
+Completed remote pushes are not undone. **Untrack** stops T3 maintenance without deleting branches.
+
+Updating requires a clean working tree. Branches checked out in another worktree must be released
+before restacking; T3 does not change another checkout. Divergent remote changes stop the operation
+for reconciliation instead of being overwritten.
 
 ## GitHub stacks
 
