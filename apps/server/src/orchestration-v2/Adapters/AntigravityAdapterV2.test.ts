@@ -162,6 +162,10 @@ describe("AntigravityAdapterV2 compaction", () => {
         const goalSupport = yield* Ref.make(false);
         const startupMilestone = yield* Deferred.make<void>();
         const consumeStartupCommands = yield* Deferred.make<void>();
+        const workspaceCommands = yield* Ref.make<{
+          readonly names: ReadonlyArray<string>;
+          readonly cwd: string;
+        } | null>(null);
         const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -189,6 +193,11 @@ describe("AntigravityAdapterV2 compaction", () => {
           supportsNativeGoals: Ref.get(goalSupport).pipe(
             Effect.tap(() => Deferred.succeed(startupMilestone, undefined)),
           ),
+          onAvailableCommands: (commands, cwd) =>
+            Ref.set(workspaceCommands, {
+              names: commands.map((command) => command.name),
+              cwd,
+            }),
           onSessionEvent: (event) =>
             event._tag === "AvailableCommandsUpdated"
               ? Deferred.await(consumeStartupCommands).pipe(
@@ -211,6 +220,10 @@ describe("AntigravityAdapterV2 compaction", () => {
         yield* Deferred.await(startupMilestone);
         yield* Deferred.succeed(consumeStartupCommands, undefined);
         const session = yield* Fiber.join(opening);
+        assert.deepEqual(yield* Ref.get(workspaceCommands), {
+          names: ["plan", "logout"],
+          cwd: process.cwd(),
+        });
         assert.isUndefined(session.compactThread);
         assert.equal(session.providerSession.capabilities.turns.supportsNativeGoals, nativeGoals);
         assert.equal((yield* adapter.getCapabilities()).turns.supportsNativeGoals, nativeGoals);

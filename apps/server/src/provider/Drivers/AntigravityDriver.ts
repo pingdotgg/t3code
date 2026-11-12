@@ -469,14 +469,11 @@ export const AntigravityDriver: ProviderDriver<
       ),
       profileDirectory,
       onSessionStarted: provider.onSessionStarted,
-      onSessionEvent: (event) => {
-        if (event._tag === "ConfigOptionsUpdated") {
-          return provider.onConfigOptionsUpdated(event.configOptions);
-        }
-        return event._tag === "AvailableCommandsUpdated"
-          ? provider.onAvailableCommands(event.availableCommands)
-          : Effect.void;
-      },
+      onAvailableCommands: provider.onAvailableCommands,
+      onSessionEvent: (event) =>
+        event._tag === "ConfigOptionsUpdated"
+          ? provider.onConfigOptionsUpdated(event.configOptions)
+          : Effect.void,
       continuationRequests,
       nativeLogging: (threadId) =>
         makeNativeLogger({
