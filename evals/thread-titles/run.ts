@@ -40,6 +40,11 @@ const { values } = NodeUtil.parseArgs({
 });
 if (!values.model || !values.out)
   throw new Error("Use --model <configured-model> --out <directory>.");
+for (const id of values.case ?? []) {
+  if (!threadTitleEvaluationCases.some((fixture) => fixture.id === id)) {
+    throw new Error(`Unknown case id: ${id}.`);
+  }
+}
 const model = values.model;
 const outputDirectory = values.out;
 const Results = Schema.fromJsonString(
