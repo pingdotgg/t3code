@@ -482,6 +482,51 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
+  it.effect("fails a message dispatch the host never answers while the socket stays up", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      const healthySession = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const accepted = yield* Deferred.make<void>();
+      const stalledClient = {
+        ...healthySession.client,
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            yield* Deferred.succeed(accepted, undefined);
+            return yield* Effect.never;
+          }),
+      } as unknown as WsRpcProtocolClient;
+      yield* SubscriptionRef.set(
+        supervisor.session,
+        Option.some({ ...healthySession, client: stalledClient }),
+      );
+
+      const sendFiber = yield* startThreadTurn({
+        commandId: CommandId.make("command-stalled-ack"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-stalled-ack"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(accepted);
+      yield* TestClock.adjust("10 minutes");
+
+      const exit = sendFiber.pollUnsafe();
+      expect(exit).toBeDefined();
+      expect(exit !== undefined && Exit.isFailure(exit)).toBe(true);
+      expect(commands.map((command) => command.commandId)).toEqual(["command-stalled-ack"]);
+    }).pipe(Effect.provide(layerTestRandom)),
+  );
+
   it.effect("Stop with no run left ends the thread's pull request watches", () =>
     Effect.gen(function* () {
       const link = {
