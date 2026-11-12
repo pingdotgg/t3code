@@ -66,6 +66,8 @@ export const UsageBucket = Schema.Struct({
   costSource: UsageCostSource,
   records: NonNegativeInt,
   unpricedRecords: NonNegativeInt,
+  /** Absent from older servers; merges then estimate it from the unpriced record share. */
+  unpricedTokens: Schema.optional(NonNegativeInt),
   sessions: NonNegativeInt,
 });
 export type UsageBucket = typeof UsageBucket.Type;

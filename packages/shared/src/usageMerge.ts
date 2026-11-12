@@ -464,7 +464,9 @@ export function mergeUsage(
       };
       model.records += bucket.records;
       model.unpricedRecords += bucket.unpricedRecords;
-      if (bucket.records > 0) {
+      if (bucket.unpricedTokens !== undefined) {
+        model.unpricedTokens += bucket.unpricedTokens;
+      } else if (bucket.records > 0) {
         model.unpricedTokens += (tokens * bucket.unpricedRecords) / bucket.records;
       }
       modelAccumulator.set(modelKey, model);
