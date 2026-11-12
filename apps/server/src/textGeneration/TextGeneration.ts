@@ -109,6 +109,8 @@ export const make = Effect.gen(function* () {
       textGeneratorCannotRun ||
       (selected?.enabled === true &&
         (!isProviderTextGenerationCapable(selected) ||
+          selected.models.find((model) => model.slug === selection.model)
+            ?.supportsTextGeneration === false ||
           (selected.status === "error" &&
             (!selected.installed || selected.auth.status === "unauthenticated"))));
     if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
