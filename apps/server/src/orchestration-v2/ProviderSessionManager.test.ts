@@ -2027,6 +2027,94 @@ it.effect.each([
 );
 
 it.effect(
+  "a planned detach keeps sibling streams flowing while its native interrupt is pending",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      let onInterrupt: Effect.Effect<void> = Effect.void;
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("thread:detach-sibling-moving");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const now = yield* DateTime.now;
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.subscribeEvents!(threadId);
+        const sibling = yield* runtime.subscribeEvents!(
+          ThreadId.make("thread:detach-sibling-other"),
+        );
+        const siblingEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* sibling.events.pipe(
+          Stream.runForEach((event) => Queue.offer(siblingEvents, event)),
+          Effect.forkScoped,
+        );
+        const turn = (nativeTurnId: string, status: "running" | "completed") =>
+          ({
+            type: "provider_turn.updated",
+            driver: CODEX_DRIVER,
+            providerTurn: {
+              id: idAllocator.derive.providerTurn({ driver: CODEX_DRIVER, nativeTurnId }),
+              providerThreadId: providerThread.id,
+              nodeId: idAllocator.derive.rootNode({ runId: RunId.make(`run:${nativeTurnId}`) }),
+              runAttemptId: null,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status,
+              startedAt: now,
+              completedAt: null,
+            },
+          }) satisfies ProviderAdapter.ProviderAdapterV2Event;
+        const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        yield* Queue.offer(adapterQueue, turn("moving", "running"));
+        yield* Queue.take(siblingEvents);
+        const fence = turn("sibling-fence", "completed");
+        onInterrupt = Queue.offer(adapterQueue, fence).pipe(
+          Effect.andThen(Queue.take(siblingEvents)),
+          Effect.map((event) => assert.deepEqual(event, fence)),
+        );
+        yield* manager.detach({ providerSessionId, threadId, reason: "workspace_changed" });
+        assert.equal((yield* Ref.get(state)).interruptCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            interruptTurn: Effect.suspend(() => onInterrupt),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 projects idle extension statuses and rejects a retired runtime's updates",
   () =>
     Effect.gen(function* () {
