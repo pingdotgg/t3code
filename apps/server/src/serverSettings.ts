@@ -262,8 +262,9 @@ export class ServerSettingsService extends Context.Service<
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** A function patch is computed from the current settings under the write lock. */
     readonly updateSettings: (
-      patch: ServerSettingsPatch,
+      patch: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateProviderInstance: (
@@ -326,7 +327,12 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     getSettings,
     updateSettings: (patch) =>
       updateTestSettings((currentSettings) =>
-        Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        Effect.succeed(
+          applyServerSettingsPatch(
+            currentSettings,
+            typeof patch === "function" ? patch(currentSettings) : patch,
+          ),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
@@ -1184,8 +1190,11 @@ const make = Effect.gen(function* () {
   };
 
   const updateAndPersistSettings = (
-    patch: ServerSettingsPatch,
-    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+    patchInput: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
+    update: (
+      current: ServerSettings,
+      patch: ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
@@ -1197,9 +1206,10 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
+        const patch = typeof patchInput === "function" ? patchInput(current) : patchInput;
         // An older client echoes a reference as the redacted marker; restore it before vetting so
         // a removed provider's reference is cleared below rather than restored by persistence.
-        const updated = withEchoedSecretReferences(current, yield* update(current));
+        const updated = withEchoedSecretReferences(current, yield* update(current, patch));
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1367,8 +1377,8 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
-    updateSettings: (patch) =>
-      updateAndPersistSettings(patch, (current) =>
+    updateSettings: (patchInput) =>
+      updateAndPersistSettings(patchInput, (current, patch) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
           Effect.as(applyServerSettingsPatch(current, patch)),
         ),

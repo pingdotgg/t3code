@@ -643,11 +643,30 @@ it.effect("an update on folded settings reaches the actions and defaults new thr
       defaultThreadEnvMode: "worktree",
     });
 
-    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+    const settingsService = yield* ServerSettings.ServerSettingsService;
+    const settings = yield* settingsService.getSettings;
     assert.deepEqual(resolveProjectScripts(settings, updated), [setup]);
     assert.equal(
       resolveProjectSettings(settings, projectId, updated).settings.defaultThreadEnvMode,
       "worktree",
+    );
+
+    yield* service.update({
+      commandId: CommandId.make("command:project:folded-update-local"),
+      projectId,
+      defaultThreadEnvMode: "local",
+    });
+    // A late retry of the first command must not reapply its superseded value.
+    const retried = yield* service.update({
+      commandId: CommandId.make("command:project:folded-update"),
+      projectId,
+      scripts: [setup],
+      defaultThreadEnvMode: "worktree",
+    });
+    assert.equal(
+      resolveProjectSettings(yield* settingsService.getSettings, projectId, retried).settings
+        .defaultThreadEnvMode,
+      "local",
     );
   }).pipe(
     Effect.provide(
