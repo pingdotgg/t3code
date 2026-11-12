@@ -132,6 +132,7 @@ import {
   useConnectedEnvironmentIds,
   useEnvironmentMachines,
   usePrimaryEnvironmentId,
+  readEnvironment,
   readEnvironmentCanChangeThreads,
   useEnvironmentCanChangeThreads,
 } from "../state/environments";
@@ -2624,6 +2625,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           api.contextMenu.show(
             buildThreadActionMenuItems({
               canOperate: readEnvironmentCanChangeThreads(threadRef.environmentId),
+              offline: readEnvironment(threadRef.environmentId)?.connection.phase !== "connected",
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:

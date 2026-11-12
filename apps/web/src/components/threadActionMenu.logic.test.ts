@@ -66,6 +66,12 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it("says a disabled action waits for an offline machine", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, canOperate: false, offline: true });
+    expect(items.find((item) => item.id === "archive")?.detail).toBe("Offline");
+    expect(items.find((item) => item.id === "mark-unread")?.detail).toBeUndefined();
+  });
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,

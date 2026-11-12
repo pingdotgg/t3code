@@ -69,6 +69,8 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  /** The thread's machine is not connected, so operate actions wait for it to reconnect. */
+  readonly offline?: boolean;
   readonly canFind?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
@@ -261,6 +263,7 @@ export function buildThreadActionMenuItems(
           ? {
               ...item,
               disabled: true,
+              ...(state.offline ? { detail: "Offline" } : {}),
               ...(item.children
                 ? { children: item.children.map((child) => ({ ...child, disabled: true })) }
                 : {}),

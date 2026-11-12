@@ -54,6 +54,7 @@ vi.mock("../state/entities", () => ({
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
 vi.mock("../state/environments", () => ({
+  readEnvironment: () => ({ connection: { phase: "connected" } }),
   readEnvironmentCanChangeThreads: (environmentId: string) => state.granted.has(environmentId),
   usePrimaryEnvironmentId: () => "primary",
 }));

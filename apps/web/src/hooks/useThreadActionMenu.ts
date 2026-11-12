@@ -28,7 +28,11 @@ import {
   readThreadShell,
   useProjects,
 } from "../state/entities";
-import { readEnvironmentCanChangeThreads, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  readEnvironment,
+  readEnvironmentCanChangeThreads,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import {
@@ -133,6 +137,7 @@ export function useThreadActionMenu(input: {
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentCanChangeThreads(threadRef.environmentId),
+        offline: readEnvironment(threadRef.environmentId)?.connection.phase !== "connected",
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
         projectFilter: null,
