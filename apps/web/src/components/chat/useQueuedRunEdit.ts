@@ -253,7 +253,7 @@ export function useQueuedRunEdit(input: {
         threadId: activeThreadId,
         runId: request.runId,
         messageId: request.messageId,
-        originalText: text,
+        originalText: request.text,
         existingAttachments: request.attachments,
         context,
       },

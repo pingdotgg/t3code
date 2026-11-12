@@ -1,5 +1,8 @@
 import type { ChatAttachment, OrchestrationMessageContext } from "@t3tools/contracts";
-import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
+import {
+  composerRecallContext,
+  stripAttachmentOnlyBootstrapPrompt,
+} from "@t3tools/shared/composerContextReferences";
 import { resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
 import {
   composerDraftHasUserContent,
@@ -21,7 +24,9 @@ export function recoverQueuedMessageEdit(input: {
     editChanged:
       input.removedExistingAttachment === true ||
       (draft !== null &&
-        (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0)),
+        (draft.prompt !== stripAttachmentOnlyBootstrapPrompt(input.originalText) ||
+          draft.images.length > 0 ||
+          draft.files.length > 0)),
     // A cleared edit has nothing to put back, so it can only be discarded.
     threadDraftEmpty:
       composerDraftHasUserContent(draft) &&

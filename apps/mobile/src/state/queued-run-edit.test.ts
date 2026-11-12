@@ -140,9 +140,11 @@ describe("beginQueuedRunEdit", () => {
     "opens attachment-only edits without the placeholder and treats them as untouched (%j)",
     (prefix) => {
       const threadKey = `env-exit:attachment-only-${prefix.length}`;
+      const recall = { version: 1, records: [], composerRecall: " \n " } as const;
       const original = {
         ...edit([image("kept")]),
         originalText: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        context: recall,
       };
       const runs = Atom.make<ReadonlyArray<{ readonly id: RunId; readonly status: string }> | null>(
         [{ id: original.runId, status: "queued" }],
@@ -153,7 +155,17 @@ describe("beginQueuedRunEdit", () => {
       expect(
         restoreAttachmentOnlyBootstrapPrompt(draft.text, original.existingAttachments.length > 0),
       ).toBe(original.originalText);
-      expect(getQueuedRunEdit(threadKey)).toEqual({ ...original, originalText: prefix.trimEnd() });
+      const editing = getQueuedRunEdit(threadKey);
+      if (editing === null) throw new Error("Expected an open queued edit");
+      const payload = resolveQueuedEditPayload({
+        edit: editing,
+        text: original.originalText,
+        draftText: draft.text,
+        draftContext: draft.context,
+        draftAttachments: [],
+        uploaded: [],
+      });
+      expect(payload.context).toEqual(recall);
       appAtomRegistry.set(runs, [{ id: original.runId, status: "running" }]);
       expect(getQueuedRunEdit(threadKey)).toBeNull();
       expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]?.message).toBeUndefined();

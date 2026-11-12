@@ -459,19 +459,17 @@ export function composerRecallContext(
   sentText: string,
   composerText: string,
   context?: OrchestrationMessageContext,
-  previousText?: string,
+  previousSentText?: string,
 ): OrchestrationMessageContext | undefined {
-  // A queued editor can reopen the already-trimmed wire text. A no-op save
-  // must not replace the captured original with that lossy representation.
-  if (
+  // The queued editor hides the attachment prompt. Keep captured text when
+  // the editor's text is untouched, even if saving changes the attachments.
+  const unchangedDraft =
+    previousSentText !== undefined &&
     context?.composerRecall !== undefined &&
-    composerText === previousText &&
-    sentText === previousText
-  ) {
-    return context;
-  }
+    composerText === stripAttachmentOnlyBootstrapPrompt(previousSentText);
+  if (unchangedDraft && sentText === previousSentText) return context;
   const ids = new Set(context?.records.map((record) => record.contextId));
-  let text = composerText;
+  let text = unchangedDraft ? recallComposerText(previousSentText, context) : composerText;
   const references = collectComposerContextReferences(text);
   for (let index = references.length - 1; index >= 0; index--) {
     const reference = references[index]!;

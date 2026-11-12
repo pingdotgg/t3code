@@ -78,7 +78,7 @@ function exitQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
   const editRestorable = editDraft.text.trim().length > 0 || editDraft.attachments.length > 0;
   const recovery = resolveQueuedEditExit({
     editChanged:
-      editDraft.text !== edit.originalText ||
+      editDraft.text !== stripAttachmentOnlyBootstrapPrompt(edit.originalText) ||
       editDraft.attachments.length > 0 ||
       edit.removedExistingAttachment === true,
     // A cleared edit has nothing to put back, so it can only be discarded.
@@ -120,15 +120,10 @@ export function beginQueuedRunEdit(
   // The composer moves off the thread draft, so a paste or pick still running for it is dropped.
   abortComposerDraftOperations(threadKey);
   const draftKey = queuedEditDraftKey(threadKey, edit.runId);
-  const originalText = stripAttachmentOnlyBootstrapPrompt(edit.originalText);
   clearComposerDraft(draftKey);
-  setComposerDraftText(draftKey, originalText);
+  setComposerDraftText(draftKey, stripAttachmentOnlyBootstrapPrompt(edit.originalText));
   setComposerDraftContext(draftKey, edit.context);
-  queuedRunEdits.begin(
-    threadKey,
-    { ...edit, originalText },
-    { runs, onRunLeftQueue: exitQueuedRunEdit },
-  );
+  queuedRunEdits.begin(threadKey, edit, { runs, onRunLeftQueue: exitQueuedRunEdit });
 }
 
 export function removeQueuedRunEditAttachment(threadKey: string, attachmentId: string): void {

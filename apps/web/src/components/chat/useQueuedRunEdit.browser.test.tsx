@@ -194,7 +194,6 @@ describe("useQueuedRunEdit", () => {
     async (prefix) => {
       const { hook } = setup();
       mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
-      await using screen = await render(view(THREAD_A, "queued", hook));
       using toast = vi.spyOn(toastManager, "add");
       const attachments = [
         {
@@ -211,6 +210,10 @@ describe("useQueuedRunEdit", () => {
         text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
         attachments,
       };
+      const context = { version: 1, records: [], composerRecall: " \n " } as const;
+      await using screen = await render(
+        view(THREAD_A, "queued", hook, [{ id: request.messageId, text: request.text, context }]),
+      );
       await act(() => requireHook(hook).beginEdit(request));
       expect(
         useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt ??
@@ -237,7 +240,7 @@ describe("useQueuedRunEdit", () => {
         expect.objectContaining({
           input: expect.objectContaining({
             text: prefix + ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-            edit: expect.objectContaining({ attachments }),
+            edit: expect.objectContaining({ attachments, context }),
           }),
         }),
       );
@@ -247,12 +250,17 @@ describe("useQueuedRunEdit", () => {
   it("saves an effort-only prompt without claiming removed attachments remain", async () => {
     const { hook } = setup();
     mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
-    await using screen = await render(view(THREAD_A, "queued", hook));
+    const messageId = MessageId.make("message-1");
+    const text = `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`;
+    const context = { version: 1, records: [], composerRecall: "" } as const;
+    await using screen = await render(
+      view(THREAD_A, "queued", hook, [{ id: messageId, text, context }]),
+    );
     await act(() =>
       requireHook(hook).beginEdit({
         runId: RUN,
-        messageId: MessageId.make("message-1"),
-        text: `Ultrathink:\n${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT}`,
+        messageId,
+        text,
         attachments: [
           {
             type: "image",
@@ -271,7 +279,7 @@ describe("useQueuedRunEdit", () => {
       expect.objectContaining({
         input: expect.objectContaining({
           text: "Ultrathink:",
-          edit: expect.objectContaining({ attachments: [] }),
+          edit: expect.objectContaining({ attachments: [], context }),
         }),
       }),
     );
