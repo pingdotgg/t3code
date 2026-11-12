@@ -57,7 +57,58 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   useAtomCommand: (() => vi.fn()) as never,
 }));
 
+vi.mock(import("~/state/entities"), async (original) => ({
+  ...(await original()),
+  useAllEnvironmentShellsBootstrapped: () => true,
+  useProjects: (() => [
+    {
+      id: "project",
+      environmentId: "environment",
+      title: "Project",
+      workspaceRoot: "/workspace",
+      repositoryIdentity: null,
+      isScratch: false,
+    },
+  ]) as never,
+}));
+vi.mock(import("~/state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironments: (() => ({
+    environments: [
+      {
+        environmentId: "environment",
+        label: "Server",
+        connection: { phase: "connected" },
+        serverConfig: { environment: { platform: "linux" } },
+      },
+    ],
+  })) as never,
+}));
+vi.mock(import("~/hooks/useSidebarProjectGroups"), () => ({
+  useSidebarProjectGroups: (() => [
+    {
+      displayName: "Project",
+      memberProjectRefs: [{ environmentId: "environment", projectId: "project" }],
+    },
+  ]) as never,
+}));
+vi.mock(import("~/state/pullRequests"), async (original) => ({
+  ...(await original()),
+  usePullRequestList: () => ({
+    data: null,
+    error: null,
+    isPending: false,
+    observations: [],
+    refresh: vi.fn(),
+  }),
+  usePullRequestListStats: () => ({ stats: null, isPending: false, refresh: vi.fn() }),
+  usePullRequestTurnRefreshes: () => [],
+}));
+
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
+import { PullRequestsPage } from "./PullRequestsPage";
+import { SidebarProvider } from "../ui/sidebar";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -142,6 +193,7 @@ function setup() {
   permissions.checkout = true;
   permissions.operate = true;
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {} });
 }
 
 it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
@@ -169,6 +221,22 @@ it("can still add conflict resolution to an existing composer without checkout s
   const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
   expect(draft?.prompt).toContain("conflicts");
   expect(draft?.prompt).toContain(detail.url);
+});
+
+it("opens a URL-selected pull request without repeatedly reopening its detail", async () => {
+  setup();
+  await using screen = await render(
+    <SidebarProvider>
+      <PullRequestsPage />
+    </SidebarProvider>,
+    {
+      router:
+        "/pull-requests?repository=owner%2Frepo&number=1&selectedProjectId=project&selectedEnvironmentId=environment",
+    },
+  );
+  await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Timeline", exact: true }));
+  await expect.element(screen.getByText("Later commit", { exact: true })).toBeVisible();
 });
 
 it("switches the timeline between newest and oldest activity first", async () => {

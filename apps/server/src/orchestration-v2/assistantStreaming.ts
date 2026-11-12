@@ -1,5 +1,10 @@
 import type { ResponseStreamingMode } from "@t3tools/contracts";
-import { splitBufferedAssistantText } from "@t3tools/shared/assistantStreaming";
+import {
+  advanceScan,
+  EMPTY_SCAN,
+  readyBoundary,
+  type AssistantTextScan,
+} from "@t3tools/shared/assistantStreaming";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 // Long enough to ride out normal gaps between chunks; short enough that text written before a
@@ -18,6 +23,7 @@ interface StreamTrack {
   // Latest snapshot whose text has not all been delivered yet.
   readonly held: ProviderAdapter.ProviderAdapterV2Event | null;
   readonly dueAt: number;
+  readonly scan: AssistantTextScan;
 }
 
 function streamedMessage(event: ProviderAdapter.ProviderAdapterV2Event): StreamedMessage | null {
@@ -82,25 +88,29 @@ export function makeAssistantStreamingFilter(
       if (mode === "turn") return null;
       const previous = tracks.get(key);
       const delivered = previous?.text ?? "";
-      const hold = () => {
+      const hold = (scan = previous?.scan ?? EMPTY_SCAN) => {
         track(key, {
           text: delivered,
           at: previous?.at ?? Number.NEGATIVE_INFINITY,
           held: message.text !== delivered ? event : null,
           dueAt: now + idleFlushMs,
+          scan,
         });
         return null;
       };
       if (previous && now - previous.at < 400) return hold();
-      const { ready } = splitBufferedAssistantText(message.text);
+      const scan = advanceScan(previous?.scan ?? EMPTY_SCAN, message.text);
+      const boundary = readyBoundary(scan);
+      const ready = boundary === -1 ? "" : message.text.slice(0, boundary);
       // An idle delivery may already show more than the next boundary; never shrink it. A
       // provider rewrite or truncation is not a prefix and replaces it.
-      if (delivered.startsWith(ready)) return hold();
+      if (delivered.startsWith(ready)) return hold(scan);
       track(key, {
         text: ready,
         at: now,
         held: ready !== message.text ? event : null,
         dueAt: now + idleFlushMs,
+        scan,
       });
       return withText(event, ready);
     },
@@ -122,6 +132,7 @@ export function makeAssistantStreamingFilter(
           at: now,
           held: null,
           dueAt: now,
+          scan: current.scan,
         });
       }
       return due;

@@ -1,6 +1,7 @@
 import { pullRequestAnchorMatchesUrl } from "@t3tools/shared/pullRequestAnchor";
 import type {
   EnvironmentId,
+  PullRequestActor,
   PullRequestDiffSide,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -18,7 +19,7 @@ import {
   CircleCheckIcon,
 } from "lucide-react";
 
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { RelativeTime } from "~/components/RelativeTime";
@@ -26,10 +27,10 @@ import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { Button, InlineButton } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { COMMENT_CARD_CLASS, CommentCardHead } from "../diffs/DiffCommentAnnotation";
 import { Badge } from "../ui/badge";
@@ -38,7 +39,11 @@ import {
   mergePullRequestThreadComments,
   visibleBody,
 } from "./pullRequestDetail.logic";
-import { AddToChatIconButton, PullRequestActorLabel } from "./pullRequestPresentation";
+import {
+  AddToChatIconButton,
+  PullRequestActorAvatar,
+  PullRequestActorLabel,
+} from "./pullRequestPresentation";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -173,6 +178,66 @@ function ReviewThreadLocation({ thread }: { thread: PullRequestReviewThread }) {
   );
 }
 
+/** The conversations on one diff line. Resolved ones hide behind their authors' avatars. */
+export function InlineReviewThreads({
+  threads,
+  renderThread,
+}: {
+  threads: ReadonlyArray<PullRequestReviewThread>;
+  renderThread: (thread: PullRequestReviewThread, hidden: boolean) => ReactNode;
+}) {
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
+  // A conversation seen open stays shown once resolved, so it does not vanish under the reader.
+  const open = threads.filter((thread) => !thread.isResolved);
+  if (open.some((thread) => !shown.has(thread.id))) {
+    setShown(new Set([...shown, ...open.map((thread) => thread.id)]));
+  }
+  const resolved = threads.filter((thread) => thread.isResolved);
+  const expanded = resolved.every((thread) => shown.has(thread.id));
+  const authors = new Map<string, PullRequestActor | null>();
+  for (const comment of resolved.flatMap((thread) => thread.comments)) {
+    authors.set(comment.author?.login ?? "ghost", comment.author);
+  }
+  if (authors.size === 0) authors.set("ghost", null);
+  const label =
+    resolved.length === 1 ? "Resolved conversation" : `${resolved.length} resolved conversations`;
+  return (
+    <>
+      {resolved.length > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                data-resolved-threads
+                aria-label={label}
+                aria-expanded={expanded}
+                // Sits on the commented line, which is the row above this annotation.
+                className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                contentEditable={false}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() =>
+                  setShown(new Set((expanded ? open : threads).map((thread) => thread.id)))
+                }
+              />
+            }
+          >
+            {[...authors].slice(0, 3).map(([login, author]) => (
+              <PullRequestActorAvatar
+                key={login}
+                actor={author}
+                className="ring-1 ring-background"
+              />
+            ))}
+          </TooltipTrigger>
+          <TooltipPopup side="left">{label}</TooltipPopup>
+        </Tooltip>
+      ) : null}
+      {threads.map((thread) => renderThread(thread, thread.isResolved && !shown.has(thread.id)))}
+    </>
+  );
+}
+
 export function ReviewThreadCard({
   thread,
   standalone = false,
@@ -195,6 +260,7 @@ export function ReviewThreadCard({
   onEditComment,
   onToggleResolved,
   onReacted,
+  hidden,
 }: {
   thread: PullRequestReviewThread;
   /**
@@ -225,9 +291,12 @@ export function ReviewThreadCard({
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
+  /** Set on a diff line. Hidden draws nothing but stays mounted, so an unsent reply survives. */
+  hidden?: boolean;
 }) {
   const [expanded, setExpanded] = useState(
-    !thread.isResolved ||
+    hidden !== undefined ||
+      !thread.isResolved ||
       Boolean(
         revealAnchor &&
         thread.comments.some((comment) => pullRequestAnchorMatchesUrl(revealAnchor, comment.url)),
@@ -313,6 +382,8 @@ export function ReviewThreadCard({
       nextCursor: page.nextCursor,
     }));
   };
+
+  if (hidden) return null;
 
   // Beside the reply field while the conversation is open; in the head otherwise, so a folded
   // or read-only thread can still be resolved or reopened.

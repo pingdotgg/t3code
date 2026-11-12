@@ -462,7 +462,7 @@ function QuestionOptionRow({
 }) {
   const className = cn(
     textAlign,
-    "group flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-foreground outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+    "group flex w-full items-center gap-2.5 rounded-row px-2.5 py-2 text-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
     selected ? "bg-selection-neutral" : "bg-transparent hover:surface-ghost-hover",
     disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
   );
