@@ -248,6 +248,7 @@ export const CodexDriver: ProviderDriver<
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        onSkillsChanged: () => snapshot.invalidateWorkspaceCatalog ?? Effect.void,
         compatibility: installation.compatibility,
       },
     ).pipe(

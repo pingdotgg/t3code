@@ -304,12 +304,15 @@ export const mergeProviderSnapshot = (
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
   const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
-  const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
-    ? previousProvider.workspaceSnapshots
-    : previousProvider.workspaceSnapshots?.map((snapshot) => ({
-        ...snapshot,
-        modelsPending: true,
-      }));
+  const previousWorkspaceSnapshots =
+    nextProvider.workspaceCatalogRevision !== previousProvider.workspaceCatalogRevision
+      ? undefined
+      : Equal.equals(models, previousProvider.models)
+        ? previousProvider.workspaceSnapshots
+        : previousProvider.workspaceSnapshots?.map((snapshot) => ({
+            ...snapshot,
+            modelsPending: true,
+          }));
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
@@ -560,6 +563,23 @@ export const layer = Layer.effect(
       );
 
       if (haveProvidersChanged(previousProviders, providers)) {
+        const invalidated = new Set(
+          providers
+            .filter(
+              (provider) =>
+                provider.workspaceCatalogRevision !==
+                previousProviders.find((previous) => previous.instanceId === provider.instanceId)
+                  ?.workspaceCatalogRevision,
+            )
+            .map((provider) => provider.instanceId),
+        );
+        if (invalidated.size > 0) {
+          yield* Ref.update(
+            workspaceRefreshesRef,
+            (refreshes) =>
+              new Map([...refreshes].filter(([instance]) => !invalidated.has(instance.instanceId))),
+          );
+        }
         if (options?.persist !== false) {
           yield* Effect.forEach(providersToPersist, persistProvider, {
             concurrency: "unbounded",

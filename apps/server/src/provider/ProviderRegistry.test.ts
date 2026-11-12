@@ -672,6 +672,11 @@ it.layer(
         unchanged.workspaceSnapshots?.map((snapshot) => snapshot.cwd),
         ["/project", "/plain"],
       );
+      const invalidated = ProviderRegistry.mergeProviderSnapshot(withCatalog, {
+        ...provider,
+        workspaceCatalogRevision: 1,
+      });
+      assert.strictEqual(invalidated.workspaceSnapshots, undefined);
       const changed = ProviderRegistry.mergeProviderSnapshot(withCatalog, {
         ...provider,
         models: [machineModel, addedModel],
@@ -1918,9 +1923,9 @@ it.layer(
       }),
     );
 
-    it.effect(
-      "a second request for a cwd being scanned gets its result, even if the first leaves",
-      () =>
+    it.effect.each(["the first leaves", "the catalog changes"] as const)(
+      "a second workspace request gets the current result when %s",
+      (scenario) =>
         Effect.gen(function* () {
           const driver = ProviderDriverKind.make("codex");
           const instanceId = ProviderInstanceId.make("codex");
@@ -1940,6 +1945,8 @@ it.layer(
           const scanStarted = yield* Deferred.make<void>();
           const releaseScan = yield* Deferred.make<void>();
           const scans = yield* Ref.make(0);
+          const updates = yield* PubSub.unbounded<ServerProvider>();
+          const current = yield* Ref.make<ServerProvider>(provider);
           const instance: ProviderInstance = {
             instanceId,
             driverKind: driver,
@@ -1954,16 +1961,26 @@ it.layer(
                     packageName: null,
                   }),
                 ),
-              getSnapshot: Effect.succeed(provider),
-              refresh: Effect.succeed(provider),
-              streamChanges: Stream.empty,
+              getSnapshot: Ref.get(current),
+              refresh: Ref.get(current),
+              streamChanges: Stream.fromPubSub(updates),
               applyUsageLimits: () => Effect.void,
             },
             snapshotForCwd: () =>
-              Ref.update(scans, (count) => count + 1).pipe(
-                Effect.andThen(Deferred.succeed(scanStarted, undefined)),
-                Effect.andThen(Deferred.await(releaseScan)),
-                Effect.as(provider),
+              Ref.updateAndGet(scans, (count) => count + 1).pipe(
+                Effect.tap(() => Deferred.succeed(scanStarted, undefined)),
+                Effect.flatMap((count): Effect.Effect<ProviderWorkspaceSnapshot> =>
+                  count > 1
+                    ? Ref.get(current).pipe(
+                        Effect.map((snapshot) => ({
+                          ...snapshot,
+                          skills: [
+                            { name: "fresh", path: "/workspace/fresh/SKILL.md", enabled: true },
+                          ],
+                        })),
+                      )
+                    : Deferred.await(releaseScan).pipe(Effect.as(provider)),
+                ),
               ),
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1999,14 +2016,42 @@ it.layer(
             const refresh = registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
             const first = yield* Effect.forkChild(refresh);
             yield* Deferred.await(scanStarted);
+            if (scenario === "the catalog changes") {
+              const changed = yield* registry.streamChanges.pipe(
+                Stream.filter((providers) => providers[0]?.workspaceCatalogRevision === 1),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkChild({ startImmediately: true }),
+              );
+              const invalidated = { ...provider, workspaceCatalogRevision: 1 };
+              yield* Ref.set(current, invalidated);
+              yield* PubSub.publish(updates, invalidated);
+              yield* Fiber.join(changed);
+            }
             const second = yield* Effect.forkChild(refresh, { startImmediately: true });
-            yield* Fiber.interrupt(first);
+            if (scenario === "the first leaves") yield* Fiber.interrupt(first);
+            else {
+              assert.deepStrictEqual(
+                (yield* Fiber.join(second))[0]?.workspaceSnapshots?.[0]?.skills.map(
+                  (skill) => skill.name,
+                ),
+                ["fresh"],
+              );
+            }
             yield* Deferred.succeed(releaseScan, undefined);
+            if (scenario === "the catalog changes") yield* Fiber.join(first);
             assert.deepStrictEqual(
               (yield* Fiber.join(second))[0]?.workspaceSnapshots?.map((snapshot) => snapshot.cwd),
               ["/workspace"],
             );
-            assert.strictEqual(yield* Ref.get(scans), 1);
+            assert.strictEqual(yield* Ref.get(scans), scenario === "the first leaves" ? 1 : 2);
+            if (scenario === "the catalog changes")
+              assert.deepStrictEqual(
+                (yield* registry.getProviders)[0]?.workspaceSnapshots?.[0]?.skills.map(
+                  (skill) => skill.name,
+                ),
+                ["fresh"],
+              );
           }).pipe(Effect.provide(runtimeServices));
         }),
     );

@@ -42,6 +42,15 @@ function withUsageLimits(
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
 
+function withWorkspaceCatalogRevision(
+  previous: ServerProvider,
+  next: ServerProvider,
+): ServerProvider {
+  return previous.workspaceCatalogRevision === undefined
+    ? next
+    : { ...next, workspaceCatalogRevision: previous.workspaceCatalogRevision };
+}
+
 const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
@@ -98,14 +107,17 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         return [null, state] as const;
       }
       // Enrichment must not revert usage updates newer than its input snapshot.
-      const merged = withUsageLimits(
-        state.usageAuthLabel === undefined
-          ? nextSnapshot
-          : {
-              ...nextSnapshot,
-              auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
-            },
-        state.snapshot.usageLimits,
+      const merged = withWorkspaceCatalogRevision(
+        state.snapshot,
+        withUsageLimits(
+          state.usageAuthLabel === undefined
+            ? nextSnapshot
+            : {
+                ...nextSnapshot,
+                auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
+              },
+          state.snapshot.usageLimits,
+        ),
       );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
@@ -227,11 +239,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                 ...probedSnapshot,
                 auth: { ...probedSnapshot.auth, label: usageAuthLabel ?? undefined },
               };
-        const snapshot = withUsageLimits(
-          workspaceId && !probedSnapshot.auth.workspaceId
-            ? { ...labeledProbe, auth: { ...labeledProbe.auth, workspaceId } }
-            : labeledProbe,
-          usageLimits,
+        const snapshot = withWorkspaceCatalogRevision(
+          state.snapshot,
+          withUsageLimits(
+            workspaceId && !probedSnapshot.auth.workspaceId
+              ? { ...labeledProbe, auth: { ...labeledProbe.auth, workspaceId } }
+              : labeledProbe,
+            usageLimits,
+          ),
         );
         return [
           { snapshot, generation },
@@ -246,6 +261,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+
+  const invalidateWorkspaceCatalog = Effect.fn("ManagedServerProvider.invalidateWorkspaceCatalog")(
+    function* () {
+      const next = yield* Ref.modify(snapshotStateRef, (state) => {
+        const snapshot = {
+          ...state.snapshot,
+          workspaceCatalogRevision: (state.snapshot.workspaceCatalogRevision ?? 0) + 1,
+        };
+        return [snapshot, { ...state, snapshot }] as const;
+      });
+      yield* PubSub.publish(changesPubSub, next);
+    },
+  );
 
   // Providers call this on every token-usage tick, usually without changing the snapshot.
   const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
@@ -450,6 +478,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       .resolveMaintenance({ fresh: true })
       .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
+    invalidateWorkspaceCatalog: invalidateWorkspaceCatalog(),
     refreshUsage: refreshUsage(),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);

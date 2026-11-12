@@ -1310,6 +1310,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         transcript.scenario,
       ).pipe(Effect.orDie);
       const changes = yield* makeChangeSignal;
+      const catalogChanges = yield* Ref.make(0);
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const driver = yield* CodexReplay.makeReplayDriver(
@@ -1364,6 +1365,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         environment: {},
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
+        onSkillsChanged: () => Ref.update(catalogChanges, (count) => count + 1),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -1437,10 +1439,64 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         subagentUpdates,
         hasPendingBackgroundWork,
         firstTerminal: Deferred.await(firstTerminal),
+        catalogChanges: Ref.get(catalogChanges),
         until: changes.until,
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect("invalidates workspace skills on session open and native skills changes", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "skills-thread";
+      const nativeTurnId = "skills-turn";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "skills-changed",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Reply OK." }),
+            {
+              type: "emit_inbound",
+              label: "skills changed",
+              frame: { method: "skills/changed", params: {} },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      assert.equal(yield* harness.catalogChanges, 1);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("skills-attempt"),
+          text: "Reply OK.",
+        }),
+      );
+      yield* harness.firstTerminal;
+      assert.equal(yield* harness.catalogChanges, 2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect("keeps native image views available to the clients", () =>
     Effect.gen(function* () {

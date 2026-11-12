@@ -1683,7 +1683,10 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime" | "compatibility"> = {},
+  hooks: Pick<
+    CodexAdapterV2Options,
+    "onUsageLimits" | "onSkillsChanged" | "resolveRuntime" | "compatibility"
+  > = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -1733,6 +1736,7 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
+  readonly onSkillsChanged?: () => Effect.Effect<void>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
     version: string,
@@ -4709,6 +4713,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               turnItem: artifacts.turnItem,
             });
           }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerNotification(
+          "skills/changed",
+          () => adapterOptions.onSkillsChanged?.() ?? Effect.void,
         );
 
         yield* client.handleServerNotification("account/rateLimits/updated", (payload) =>
@@ -8540,6 +8549,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
           ),
         };
+        // The process may see skills newer than the composer's pre-session scan.
+        yield* adapterOptions.onSkillsChanged?.() ?? Effect.void;
         return runtime;
       },
       (effect, input) =>

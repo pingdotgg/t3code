@@ -1302,6 +1302,27 @@ describe("server state projection", () => {
         ?.workspaceSnapshots;
     expect(snapshotsFor(digested("d1", [{ name: "loaded" }]))).toEqual([claudeA]);
     expect(snapshotsFor(digested("d2"))).toBeUndefined();
+    const invalidated = { ...digested("d1"), workspaceCatalogRevision: 1 };
+    expect(snapshotsFor(invalidated)).toBeUndefined();
+
+    const latest = snapshot("/a", "latest");
+    const latestConfig = { ...digested("d1"), workspaceCatalogRevision: 2 };
+    const latestFetched = recordFetchedWorkspaceSnapshot(
+      [],
+      { instanceId: claude, cwd: "/a", fresh: false },
+      [{ ...provider(claude, [latest]), workspaceCatalogRevision: 2 }],
+      latestConfig,
+    );
+    for (const fresh of [false, true]) {
+      expect(
+        recordFetchedWorkspaceSnapshot(
+          latestFetched,
+          { instanceId: claude, cwd: "/a", fresh },
+          [{ ...provider(claude, [claudeA]), workspaceCatalogRevision: 1 }],
+          latestConfig,
+        ),
+      ).toBe(latestFetched);
+    }
 
     // Older servers send every snapshot and every drop; their config stands.
     const legacy = configWith(false, [provider(claude)]);

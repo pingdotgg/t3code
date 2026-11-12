@@ -676,6 +676,13 @@ describe("makeManagedServerProvider", () => {
           enrichedSnapshotSecond,
         ]);
         assert.deepStrictEqual(latest, enrichedSnapshotSecond);
+
+        assert.ok(provider.invalidateWorkspaceCatalog);
+        yield* provider.invalidateWorkspaceCatalog;
+        yield* publishCallbacks[1]!(enrichedSnapshotSecond);
+        assert.strictEqual((yield* provider.getSnapshot).workspaceCatalogRevision, 1);
+        yield* provider.refresh;
+        assert.strictEqual((yield* provider.getSnapshot).workspaceCatalogRevision, 1);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

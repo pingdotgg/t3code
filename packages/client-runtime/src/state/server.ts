@@ -751,6 +751,7 @@ const snapshotBasis = (provider: ServerProviderEntry | undefined) =>
   provider && {
     enabled: provider.enabled,
     models: provider.models,
+    workspaceCatalogRevision: provider.workspaceCatalogRevision,
     // The digest stands for the lists, which load with a snapshot and must not unseat it.
     ...(provider.catalogDigest === undefined
       ? { slashCommands: provider.slashCommands, skills: provider.skills }
@@ -803,9 +804,12 @@ export function recordFetchedWorkspaceSnapshot(
   configProvider: ServerProviderEntry | undefined,
 ): ReadonlyArray<FetchedWorkspaceSnapshot> {
   const basis = snapshotBasis(configProvider);
-  const snapshot = providers
-    .find((provider) => provider.instanceId === input.instanceId)
-    ?.workspaceSnapshots?.find((candidate) => candidate.cwd === input.cwd);
+  const respondingProvider = providers.find((provider) => provider.instanceId === input.instanceId);
+  if (respondingProvider?.workspaceCatalogRevision !== basis?.workspaceCatalogRevision)
+    return current;
+  const snapshot = respondingProvider?.workspaceSnapshots?.find(
+    (candidate) => candidate.cwd === input.cwd,
+  );
   const stored = current.find(
     (entry) => entry.instanceId === input.instanceId && entry.snapshot.cwd === input.cwd,
   );
