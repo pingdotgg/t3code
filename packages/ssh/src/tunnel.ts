@@ -604,7 +604,6 @@ if [ "$T3_ARCHIVE_MODE" = "1" ]; then
   # archive before the port and readiness probes rely on it.
   "$RUNNER_NEXT" --version >/dev/null
 elif ! ensure_remote_node_path; then
-  # A node that fails the engine check has already said why.
   if ! command -v node >/dev/null 2>&1; then
     printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   fi
@@ -1008,7 +1007,15 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey,
     });
     const result = yield* runSshCommand(target, {
-      remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
+      // Shells known to take `-l -c` with a POSIX-style `exec` read their own login
+      // profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
+      remoteCommandArgs: [
+        "sh",
+        "-c",
+        shellSingleQuote(
+          `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s -- ${stateKey}" ;; *) exec sh -l -s -- ${stateKey} ;; esac`,
+        ),
+      ],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
