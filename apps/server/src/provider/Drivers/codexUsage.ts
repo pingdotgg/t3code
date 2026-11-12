@@ -140,6 +140,18 @@ function unreportedRequests(
   );
 }
 
+// A rewound snapshot accounts only for the request it reports. Earlier pending requests cannot be
+// reconciled against the rewound counters, so they stay unbilled.
+function discardedRequestCount(
+  pending: readonly CodexUnreportedRequest[] | undefined,
+  last: CodexTokenUsage,
+) {
+  const final = pending?.at(-1);
+  if (pending === undefined || final === undefined) return 0;
+  const reported = CODEX_USAGE_FIELDS.every((key) => final.usage[key] === last[key]);
+  return pending.length - (reported ? 1 : 0);
+}
+
 /**
  * Codex `token_count` events carry no model or service tier, so both are carried forward: the model
  * from the most recent `turn_context`, the tier from the most recent `thread_settings_applied`.
@@ -373,6 +385,9 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     // Only the same event is a replay; a later request can restart with identical counters.
     if (restarted && sequenceStart === state.sequenceStartSignature) {
       state.lastCumulativeUsage = previous;
+      // The replay's older timestamp would let a later stale snapshot pass as a rewind.
+      if (previousTimestampMs === undefined) delete state.lastCumulativeTimestampMs;
+      else state.lastCumulativeTimestampMs = previousTimestampMs;
       return [];
     }
     // Forks and paginated continuations can inherit totals without copying a counter snapshot.
@@ -384,7 +399,9 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
           ) !== null
         : CODEX_USAGE_FIELDS.every((key) => cumulative[key] - previous[key] === last[key]);
     if (!restarted && !reconciled) {
-      if (!isRewoundBaseline(previous, previousTimestampMs, cumulative, last, timestampMs)) {
+      if (isRewoundBaseline(previous, previousTimestampMs, cumulative, last, timestampMs)) {
+        state.malformedRecords += discardedRequestCount(pending, last);
+      } else {
         const bridged = unreportedRequests(previous, cumulative, last, pending);
         if (bridged === null) {
           state.malformedRecords += 1;

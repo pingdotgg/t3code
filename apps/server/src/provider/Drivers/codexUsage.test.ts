@@ -745,13 +745,50 @@ describe("parseCodexLine", () => {
     parseCodexLine(turnContext, state);
     const at = (line: string, time: string) =>
       line.replace("2026-08-01T05:17:49.919Z", `2026-08-01T${time}.000Z`);
-    const replay = at(counted(counters(20, 4), counters(120, 24)), "10:00:05");
-    parseCodexLine(at(counted(counters(100, 20), counters(100, 20)), "10:00:00"), state);
-    parseCodexLine(replay, state);
-    parseCodexLine(at(counted(counters(30, 6), counters(150, 30)), "10:00:10"), state);
+    const billed = (line: string) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    };
+    const start = at(counted(counters(100, 20), counters(100, 20)), "10:00:00");
+    const second = at(counted(counters(20, 4), counters(120, 24)), "10:00:05");
+    const third = at(counted(counters(30, 6), counters(150, 30)), "10:00:10");
+    expect([start, second, third].map(billed)).toEqual([120, 24, 36]);
     // Scan states cached before v15 resume without the timestamp.
     delete state.lastCumulativeTimestampMs;
-    expect(parseCodexLine(replay, state)).toBeNull();
+
+    const replayedStart = billed(start);
+    const hasTimestampAfterStart = "lastCumulativeTimestampMs" in state;
+    const replayedSecond = billed(second);
+    expect({ replayed: [replayedStart, replayedSecond], hasTimestampAfterStart }).toEqual({
+      replayed: [0, 0],
+      hasTimestampAfterStart: false,
+    });
+  });
+
+  it("warns about pending anonymous requests a counter rewind discards", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const at = (line: string, time: string) =>
+      line.replace("2026-08-01T05:17:49.919Z", `2026-08-01T${time}.000Z`);
+    const request = (time: string, usage: unknown) =>
+      JSON.stringify({
+        type: "token_usage_record",
+        timestamp: `2026-08-01T${time}.000Z`,
+        payload: { usage },
+      });
+    const billed = [
+      at(counted(counters(100, 20), counters(100, 20)), "10:00:00"),
+      request("10:00:05", counters(40, 8)),
+      request("10:00:06", counters(20, 4)),
+      // Rewinds below the 120-token baseline and reports only the 10:00:06 request.
+      at(counted(counters(20, 4), counters(60, 12)), "10:00:07"),
+      at(counted(counters(10, 2), counters(70, 14)), "10:00:08"),
+    ].flatMap((line) => parseCodexRecords(line, state));
+
+    expect({
+      processed: billed.map((record) => totalTokens(record.totals)),
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [120, 24, 12], skipped: 1 });
   });
 
   it.each([
