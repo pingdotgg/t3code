@@ -3,7 +3,7 @@ import { type PluggableList, unified } from "unified";
 import rehypeRaw from "rehype-raw";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import type { Root, RootContent } from "mdast";
+import type { Link, Root, RootContent } from "mdast";
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -209,6 +209,33 @@ it("ends bare URLs at CJK punctuation with source positions", () => {
         ],
       },
     ],
+  });
+  // Markup the URL swallowed comes back once the URL ends.
+  expect(parse(`打开 ${url}，然后运行\`pnpm dev\``)).toMatchObject({
+    children: [
+      {
+        children: [
+          { type: "text", value: "打开 " },
+          { type: "link", url },
+          { type: "text", value: "，然后运行" },
+          { type: "inlineCode", value: "pnpm dev" },
+        ],
+      },
+    ],
+  });
+  // Every URL in one paragraph ends at its mark, with positions on its own line.
+  const lines = Array.from({ length: 300 }, (_, index) => `接口：http://localhost:${index}，`);
+  const [paragraph] = (parse(lines.join("\n")) as Root).children;
+  const links =
+    paragraph?.type === "paragraph"
+      ? paragraph.children.filter((node): node is Link => node.type === "link")
+      : [];
+  expect(links.map((node) => node.url)).toEqual(
+    lines.map((_, index) => `http://localhost:${index}`),
+  );
+  const lastLine = lines.slice(0, -1).join("\n").length + 1;
+  expect(links.at(-1)).toMatchObject({
+    position: { start: at(300, 4, lastLine + 3), end: at(300, 24, lastLine + 23) },
   });
   // A list item's continuation line parses the same on its own.
   expect(parse(`- 第一行\n  **${url}**（已重启）`)).toMatchObject({
