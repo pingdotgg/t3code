@@ -57,8 +57,8 @@ catalog:
   "@legendapp/list": 3.7.2
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
-  "@pierre/diffs": 1.6.1
-  "@pierre/highlights": 0.2.0
+  "@pierre/diffs": 1.7.0-beta.3
+  "@pierre/highlights": 0.5.0
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
@@ -110,11 +110,12 @@ overrides:
   expo-audio: 58.0.11
   expo-network: 58.0.4
   "@clerk/expo-native-components": 0.4.4
+  "@cursor/sdk": 1.2.0
   expo-sharing: 58.0.22
   expo-widgets: 58.0.27
   "@ff-labs/fff-node": 0.11.0
   "@legendapp/list": 3.7.2
-  "@pierre/diffs": 1.6.1
+  "@pierre/diffs": 1.7.0-beta.3
   "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
   "@react-navigation/native-stack": 7.21.0
@@ -128,6 +129,7 @@ overrides:
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
   app-builder-lib: 26.16.1
+  electron-updater: 6.8.9
   expo-modules-core: 58.0.30
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
@@ -204,6 +206,11 @@ overrides:
   vite: "catalog:"
   vite-plus: "catalog:"
   yaml: "catalog:"
+  # @vercel/routing-utils pins exactly 6.1.0, which has a ReDoS advisory (GHSA-9wv6-86v2-598j).
+  "@vercel/routing-utils>path-to-regexp": 6.3.0
+  # zod 3 has a high advisory (GHSA-mrhx-c7xc-m3w5) fixed only in 4.6.6. @vercel/config only
+  # builds a z.object of z.string().regex() and calls parse, which zod 4 keeps unchanged.
+  "@vercel/config>zod": 4.6.7
 
 packageExtensions:
   "@clerk/expo@*":
@@ -234,9 +241,9 @@ patchedDependencies:
   expo-sharing@58.0.22: patches/expo-sharing@58.0.22.patch
   expo-widgets@58.0.27: patches/expo-widgets@58.0.27.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
-  # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
-  # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
-  "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
+  # Exports the dependency-light subpaths mobile and the web diff parser import, and makes find
+  # cover folded files and collapsed context (onRevealSearchMatch).
+  "@pierre/diffs@1.7.0-beta.3": patches/@pierre__diffs@1.7.0-beta.3.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch
@@ -255,6 +262,11 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  # Electron net requests never emit "socket", so upstream's idle timeout never fires and a
+  # stalled update download hangs forever.
+  electron-updater@6.8.9: patches/electron-updater@6.8.9.patch
+  # Local agents honor the attribution settings in the user's Cursor CLI cli-config.json.
+  "@cursor/sdk@1.2.0": patches/@cursor__sdk@1.2.0.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
@@ -306,3 +318,5 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-x64@0.67.1"
   - "@effect/tsgo@0.67.1"
   - "@anthropic-ai/claude-agent-sdk@0.3.321"
+  - "@pierre/diffs@1.7.0-beta.3"
+  - "@pierre/highlights@0.5.0"
