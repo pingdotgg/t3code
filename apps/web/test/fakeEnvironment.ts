@@ -7,12 +7,14 @@ import {
   EventId,
   ExecutionEnvironmentDescriptor,
   MessageId,
+  NodeId,
   OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ServerConfig,
   ThreadId,
   TurnItemId,
@@ -227,6 +229,7 @@ export interface FakeThread {
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly runtimeRequests?: OrchestrationV2ThreadProjection["runtimeRequests"];
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -254,6 +257,47 @@ export function threadWithHistory(
     );
   }
   return { id, title: `Thread ${name}`, modelSelection, runs, items };
+}
+
+/** A one-turn thread whose agent waits on an answer to one question. */
+export function threadWithQuestion(name: string, question: string): FakeThread {
+  const thread = threadWithHistory(name, 1);
+  const requestId = RuntimeRequestId.make(`${name}-request`);
+  return {
+    ...thread,
+    items: [
+      ...thread.items,
+      {
+        ...base(thread.id, RunId.make(`${name}-run-0`), `${name}-question`, 2),
+        type: "user_input_request",
+        requestId,
+        responseMode: "message",
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question,
+            required: true,
+            allowCustomAnswer: false,
+            options: [{ label: "Continue", value: "continue", description: "Resume work" }],
+          },
+        ],
+      },
+    ],
+    runtimeRequests: [
+      {
+        id: requestId,
+        nodeId: NodeId.make(`${name}-node`),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: AT,
+        resolvedAt: null,
+      },
+    ],
+  };
 }
 
 function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
@@ -341,7 +385,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     providerSessions: [],
     providerThreads: [...(thread.providerThreads ?? [])],
     providerTurns: [],
-    runtimeRequests: [],
+    runtimeRequests: [...(thread.runtimeRequests ?? [])],
     messages: [],
     plans: [],
     turnItems: [...thread.items],

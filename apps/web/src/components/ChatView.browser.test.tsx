@@ -24,6 +24,7 @@ import {
   installFakeEnvironment,
   rejectPendingCommand,
   threadWithHistory,
+  threadWithQuestion,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, render } from "../../test/render";
@@ -45,7 +46,8 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
   const other = threadWithHistory("thread-stash-restore", 1);
-  using _environment = installFakeEnvironment([other]);
+  const asking = threadWithQuestion("thread-stash-question", "Which file should change?");
+  using _environment = installFakeEnvironment([other, asking]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -74,6 +76,16 @@ it("a machine chip stashed in one thread restores with its machine in another", 
   await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
   await pressStashShortcut();
   await vi.waitFor(() => expect(usePromptStashStore.getState().entries).toHaveLength(1));
+
+  // An answer carries no machines, so an open question refuses the restore and keeps the entry.
+  await router.navigate({ to: `/${ENVIRONMENT_ID}/${asking.id}` });
+  await expect.element(page.getByText("Which file should change?")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: /^Stashed prompts/ }));
+  await userEvent.click(page.getByRole("button", { name: /^Restore stashed prompt/ }));
+  await vi.waitFor(() =>
+    expect(document.body.textContent).toContain("Stashed machines can't go in an answer"),
+  );
+  expect(usePromptStashStore.getState().entries).toHaveLength(1);
 
   await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
   await expect.element(page.getByText("Answer 0 for thread-stash-restore.")).toBeVisible();
