@@ -5,6 +5,7 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   OtlpEndpointCheckInput,
   resolveEnvironmentMachineKind,
+  ServerConfig,
   ServerObservability,
   ServerProvider,
   ServerProviders,
@@ -69,6 +70,18 @@ describe("server config forward compatibility", () => {
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
+  });
+
+  it("drops a direct endpoint of a kind this build does not know and keeps the rest", () => {
+    const decode = Schema.decodeUnknownSync(ServerConfig.fields.directEndpoints);
+    const known = [
+      { kind: "configured", httpBaseUrl: "https://t3.example.test/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+    ];
+
+    expect(
+      decode([known[0], { kind: "some-future-kind", httpBaseUrl: "https://next.test/" }, known[1]]),
+    ).toEqual(known);
   });
 });
 

@@ -226,7 +226,8 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server listens only on a loopback address, creates no pairing links, and
 signs out devices that paired earlier. It does not start with a host other than a loopback
-address or `localhost`. A [background service](./background-service.md) installed before
+address or `localhost`, or with an
+[advertised address](./remote-access.md#behind-a-reverse-proxy). A [background service](./background-service.md) installed before
 `T3CODE_LAN` existed keeps private-network access, so without `remote` it refuses to start.
 Run `t3 up --no-lan` when its `service.env` sets no `T3CODE_HOST`, or set
 `T3CODE_HOST=127.0.0.1` in `service.env`, then run `t3 service restart`. The desktop app starts

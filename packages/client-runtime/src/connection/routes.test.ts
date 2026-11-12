@@ -215,6 +215,37 @@ describe("learned routes", () => {
     ).toBeNull();
   });
 
+  it("learns a configured https address as an encrypted route, from an HTTPS page too", () => {
+    const reported = [
+      { kind: "configured", httpBaseUrl: "https://t3.example.test/" },
+      { kind: "lan", httpBaseUrl: "http://10.42.0.17:3773/" },
+    ];
+    const hosted = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported,
+      allowInsecure: false,
+    })!;
+    expect(hosted.map(connectionRouteLabel)).toEqual(["t3.example.test", "T3 Connect"]);
+    expect(profileOf(hosted[0]!)).toMatchObject({
+      learned: true,
+      httpBaseUrl: "https://t3.example.test/",
+      wsBaseUrl: "wss://t3.example.test/",
+    });
+    expect(profileOf(hosted[0]!)).not.toHaveProperty("network");
+
+    // A token paired over https reaches it, and still stays off the plain http address.
+    const paired = entryWithRoutes(relayOnly, [PUBLIC]);
+    const borrowed = mergeLearnedRoutes({
+      entry: paired,
+      activeRoute: PUBLIC,
+      reported,
+      allowInsecure: true,
+    })!;
+    expect(borrowed.map(connectionRouteLabel)).toEqual(["desk.example.com", "t3.example.test"]);
+    expect(credentialConnectionId(connectionRouteId(borrowed[1]!.target))).toBe("public");
+  });
+
   it("leaves user routes alone and does not learn an address already saved", () => {
     const entry: ConnectionCatalogEntry = {
       target: LAN.target,

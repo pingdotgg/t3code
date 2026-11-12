@@ -49,6 +49,7 @@ const minimalDesktopFlags = (baseDir: string) => ({
   logWebSocketEvents: Option.none<boolean>(),
   tailscaleServeEnabled: Option.none<boolean>(),
   tailscaleServePort: Option.none<number>(),
+  advertisedUrls: [],
   lan: Option.none<boolean>(),
 });
 
@@ -232,6 +233,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
+        advertisedUrls: [],
         lan: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
@@ -277,6 +279,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: Option.none<boolean>(),
         tailscaleServeEnabled: Option.none<boolean>(),
         tailscaleServePort: Option.none<number>(),
+        advertisedUrls: [],
         lan: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
@@ -333,6 +336,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.some(false),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          advertisedUrls: [],
           lan: Option.none(),
         },
         Option.none(),
@@ -410,6 +414,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          advertisedUrls: [],
           lan: Option.none(),
         },
         Option.some("Debug"),
@@ -558,6 +563,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          advertisedUrls: [],
           lan: Option.none(),
         },
         Option.none(),
@@ -607,6 +613,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          advertisedUrls: [],
           lan: Option.none(),
         },
         Option.none(),
@@ -648,6 +655,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          advertisedUrls: [],
           lan: Option.none(),
         },
         Option.none(),
@@ -711,6 +719,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           logWebSocketEvents: Option.none(),
           tailscaleServeEnabled: Option.none(),
           tailscaleServePort: Option.none(),
+          advertisedUrls: [],
           lan: Option.none(),
         },
         Option.none(),
@@ -751,6 +760,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     logWebSocketEvents: Option.none<boolean>(),
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
+    advertisedUrls: [],
     lan: Option.none<boolean>(),
   });
 
@@ -788,6 +798,53 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         yield* resolvePort({ mode: Option.some("desktop" as const), port: Option.none() }),
       ).toBe(3773);
       expect(selected).toEqual([3773]);
+    }),
+  );
+
+  it.effect("advertises only https origins and rejects anything else at startup", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-cli-advertise-url-" })),
+      );
+      const resolve = (env: Record<string, string>, flag: ReadonlyArray<string> = []) =>
+        resolveServerConfig({ ...minimalWebFlags(baseDir), advertisedUrls: flag }, Option.none(), {
+          selectAutomaticPort: () => Effect.succeed(3773),
+        }).pipe(
+          Effect.map((config) => config.advertisedUrls),
+          Effect.provide(
+            Layer.merge(NetService.layer, ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+          ),
+        );
+
+      expect(yield* resolve({})).toBeUndefined();
+      const env = {
+        T3CODE_ADVERTISE_URL:
+          " https://T3.Example.test , https://other.example.test:8443/,https://t3.example.test",
+      };
+      expect(yield* resolve(env)).toEqual([
+        "https://t3.example.test/",
+        "https://other.example.test:8443/",
+      ]);
+      expect(yield* resolve(env, ["https://flag.example.test/"])).toEqual([
+        "https://flag.example.test/",
+      ]);
+
+      for (const [rejected, shown] of [
+        ["http://t3.example.test", "http://t3.example.test"],
+        ["not a url", "not a url"],
+        // A proxy under a path prefix shares its origin with other apps.
+        ["https://t3.example.test/app", "https://t3.example.test/app"],
+        ["https://t3.example.test?x=1", "https://t3.example.test?x=1"],
+        ["https://user:secret@t3.example.test", "t3.example.test"],
+      ]) {
+        const error = String(
+          yield* resolve({ T3CODE_ADVERTISE_URL: `https://t3.example.test,${rejected}` }).pipe(
+            Effect.flip,
+          ),
+        );
+        expect(error).toContain(`"${shown}" is not an https origin`);
+        expect(error).not.toContain("secret");
+      }
     }),
   );
 
