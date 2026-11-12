@@ -471,6 +471,23 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("matches curly braces in the query literally", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-braces-" });
+        yield* writeTextFile(cwd, "src/foo{bar}.ts");
+
+        for (const kind of [undefined, "file"] as const) {
+          const result = yield* searchWorkspaceEntries({
+            cwd,
+            query: "foo{bar}.ts",
+            limit: 10,
+            ...(kind ? { kind } : {}),
+          });
+          expect(result.entries.map((entry) => entry.path)).toContain("src/foo{bar}.ts");
+        }
+      }),
+    );
+
     it.effect("excludes gitignored paths for git repositories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });
