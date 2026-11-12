@@ -7,6 +7,7 @@ import type {
   OrchestrationV2ThreadShell,
   ScopedThreadRef,
   SideThreadOpenTarget,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import type { ToolCallDiffTarget } from "../diffPanelStore";
@@ -110,4 +111,21 @@ export function openLinkedThreadRead(input: {
     to: "/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId",
     params: linkedThreadRouteParams(target),
   });
+}
+
+let pendingDraft: { readonly threadId: ThreadId; readonly take: () => string } | null = null;
+
+/**
+ * Hands what the parent composer collects while a side chat starts to that side chat's composer.
+ * It is taken as the composer mounts, together with focus, so no keystroke falls between them.
+ */
+export function handOffSideChatDraft(threadId: ThreadId, take: () => string) {
+  pendingDraft = { threadId, take };
+}
+
+export function takeSideChatDraft(threadId: ThreadId): string | null {
+  if (pendingDraft?.threadId !== threadId) return null;
+  const { take } = pendingDraft;
+  pendingDraft = null;
+  return take();
 }

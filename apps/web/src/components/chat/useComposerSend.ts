@@ -286,7 +286,9 @@ interface ComposerSendInput {
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
   /** Resolves true once the side chat started and got the message. */
-  readonly onSideChat?: ((message: SideChatMessage | undefined) => Promise<boolean>) | undefined;
+  readonly onSideChat?:
+    | ((message: SideChatMessage | undefined, takeDraft?: () => string) => Promise<boolean>)
+    | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -682,8 +684,20 @@ export function useComposerSend(input: ComposerSendInput) {
           composerRef.current?.resetCursorState();
         }
       }
+      // After a bare /side, what the user types while the side chat starts is its question.
+      const takeDraft = () => {
+        if (currentRouteThreadKeyRef.current !== routeThreadKey) return "";
+        const current = promptRef.current;
+        if (!current.startsWith(promptAtSend)) return "";
+        promptRef.current = "";
+        setComposerDraftPrompt(composerDraftTarget, "");
+        composerRef.current?.resetCursorState();
+        return current.slice(promptAtSend.length).trimStart();
+      };
       const started = await settlePromise(async () => {
-        if (!hasSendableContent) return onSideChat(undefined);
+        if (!hasSendableContent) {
+          return onSideChat(undefined, sendCtx.answeringPendingUserInput ? undefined : takeDraft);
+        }
         const attachments = await prepareTurnAttachments({
           environmentId,
           attachments: snapshot.attachments,

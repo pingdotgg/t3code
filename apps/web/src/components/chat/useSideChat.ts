@@ -13,6 +13,7 @@ import { useRef } from "react";
 
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { handOffSideChatDraft } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { readThreadShell, waitForThreadShell } from "../../state/entities";
@@ -28,8 +29,8 @@ export type SideChatMessage = Pick<
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
  * thread's latest stable point, sends `message` there with `readSettings()`, the parent
- * composer's settings, and shows the tab. It resolves false when the side chat did not
- * start, or another one is still starting.
+ * composer's settings, and shows the tab. Its composer starts with `takeDraft()`. It resolves
+ * false when the side chat did not start, or another one is still starting.
  */
 export function useSideChat(input: {
   readonly threadRef: ScopedThreadRef | null;
@@ -56,7 +57,11 @@ export function useSideChat(input: {
     const error = squashAtomCommandFailure(failure);
     input.onError(thrownErrorMessage(error, m) ?? fallback);
   };
-  const start = async (threadRef: ScopedThreadRef, message: SideChatMessage | undefined) => {
+  const start = async (
+    threadRef: ScopedThreadRef,
+    message: SideChatMessage | undefined,
+    takeDraft: (() => string) | undefined,
+  ) => {
     const { runtimeMode, modelSelection } = input.readSettings();
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
@@ -120,14 +125,15 @@ export function useSideChat(input: {
     } else if (modelSelection !== undefined) {
       useComposerDraftStore.getState().setModelSelection(targetRef, modelSelection);
     }
+    if (takeDraft) handOffSideChatDraft(targetThreadId, takeDraft);
     useRightPanelStore.getState().openThread(threadRef, targetThreadId);
     return true;
   };
-  const open = async (message?: SideChatMessage) => {
+  const open = async (message?: SideChatMessage, takeDraft?: () => string) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, message).finally(() => {
+    return start(threadRef, message, takeDraft).finally(() => {
       pendingRef.current = false;
     });
   };

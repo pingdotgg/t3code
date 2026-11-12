@@ -215,6 +215,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { threadContextAttachment } from "~/lib/threadContextAttachment";
+import { takeSideChatDraft } from "~/lib/sideChatPane";
 import {
   type ComposerCommandItem,
   ComposerCommandMenu,
@@ -2984,6 +2985,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return inserted;
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new side chat's composer takes the parent's typing and focus in one frame
+  useEffect(() => {
+    if (!activeThreadId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const text = takeSideChatDraft(activeThreadId);
+      if (text === null) return;
+      if (text) insertComposerTextAtEndStable(text);
+      composerEditorRef.current?.focusAtEnd();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeThreadId, insertComposerTextAtEndStable]);
 
   const insertComposerFolders = async (
     folders: File[],
