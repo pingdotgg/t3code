@@ -116,6 +116,14 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   useLayoutStore.getState().focusTab(tabs.second.id);
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
   await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, tabs.second.id)));
+  // The label under the landed shape reads as the active one, and only that one.
+  await vi.waitFor(() =>
+    expect(
+      [...strip.querySelectorAll<HTMLElement>("[data-joined]")].map(
+        (tab) => tab.dataset.layoutPaneTab,
+      ),
+    ).toEqual([tabs.second.id]),
+  );
   expect(secondPaneStrip()).toBe(strip);
   expect(strip.isConnected).toBe(true);
 });
