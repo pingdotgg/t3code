@@ -45,36 +45,24 @@ describe("parseElicitationForm", () => {
     );
   }
 
-  it("asks a choice with OpenCode's custom-answer companion as one question", () => {
+  it("keeps an optional choice and its `_custom`-named text field as separate questions", () => {
     const form = parseElicitationForm(
       {
         type: "object",
         properties: {
-          q0: {
-            type: "string",
-            title: "Button colour",
-            description: "Which colour should the button be?",
-            oneOf: [
-              { const: "Red", title: "Red", description: "Make the button red" },
-              { const: "Blue", title: "Blue", description: "Make the button blue" },
-            ],
-          },
-          q0_custom: {
-            type: "string",
-            title: "Button colour (other)",
-            description: "Type your own answer",
-          },
+          theme: { type: "string", title: "Theme", enum: ["light", "dark"] },
+          theme_custom: { type: "string", title: "Custom theme CSS" },
         },
         required: [],
       },
-      "Questions",
+      "Settings",
     );
     assert(form !== undefined);
     assert.deepStrictEqual(
-      form.questions.map((question) => question.question),
-      ["Which colour should the button be?"],
+      form.questions.map((question) => question.id),
+      ["theme", "theme_custom"],
     );
-    assert.deepStrictEqual(form.content({ q0: "Red" }), { q0: "Red" });
-    assert.deepStrictEqual(form.content({ q0: "Purple" }), { q0_custom: "Purple" });
+    const content = { theme: "dark", theme_custom: "body { color: red; }" };
+    assert.deepStrictEqual(form.content(content), content);
   });
 });
