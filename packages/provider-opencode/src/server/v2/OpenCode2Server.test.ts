@@ -149,6 +149,51 @@ describe("OpenCode2Server error details", () => {
   );
 });
 
+describe("OpenCode2Server external server", () => {
+  it.effect("reverifies after forgetting, so a replaced service's version is seen", () =>
+    Effect.gen(function* () {
+      let version = "2.2.4";
+      const layerService = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ version, pid: 1, urls: [], paths: { tmp: "/tmp" } }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          ),
+        ),
+      );
+      const versions = yield* Effect.gen(function* () {
+        const server = yield* OpenCode2Server.make({
+          binaryPath: "opencode",
+          serverUrl: "http://127.0.0.1:49374",
+          serverPassword: "secret",
+          directory: "/project",
+          environment: {},
+        });
+        const read = server.withConnection((connection) => Effect.succeed(connection.version));
+        const before = yield* read;
+        version = "2.2.5";
+        const cached = yield* read;
+        yield* server.forget;
+        return [before, cached, yield* read];
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            OpenCode2Client.layer.pipe(Layer.provide(layerService)),
+            OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+          ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+        ),
+      );
+      assert.deepStrictEqual(versions, ["2.2.4", "2.2.4", "2.2.5"]);
+    }),
+  );
+});
+
 describe("OpenCode2Server passwords", () => {
   it("hands the spawned server only the T3 password", () => {
     const password = Redacted.make("t3-generated");
@@ -208,8 +253,12 @@ describe("OpenCode2Server spawned server", () => {
       assert.strictEqual(first.version, "2.0.18");
       assert.strictEqual(first.external, false);
       assert.strictEqual(second.client, first.client);
+      if (first.processExit === undefined)
+        return yield* Effect.die("Missing owned process lifetime");
+      return first.processExit;
     }).pipe(
       Effect.scoped,
+      Effect.flatten,
       Effect.provide(
         Layer.mergeAll(
           OpenCode2Client.layer,
