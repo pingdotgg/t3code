@@ -17,8 +17,7 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
   >();
   // The download each plugin waits for; one that a newer change replaced is dropped.
   const pending = new Map<PluginState["id"], string>();
-  // Plugins whose row shows a styles failure, which only this module clears: the web loader
-  // keeps its own failures on the same row.
+  // Plugins whose row shows a styles failure, which only this module sets and clears.
   const failed = new Set<PluginState["id"]>();
   let stopped = false;
 
@@ -27,7 +26,7 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
     applied.delete(pluginId);
   };
   const clearFailure = (pluginId: PluginState["id"]) => {
-    if (failed.delete(pluginId)) setPluginWebFailure(environmentId, pluginId, undefined);
+    if (failed.delete(pluginId)) setPluginWebFailure(environmentId, pluginId, "styles", undefined);
   };
 
   const apply = async (plugin: PluginState, key: string) => {
@@ -68,6 +67,7 @@ export function startPluginStyles(environmentId: EnvironmentId): () => void {
       setPluginWebFailure(
         environmentId,
         plugin.id,
+        "styles",
         error instanceof Error ? error.message : "The plugin's styles failed to load.",
       );
     }

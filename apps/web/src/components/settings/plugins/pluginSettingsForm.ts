@@ -116,6 +116,11 @@ const toField = (
 export function pluginSettingsForm(schema: Schema.JsonObject | undefined): PluginSettingsForm {
   if (schema === undefined) return { kind: "none" };
   if (schema.type !== "object" || !isRecord(schema.properties)) return { kind: "json" };
+  // Keys the schema names only by rule have no field, so all of them are edited as JSON.
+  const dynamicKeys =
+    (schema.additionalProperties !== undefined && schema.additionalProperties !== false) ||
+    schema.patternProperties !== undefined;
+  if (dynamicKeys) return { kind: "json" };
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   const fields: Array<PluginSettingsField> = [];
   for (const [key, property] of Object.entries(schema.properties)) {

@@ -1,7 +1,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { XIcon } from "lucide-react";
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps, useRef, useState } from "react";
 
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
@@ -115,6 +115,13 @@ export function JsonSchemaSettingsForm({
 }) {
   const form = pluginSettingsForm(schema);
   const [saved, setSaved] = useState(settings);
+  // Newer settings from the server, such as after a reconnect, replace the saved ones. Fields with
+  // unsaved edits keep showing them from `pending`.
+  const [answered, setAnswered] = useState(settings);
+  if (answered !== settings) {
+    setAnswered(settings);
+    setSaved(settings);
+  }
   // What the user just set, shown until it saves; it stays, with its problem, when it can't.
   const [pending, setPending] = useState<Readonly<Record<string, DraftValue>>>({});
   const [problems, setProblems] = useState<Readonly<Record<string, string>>>({});
@@ -122,6 +129,15 @@ export function JsonSchemaSettingsForm({
     setProblems((all) => (problem === null ? without(all, key) : { ...all, [key]: problem }));
     if (problem === null) setPending((all) => without(all, key));
   };
+  // One save at a time, so each answer is newer than the last and a field's later change reaches
+  // the server after its earlier one.
+  const saving = useRef<Promise<void>>(Promise.resolve());
+  // Each field's newest change; an older one that settles leaves the field to it.
+  const latestEdits = useRef(new Map<string, object>());
+  // Invalid drafts can replace the display while an earlier valid value is still queued.
+  const requested = useRef(
+    new Map<string, { readonly value: DraftValue; readonly edit: object }>(),
+  );
 
   if (form.kind === "json") {
     return (
@@ -136,16 +152,45 @@ export function JsonSchemaSettingsForm({
   }
   if (form.kind !== "fields") return null;
 
-  const commit = async (field: PluginSettingsField, value: DraftValue) => {
-    const current = draftValue(field, saved[field.key]);
-    const next = toPatch([field], { [field.key]: current }, { [field.key]: value });
-    setPending((all) => ({ ...all, [field.key]: value }));
-    if ("problem" in next) return settle(field.key, next.problem);
-    if (Object.keys(next.patch).length === 0) return settle(field.key, null);
-    const result = await onSave(next.patch);
-    if ("problem" in result) return settle(field.key, result.problem);
-    setSaved(result.settings);
-    settle(field.key, null);
+  const commit = (field: PluginSettingsField, value: DraftValue) => {
+    const { key } = field;
+    const outstanding = requested.current.get(key);
+    const current = outstanding === undefined ? draftValue(field, saved[key]) : outstanding.value;
+    const next = toPatch([field], { [key]: current }, { [key]: value });
+    if ("patch" in next && Object.keys(next.patch).length === 0) {
+      if (outstanding === undefined) {
+        latestEdits.current.delete(key);
+        settle(key, null);
+      } else {
+        latestEdits.current.set(key, outstanding.edit);
+        setPending((all) => ({ ...all, [key]: value }));
+        setProblems((all) => without(all, key));
+      }
+      return;
+    }
+    const edit = {};
+    latestEdits.current.set(key, edit);
+    const settleIfLatest = (problem: string | null) => {
+      if (latestEdits.current.get(key) !== edit) return;
+      latestEdits.current.delete(key);
+      settle(key, problem);
+    };
+    setPending((all) => ({ ...all, [key]: value }));
+    if ("problem" in next) return settleIfLatest(next.problem);
+    const request = { value, edit };
+    requested.current.set(key, request);
+    saving.current = saving.current
+      .then(async () => {
+        const result = await onSave(next.patch);
+        if ("problem" in result) return settleIfLatest(result.problem);
+        setSaved(result.settings);
+        settleIfLatest(null);
+      })
+      // A save that throws must not stop the ones after it.
+      .catch(() => settleIfLatest("Could not save the settings."))
+      .finally(() => {
+        if (requested.current.get(key) === request) requested.current.delete(key);
+      });
   };
 
   return (
@@ -167,7 +212,7 @@ export function JsonSchemaSettingsForm({
           }
           problem={problems[field.key]}
           disabled={!canSave}
-          onCommit={(value) => void commit(field, value)}
+          onCommit={(value) => commit(field, value)}
         />
       ))}
     </>
@@ -191,6 +236,12 @@ function JsonSettingsRow({
   readonly onSaved: (settings: Schema.JsonObject) => void;
 }) {
   const [json, setJson] = useState(() => JSON.stringify(settings, null, 2));
+  // Until edited, the JSON follows newer settings.
+  const [shown, setShown] = useState(settings);
+  if (shown !== settings) {
+    setShown(settings);
+    if (json === JSON.stringify(shown, null, 2)) setJson(JSON.stringify(settings, null, 2));
+  }
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const save = async () => {

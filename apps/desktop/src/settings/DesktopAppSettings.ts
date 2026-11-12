@@ -605,9 +605,10 @@ export const make = Effect.gen(function* () {
       return yield* persist((settings) => setWslOnly(settings, enabled));
     }),
     setWindowBackground: Effect.fn("desktop.settings.setWindowBackground")(function* (background) {
+      // The renderer sends any string; only a color that would be saved is recorded.
       yield* Effect.annotateCurrentSpan({
-        light: background.light.color,
-        dark: background.dark.color,
+        light: normalizeWindowColor(background.light.color),
+        dark: normalizeWindowColor(background.dark.color),
       });
 
       return yield* persist((settings) => setWindowBackground(settings, background));

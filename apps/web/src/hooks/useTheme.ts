@@ -322,7 +322,9 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     lastAppliedTheme.appearanceMode === appearanceMode &&
     themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves)
   ) {
+    // Both retry here: a failed bridge call forgets what it sent.
     syncDesktopTheme(theme, followSystem, appearanceMode);
+    syncDesktopWindowBackground(theme, followSystem, appearanceMode, themeHalves);
     return;
   }
 

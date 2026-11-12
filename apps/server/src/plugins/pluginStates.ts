@@ -132,12 +132,15 @@ export const makePluginStates = Effect.fn("PluginStates.make")(function* (input:
     }),
   );
 
+  // Under the publish lock, so a publish already underway cannot send an older list after it.
   const stream = Stream.unwrap(
-    Effect.gen(function* () {
-      const subscription = yield* PubSub.subscribe(changes);
-      const snapshot = yield* current;
-      return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
-    }),
+    publishLock.withPermits(1)(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(changes);
+        const snapshot = yield* current;
+        return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
+      }),
+    ),
   );
   const forClient =
     (scopes: ReadonlyArray<AuthEnvironmentScope>) =>

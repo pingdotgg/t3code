@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - a Vite plugin runs in Node at build time, and reads
+// React's export list from the plugin's own install with node:module.
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
@@ -72,8 +73,8 @@ export function t3PluginWeb(options: T3PluginWebOptions = {}) {
     configResolved: (config: { readonly root: string }) => {
       root = config.root;
     },
-    // T3 loads only `web.js`, so a stylesheet Vite writes beside it would never apply. Runs last,
-    // after Vite's own CSS step has added it.
+    // T3 loads only `web.js`, so a stylesheet or worker Vite writes beside it would never load.
+    // Runs last, after Vite's own CSS step has added it. Library builds inline other assets.
     generateBundle: {
       order: "post" as const,
       handler(
@@ -81,10 +82,19 @@ export function t3PluginWeb(options: T3PluginWebOptions = {}) {
         _options: unknown,
         bundle: Readonly<Record<string, { readonly fileName: string }>>,
       ) {
-        const stylesheet = Object.values(bundle).find((output) => output.fileName.endsWith(".css"));
-        if (stylesheet === undefined) return;
+        const outputs = Object.values(bundle);
+        const stylesheet = outputs.find((output) => output.fileName.endsWith(".css"));
+        if (stylesheet !== undefined) {
+          this.error(
+            `The build wrote ${stylesheet.fileName}, which T3 never loads. Import the CSS with \`?inline\`, as in \`import css from "./web.css?inline"\`, and pass it to \`api.injectStyles(css)\` in \`activate\`.`,
+          );
+        }
+        const extra = outputs.find(
+          (output) => output.fileName !== "web.js" && !output.fileName.endsWith(".map"),
+        );
+        if (extra === undefined) return;
         this.error(
-          `The build wrote ${stylesheet.fileName}, which T3 never loads. Import the CSS with \`?inline\`, as in \`import css from "./web.css?inline"\`, and pass it to \`api.injectStyles(css)\` in \`activate\`.`,
+          `The build wrote ${extra.fileName}, which T3 never loads. Import a worker with \`?worker&inline\`, so it stays inside web.js.`,
         );
       },
     },

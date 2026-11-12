@@ -58,25 +58,41 @@ describe("t3PluginWeb", () => {
     expect(files).toEqual(["web.js"]);
   });
 
-  it("refuses a stylesheet T3 would never load", async () => {
-    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-plugin-css-"));
-    await using _root = { [Symbol.asyncDispose]: () => NodeFSP.rm(root, { recursive: true }) };
-    await NodeFSP.writeFile(NodePath.join(root, "web.css"), "p { color: red; }");
-    await NodeFSP.writeFile(
-      NodePath.join(root, "web.tsx"),
-      'import "./web.css";\nexport default {};\n',
-    );
+  it.each([
+    [
+      "a stylesheet",
+      { "web.css": "p { color: red; }", "web.tsx": 'import "./web.css";\nexport default {};\n' },
+      "web.css, which T3 never loads. Import the CSS with `?inline`",
+    ],
+    [
+      "a worker",
+      {
+        "worker.ts": "self.postMessage(1);\n",
+        "web.tsx":
+          'import Worker from "./worker.ts?worker";\nexport default { activate: () => new Worker() };\n',
+      },
+      "which T3 never loads. Import a worker with `?worker&inline`",
+    ],
+  ])(
+    "refuses %s written beside web.js, which T3 would never load",
+    async (_name, files, message) => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-plugin-extra-"));
+      await using _root = { [Symbol.asyncDispose]: () => NodeFSP.rm(root, { recursive: true }) };
+      for (const [name, text] of Object.entries(files)) {
+        await NodeFSP.writeFile(NodePath.join(root, name), text);
+      }
 
-    await expect(
-      build({
-        root,
-        configFile: false,
-        logLevel: "silent",
-        plugins: [t3PluginWeb()],
-        build: { write: false, minify: false },
-      }),
-    ).rejects.toThrow("which T3 never loads");
-  });
+      await expect(
+        build({
+          root,
+          configFile: false,
+          logLevel: "silent",
+          plugins: [t3PluginWeb()],
+          build: { write: false, minify: false },
+        }),
+      ).rejects.toThrow(message);
+    },
+  );
 });
 
 describe("shared atom modules", () => {

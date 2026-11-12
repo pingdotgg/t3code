@@ -73,8 +73,8 @@ const isGone = (error: PlatformError.PlatformError) => error.reason._tag === "No
 /**
  * Lists installed plugins (`<pluginsDir>/<any folder>/t3-plugin.json`), then dev plugins
  * (`devPaths`). An id more than one folder has is listed once, as failed. `complete` is false when
- * a folder could not be read, such as a link into a drive that isn't mounted, so a plugin missing
- * from the list may still be there.
+ * a folder could not be read, such as a link into a drive that isn't mounted, or the folder limit
+ * cut the scan short, so a plugin missing from the list may still be there.
  */
 export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (input: {
   readonly pluginsDir: string;
@@ -189,6 +189,7 @@ export const discoverPlugins = Effect.fn("PluginDiscovery.discover")(function* (
   const underLimit = Effect.fnUntraced(function* (location: string) {
     examined += 1;
     if (examined <= MAX_PLUGIN_DIRECTORIES) return true;
+    complete = false;
     yield* Effect.logWarning("ignoring plugin folders past the limit", {
       path: location,
       limit: MAX_PLUGIN_DIRECTORIES,

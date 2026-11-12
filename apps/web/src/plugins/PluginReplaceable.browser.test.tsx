@@ -1,5 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
@@ -104,5 +104,23 @@ describe("PluginReplaceable", () => {
     expect(
       appAtomRegistry.get(pluginWebFailuresAtom(owner.pluginId)).get(owner.environmentId),
     ).toContain("(composer.controls) stopped with an error: boom");
+
+    // A thrown value without a prototype can't become text, and the row still says it failed.
+    const bare = { ...owner, pluginId: "bare-throw" };
+    using _bare = {
+      [Symbol.dispose]: registerPluginReplacement(
+        "composer.controls",
+        () => {
+          throw Object.create(null);
+        },
+        bare,
+      ),
+    };
+    await vi.waitFor(() =>
+      expect(
+        appAtomRegistry.get(pluginWebFailuresAtom(bare.pluginId)).get(bare.environmentId),
+      ).toContain("(composer.controls) stopped with an error"),
+    );
+    await expect.element(page.getByText("T3 controls")).toBeVisible();
   });
 });
