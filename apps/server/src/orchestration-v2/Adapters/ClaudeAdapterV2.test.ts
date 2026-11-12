@@ -4805,7 +4805,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       turn: Effect.Success<ReturnType<typeof openPlanTurn>>,
       toolName: string,
       toolInput: Record<string, unknown>,
-      options?: { toolUseID: string; agentID?: string },
+      options?: {
+        toolUseID: string;
+        agentID?: string;
+        matchedAskRule?: Parameters<ClaudeSdk.CanUseTool>[2]["matchedAskRule"];
+      },
     ) {
       const decision = yield* Effect.promise(() =>
         turn.canUseTool(toolName, toolInput, {
@@ -4813,6 +4817,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           toolUseID: options?.toolUseID ?? "tool-plan-write",
           requestId: "request-plan-write",
           ...(options?.agentID === undefined ? {} : { agentID: options.agentID }),
+          ...(options?.matchedAskRule === undefined
+            ? {}
+            : { matchedAskRule: options.matchedAskRule }),
         }),
       ).pipe(Effect.forkScoped);
       const first = yield* Effect.raceFirst(
@@ -4877,7 +4884,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
 
     // regression: #23918 the CLI drops the session rule in Plan mode and asks again
-    it.effect("answers a repeated Plan MCP call from a session grant without a card", () =>
+    it.effect.each([
+      { name: "answers a repeated Plan MCP call from a session grant without a card" },
+      {
+        name: "still asks a repeated Plan MCP call that an ask rule forces",
+        matchedAskRule: {
+          source: "userSettings",
+          toolName: "mcp__t3-code__t3_thread_read",
+          ruleContent: "*",
+        },
+      },
+    ])("$name", ({ matchedAskRule }) =>
       Effect.gen(function* () {
         const turn = yield* openPlanTurn("full-access");
         const toolName = "mcp__t3-code__t3_thread_read";
@@ -4885,7 +4902,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           turn,
           toolName,
           { threadId: "thread-other" },
-          { toolUseID: "read-page-1" },
+          { toolUseID: "read-page-1", ...(matchedAskRule === undefined ? {} : { matchedAskRule }) },
         );
         assert.equal(first.first.type, "request");
         if (first.first.type !== "request") return;
@@ -4899,8 +4916,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           turn,
           toolName,
           { threadId: "thread-other", afterPosition: 50 },
-          { toolUseID: "read-page-2" },
+          { toolUseID: "read-page-2", ...(matchedAskRule === undefined ? {} : { matchedAskRule }) },
         );
+        if (matchedAskRule !== undefined) {
+          assert.equal(second.first.type, "request", "the ask rule was bypassed");
+          return;
+        }
         assert.equal(second.first.type, "decision", "the session grant asked again");
         if (second.first.type !== "decision") return;
         assert.equal(second.first.result?.behavior, "allow");

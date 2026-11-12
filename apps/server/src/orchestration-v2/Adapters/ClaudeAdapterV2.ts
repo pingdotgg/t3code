@@ -11312,7 +11312,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const grantsByToolName =
-            toolName.startsWith("mcp__") && (callbackOptions.suggestions ?? []).length === 0;
+            toolName.startsWith("mcp__") &&
+            (callbackOptions.suggestions ?? []).length === 0 &&
+            callbackOptions.matchedAskRule === undefined;
           if (grantsByToolName && (yield* Ref.get(mcpToolSessionGrants)).has(toolName)) {
             return {
               behavior: "allow",
