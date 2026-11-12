@@ -105,8 +105,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           Effect.provideService(HostProcess.Arguments, ["node", entry]),
           Effect.provideService(HostProcess.IsExecutable, false),
           Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(HostProcess.Environment, {}),
+          Effect.provideService(HostProcess.Environment, { T3CODE_DESKTOP_SSH_LAUNCH: "1" }),
         );
+        expect(descriptor.capabilities.desktopSshLaunch).toBe(mode === "web" ? true : undefined);
         expect(descriptor.capabilities.serverInstallation).toEqual(
           mode === "web" ? { kind: "npm-global", prefix } : undefined,
         );

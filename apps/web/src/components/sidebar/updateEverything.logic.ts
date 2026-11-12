@@ -11,11 +11,14 @@ import { cliReleaseChannelOf, desktopUpdateChannelOf } from "@t3tools/shared/cli
 import { compareSemverVersions } from "@t3tools/shared/semver";
 
 import {
+  isDesktopSshLaunched,
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
   supportsDesktopAppUpdate,
 } from "~/versionSkew";
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
+
+const DESKTOP_SSH_LAUNCH_SKIP = "updated by the desktop app when it reconnects over SSH";
 
 export interface UpdateEverythingMachine {
   readonly environmentId: EnvironmentId;
@@ -105,7 +108,7 @@ export function collectServerUpdateTargets(
     }
     const desktopAppUpdate = supportsDesktopAppUpdate(config);
     if (selfUpdate === null) {
-      skip("needs a manual update");
+      skip(isDesktopSshLaunched(config) ? DESKTOP_SSH_LAUNCH_SKIP : "needs a manual update");
       continue;
     }
     if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
@@ -333,7 +336,11 @@ function trackSwitchMove(
     return { skip: "runs a preview build" };
   }
   const selfUpdate = resolveServerSelfUpdateCapability(config);
-  if (selfUpdate === null) return { skip: "needs a manual update" };
+  if (selfUpdate === null) {
+    return {
+      skip: isDesktopSshLaunched(config) ? DESKTOP_SSH_LAUNCH_SKIP : "needs a manual update",
+    };
+  }
   if (selfUpdate !== "desktop-managed") return { selfUpdate };
   if (config.environment.capabilities.desktopAppChannelSwitch !== true) {
     return { skip: "needs a newer desktop app" };

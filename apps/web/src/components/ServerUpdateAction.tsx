@@ -31,7 +31,11 @@ import { useServerConfigs } from "~/state/entities";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { environmentPresentations } from "~/state/presentation";
 import { ManagedControl } from "./ManagedPolicy";
-import { manualServerUpdateCommand } from "~/versionSkew";
+import {
+  DESKTOP_SSH_LAUNCH_UPDATE_NOTE,
+  isDesktopSshLaunched,
+  manualServerUpdateCommand,
+} from "~/versionSkew";
 import { crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
@@ -271,7 +275,8 @@ export function ServerUpdateAction({
   appearance = "button",
 }: ServerUpdateTarget & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
-  const serverVersion = useServerConfigs().get(environmentId)?.environment.serverVersion;
+  const serverConfig = useServerConfigs().get(environmentId);
+  const serverVersion = serverConfig?.environment.serverVersion;
   const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
   const canUpdate = useAtomValue(sessionStateAtom, canUpdateServer);
   const updatesDenial = managedUpdatesDenial(useManagedPolicy(environmentId));
@@ -343,6 +348,10 @@ export function ServerUpdateAction({
         Update the desktop app on that machine to update this server.
       </span>
     );
+  }
+
+  if (selfUpdate === null && isDesktopSshLaunched(serverConfig)) {
+    return <span className="text-muted-foreground text-xs">{DESKTOP_SSH_LAUNCH_UPDATE_NOTE}</span>;
   }
 
   if (refusedCrossing({ selfUpdate, targetVersion, channel }, serverVersion)) {

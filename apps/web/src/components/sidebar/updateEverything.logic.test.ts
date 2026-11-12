@@ -67,6 +67,15 @@ describe("collectServerUpdateTargets", () => {
         machine("current", "0.0.50", "boot-service"),
         machine("current-offline", "0.0.50", "boot-service", { connected: false }),
         machine("manual", "0.0.40", undefined),
+        machine("ssh", "0.0.40", undefined, {
+          serverConfig: {
+            ...machine("ssh", "0.0.40", undefined).serverConfig!,
+            environment: {
+              ...machine("ssh", "0.0.40", undefined).serverConfig!.environment,
+              capabilities: { repositoryIdentity: true, desktopSshLaunch: true },
+            },
+          },
+        }),
       ],
       "0.0.50",
     );
@@ -82,6 +91,7 @@ describe("collectServerUpdateTargets", () => {
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
+      ["ssh", "updated by the desktop app when it reconnects over SSH"],
     ]);
   });
 

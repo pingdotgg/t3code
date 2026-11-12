@@ -7,8 +7,10 @@ import type { EnvironmentPresentation } from "~/state/environments";
 import { environmentUpdateStatesAtom } from "~/state/server";
 import {
   buildVersionMismatchDismissalKey,
+  DESKTOP_SSH_LAUNCH_UPDATE_NOTE,
   dismissServerUpdateFailure,
   dismissVersionMismatch,
+  isDesktopSshLaunched,
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
@@ -65,6 +67,7 @@ export function useAutoBalanceUpdateBanner(
         targetVersion: state.status === "idle" ? mismatch!.clientVersion : state.targetVersion,
         connected: environment.connection.phase === "connected",
         remoteUpdate: selfUpdate !== null && (selfUpdate !== "desktop-managed" || desktopAppUpdate),
+        desktopSshLaunch: selfUpdate === null && isDesktopSshLaunched(environment.serverConfig),
         state,
         dismissKey,
       },
@@ -74,7 +77,9 @@ export function useAutoBalanceUpdateBanner(
 
   const running = machines.filter((machine) => machine.state.status === "running").length;
   const failed = machines.filter((machine) => machine.state.status === "failed").length;
-  const manual = machines.filter((machine) => !machine.remoteUpdate).length;
+  const manual = machines.filter(
+    (machine) => !machine.remoteUpdate && !machine.desktopSshLaunch,
+  ).length;
   const targets = machines.filter(
     (machine) => machine.connected && machine.remoteUpdate && machine.state.status !== "running",
   );
@@ -103,6 +108,8 @@ export function useAutoBalanceUpdateBanner(
                 <div className="font-medium">{machine.serverLabel}</div>
                 {machine.state.status !== "idle" ? (
                   <ServerUpdateProgress state={machine.state} />
+                ) : machine.desktopSshLaunch ? (
+                  <div className="text-muted-foreground">{DESKTOP_SSH_LAUNCH_UPDATE_NOTE}</div>
                 ) : !machine.remoteUpdate ? (
                   <>
                     <div className="text-muted-foreground">Manual update required</div>
