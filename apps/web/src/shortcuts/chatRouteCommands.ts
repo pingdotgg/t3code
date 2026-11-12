@@ -55,6 +55,13 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     const target = readRouteTarget();
     return target?.kind === "server" ? target.threadRef : null;
   };
+  const readRouteEnvironmentId = () => {
+    const target = readRouteTarget();
+    if (!target) return null;
+    return target.kind === "server"
+      ? target.threadRef.environmentId
+      : (useComposerDraftStore.getState().getDraftSession(target.draftId)?.environmentId ?? null);
+  };
   const readPreviewOpen = () => {
     const threadRef = readRouteThreadRef();
     // Store-only on purpose: the URL-aware arbitration lives in ChatView's
@@ -114,8 +121,8 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     (action: PreviewAction): CommandHandler =>
     (event) => {
       claim(event);
-      const threadRef = readRouteThreadRef();
-      if (threadRef && canOperatePreview(threadRef.environmentId)) dispatchPreviewAction(action);
+      const environmentId = readRouteEnvironmentId();
+      if (environmentId && canOperatePreview(environmentId)) dispatchPreviewAction(action);
     };
 
   return registerCommands(
