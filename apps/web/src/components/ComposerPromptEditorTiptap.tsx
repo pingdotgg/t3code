@@ -1112,9 +1112,17 @@ function ComposerPromptEditorTiptapInner(
       editorProps: {
         attributes: editorAttributes,
         handleDOMEvents: {
-          // True skips the editor's keymaps without preventDefault, so the app command still runs.
-          keydown: (_view, event) =>
-            isRichTextFormattingShortcut(event) && hasCommandForKeyDown(event),
+          // Composer commands keep precedence; otherwise true skips the editor's keymaps without
+          // preventDefault, so a bound app command still runs.
+          keydown: (_view, event) => {
+            if (!isRichTextFormattingShortcut(event)) return false;
+            if (readCallbacks().onCommandKeyDown?.(event.key, event)) {
+              event.preventDefault();
+              event.stopPropagation();
+              return true;
+            }
+            return hasCommandForKeyDown(event);
+          },
         },
         handleKeyDown: (view, event) => {
           // In a right-to-left line the start is on the right.

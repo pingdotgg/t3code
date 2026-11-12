@@ -37,11 +37,13 @@ function Composer({
   richTextEnabled,
   skills,
   onChange,
+  onCommandKeyDown = () => false,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
+  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -59,6 +61,7 @@ function Composer({
         onChange?.(...args);
       }}
       onPaste={() => {}}
+      onCommandKeyDown={onCommandKeyDown}
     />
   );
 }
@@ -68,9 +71,16 @@ function composer(
   richTextEnabled = true,
   skills: ReadonlyArray<ServerProviderSkill> = [],
   onChange?: ComposerPromptEditorProps["onChange"],
+  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"],
 ) {
   return (
-    <Composer value={value} richTextEnabled={richTextEnabled} skills={skills} onChange={onChange} />
+    <Composer
+      value={value}
+      richTextEnabled={richTextEnabled}
+      skills={skills}
+      onChange={onChange}
+      onCommandKeyDown={onCommandKeyDown}
+    />
   );
 }
 
@@ -214,9 +224,13 @@ it.each([
   },
 );
 
-it.each(["e", "i"])(
-  "leaves Mod+%s to an app command bound to it instead of formatting",
-  async (key) => {
+it.each([
+  ["e", false],
+  ["i", false],
+  ["e", true],
+])(
+  "leaves Mod+%s to an app command bound to it instead of formatting (composer command: %s)",
+  async (key, composerClaimsKey) => {
     const openUsage = vi.fn((event: KeyboardEvent) => {
       event.preventDefault();
     });
@@ -240,7 +254,8 @@ it.each(["e", "i"])(
         },
       ),
     };
-    await using screen = await mountEditor("word");
+    const composerCommand = vi.fn(() => composerClaimsKey);
+    await using screen = await mountEditor("word", true, [], undefined, composerCommand);
     const { editor } = screen;
     await act(async () => {
       editor.commands.focus();
@@ -249,7 +264,8 @@ it.each(["e", "i"])(
     await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
     await userEvent.keyboard(`{${modifier}>}${key}{/${modifier}}`);
-    expect(openUsage).toHaveBeenCalledOnce();
+    expect(composerCommand).toHaveBeenCalled();
+    expect(openUsage).toHaveBeenCalledTimes(composerClaimsKey ? 0 : 1);
     expect(serializeEditorDoc(editor.state.doc).value).toBe("word");
   },
 );
