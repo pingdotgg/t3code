@@ -103,10 +103,11 @@ import FilePreviewPanel from "./FilePreviewPanel";
 const environmentId = EnvironmentId.make("markdown-preview-test");
 const threadRef = { environmentId, threadId: ThreadId.make("thread") };
 function setup() {
-  const keys = ["t3code.fileExplorerOpen", "t3code.renderMarkdown"];
+  const keys = ["t3code.fileExplorerOpen", "t3code.renderMarkdown", "t3code.renderBrowserFile"];
   const previous = keys.map((key) => localStorage.getItem(key));
   localStorage.setItem(keys[0]!, "false");
   localStorage.setItem(keys[1]!, "true");
+  localStorage.removeItem(keys[2]!);
   state.file = null;
   state.optimistic = null;
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -302,5 +303,30 @@ describe("rendered Markdown select all", () => {
     // A toggled checkbox keeps focus on an input inside the preview.
     await userEvent.click(screen.getByRole("checkbox"));
     await expectFileOnlySelection();
+  });
+});
+
+describe("HTML source view", () => {
+  it("opens the next HTML document rendered after source was chosen on another", async () => {
+    using _settings = setup();
+    const contents = "<h1>Report</h1>\n";
+    state.file = {
+      relativePath: "a.html",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    await using screen = await render(filePreview("a.html"));
+    await userEvent.click(screen.getByRole("button", { name: "Show HTML source" }));
+    await expect.element(screen.getByRole("button", { name: "Show rendered page" })).toBeVisible();
+
+    state.file = {
+      relativePath: "b.html",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    await screen.rerender(filePreview("b.html"));
+    await expect.element(screen.getByRole("button", { name: "Show HTML source" })).toBeVisible();
   });
 });
