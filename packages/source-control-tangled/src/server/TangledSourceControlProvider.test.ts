@@ -355,6 +355,18 @@ describe("createChangeRequest", () => {
         })
         .pipe(Effect.flip);
       assert.match(error.detail, /--source-repo handle\/repo/u);
+      // GitManager sends a fork as `owner:branch` alone, which names no source repository.
+      const ownerOnly = yield* provider
+        .createChangeRequest({
+          cwd: "/repo",
+          context: REMOTE,
+          baseRefName: "main",
+          headSelector: "bob.example:feature",
+          title: "Add a thing",
+          bodyFile: "/tmp/body.md",
+        })
+        .pipe(Effect.flip);
+      assert.match(ownerOnly.detail, /bob\.example's fork/u);
       assert.strictEqual(tg.calls.filter((call) => call.includes("create")).length, 1);
     }).pipe(serve(tg));
   });
