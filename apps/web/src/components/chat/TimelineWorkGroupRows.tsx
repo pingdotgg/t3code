@@ -341,8 +341,13 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup, pendingRequest } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    backgroundWorktreeSetup,
+    pendingRequest,
+    providerStartingLabel,
+  } = use(TimelineRowActivityCtx);
   const window = row.window;
   const [fit, onOverflowChange] = useReducer(
     (current: { overflows: boolean; fade: boolean }, overflows: boolean) =>
@@ -378,6 +383,9 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
         "Compacting…"
       )}
     </span>
+  ) : providerStartingLabel ? (
+    // Until the provider opens a turn, the run is still launching it.
+    providerStartingLabel
   ) : row.createdAt ? (
     <>
       Working for <WorkingTimer createdAt={row.createdAt} />
@@ -920,8 +928,14 @@ function WorkingWindowView({
   onOverflowChange: (overflows: boolean) => void;
 }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest, liveAnswerPreview } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    turnEnded,
+    pendingRequest,
+    liveAnswerPreview,
+    providerStartingLabel,
+  } = use(TimelineRowActivityCtx);
   const open = window.historyOpen;
   const [history, setHistory] = useState<{ head: number; tailStart: number } | null>(null);
   if (open && history === null) {
@@ -999,6 +1013,7 @@ function WorkingWindowView({
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
+    providerStartingLabel === null &&
     !window.answering &&
     !workingWindowItemIsLive(window.items.at(-1)) &&
     !isCompacting &&
