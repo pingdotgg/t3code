@@ -1,4 +1,4 @@
-import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import { type EnvironmentId, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isLocalLoopbackHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
@@ -711,7 +711,12 @@ export const readTailscaleServeRootHolders = (
   );
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
-  function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {
+  function* (input: {
+    readonly baseUrl: string;
+    readonly timeout?: Duration.Input;
+    /** Serve may still route to another T3 server; only its own ID proves this one. */
+    readonly environmentId?: EnvironmentId;
+  }) {
     const client = yield* HttpClient.HttpClient;
     const descriptor = yield* Effect.gen(function* () {
       const url = new URL("/.well-known/t3/environment", input.baseUrl);
@@ -722,7 +727,10 @@ export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHt
       return yield* HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)(response);
     }).pipe(Effect.timeoutOption(input.timeout ?? TAILSCALE_PROBE_TIMEOUT));
 
-    return Option.isSome(descriptor);
+    return Option.exists(
+      descriptor,
+      (found) => input.environmentId === undefined || found.environmentId === input.environmentId,
+    );
   },
   Effect.orElseSucceed(() => false),
 );
