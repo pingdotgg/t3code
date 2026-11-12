@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
+import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectLimitAccounts,
@@ -29,17 +30,11 @@ import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
-const DRIVER_LABEL: Partial<Record<string, string>> = {
-  codex: "Codex",
-  claudeAgent: "Claude",
-  grok: "Grok",
-  antigravity: "Antigravity",
-};
 const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
-  if (!account.email) return DRIVER_LABEL[account.driver] ?? String(account.driver);
+  if (!account.email) return providerClients.get(account.driver)?.label ?? account.driver;
   return emailInitials(account.email) || "Account";
 }
 
@@ -176,7 +171,7 @@ function PoolWindowCard({
   readonly color: string;
   readonly now: number;
   readonly environmentIds: readonly string[] | null;
-  readonly label?: string;
+  readonly label?: string | null;
   readonly description?: string;
   readonly wide: boolean;
 }) {
@@ -200,7 +195,9 @@ function PoolWindowCard({
     <>
       <View className={wide ? "gap-1" : "flex-row items-start justify-between gap-3"}>
         <View className="gap-1">
-          <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
+          {label !== null ? (
+            <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
+          ) : null}
           <View className="flex-row items-baseline gap-1.5">
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
               {pool.remainingPercent}%
@@ -408,13 +405,11 @@ export function UsageLimitsSection({
   now,
   failedLabels,
   selectedEnvironmentIds,
-  cursorPrompt,
   wide = false,
 }: {
   readonly now: number;
   readonly failedLabels: readonly string[];
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
-  readonly cursorPrompt?: ReactNode;
   readonly wide?: boolean;
 }) {
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
@@ -426,17 +421,11 @@ export function UsageLimitsSection({
   const notices = collectLimitNotices(selected);
   const externalLinks = collectExternalUsageLinks(selected);
   const colors = useProviderColors();
-  const cursorPromptAt =
-    Math.max(
-      pools.findIndex((pool) => pool.driver === "codex"),
-      pools.findIndex((pool) => pool.driver === "claudeAgent"),
-    ) + 1;
   return (
     <View className="gap-6">
       {pools.length === 0 &&
       notices.length === 0 &&
       failedLabels.length === 0 &&
-      !cursorPrompt &&
       externalLinks.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
@@ -444,21 +433,20 @@ export function UsageLimitsSection({
             : "No provider on the selected environments reports subscription limits."}
         </Text>
       ) : null}
-      {pools.map((pool, index) => {
+      {pools.map((pool) => {
         const windows = displayLimitWindows(pool);
         return (
           <Fragment key={pool.driver}>
-            {index === cursorPromptAt ? cursorPrompt : null}
             <View className="gap-3">
               <View className="flex-row items-center gap-2 px-1">
                 <ProviderIcon provider={pool.driver} size={18} />
                 <Text className="text-base font-t3-medium text-foreground">
-                  {DRIVER_LABEL[pool.driver] ?? pool.driver}
+                  {providerClients.get(pool.driver)?.label ?? pool.driver}
                 </Text>
               </View>
               {windows.map((window) => {
                 const details =
-                  pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+                  pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
                 return (
                   <PoolWindowCard
                     key={`${window.kind}:${window.id}`}
@@ -478,7 +466,6 @@ export function UsageLimitsSection({
           </Fragment>
         );
       })}
-      {cursorPromptAt === pools.length ? cursorPrompt : null}
       {externalLinks.map((link) => (
         <View key={link.url} className="gap-3 rounded-xl border border-border-subtle p-4">
           <Text className="text-base font-t3-medium text-foreground">{link.label}</Text>
@@ -569,7 +556,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               <View className="flex-row items-center gap-2">
                 <ProviderIcon provider={account.driver} size={24} />
                 <Text className="flex-1 text-xl font-t3-bold text-foreground">
-                  {account.displayName ?? DRIVER_LABEL[account.driver] ?? account.driver}
+                  {account.displayName ??
+                    providerClients.get(account.driver)?.label ??
+                    account.driver}
                 </Text>
               </View>
               {account.email ? (

@@ -2,7 +2,7 @@
 import { cursorRateModel } from "./accountUsage.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
-export type CursorCredentialSource = string | { readonly kind: "keychain" };
+export type CursorCredentialSource = { readonly kind: "apiKey"; readonly apiKey: string };
 
 export const CURSOR_ACCOUNT_TTL_MS = 60 * 1000;
 
@@ -53,11 +53,22 @@ export function mergeCursorFetch(
     record.timestampMs >= range.sinceMs && record.timestampMs <= range.untilMs;
   const previous = cache?.records ?? [];
   const added = fetched.filter(inRange);
-  const replacedKeys = new Set(previous.filter(inRange).map((record) => record.dedupeKey));
+  const replacedKeys = new Set<string | null>();
+  let pruned = false;
+  for (const record of previous) {
+    if (inRange(record)) replacedKeys.add(record.dedupeKey);
+    else if (record.timestampMs < retentionStartMs) pruned = true;
+  }
   const changed =
     cache === undefined ||
+    pruned ||
     replacedKeys.size !== added.length ||
     added.some((record) => !replacedKeys.has(record.dedupeKey));
+  const records = !changed
+    ? previous
+    : previous
+        .filter((record) => !inRange(record) && record.timestampMs >= retentionStartMs)
+        .concat(added);
   return {
     changed,
     cache: {
@@ -65,10 +76,7 @@ export function mergeCursorFetch(
       sinceMs: retentionStartMs,
       untilMs: range.untilMs,
       fetchedAtMs: nowMs,
-      records: [
-        ...previous.filter((record) => !inRange(record) && record.timestampMs >= retentionStartMs),
-        ...added,
-      ],
+      records,
     } satisfies CursorAccountCache,
   };
 }

@@ -1,0 +1,27 @@
+{
+  "extends": "../tsconfig.base.json",
+  "include": ["src/**/*.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": true,
+    "tsBuildInfoFile": "../.cache/tsconfig.stacks.tsbuildinfo",
+    "types": ["bun", "node"]
+  },
+  "references": [
+    { "path": "../packages/alchemy/tsconfig.json" },
+    { "path": "../packages/aws/tsconfig.json" },
+    { "path": "../packages/axiom/tsconfig.json" },
+    { "path": "../packages/cloudflare/tsconfig.json" },
+    { "path": "../packages/fly/tsconfig.json" },
+    { "path": "../packages/gcp/tsconfig.json" },
+    { "path": "../packages/github/tsconfig.json" },
+    { "path": "../packages/hetzner/tsconfig.json" },
+    { "path": "../packages/neon/tsconfig.json" },
+    { "path": "../packages/pkg/tsconfig.json" },
+    { "path": "../packages/planetscale/tsconfig.json" },
+    { "path": "../packages/prisma/tsconfig.json" },
+    { "path": "../packages/railway/tsconfig.json" },
+    { "path": "../packages/stripe/tsconfig.json" },
+    { "path": "../packages/turso/tsconfig.json" }
+  ]
+}
