@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useRef, useState } from "react";
 
@@ -26,7 +25,7 @@ import { Label } from "../ui/label";
 import { Menu, MenuCheckboxItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
-import { USAGE_PRICE_FIELDS } from "./usagePriceForm";
+import { isUsagePriceEdit, USAGE_PRICE_FIELDS } from "./usagePriceForm";
 import {
   isEmptyUsagePriceDraft,
   usageAliasCell,
@@ -46,7 +45,7 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
     const session = get(environmentSession.sessionStateAtom(environmentId));
-    const sessionData = Option.getOrNull(AsyncResult.value(session));
+    const sessionData = AsyncResult.getOrElse(session, () => null);
     const access =
       session._tag === "Failure"
         ? "denied"
@@ -70,13 +69,11 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
           ? "Offline"
           : settings === null
             ? "Prices not loaded"
-            : environment.serverConfig?.environment.capabilities.usagePriceOverrides !== true
-              ? "Update server to edit prices"
-              : access === "pending"
-                ? "Checking permissions…"
-                : access === "denied"
-                  ? "Read-only access"
-                  : null,
+            : access === "pending"
+              ? "Checking permissions…"
+              : access === "denied"
+                ? "Read-only access"
+                : null,
     };
   }),
 );
@@ -93,10 +90,6 @@ type SaveAttempt = {
   >;
 };
 
-/**
- * Edits custom model prices and mappings. A mapped model's usage counts as its
- * target model. `initialModel` opens with a new row for that model.
- */
 export function UsagePriceOverrides({
   usage,
   initialSelectedEnvironmentIds,
@@ -113,7 +106,6 @@ export function UsagePriceOverrides({
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),
   );
-  // A model that already has a custom price or mapping is edited in its existing row.
   const [drafts, setDrafts] = useState<readonly UsagePriceDraft[]>(() =>
     initialModel === undefined ||
     selected.some(
@@ -147,7 +139,6 @@ export function UsagePriceOverrides({
         .flatMap((environment) => environment.summary?.buckets.map((bucket) => bucket.model) ?? []),
     ]),
   ].sort();
-  // Keep new rows in place while successful environments publish their updated settings.
   const newModels = new Set(
     drafts.filter((draft) => draft.isNew).map((draft) => draft.model.trim()),
   );
@@ -167,6 +158,8 @@ export function UsagePriceOverrides({
   ];
   const stagedDrafts = drafts.filter((draft) => !isEmptyUsagePriceDraft(draft));
   const errors = usagePriceTableErrors(selected, stagedDrafts);
+  // New rows still block Save, but show a price error only once a price or mapping is typed.
+  const awaitingPrice = new Set<string>();
   for (const draft of stagedDrafts) {
     if (!draft.isNew) continue;
     if (draft.model.trim() === "") errors.set(draft.id, "Enter a model ID.");
@@ -176,6 +169,11 @@ export function UsagePriceOverrides({
         drafts.some((other) => other.id !== draft.id && other.model.trim() === draft.model.trim()))
     )
       errors.set(draft.id, "This model already has a row. Edit its prices there.");
+    else if (
+      (draft.alias ?? "").trim() === "" &&
+      Object.values(draft.values).every((value) => value.trim() === "")
+    )
+      awaitingPrice.add(draft.id);
   }
   const failedDestinations =
     attempt?.destinations.filter(
@@ -202,7 +200,6 @@ export function UsagePriceOverrides({
     );
     setAttempt(null);
   };
-  // An existing row edited back to its saved values has nothing left to save.
   const matchesSaved = (
     row: UsagePriceDraft,
     cell: { value: string; placeholder: string },
@@ -400,6 +397,7 @@ export function UsagePriceOverrides({
                       rows.map((row) => {
                         const aliasCell = usageAliasCell(selected, row.model);
                         const alias = (row.alias ?? aliasCell.value).trim();
+                        const error = awaitingPrice.has(row.id) ? undefined : errors.get(row.id);
                         return (
                           <TableRow key={row.id} data-row-id={row.id}>
                             <TableCell className="whitespace-normal">
@@ -415,7 +413,7 @@ export function UsagePriceOverrides({
                                   }}
                                   aria-label="New model ID"
                                   aria-invalid={
-                                    (row.model.trim() !== "" && errors.has(row.id)) || undefined
+                                    (row.model.trim() !== "" && error !== undefined) || undefined
                                   }
                                   list="usage-price-models"
                                   placeholder="Model ID"
@@ -436,11 +434,11 @@ export function UsagePriceOverrides({
                                   {row.model}
                                 </span>
                               )}
-                              {errors.has(row.id) &&
+                              {error !== undefined &&
                               (row.model.trim() !== "" ||
                                 Object.values(row.values).some((value) => value !== "")) ? (
                                 <p role="alert" className="mt-1 text-xs text-destructive">
-                                  {errors.get(row.id)}
+                                  {error}
                                 </p>
                               ) : null}
                             </TableCell>
@@ -474,13 +472,15 @@ export function UsagePriceOverrides({
                             ) : (
                               USAGE_PRICE_FIELDS.map((field) => {
                                 const cell = usagePriceCell(selected, row.model, field.key);
+                                const value =
+                                  row.values[field.key] ?? (row.isNew ? "" : cell.value);
                                 return (
                                   <TableCell key={field.key}>
                                     <Input
                                       size="compact"
                                       inputMode="decimal"
                                       aria-label={`${field.label} price for ${row.model || "new model"}`}
-                                      value={row.values[field.key] ?? (row.isNew ? "" : cell.value)}
+                                      value={value}
                                       placeholder={
                                         row.isNew
                                           ? field.optional
@@ -491,9 +491,10 @@ export function UsagePriceOverrides({
                                       autoComplete="off"
                                       disabled={locked}
                                       font="mono"
-                                      onChange={(event) =>
-                                        editCell(row, field.key, event.target.value)
-                                      }
+                                      onChange={(event) => {
+                                        if (isUsagePriceEdit(value, event.target.value))
+                                          editCell(row, field.key, event.target.value);
+                                      }}
                                     />
                                   </TableCell>
                                 );

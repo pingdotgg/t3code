@@ -12,12 +12,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * The server stops mid-command and its event stream ends with no execution
- * end. T3 reconnects to the restarted server, finds the session idle with no
- * outcome, backfills the shell call the history shows cancelled, and ends the
- * turn as interrupted. The next turn runs on the same session.
- */
 export function assertOpenCode2ResumeAfterRestartOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -36,7 +30,6 @@ export function assertOpenCode2ResumeAfterRestartOutput(
     OPENCODE2_RESTART_RECALL_PROMPT,
   ]);
   const [first, second] = projection.runs;
-  // The orphaned shell call ends as the history recorded it, not left running.
   const shell = projection.turnItems.find(
     (item) => item.type === "command_execution" && item.runId === first?.id,
   );

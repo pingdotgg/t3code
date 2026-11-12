@@ -14,7 +14,6 @@ export function claudeBackgroundTaskInterruptInput(): OrchestratorFixtureInput {
   return {
     steps: [
       { type: "message", text: CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT },
-      // The recording interrupted right after the foreground tool use.
       { type: "interrupt", targetRunIndex: 1, waitForTurnItemType: "command_execution" },
     ],
   };

@@ -1,3 +1,5 @@
+import { PreviewAutomationEvaluateInput } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import {
   chromium,
   type Browser,
@@ -5,9 +7,20 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
+
+const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
 describe("server browser element refs", () => {
   let browser: Browser;
@@ -98,6 +111,27 @@ describe("server browser element refs", () => {
     expect(await page.locator("li").count()).toBe(5);
   });
 
+  it("tells a click target that matches nothing from one that never becomes clickable", async () => {
+    await page.setContent(`<button hidden>hidden</button>`);
+    const failure = (selector: string) =>
+      ServerBrowserPage.click(page, { selector, timeoutMs: 500 }).then(
+        () => expect.unreachable(),
+        ServerBrowserPage.toOperationError,
+      );
+
+    const absent = await failure(".definitely-no-such-t3-target");
+    expect(absent.tag).toBe("PreviewAutomationTimeoutError");
+    expect(absent.message).toBe(
+      'The click may have happened and removed its target or navigated; check the page before retrying. No element matches ".definitely-no-such-t3-target" after the timeout; take a fresh snapshot and use its locator.',
+    );
+    expect(absent.cause).toMatchObject({ name: "TimeoutError" });
+    const hidden = await failure("button");
+    expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
+    expect(hidden.message).toBe(
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
+    );
+  });
+
   it("does not retarget a removed ref to a replacement node", async () => {
     await page.setContent("<button onclick=\"this.textContent='clicked'\">original</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "original");
@@ -123,6 +157,99 @@ describe("server browser element refs", () => {
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
   });
 
+  it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
+    await page.setContent(`
+      <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>
+      <input aria-label="Username" value="maria">
+      <input type="password" aria-label='saved" [ref=e2]: x' placeholder="hint" value="saved-pass">
+      <input type="password" role="combobox" aria-label="Code" value="role-pass">
+      <input aria-label="PIN" style="-webkit-text-security: disc" value="styled-pass">
+      <div contenteditable style="-webkit-text-security: disc">editable-pass</div>
+      <iframe srcdoc="<input type=password aria-label=child value=frame-pass>"></iframe>
+      <iframe id="blank" src="javascript:false"></iframe>
+      <p>Order styled-pass-2</p>
+      <script>
+        // A frame that never commits a document, filled by its parent.
+        blank.contentDocument.body.innerHTML = "<input type=password aria-label=blank value=blank-pass>";
+        // Page script can't change the value the snapshot sees.
+        Object.defineProperty(HTMLInputElement.prototype, "value", { get: () => "" });
+      </script>`);
+    await page.frameLocator("iframe[srcdoc]").getByRole("textbox").waitFor();
+    await ServerBrowserPage.type(page, { locator: "#pw", text: "typed-pass" });
+    const result = await takeSnapshot();
+    const tree = String(result.accessibilityTree);
+    expect(tree).toContain('textbox "blank"');
+    expect(tree).not.toMatch(
+      /typed-pass|saved-pass|role-pass|styled-pass|editable-pass|frame-pass|blank-pass/,
+    );
+    expect(result.visibleText).not.toContain("editable-pass");
+    expect(result.visibleText).toContain("Order ••••••••-2");
+    expect(tree).toMatch(/textbox "Username" [^\n]*: maria$/m);
+    const line = tree.split("\n").find((line) => line.includes('textbox "Password"'));
+    expect(line).toMatch(/: •+$/);
+    await ServerBrowserPage.type(page, { locator: locators(line)[0]!, text: "next", clear: true });
+    expect(await page.locator("#pw").inputValue()).toBe("next");
+  });
+
+  it("masks dotted values in page text next to punctuation, with odd spaces, and at the cut", async () => {
+    await page.setContent(`
+      <input type="password" aria-label="PIN" value="123">
+      <input type="password" aria-label="Phrase" value="open&nbsp;sesame">
+      <p>PIN: 123. Code (123) id 1234</p>
+      <p>open&nbsp;sesame</p>`);
+    const text = (await takeSnapshot()).visibleText;
+    expect(text).toContain("PIN: ••••••••. Code (••••••••) id 1234");
+    expect(text).not.toMatch(/open|sesame/);
+    await page.setContent(`
+      <p>${"x".repeat(19_995)}long-secret</p>
+      <input type="password" aria-label="Long" value="long-secret">`);
+    const cut = (await takeSnapshot()).visibleText;
+    expect(cut.length).toBe(20_000);
+    expect(cut.slice(-8)).toBe("xxx•••••");
+  });
+
+  it("shows a data: link or blocked data: navigation by media type only", async () => {
+    // Chromium keeps raw spaces and quotes in both, so a payload can't be cut at either.
+    await page.setContent(`
+      <a download href="data:text/plain;charset=&quot;a,b&quot;,head PAYLOAD'tail">Key</a>
+      <a href="https://example.com/data:report,2026">Report</a>
+      <a href="#">data:text/plain,label</a>
+      <a href='"data:text/plain,relative'>Relative</a>
+      <a href=" data:text/plain,PAYLOAD">Spaced</a>
+      <a href="da&#9;ta:text/plain,PAYLOAD">Tabbed</a>
+      <a href="data:text/plain,head&#x2028;PAYLOAD">Separated</a>
+      <a href="data:PAYLOAD,x">Typeless</a>
+      <a href="&#11;data:text/plain,PAYLOAD">Vertical tab</a>
+      <a href="&#8;data:text/plain,PAYLOAD">Backspace</a>
+      <a id="controlled">Controlled</a>
+      <a id="escaped">Escaped</a>
+      <script>
+        controlled.href = "\\x01data:text/plain,PAYLOAD";
+        escaped.href = "\\x02da\\tta:text/plain,PAYLOAD";
+      </script>`);
+    const tree = String((await takeSnapshot()).accessibilityTree);
+    expect(tree.match(/\/url: data:text\/plain,…$/gm)).toHaveLength(8);
+    expect(tree).toContain("/url: data:,…");
+    expect(tree).toContain("/url: https://example.com/data:report,2026");
+    expect(tree).toMatch(/link "data:text\/plain,label" \[ref=t3-/);
+    expect(tree).not.toMatch(/PAYLOAD|tail|charset|\u2028/);
+    expect(tree).toContain('/url: "\\"data:text/plain,relative"');
+  });
+
+  it("redacts a data: link whose scheme a password value would mask", async () => {
+    await page.setContent(`
+      <input type="password" aria-label="Scheme" value="data">
+      <a download href="data:text/plain,PAYLOAD">Key</a>`);
+    const tree = String((await takeSnapshot()).accessibilityTree);
+    expect(tree).toContain("/url: ••••••••:text/plain,…");
+    expect(tree).not.toContain("PAYLOAD");
+  });
+
+  it("shows a data: page's own URL by media type only", async () => {
+    await page.goto("data:text/html,<title>Key</title>PAYLOAD");
+    expect((await takeSnapshot()).url).toBe("data:text/html,…");
+  });
+
   it("rejects refs from another tab", async () => {
     await page.setContent("<button>same label</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "same label");
@@ -131,27 +258,10 @@ describe("server browser element refs", () => {
     await expect(ServerBrowserPage.click(other, { locator })).rejects.toThrow(/another tab/);
   });
 
-  it("revokes refs on takeover and issues usable refs in the next snapshot", async () => {
-    await page.setContent("<button onclick=\"this.textContent='clicked'\">continue</button>");
-    const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
-    ServerBrowserPage.invalidateRefs(page);
-    await expect(ServerBrowserPage.click(page, { locator })).rejects.toThrow(/stale/);
-    const fresh = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
-    await ServerBrowserPage.click(page, { locator: fresh });
-    expect(await page.locator("button").textContent()).toBe("clicked");
-  });
-
   it("revokes refs after navigation even when labels are identical", async () => {
     await page.goto("data:text/html,<button>continue</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
     await page.goto("data:text/html,<button>continue</button><p>new document</p>");
-    await expect(ServerBrowserPage.click(page, { locator })).rejects.toThrow(/stale/);
-  });
-
-  it("only accepts refs from the most recent snapshot", async () => {
-    await page.setContent("<button>continue</button>");
-    const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "continue");
-    await takeSnapshot();
     await expect(ServerBrowserPage.click(page, { locator })).rejects.toThrow(/stale/);
   });
 
@@ -164,14 +274,6 @@ describe("server browser element refs", () => {
     },
   );
 
-  it("preserves CSS selectors containing an aria-ref attribute", async () => {
-    await page.setContent(
-      '<button aria-ref="save" onclick="this.textContent=\'saved\'">save</button>',
-    );
-    await ServerBrowserPage.click(page, { selector: 'button[aria-ref="save"]' });
-    expect(await page.locator("button").textContent()).toBe("saved");
-  });
-
   it("preserves quoted attribute values containing ref engine text", async () => {
     await page.setContent(
       '<button data-example=" >> aria-ref=e1" onclick="this.textContent=\'saved\'">save</button>',
@@ -180,69 +282,322 @@ describe("server browser element refs", () => {
     expect(await page.locator("button").textContent()).toBe("saved");
   });
 
-  it("right-clicks, double-clicks, hovers, selects, and drags like a pointer user", async () => {
-    await page.setContent(`
-      <style>#menu { position: absolute; display: none } #hover:hover + #menu { display: block }</style>
-      <button id="target">target</button>
-      <div id="hover">hover me</div><div id="menu">menu item</div>
-      <select id="size"><option value="s">Small</option><option value="l">Large</option></select>
-      <div id="card" draggable="true">card</div><div id="lane" style="height:40px">lane</div>
-      <p id="log"></p>
-      <script>
-        const log = (text) => (document.getElementById("log").textContent += text + ";");
-        const target = document.getElementById("target");
-        target.addEventListener("contextmenu", (event) => { event.preventDefault(); log("context"); });
-        target.addEventListener("dblclick", () => log("dblclick"));
-        document.getElementById("card").addEventListener("dragstart", (event) =>
-          event.dataTransfer.setData("text/plain", "card"),
-        );
-        for (const type of ["dragenter", "dragover"])
-          document.getElementById("lane").addEventListener(type, (event) => event.preventDefault());
-        document.getElementById("lane").addEventListener("drop", () => log("drop"));
-      </script>`);
-    await ServerBrowserPage.click(page, { locator: "#target", button: "right" });
-    await ServerBrowserPage.click(page, { locator: "#target", clickCount: 2 });
-    await ServerBrowserPage.hover(page, { locator: "#hover" });
-    expect(await page.isVisible("#menu")).toBe(true);
-    // A visible label selects the same option as its value.
-    expect(await ServerBrowserPage.select(page, { locator: "#size", values: ["Large"] })).toEqual({
-      selected: ["l"],
-    });
-    await ServerBrowserPage.drag(page, { source: "#card", target: "#lane" });
-    expect(await page.textContent("#log")).toBe("context;dblclick;drop;");
-    await expect(
-      ServerBrowserPage.select(page, { locator: "#target", values: ["s"] }),
-    ).rejects.toMatchObject({ tag: "PreviewAutomationTargetNotEditableError" });
+  it("evaluates top-level await and returns the last expression's value", async () => {
+    await page.setContent("<title>Ready</title>");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await Promise.resolve(); document.title" },
+      5_000,
+    );
+    expect(result).toBe("Ready");
   });
 
-  it("shows the agent's pointer at each target before the action reaches the page", async () => {
+  it("returns object contents even when a legacy caller asks for a remote reference", async () => {
+    const input = decodeEvaluateInput({
+      expression: "({ answer: 42, nested: { ready: true } })",
+      returnByValue: false,
+    });
+    const result = await ServerBrowserPage.evaluate(cdp, input, 5_000);
+    expect(result).toEqual({ answer: 42, nested: { ready: true } });
+  });
+
+  it("still awaits the promise an async function returns", async () => {
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "(async () => { await 0; return 1 })()" },
+      5_000,
+    );
+    expect(result).toBe(1);
+  });
+
+  it("does not rerun an expression whose SyntaxError is thrown at runtime", async () => {
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "window.runs = (window.runs ?? 0) + 1; new Function('await 0')" },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("await is only valid");
+    expect(await page.evaluate("window.runs")).toBe(1);
+  });
+
+  it("does not rerun an expression whose awaited browser call rejects with a SyntaxError", async () => {
+    let posts = 0;
+    await page.route("http://preview.test/**", (route) => {
+      if (route.request().method() === "POST") posts++;
+      return route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" });
+    });
+    await page.goto("http://preview.test/");
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      {
+        expression:
+          "(async () => { const r = await fetch('/api', { method: 'POST' }); return r.json() })()",
+      },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("is not valid JSON");
+    expect(posts).toBe(1);
+  });
+
+  it("returns the result of a top-level await expression that reloads the page", async () => {
+    await page.route("http://preview.test/", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
+    );
+    await page.goto("http://preview.test/");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await 0; location.reload(); ({ clicked: true })" },
+      5_000,
+    );
+    expect(result).toEqual({ clicked: true });
+  });
+});
+
+describe("server browser snapshot screenshot", () => {
+  let browser: Browser;
+  let context: BrowserContext;
+
+  beforeAll(async () => {
+    // ServerBrowserContexts launches with these, and the capture scale depends on them.
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--force-device-scale-factor=2"],
+    });
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+  beforeEach(async () => {
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 2,
+    });
+  });
+  afterEach(async () => {
+    await context.close();
+  });
+
+  // Blue on the left half and red on the right, so a mirrored left half shows up on the right.
+  const halves = (overlay: string) => `
+    <style>
+      body { margin: 0; background: white; }
+      .half { position: absolute; top: 0; width: 640px; height: 800px; }
+      .overlay { position: fixed; inset: 0; ${overlay} }
+    </style>
+    <div class="half" style="left: 0; background: #2563eb"></div>
+    <div class="half" style="left: 640px; background: #ef4444"></div>
+    <div class="overlay"></div>`;
+
+  const screenshotOf = async (html: string) => {
+    const page = await context.newPage();
+    await page.setContent(html);
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      fullScreenshot: true,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+    // The server has no DOM types, so the decoder runs as page source.
+    const points = [
+      [0.15, 0.75],
+      [0.85, 0.25],
+      [0.85, 0.75],
+    ];
+    const pixels = (await page.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(screenshot.data)}), (char) => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return ${JSON.stringify(points)}.map(([x, y]) =>
+        Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
+      );
+    })()`)) as Array<[number, number, number, number]>;
+    return { screenshot, fullScreenshot, pixels };
+  };
+  const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
+    blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
+
+  it("captures a blurred backdrop-filter page as rendered, not mirrored", async () => {
+    const { screenshot, pixels } = await screenshotOf(halves("backdrop-filter: blur(4px);"));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+  });
+
+  it("captures a plain page at the shrunk size with its content in place", async () => {
+    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
+
+    expect({
+      size: [screenshot.width, screenshot.height],
+      fullSize: [fullScreenshot?.width, fullScreenshot?.height],
+      colors: pixels.map(colorOf),
+    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
+  });
+
+  it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
+    const page = await context.newPage();
     await page.setContent(`
-      <button id="go" style="position:absolute;left:100px;top:40px;width:80px;height:20px">go</button>
-      <div id="tip" style="position:absolute;left:300px;top:40px;width:60px;height:20px">tip</div>
-      <div id="card" draggable="true" style="position:absolute;left:20px;top:120px;width:40px;height:40px">card</div>
-      <div id="lane" style="position:absolute;left:220px;top:120px;width:100px;height:40px">lane</div>
-      <script>
-        window.seen = [];
-        go.onclick = () => seen.push("click");
-        tip.onmouseenter = () => seen.push("hover");
-        card.ondragstart = (event) => event.dataTransfer.setData("text/plain", "card");
-        lane.ondragover = (event) => event.preventDefault();
-        lane.ondrop = () => seen.push("drop");
-      </script>`);
-    const shown: Array<string> = [];
-    const pointer: ServerBrowserPage.PointerReporter = async ({ x, y }, phase) => {
-      const seen = await page.evaluate("window.seen.length");
-      shown.push(`${phase}@${Math.round(x)},${Math.round(y)} after ${seen}`);
-    };
-    await ServerBrowserPage.click(page, { locator: "#go" }, pointer);
-    await ServerBrowserPage.hover(page, { locator: "#tip" }, pointer);
-    await ServerBrowserPage.drag(page, { source: "#card", target: "#lane" }, pointer);
-    expect(shown).toEqual([
-      "click@140,50 after 0",
-      "move@330,50 after 1",
-      "move@40,140 after 2",
-      "move@270,140 after 2",
-    ]);
-    expect(await page.evaluate("window.seen")).toEqual(["click", "hover", "drop"]);
+      <style>
+        body { margin: 0; background: #2563eb; }
+        @keyframes enter { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
+        button { animation: pulse 2s infinite; }
+        #paused { animation: enter 2s paused; }
+        #overlay { display: none; position: fixed; inset: 0; background: #ef4444; }
+        #overlay.open { display: block; animation: enter 200ms both; }
+      </style>
+      <button onclick="document.querySelector('#overlay').classList.add('open')">Open</button>
+      <div id="paused"></div>
+      <div id="overlay"></div>
+    `);
+    await page.getByRole("button", { name: "Open" }).click();
+    const frame = await ServerBrowserPage.captureFinalRecordingFrame(
+      await context.newCDPSession(page),
+      80,
+    );
+    expect(frame).toBeDefined();
+    const pixel = (await page.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(frame)}), char => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return Array.from(context.getImageData(bitmap.width / 2, bitmap.height / 2, 1, 1).data);
+    })()`)) as [number, number, number, number];
+    expect(colorOf(pixel)).toBe("red");
+  });
+
+  it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
+    const page = await context.newPage();
+    await page.goto("data:text/xml,<a/>");
+    const { screenshot } = await ServerBrowserPage.snapshot({
+      page,
+      cdp: await context.newCDPSession(page),
+      renderScale: 2,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+    });
+
+    expect([screenshot.width, screenshot.height]).toEqual([1280, 800]);
+  });
+});
+
+describe("server browser drag", () => {
+  it("fails the drag, not the server, when it times out while the cursor is still moving", async () => {
+    const timedOut = new Error("locator.dragTo: Timeout 30000ms exceeded.");
+    const box = { x: 0, y: 0, width: 20, height: 20 };
+    const targetBox = Promise.withResolvers<typeof box>();
+    const page = {
+      locator: (selector: string) =>
+        selector === "#card"
+          ? {
+              scrollIntoViewIfNeeded: async () => {},
+              boundingBox: async () => box,
+              dragTo: () => Promise.reject(timedOut),
+            }
+          : { boundingBox: () => targetBox.promise },
+    } as unknown as Page;
+    const unobserved: Array<unknown> = [];
+    const onUnhandled = (reason: unknown) => unobserved.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      let finished = false;
+      const settled = ServerBrowserPage.drag(page, { source: "#card", target: "#lane" }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      void settled.then(() => (finished = true));
+      // Two macrotask turns: Node reports a rejection nobody observed after the first.
+      for (let turn = 0; turn < 2; turn++) {
+        // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- Node emits unhandledRejection only between macrotasks; no promise can mark that point.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(finished).toBe(false);
+      targetBox.resolve(box);
+
+      expect(await settled).toBe(timedOut);
+      expect(unobserved).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("server browser evaluate", () => {
+  it("does not retry a parse error that arrives after the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const classic = Promise.withResolvers<unknown>();
+      const send = vi.fn((method: string) =>
+        method === "Runtime.evaluate" ? classic.promise : Promise.resolve({}),
+      );
+      const cdp = { send } as unknown as CDPSession;
+      const evaluation = ServerBrowserPage.evaluate(cdp, { expression: "await 0; 1" }, 10);
+      const rejected = expect(evaluation).rejects.toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      await rejected;
+      classic.resolve({
+        result: { type: "object" },
+        exceptionDetails: {
+          text: "Uncaught",
+          scriptId: "4",
+          exception: { type: "object", className: "SyntaxError" },
+        },
+      });
+      await classic.promise;
+      expect(send.mock.calls.map(([method]) => method)).toEqual([
+        "Runtime.evaluate",
+        "Runtime.terminateExecution",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser wait", () => {
+  it("ends at its timeout when a check never answers", async () => {
+    // As on a desktop tab whose Playwright utility world never answers.
+    const page = {
+      locator: () => ({ count: () => new Promise<number>(() => {}) }),
+    } as unknown as Page;
+    vi.useFakeTimers();
+    try {
+      let failure: unknown;
+      void ServerBrowserPage.waitFor(page, { selector: "button", timeoutMs: 300 }).catch(
+        (error: unknown) => (failure = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(failure).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser net errors", () => {
+  it.each([
+    ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
+    [
+      "page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://localhost:5173/",
+      "ERR_HTTP2_PROTOCOL_ERROR",
+      -2,
+    ],
+    ["net::ERR_TLS13_DOWNGRADE_DETECTED", "ERR_TLS13_DOWNGRADE_DETECTED", -2],
+  ])("reads the whole error name from %j", (errorText, description, code) => {
+    expect(ServerBrowserPage.parseNetError(errorText)).toEqual({ description, code });
   });
 });

@@ -55,10 +55,6 @@ export type RegionSnapShotProcess = {
   readonly close: () => void;
 };
 
-/**
- * One capture child. `warm` it ahead of time so the native module is loaded
- * before the shortcut fires; each child serves a single capture and exits.
- */
 export function startRegionSnapShotProcess(
   workerPath: string,
   fork: (workerPath: string) => RegionSnapShotChild = forkRegionSnapShotChild,
@@ -179,10 +175,9 @@ export function makeRegionSnapShotPool(
 export async function captureRegionWindowSnapshot(
   pool: Pick<RegionSnapShotPool, "capture">,
   active: ActiveWindow,
-  region: Electron.Rectangle,
   maxSize: Electron.Size,
 ): Promise<{ readonly source: RegionSnapShotSource; readonly png: Buffer }> {
-  const shot = await pool.capture(region);
+  const shot = await pool.capture(active.bounds);
   const scale = Math.min(maxSize.width / shot.width, maxSize.height / shot.height, 1);
   const png =
     scale < 1

@@ -1,0 +1,41 @@
+import { NativeThemeHost } from "./NativeThemeHost.android";
+import { Switch as ComposeSwitch } from "@expo/ui/jetpack-compose";
+import { Pressable, View } from "react-native";
+import type { ThemedSwitchProps } from "./NativeSwitch.types";
+
+import { useControlTheme } from "./useControlTheme";
+
+/** RN Pressable must own touch: Compose-handled switch taps can activate the parent row instead. */
+export function NativeSwitch(props: ThemedSwitchProps) {
+  const { colors } = useControlTheme();
+
+  return (
+    <Pressable
+      disabled={props.disabled}
+      onPress={() => props.onValueChange?.(!props.value)}
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityHint={props.accessibilityHint}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: Boolean(props.value), disabled: Boolean(props.disabled) }}
+      style={props.style}
+      testID={props.testID}
+    >
+      <View importantForAccessibility="no-hide-descendants" pointerEvents="none">
+        <NativeThemeHost ignoreSafeAreaKeyboardInsets style={{ width: 52, height: 48 }}>
+          <ComposeSwitch
+            value={Boolean(props.value)}
+            enabled={!props.disabled}
+            colors={{
+              checkedTrackColor: colors["--color-switch-active-track"],
+              checkedThumbColor: colors["--color-switch-active-thumb"],
+              checkedBorderColor: colors["--color-switch-active-track"],
+              uncheckedTrackColor: colors["--color-switch-inactive-track"],
+              uncheckedThumbColor: colors["--color-switch-inactive-thumb"],
+              uncheckedBorderColor: colors["--color-switch-inactive-thumb"],
+            }}
+          />
+        </NativeThemeHost>
+      </View>
+    </Pressable>
+  );
+}

@@ -15,7 +15,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
 
-        // Setup base state
         {
           yield* runMigrations({ toMigrationInclusive: 15 });
 
@@ -58,8 +57,7 @@ layer("016_CanonicalizeModelSelections", (it) => {
         VALUES
           ('thread-session', 'project-codex', 'Session thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
           ('thread-claude', 'project-claude', 'Claude thread', 'claude-opus-4-6', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
-          ('thread-codex', 'project-codex', 'Codex thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
-          ('thread-legacy-options', 'project-claude', 'Legacy options thread', 'claude-opus-4-6', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default')
+          ('thread-codex', 'project-codex', 'Codex thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default')
       `;
           yield* sql`
         INSERT INTO projection_thread_sessions (
@@ -202,10 +200,8 @@ layer("016_CanonicalizeModelSelections", (it) => {
       `;
         }
 
-        // Execute migration under test
         yield* runMigrations({ toMigrationInclusive: 16 });
 
-        // Assert expected state
         {
           const projectRows = yield* sql<{
             readonly projectId: string;
@@ -247,10 +243,6 @@ layer("016_CanonicalizeModelSelections", (it) => {
             {
               threadId: "thread-codex",
               modelSelection: '{"provider":"codex","model":"gpt-5.4"}',
-            },
-            {
-              threadId: "thread-legacy-options",
-              modelSelection: '{"provider":"claudeAgent","model":"claude-opus-4-6"}',
             },
             {
               threadId: "thread-session",

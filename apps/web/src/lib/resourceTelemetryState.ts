@@ -6,7 +6,6 @@ import type {
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useCallback } from "react";
 
 import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
@@ -39,7 +38,7 @@ export function useResourceTelemetry(
   const retryCommand = useAtomCommand(serverEnvironment.retryResourceTelemetry, {
     reportFailure: false,
   });
-  const retry = useCallback(async () => {
+  const retry = async () => {
     if (environmentId === null) {
       throw new Error("No environment is selected.");
     }
@@ -53,8 +52,9 @@ export function useResourceTelemetry(
     if (result._tag === "Failure") {
       throw Cause.squash(result.cause);
     }
+    query.refresh();
     return result.value.snapshot;
-  }, [environmentId, retryCommand]);
+  };
 
   return { ...query, retry };
 }

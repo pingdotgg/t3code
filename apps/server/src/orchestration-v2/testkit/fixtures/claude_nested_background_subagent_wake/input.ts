@@ -1,8 +1,6 @@
 import { claudeBackgroundWakeResultLabel } from "../../../Adapters/ClaudeAdapterV2.testkit.ts";
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-// The child starts a grandchild in the background and outlives it, so the
-// grandchild ends while the root is idle and only the child's end wakes it.
 export const CLAUDE_NESTED_BACKGROUND_SUBAGENT_WAKE_PROMPT = [
   "Live-test a background subagent that starts its own background subagent. Do exactly this, with no extra steps.",
   "",
@@ -16,8 +14,6 @@ export function claudeNestedBackgroundSubagentWakeInput(): OrchestratorFixtureIn
   return {
     steps: [
       { type: "message", text: CLAUDE_NESTED_BACKGROUND_SUBAGENT_WAKE_PROMPT },
-      // Only the child's end opens continuation run 2. The wake result is
-      // held until run 2 has drained the buffered wake reply.
       {
         type: "await_run_status",
         targetRunIndex: 2,

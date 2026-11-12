@@ -28,7 +28,6 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         SELECT auto_settle_disabled_at AS "autoSettleDisabledAt" FROM projection_threads WHERE thread_id = 'thread-1'
       `;
         assert.deepEqual(migrated, [{ autoSettleDisabledAt: null }]);
-        // Re-running against a database that already has the column keeps its value.
         yield* sql`UPDATE projection_threads SET auto_settle_disabled_at = ${now} WHERE thread_id = 'thread-1'`;
         yield* migrateAutoSettleDisabledAt;
         const rows = yield* sql<{ readonly autoSettleDisabledAt: string | null }>`

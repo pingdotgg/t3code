@@ -1,7 +1,5 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-// The outer Agent call names a model; the inner one names none, so the nested
-// subagent runs on its owner's model rather than the session's.
 export const CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT = [
   "Live-test nested subagents. Do exactly this, with no extra steps.",
   "",

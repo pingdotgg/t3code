@@ -3,24 +3,22 @@ import { useId, useState } from "react";
 
 import { cn } from "../../lib/utils";
 
-/**
- * Long error text clamped to a few lines with a toggle to reveal the rest.
- * Short single-line text renders as-is without the toggle.
- */
 export function ExpandableText({
   text,
+  collapsedText = text,
   className,
   collapsedClassName = "line-clamp-3",
   expandLabel = "Show full error",
 }: {
   text: string;
+  collapsedText?: string;
   className?: string;
   collapsedClassName?: string;
   expandLabel?: string;
 }) {
   const textId = useId();
   const [expanded, setExpanded] = useState(false);
-  const canExpand = text.length > 180 || text.includes("\n");
+  const canExpand = collapsedText !== text || text.length > 180 || text.includes("\n");
 
   return (
     <div className={cn("min-w-0", className)}>
@@ -31,7 +29,7 @@ export function ExpandableText({
           !expanded && canExpand ? collapsedClassName : null,
         )}
       >
-        {text}
+        {expanded ? text : collapsedText}
       </div>
       {canExpand ? (
         <InlineButton

@@ -15,7 +15,6 @@ export interface DeviceAccessorySource {
 
 export type DeviceAssetSource = DeviceModelSource | DeviceAccessorySource;
 
-/** Match actual hardware, never stretch an available model to impersonate another device. */
 export function resolveDeviceModelId(platform: DevicePlatform, name: string): DeviceModelId | null {
   if (platform !== "ios") return null;
   if (/^iPhone Duo$/i.test(name)) return "iphone-duo";
@@ -73,7 +72,6 @@ export function createDeviceModelSlot<
             request = null;
             options.onError?.(cause);
           }
-          // The procedural body stays installed on download, decoding or validation failure.
         },
       );
     },

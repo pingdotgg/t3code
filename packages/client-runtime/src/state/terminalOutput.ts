@@ -1,5 +1,4 @@
 export interface TerminalOutputChunk {
-  /** UTF-16 string offset within this generation and reset. */
   readonly startOffset: number;
   readonly data: string;
   readonly byteLength: number;
@@ -19,7 +18,6 @@ export interface TerminalOutputCursor {
   readonly offset: number;
 }
 
-/** Forces the first `readTerminalOutputUpdate` to resynchronize from a reset. */
 export const INITIAL_TERMINAL_OUTPUT_CURSOR = Object.freeze<TerminalOutputCursor>({
   generation: -1,
   resetVersion: -1,
@@ -42,7 +40,6 @@ export type TerminalOutputUpdate =
       readonly data: string;
     };
 
-export const DEFAULT_MAX_TERMINAL_BUFFER_BYTES = 512 * 1024;
 const DEFAULT_TERMINAL_CHUNK_BYTES = 16 * 1024;
 const MAX_TERMINAL_OUTPUT_CHUNKS = 1_024;
 const textEncoder = new TextEncoder();
@@ -62,14 +59,6 @@ interface Utf8Chunk {
   readonly byteLength: number;
 }
 
-/**
- * Split a string into chunks of at most `maxBytes` UTF-8 bytes without cutting
- * a code point in half. The retained-output budget always supplies a positive
- * size. Only new output is encoded on live updates.
- *
- * A chunk that fits whole is returned as the original string, so the common
- * small-write path pays one encode and no decode.
- */
 function splitStringByUtf8Bytes(data: string, maxBytes: number): ReadonlyArray<Utf8Chunk> {
   if (data.length === 0) return [];
 
@@ -153,10 +142,6 @@ function splitOutputChunks(
   };
 }
 
-/**
- * Merge adjacent chunks without changing their string positions. A reader can
- * still append the unread suffix when its cursor falls inside a merged chunk.
- */
 function compactRetainedChunks(chunks: ReadonlyArray<TerminalOutputChunk>) {
   const compacted: TerminalOutputChunk[] = [];
   for (const chunk of chunks) {
@@ -178,7 +163,6 @@ function compactRetainedChunks(chunks: ReadonlyArray<TerminalOutputChunk>) {
   return compacted;
 }
 
-// Scan only the removed prefix instead of encoding retained output again.
 function trimOutputChunkStart(
   chunk: TerminalOutputChunk,
   bytesToDrop: number,
@@ -302,9 +286,14 @@ export function readTerminalOutputUpdate(
     return { type: "reset", data: terminalOutputText(output), cursor: nextCursor };
   }
 
-  const appended = output.chunks.filter(
-    (chunk) => chunk.startOffset + chunk.data.length > cursor.offset,
-  );
+  // Appends and compaction preserve offset order, so unread chunks form a suffix.
+  let firstUnread = output.chunks.length;
+  while (firstUnread > 0) {
+    const chunk = output.chunks[firstUnread - 1]!;
+    if (!(chunk.startOffset + chunk.data.length > cursor.offset)) break;
+    firstUnread -= 1;
+  }
+  const appended = output.chunks.slice(firstUnread);
   if (appended.length === 0) {
     return { type: "none", cursor: nextCursor };
   }

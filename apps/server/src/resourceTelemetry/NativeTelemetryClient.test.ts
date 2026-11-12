@@ -8,11 +8,7 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import {
-  canCommandNativeTelemetrySidecar,
-  canRequestNativeTelemetryRetry,
   commitCollectionControlUpdate,
-  retainRecentNativeTelemetryFailures,
-  resolveNativeSampleIntervalMs,
   synchronizeCollectionControlOnStart,
 } from "./NativeTelemetryClient.ts";
 
@@ -28,62 +24,6 @@ const basePower: HostPowerSnapshot = {
   stale: false,
   updatedAt: DateTime.makeUnsafe("2026-06-17T12:00:00.000Z"),
 };
-
-describe("resolveNativeSampleIntervalMs", () => {
-  it("keeps a recovery cadence while suspended and backs off under host constraints", () => {
-    expect(resolveNativeSampleIntervalMs({ ...basePower, suspended: true }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, locked: "true" }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, lowPowerMode: "true" }, 1)).toBe(15_000);
-    expect(resolveNativeSampleIntervalMs({ ...basePower, thermalState: "critical" }, 1)).toBe(
-      15_000,
-    );
-    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1)).toBe(5_000);
-  });
-
-  it("slows background telemetry and serves live diagnostics at 1Hz", () => {
-    const unknown: HostPowerSnapshot = {
-      ...basePower,
-      source: "unknown",
-      stale: true,
-    };
-    expect(resolveNativeSampleIntervalMs(unknown, 0)).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(unknown, 1)).toBe(1_000);
-    expect(
-      resolveNativeSampleIntervalMs(
-        { ...basePower, stale: true, locked: "true", suspended: true },
-        0,
-      ),
-    ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 1)).toBe(1_000);
-  });
-});
-
-describe("canRequestNativeTelemetryRetry", () => {
-  it("only accepts retry while the supervisor is waiting without a live sidecar", () => {
-    expect(canRequestNativeTelemetryRetry("degraded", false)).toBe(true);
-    expect(canRequestNativeTelemetryRetry("unavailable", false)).toBe(true);
-    expect(canRequestNativeTelemetryRetry("degraded", true)).toBe(false);
-    expect(canRequestNativeTelemetryRetry("healthy", false)).toBe(false);
-    expect(canRequestNativeTelemetryRetry("starting", false)).toBe(false);
-  });
-});
-
-describe("canCommandNativeTelemetrySidecar", () => {
-  it("keeps on-demand recovery commands available while a live sidecar is degraded", () => {
-    expect(canCommandNativeTelemetrySidecar("healthy", true)).toBe(true);
-    expect(canCommandNativeTelemetrySidecar("degraded", true)).toBe(true);
-    expect(canCommandNativeTelemetrySidecar("unavailable", true)).toBe(false);
-    expect(canCommandNativeTelemetrySidecar("degraded", false)).toBe(false);
-  });
-});
-
-describe("retainRecentNativeTelemetryFailures", () => {
-  it("expires old failures so an isolated crash restarts from the initial backoff", () => {
-    expect(retainRecentNativeTelemetryFailures([0, 30_000], 90_001)).toEqual([]);
-    expect(retainRecentNativeTelemetryFailures([30_000, 60_000], 90_000)).toEqual([30_000, 60_000]);
-  });
-});
 
 describe("commitCollectionControlUpdate", () => {
   it.effect("retains desired demand and retries unapplied sidecar state", () =>

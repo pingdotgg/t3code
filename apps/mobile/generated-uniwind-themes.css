@@ -32,6 +32,8 @@
       --color-inline-skill-border: rgba(27, 78, 216, 0.42);
       --color-inline-skill-foreground: #18181b;
       --color-primary: #1b4ed8;
+      --color-prominent-action: #27272a;
+      --color-prominent-action-foreground: #fcfcfc;
       --color-primary-foreground: #ffffff;
       --color-primary-text: #1b4ed8;
       --color-primary-shadow: #000000;
@@ -108,6 +110,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -191,6 +195,8 @@
       --color-inline-skill-border: rgba(52, 107, 241, 0.42);
       --color-inline-skill-foreground: #f5f5f5;
       --color-primary: #346bf1;
+      --color-prominent-action: #f5f5f5;
+      --color-prominent-action-foreground: #0a0a0a;
       --color-primary-foreground: #ffffff;
       --color-primary-text: #4b7cf3;
       --color-primary-shadow: #000000;
@@ -267,6 +273,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -324,7 +332,7 @@
       --color-sheet: rgba(253, 247, 253, 0.98);
       --color-sheet-solid: #fdf7fd;
       --color-card: #faf3fb;
-      --color-grouped-card: #faf3fb;
+      --color-grouped-card: #f3e6f5;
       --color-card-alt: #fdfafd;
       --color-card-translucent: rgba(250, 243, 251, 0.8);
       --color-thread-canvas: #fdf7fd;
@@ -334,10 +342,10 @@
       --color-thread-hover: #f8f8f7;
       --color-row-hover: #eccfe3;
       --color-composer-panel: rgba(253, 247, 253, 0.88);
-      --color-composer-surface: rgba(250, 243, 251, 0.94);
-      --color-composer-border: rgba(238, 225, 237, 0.54);
+      --color-composer-surface: rgba(243, 230, 245, 0.94);
+      --color-composer-border: rgba(238, 225, 237, 0.8);
       --color-foreground: #501854;
-      --color-foreground-secondary: #ac1668;
+      --color-foreground-secondary: #ab1668;
       --color-foreground-muted: #8d1255;
       --color-foreground-tertiary: #ac1668;
       --color-border: #eee1ed;
@@ -350,8 +358,10 @@
       --color-inline-skill-border: rgba(219, 39, 119, 0.42);
       --color-inline-skill-foreground: #454554;
       --color-primary: #db2777;
+      --color-prominent-action: #501854;
+      --color-prominent-action-foreground: #fdf7fd;
       --color-primary-foreground: #ffffff;
-      --color-primary-text: #d32572;
+      --color-primary-text: #aa1e5d;
       --color-primary-shadow: #000000;
       --color-secondary: #f1c4e6;
       --color-secondary-foreground: #77347c;
@@ -371,7 +381,7 @@
       --color-input: #faf3fb;
       --color-input-border: #e7c1dc;
       --color-sidebar-search: #f8f8f7;
-      --color-placeholder: #8b5f90;
+      --color-placeholder: #714e76;
       --color-icon: #501854;
       --color-icon-muted: #ac1668;
       --color-icon-subtle: #ac1668;
@@ -379,7 +389,7 @@
       --color-header-foreground: #501854;
       --color-header-border: #efbdeb;
       --color-glass-surface: rgba(255, 255, 255, 0.74);
-      --color-glass-fallback: rgba(250, 243, 251, 0.94);
+      --color-glass-fallback: rgba(243, 230, 245, 0.94);
       --color-glass-tint: rgba(255, 255, 255, 0.22);
       --color-status-bar: #fdf7fd;
       --color-md-body: #501854;
@@ -426,6 +436,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -509,8 +521,10 @@
       --color-inline-skill-border: rgba(163, 0, 76, 0.42);
       --color-inline-skill-foreground: #f8f1f5;
       --color-primary: #a3004c;
+      --color-prominent-action: #fbd0e8;
+      --color-prominent-action-foreground: #a3004c;
       --color-primary-foreground: #fbd0e8;
-      --color-primary-text: #cc729c;
+      --color-primary-text: #d07ea4;
       --color-primary-shadow: #000000;
       --color-secondary: #362d3d;
       --color-secondary-foreground: #d4c7e1;
@@ -530,7 +544,7 @@
       --color-input: #29232d;
       --color-input-border: #302029;
       --color-sidebar-search: #261922;
-      --color-placeholder: #968d9f;
+      --color-placeholder: #9d94a5;
       --color-icon: #f9f8fb;
       --color-icon-muted: #d4c7e1;
       --color-icon-subtle: #e7d0dd;
@@ -585,6 +599,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -642,7 +658,7 @@
       --color-sheet: rgba(243, 247, 244, 0.98);
       --color-sheet-solid: #f3f7f4;
       --color-card: #f3f7f4;
-      --color-grouped-card: #f3f7f4;
+      --color-grouped-card: #e6f0ea;
       --color-card-alt: #ecefed;
       --color-card-translucent: rgba(243, 247, 244, 0.8);
       --color-thread-canvas: #f3f7f4;
@@ -652,11 +668,11 @@
       --color-thread-hover: #cae0d5;
       --color-row-hover: #d5e6dd;
       --color-composer-panel: rgba(243, 247, 244, 0.88);
-      --color-composer-surface: rgba(243, 247, 244, 0.94);
-      --color-composer-border: rgba(203, 213, 209, 0.54);
+      --color-composer-surface: rgba(230, 240, 234, 0.94);
+      --color-composer-border: rgba(203, 213, 209, 0.8);
       --color-foreground: #241523;
-      --color-foreground-secondary: #726a71;
-      --color-foreground-muted: #6e696f;
+      --color-foreground-secondary: #6f686f;
+      --color-foreground-muted: #6d686e;
       --color-foreground-tertiary: #746c73;
       --color-border: #cbd5d1;
       --color-focus: #1b7d50;
@@ -668,8 +684,10 @@
       --color-inline-skill-border: rgba(27, 125, 80, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #8f6410;
+      --color-prominent-action: #8f6410;
+      --color-prominent-action-foreground: #fffaff;
       --color-primary-foreground: #fffaff;
-      --color-primary-text: #8f6410;
+      --color-primary-text: #8d6210;
       --color-primary-shadow: #000000;
       --color-secondary: #e2ede7;
       --color-secondary-foreground: #241523;
@@ -689,7 +707,7 @@
       --color-input: #f3f7f4;
       --color-input-border: #becbc5;
       --color-sidebar-search: #d3dcd8;
-      --color-placeholder: #716971;
+      --color-placeholder: #6f686f;
       --color-icon: #241523;
       --color-icon-muted: #746c73;
       --color-icon-subtle: #746c73;
@@ -697,7 +715,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #d5e6dd;
       --color-glass-surface: rgba(231, 233, 232, 0.74);
-      --color-glass-fallback: rgba(243, 247, 244, 0.94);
+      --color-glass-fallback: rgba(230, 240, 234, 0.94);
       --color-glass-tint: rgba(231, 233, 232, 0.22);
       --color-status-bar: #f3f7f4;
       --color-md-body: #241523;
@@ -744,6 +762,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -801,7 +821,7 @@
       --color-sheet: rgba(27, 40, 33, 0.98);
       --color-sheet-solid: #1b2821;
       --color-card: #1b2821;
-      --color-grouped-card: #1b2821;
+      --color-grouped-card: #253e31;
       --color-card-alt: #36413c;
       --color-card-translucent: rgba(27, 40, 33, 0.8);
       --color-thread-canvas: #1b2821;
@@ -811,11 +831,11 @@
       --color-thread-hover: #2a4938;
       --color-row-hover: #325c46;
       --color-composer-panel: rgba(27, 40, 33, 0.92);
-      --color-composer-surface: rgba(27, 40, 33, 0.9);
-      --color-composer-border: rgba(65, 95, 79, 0.46);
+      --color-composer-surface: rgba(37, 62, 49, 0.9);
+      --color-composer-border: rgba(65, 95, 79, 0.8);
       --color-foreground: #fffaff;
-      --color-foreground-secondary: #a6aaaa;
-      --color-foreground-muted: #a3aba8;
+      --color-foreground-secondary: #afb1b1;
+      --color-foreground-muted: #acb2b0;
       --color-foreground-tertiary: #919595;
       --color-border: #415f4f;
       --color-focus: #69d69a;
@@ -827,6 +847,8 @@
       --color-inline-skill-border: rgba(105, 214, 154, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #e3b34e;
+      --color-prominent-action: #e3b34e;
+      --color-prominent-action-foreground: #241523;
       --color-primary-foreground: #241523;
       --color-primary-text: #e3b34e;
       --color-primary-shadow: #000000;
@@ -848,7 +870,7 @@
       --color-input: #1b2821;
       --color-input-border: #4f725f;
       --color-sidebar-search: #45554d;
-      --color-placeholder: #a9abab;
+      --color-placeholder: #afb1b1;
       --color-icon: #fffaff;
       --color-icon-muted: #919595;
       --color-icon-subtle: #919595;
@@ -856,7 +878,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #36654c;
       --color-glass-surface: rgba(68, 77, 73, 0.74);
-      --color-glass-fallback: rgba(27, 40, 33, 0.9);
+      --color-glass-fallback: rgba(37, 62, 49, 0.9);
       --color-glass-tint: rgba(68, 77, 73, 0.22);
       --color-status-bar: #1b2821;
       --color-md-body: #fffaff;
@@ -903,6 +925,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -960,7 +984,7 @@
       --color-sheet: rgba(245, 247, 248, 0.98);
       --color-sheet-solid: #f5f7f8;
       --color-card: #f5f7f8;
-      --color-grouped-card: #f5f7f8;
+      --color-grouped-card: #e8eff4;
       --color-card-alt: #edeff1;
       --color-card-translucent: rgba(245, 247, 248, 0.8);
       --color-thread-canvas: #f5f7f8;
@@ -970,10 +994,10 @@
       --color-thread-hover: #cdddea;
       --color-row-hover: #d8e4ee;
       --color-composer-panel: rgba(245, 247, 248, 0.88);
-      --color-composer-surface: rgba(245, 247, 248, 0.94);
-      --color-composer-border: rgba(205, 212, 220, 0.54);
+      --color-composer-surface: rgba(232, 239, 244, 0.94);
+      --color-composer-border: rgba(205, 212, 220, 0.8);
       --color-foreground: #241523;
-      --color-foreground-secondary: #726a73;
+      --color-foreground-secondary: #706870;
       --color-foreground-muted: #6f6873;
       --color-foreground-tertiary: #746c75;
       --color-border: #cdd4dc;
@@ -986,6 +1010,8 @@
       --color-inline-skill-border: rgba(38, 114, 175, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #0a6f75;
+      --color-prominent-action: #0a6f75;
+      --color-prominent-action-foreground: #fffaff;
       --color-primary-foreground: #fffaff;
       --color-primary-text: #0a6f75;
       --color-primary-shadow: #000000;
@@ -1007,7 +1033,7 @@
       --color-input: #f5f7f8;
       --color-input-border: #c0c9d4;
       --color-sidebar-search: #d5dbe2;
-      --color-placeholder: #716972;
+      --color-placeholder: #706870;
       --color-icon: #241523;
       --color-icon-muted: #746c75;
       --color-icon-subtle: #746c75;
@@ -1015,7 +1041,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #d8e4ee;
       --color-glass-surface: rgba(232, 233, 235, 0.74);
-      --color-glass-fallback: rgba(245, 247, 248, 0.94);
+      --color-glass-fallback: rgba(232, 239, 244, 0.94);
       --color-glass-tint: rgba(232, 233, 235, 0.22);
       --color-status-bar: #f5f7f8;
       --color-md-body: #241523;
@@ -1062,6 +1088,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -1119,7 +1147,7 @@
       --color-sheet: rgba(23, 33, 43, 0.98);
       --color-sheet-solid: #17212b;
       --color-card: #17212b;
-      --color-grouped-card: #17212b;
+      --color-grouped-card: #233544;
       --color-card-alt: #333b45;
       --color-card-translucent: rgba(23, 33, 43, 0.8);
       --color-thread-canvas: #17212b;
@@ -1129,11 +1157,11 @@
       --color-thread-hover: #283e50;
       --color-row-hover: #324e66;
       --color-composer-panel: rgba(23, 33, 43, 0.92);
-      --color-composer-surface: rgba(23, 33, 43, 0.9);
-      --color-composer-border: rgba(64, 85, 103, 0.46);
+      --color-composer-surface: rgba(35, 53, 68, 0.9);
+      --color-composer-border: rgba(64, 85, 103, 0.8);
       --color-foreground: #fffaff;
-      --color-foreground-secondary: #a2a3aa;
-      --color-foreground-muted: #9ea4ad;
+      --color-foreground-secondary: #a5a7ad;
+      --color-foreground-muted: #a2a7b0;
       --color-foreground-tertiary: #8d8f97;
       --color-border: #405567;
       --color-focus: #70b9ee;
@@ -1145,6 +1173,8 @@
       --color-inline-skill-border: rgba(112, 185, 238, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #5bd0d6;
+      --color-prominent-action: #5bd0d6;
+      --color-prominent-action-foreground: #241523;
       --color-primary-foreground: #241523;
       --color-primary-text: #5bd0d6;
       --color-primary-shadow: #000000;
@@ -1166,7 +1196,7 @@
       --color-input: #17212b;
       --color-input-border: #4f677b;
       --color-sidebar-search: #424e5a;
-      --color-placeholder: #a4a4ac;
+      --color-placeholder: #a6a6ad;
       --color-icon: #fffaff;
       --color-icon-muted: #8d8f97;
       --color-icon-subtle: #8d8f97;
@@ -1174,7 +1204,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #36566f;
       --color-glass-surface: rgba(65, 72, 81, 0.74);
-      --color-glass-fallback: rgba(23, 33, 43, 0.9);
+      --color-glass-fallback: rgba(35, 53, 68, 0.9);
       --color-glass-tint: rgba(65, 72, 81, 0.22);
       --color-status-bar: #17212b;
       --color-md-body: #fffaff;
@@ -1221,6 +1251,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -1278,7 +1310,7 @@
       --color-sheet: rgba(249, 247, 245, 0.98);
       --color-sheet-solid: #f9f7f5;
       --color-card: #f9f7f5;
-      --color-grouped-card: #f9f7f5;
+      --color-grouped-card: #f4ede9;
       --color-card-alt: #f1efee;
       --color-card-translucent: rgba(249, 247, 245, 0.8);
       --color-thread-canvas: #f9f7f5;
@@ -1288,11 +1320,11 @@
       --color-thread-hover: #ead8cf;
       --color-row-hover: #eee0d9;
       --color-composer-panel: rgba(249, 247, 245, 0.88);
-      --color-composer-surface: rgba(249, 247, 245, 0.94);
-      --color-composer-border: rgba(221, 210, 206, 0.54);
+      --color-composer-surface: rgba(244, 237, 233, 0.94);
+      --color-composer-border: rgba(221, 210, 206, 0.8);
       --color-foreground: #241523;
-      --color-foreground-secondary: #746a72;
-      --color-foreground-muted: #74686f;
+      --color-foreground-secondary: #726870;
+      --color-foreground-muted: #73686e;
       --color-foreground-tertiary: #766c74;
       --color-border: #ddd2ce;
       --color-focus: #ae552a;
@@ -1304,6 +1336,8 @@
       --color-inline-skill-border: rgba(174, 85, 42, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #b23535;
+      --color-prominent-action: #b23535;
+      --color-prominent-action-foreground: #fffaff;
       --color-primary-foreground: #fffaff;
       --color-primary-text: #b23535;
       --color-primary-shadow: #000000;
@@ -1325,7 +1359,7 @@
       --color-input: #f9f7f5;
       --color-input-border: #d4c6c1;
       --color-sidebar-search: #e2d9d6;
-      --color-placeholder: #736971;
+      --color-placeholder: #726870;
       --color-icon: #241523;
       --color-icon-muted: #766c74;
       --color-icon-subtle: #766c74;
@@ -1333,7 +1367,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #eee0d9;
       --color-glass-surface: rgba(236, 233, 233, 0.74);
-      --color-glass-fallback: rgba(249, 247, 245, 0.94);
+      --color-glass-fallback: rgba(244, 237, 233, 0.94);
       --color-glass-tint: rgba(236, 233, 233, 0.22);
       --color-status-bar: #f9f7f5;
       --color-md-body: #241523;
@@ -1380,6 +1414,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -1437,7 +1473,7 @@
       --color-sheet: rgba(41, 30, 26, 0.98);
       --color-sheet-solid: #291e1a;
       --color-card: #291e1a;
-      --color-grouped-card: #291e1a;
+      --color-grouped-card: #432e23;
       --color-card-alt: #433835;
       --color-card-translucent: rgba(41, 30, 26, 0.8);
       --color-thread-canvas: #291e1a;
@@ -1447,11 +1483,11 @@
       --color-thread-hover: #4f3528;
       --color-row-hover: #644330;
       --color-composer-panel: rgba(41, 30, 26, 0.92);
-      --color-composer-surface: rgba(41, 30, 26, 0.9);
-      --color-composer-border: rgba(102, 76, 63, 0.46);
+      --color-composer-surface: rgba(67, 46, 35, 0.9);
+      --color-composer-border: rgba(102, 76, 63, 0.8);
       --color-foreground: #fffaff;
-      --color-foreground-secondary: #a8a2a2;
-      --color-foreground-muted: #aca19f;
+      --color-foreground-secondary: #aca5a6;
+      --color-foreground-muted: #afa5a2;
       --color-foreground-tertiary: #968e8f;
       --color-border: #664c3f;
       --color-focus: #f09a64;
@@ -1463,6 +1499,8 @@
       --color-inline-skill-border: rgba(240, 154, 100, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #f78a7a;
+      --color-prominent-action: #f78a7a;
+      --color-prominent-action-foreground: #241523;
       --color-primary-foreground: #241523;
       --color-primary-text: #f78a7a;
       --color-primary-shadow: #000000;
@@ -1484,7 +1522,7 @@
       --color-input: #291e1a;
       --color-input-border: #7a5d4d;
       --color-sidebar-search: #584943;
-      --color-placeholder: #aba3a5;
+      --color-placeholder: #aca5a6;
       --color-icon: #fffaff;
       --color-icon-muted: #968e8f;
       --color-icon-subtle: #968e8f;
@@ -1492,7 +1530,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #6e4934;
       --color-glass-surface: rgba(79, 69, 67, 0.74);
-      --color-glass-fallback: rgba(41, 30, 26, 0.9);
+      --color-glass-fallback: rgba(67, 46, 35, 0.9);
       --color-glass-tint: rgba(79, 69, 67, 0.22);
       --color-status-bar: #291e1a;
       --color-md-body: #fffaff;
@@ -1539,6 +1577,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);
@@ -1596,7 +1636,7 @@
       --color-sheet: rgba(248, 247, 249, 0.98);
       --color-sheet-solid: #f8f7f9;
       --color-card: #f8f7f9;
-      --color-grouped-card: #f8f7f9;
+      --color-grouped-card: #f0edf6;
       --color-card-alt: #f0eff2;
       --color-card-translucent: rgba(248, 247, 249, 0.8);
       --color-thread-canvas: #f8f7f9;
@@ -1606,11 +1646,11 @@
       --color-thread-hover: #ded8ed;
       --color-row-hover: #e5e0f0;
       --color-composer-panel: rgba(248, 247, 249, 0.88);
-      --color-composer-surface: rgba(248, 247, 249, 0.94);
-      --color-composer-border: rgba(214, 209, 222, 0.54);
+      --color-composer-surface: rgba(240, 237, 246, 0.94);
+      --color-composer-border: rgba(214, 209, 222, 0.8);
       --color-foreground: #241523;
-      --color-foreground-secondary: #746a74;
-      --color-foreground-muted: #726874;
+      --color-foreground-secondary: #716871;
+      --color-foreground-muted: #716773;
       --color-foreground-tertiary: #766c76;
       --color-border: #d6d1de;
       --color-focus: #7253b9;
@@ -1622,6 +1662,8 @@
       --color-inline-skill-border: rgba(114, 83, 185, 0.42);
       --color-inline-skill-foreground: #241523;
       --color-primary: #a82c87;
+      --color-prominent-action: #a82c87;
+      --color-prominent-action-foreground: #fffaff;
       --color-primary-foreground: #fffaff;
       --color-primary-text: #a82c87;
       --color-primary-shadow: #000000;
@@ -1643,7 +1685,7 @@
       --color-input: #f8f7f9;
       --color-input-border: #ccc5d6;
       --color-sidebar-search: #ddd9e3;
-      --color-placeholder: #736973;
+      --color-placeholder: #716871;
       --color-icon: #241523;
       --color-icon-muted: #766c76;
       --color-icon-subtle: #766c76;
@@ -1651,7 +1693,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #e5e0f0;
       --color-glass-surface: rgba(235, 233, 237, 0.74);
-      --color-glass-fallback: rgba(248, 247, 249, 0.94);
+      --color-glass-fallback: rgba(240, 237, 246, 0.94);
       --color-glass-tint: rgba(235, 233, 237, 0.22);
       --color-status-bar: #f8f7f9;
       --color-md-body: #241523;
@@ -1698,6 +1740,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 12%);
       --color-adaptive-emerald-600-400: oklch(59.6% 0.145 163.225);
       --color-adaptive-emerald-700-300: oklch(50.8% 0.118 165.612);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(66.7% 0.295 322.15 / 50%);
+      --color-adaptive-fuchsia-600-300: oklch(59.1% 0.293 322.896);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 12%);
       --color-adaptive-indigo-600-300: oklch(51.1% 0.262 276.966);
       --color-adaptive-indigo-700-300: oklch(45.7% 0.24 277.023);
@@ -1755,7 +1799,7 @@
       --color-sheet: rgba(29, 25, 41, 0.98);
       --color-sheet-solid: #1d1929;
       --color-card: #1d1929;
-      --color-grouped-card: #1d1929;
+      --color-grouped-card: #2d2643;
       --color-card-alt: #383443;
       --color-card-translucent: rgba(29, 25, 41, 0.8);
       --color-thread-canvas: #1d1929;
@@ -1765,8 +1809,8 @@
       --color-thread-hover: #352c4f;
       --color-row-hover: #433765;
       --color-composer-panel: rgba(29, 25, 41, 0.92);
-      --color-composer-surface: rgba(29, 25, 41, 0.9);
-      --color-composer-border: rgba(77, 67, 102, 0.46);
+      --color-composer-surface: rgba(45, 38, 67, 0.9);
+      --color-composer-border: rgba(77, 67, 102, 0.8);
       --color-foreground: #fffaff;
       --color-foreground-secondary: #a09da6;
       --color-foreground-muted: #a19cab;
@@ -1781,6 +1825,8 @@
       --color-inline-skill-border: rgba(157, 125, 242, 0.42);
       --color-inline-skill-foreground: #fffaff;
       --color-primary: #f099d8;
+      --color-prominent-action: #f099d8;
+      --color-prominent-action-foreground: #241523;
       --color-primary-foreground: #241523;
       --color-primary-text: #f099d8;
       --color-primary-shadow: #000000;
@@ -1810,7 +1856,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #4a3c70;
       --color-glass-surface: rgba(69, 66, 80, 0.74);
-      --color-glass-fallback: rgba(29, 25, 41, 0.9);
+      --color-glass-fallback: rgba(45, 38, 67, 0.9);
       --color-glass-tint: rgba(69, 66, 80, 0.22);
       --color-status-bar: #1d1929;
       --color-md-body: #fffaff;
@@ -1857,6 +1903,8 @@
       --color-adaptive-emerald-500-a12-a16: oklch(69.6% 0.17 162.48 / 16%);
       --color-adaptive-emerald-600-400: oklch(76.5% 0.177 163.223);
       --color-adaptive-emerald-700-300: oklch(84.5% 0.143 164.978);
+      --color-adaptive-fuchsia-500-a50-300-a40: oklch(83.3% 0.145 321.434 / 40%);
+      --color-adaptive-fuchsia-600-300: oklch(83.3% 0.145 321.434);
       --color-adaptive-indigo-500-a12-a16: oklch(58.5% 0.233 277.117 / 16%);
       --color-adaptive-indigo-600-300: oklch(78.5% 0.115 274.713);
       --color-adaptive-indigo-700-300: oklch(78.5% 0.115 274.713);

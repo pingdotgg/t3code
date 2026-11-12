@@ -3,6 +3,7 @@ import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3t
 
 import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import {
   readEnvironmentSupportsServerBrowser,
@@ -10,10 +11,27 @@ import {
 } from "~/state/entities";
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
-  return readEnvironmentSupportsServerBrowser(environmentId) ? "server" : undefined;
+  if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
+  if (
+    isPreviewSupportedInRuntime() &&
+    environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom)
+  ) {
+    return undefined;
+  }
+  return "server";
 }
 
-/** Electron hosts its own browser tabs; other clients need the environment to host them. */
+export function alternatePreviewRuntime(
+  environmentId: EnvironmentId,
+  primaryEnvironmentId: EnvironmentId | null,
+  serverBrowser: boolean,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime"> | null | undefined,
+): PreviewRuntime | null {
+  if (!snapshot || !serverBrowser || !isPreviewSupportedInRuntime()) return null;
+  if (environmentId === primaryEnvironmentId) return null;
+  return snapshot.runtime === "server" ? "desktop" : "server";
+}
+
 export function isPreviewAvailableFor(environmentId: EnvironmentId): boolean {
   return isPreviewSupportedInRuntime() || readEnvironmentSupportsServerBrowser(environmentId);
 }
@@ -23,19 +41,15 @@ export function usePreviewAvailable(environmentId: EnvironmentId | null): boolea
   return isPreviewSupportedInRuntime() || serverBrowser;
 }
 
-/**
- * Whether this client draws a server tab with its own `<webview>`. The desktop
- * app renders tabs of the server it launched, which drives them over the
- * desktop browser channel; every other client and environment streams them.
- */
 export function rendersServerTabNatively(
   environmentId: EnvironmentId,
   primaryEnvironmentId: EnvironmentId | null,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime"> | null | undefined,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
 ): boolean {
   return (
     isElectron &&
     snapshot?.runtime === "server" &&
+    !snapshot.headless &&
     primaryEnvironmentId !== null &&
     environmentId === primaryEnvironmentId
   );
@@ -43,7 +57,7 @@ export function rendersServerTabNatively(
 
 export function useRendersServerTabNatively(
   environmentId: EnvironmentId,
-  snapshot: Pick<PreviewSessionSnapshot, "runtime"> | null | undefined,
+  snapshot: Pick<PreviewSessionSnapshot, "runtime" | "headless"> | null | undefined,
 ): boolean {
   return rendersServerTabNatively(environmentId, useAtomValue(primaryEnvironmentIdAtom), snapshot);
 }

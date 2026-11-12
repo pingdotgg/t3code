@@ -1,3 +1,4 @@
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
 
 import {
@@ -46,21 +47,19 @@ export function NotificationSettings() {
                 return;
               }
               setRequesting(true);
-              try {
-                const permission = await Notification.requestPermission();
-                if (permission !== "granted") {
-                  setPermissionMessage(
-                    "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
-                  );
-                  return;
-                }
-              } catch {
+              const permission = await settlePromise(() => Notification.requestPermission());
+              setRequesting(false);
+              if (permission._tag === "Failure") {
                 setPermissionMessage(
                   "Notifications are unavailable in this browser. Sound only is still available.",
                 );
                 return;
-              } finally {
-                setRequesting(false);
+              }
+              if (permission.value !== "granted") {
+                setPermissionMessage(
+                  "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
+                );
+                return;
               }
             }
             updateSettings({ notificationMode: value });

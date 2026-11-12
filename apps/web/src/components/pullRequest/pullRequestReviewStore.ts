@@ -1,22 +1,9 @@
-/**
- * A review being written, held until it is sent.
- *
- * Nothing here reaches the host: a review is one request carrying every line comment and the
- * verdict together, so a half-written one is invisible to everyone else — including on the
- * hosts that have no pending review of their own. That also means a draft lives only as long
- * as the tab does, which is why this is deliberately not persisted.
- */
 import type { PullRequestRef, PullRequestReviewCommentDraft } from "@t3tools/contracts";
 import { create } from "zustand";
 
 export type PendingReviewComment = PullRequestReviewCommentDraft & { readonly id: string };
 
-/**
- * A counter rather than anything derived from the comment: two remarks on one line can be the
- * same length, and an id built from the draft's own contents would collide with a comment that
- * was already removed — which shares a React key with it and, worse, makes discarding one card
- * delete both.
- */
+// Content-derived ids can collide across comments; use a counter.
 let pendingCommentSequence = 0;
 
 export function nextPendingReviewCommentId(): string {
@@ -24,7 +11,6 @@ export function nextPendingReviewCommentId(): string {
   return `pending-review-comment-${pendingCommentSequence}`;
 }
 
-/** A project's thread can review the same repository path and number on different hosts. */
 export function pullRequestReviewKey(reference: PullRequestRef): string {
   return JSON.stringify([
     reference.projectId,
@@ -77,15 +63,13 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
   setSummary: (key, body) => set((state) => ({ summaries: { ...state.summaries, [key]: body } })),
   clearSummary: (key, submittedBody) =>
     set((state) => {
-      // The textarea stays editable while the request is in flight. Only remove the exact draft
-      // the host accepted; a revised summary for the same pull request is new work.
+      // Keep summary edits made during submission; the textarea stays editable.
       if (state.summaries[key] !== submittedBody) return state;
       const { [key]: _removed, ...rest } = state.summaries;
       return { summaries: rest };
     }),
 }));
 
-/** The comments a pull request's draft holds, stable across renders while it is empty. */
 export function usePendingReviewComments(
   reference: PullRequestRef,
 ): ReadonlyArray<PendingReviewComment> {

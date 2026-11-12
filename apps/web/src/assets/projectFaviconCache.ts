@@ -45,7 +45,6 @@ async function withStore<A>(
   return request?.result;
 }
 
-/** Rasterizes a bitmap that is too large to inline, retrying at half size. */
 async function downscaleProjectFavicon(
   image: { readonly mimeType: string; readonly bytes: Uint8Array<ArrayBuffer> },
   signal: AbortSignal,

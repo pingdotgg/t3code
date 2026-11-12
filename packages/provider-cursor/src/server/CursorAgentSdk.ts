@@ -1,0 +1,784 @@
+import type {
+  AgentMessage,
+  AgentOptions,
+  InteractionUpdate,
+  Run,
+  RunResult,
+  SDKUserMessage,
+  SendOptions,
+  SteerAckOutcome,
+} from "@cursor/sdk";
+import {
+  type OrchestrationV2ProviderSession,
+  ProviderDriverKind,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+
+import * as CursorSdk from "./CursorSdk.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+
+export const CURSOR_AGENT_SDK_PROTOCOL = "cursor-agent-sdk.local" as const;
+export const CURSOR_PROVIDER = ProviderDriverKind.make("cursor");
+
+export class CursorAgentSdkRunnerError extends Schema.TaggedError<CursorAgentSdkRunnerError>()(
+  "CursorAgentSdkRunnerError",
+  {
+    method: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Cursor Agent SDK ${this.method} failed.`;
+  }
+}
+
+export function cursorSdkFailureMessage(error: CursorAgentSdkRunnerError): string {
+  const reason = sdkErrorReason(error.cause);
+  return reason === undefined
+    ? error.message
+    : `Cursor Agent SDK ${error.method} failed: ${reason}`;
+}
+
+// The SDK maps backend details to codes like PRO_USER_USAGE_LIMIT or RATE_LIMITED, without a status.
+const CURSOR_USAGE_LIMIT_CODE =
+  /^(?:resource_exhausted|rate_limited(?:_changeable)?|\w*_usage_limit|\w*_rate_limit(?:_exceeded)?)$/i;
+
+export function isCursorUsageLimitError(cause: unknown): boolean {
+  const error = isCursorAgentSdkRunnerError(cause) ? cause.cause : cause;
+  if (typeof error !== "object" || error === null) return false;
+  const code = Reflect.get(error, "code");
+  return (
+    Reflect.get(error, "name") === "RateLimitError" ||
+    Reflect.get(error, "status") === 429 ||
+    (typeof code === "string" && CURSOR_USAGE_LIMIT_CODE.test(code))
+  );
+}
+
+const GENERIC_SDK_ERROR_CODES = new Set(["", "error", "unknown"]);
+
+function sdkErrorReason(cause: unknown): string | undefined {
+  if (!(cause instanceof Error)) return undefined;
+  const message = cause.message.trim();
+  if (message.length === 0) return undefined;
+  const code = Reflect.get(cause, "code");
+  const status = Reflect.get(cause, "status");
+  const details = [
+    ...(typeof code === "string" && !GENERIC_SDK_ERROR_CODES.has(code) && !message.includes(code)
+      ? [code]
+      : []),
+    ...(typeof status === "number" ? [`HTTP ${status}`] : []),
+  ];
+  return details.length === 0 ? message : `${message} (${details.join(", ")})`;
+}
+
+export const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
+
+export interface CursorAgentSdkOpenInput {
+  readonly operation: "create" | "resume";
+  readonly agentId?: string;
+  readonly storeCwd?: string;
+  readonly options: AgentOptions;
+  readonly threadId: ThreadId;
+  readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+}
+
+export interface CursorAgentSdkSendInput<Error> {
+  readonly message: string | SDKUserMessage;
+  readonly options?: Omit<SendOptions, "onDelta">;
+  readonly onDelta?: (update: InteractionUpdate) => Effect.Effect<void, Error>;
+  /** Runs `agent.summarize()` instead, which takes no message or options. */
+  readonly summarize?: boolean;
+}
+
+export interface CursorAgentSdkRun {
+  readonly runId: string;
+  readonly agentId: string;
+  readonly wait: Effect.Effect<RunResult, CursorAgentSdkRunnerError>;
+  readonly cancel: Effect.Effect<void, CursorAgentSdkRunnerError>;
+  /** Absent on test doubles that never steer. The live runner always sets it. */
+  readonly steer?: (text: string) => Effect.Effect<SteerAckOutcome, CursorAgentSdkRunnerError>;
+}
+
+export interface CursorAgentSdkSession {
+  readonly agentId: string;
+  readonly send: <Error>(
+    input: CursorAgentSdkSendInput<Error>,
+  ) => Effect.Effect<CursorAgentSdkRun, CursorAgentSdkRunnerError>;
+  readonly listMessages: Effect.Effect<ReadonlyArray<AgentMessage>, CursorAgentSdkRunnerError>;
+  readonly close: Effect.Effect<void, CursorAgentSdkRunnerError>;
+}
+
+export class CursorAgentSdkRunner extends Context.Service<
+  CursorAgentSdkRunner,
+  {
+    readonly open: (
+      input: CursorAgentSdkOpenInput,
+    ) => Effect.Effect<CursorAgentSdkSession, CursorAgentSdkRunnerError>;
+    readonly assertComplete: Effect.Effect<void, CursorAgentSdkRunnerError>;
+  }
+>()("@t3tools/provider-cursor/server/CursorAgentSdk/CursorAgentSdkRunner") {}
+
+export interface CursorAgentSdkLoggedAgentOptions {
+  readonly model?: AgentOptions["model"];
+  readonly hasName?: boolean;
+  readonly mode?: AgentOptions["mode"];
+  readonly local?: {
+    readonly hasCwd?: boolean;
+    readonly autoReview?: boolean;
+    readonly settingSources?: AgentOptions["local"] extends infer Local
+      ? Local extends { readonly settingSources?: infer Sources }
+        ? Sources
+        : never
+      : never;
+    readonly sandboxEnabled?: boolean;
+    readonly enableAgentRetries?: boolean;
+    readonly hasCustomTools?: boolean;
+  };
+  readonly agents?: ReadonlyArray<string>;
+}
+
+export interface CursorAgentSdkLoggedSendOptions {
+  readonly model?: SendOptions["model"];
+  readonly mode?: SendOptions["mode"];
+  readonly hasMcpServers?: boolean;
+  readonly mcpServerNames?: ReadonlyArray<string>;
+  readonly local?: {
+    readonly force?: boolean;
+    readonly hasCustomTools?: boolean;
+  };
+  readonly idempotencyKey?: string;
+}
+
+export type CursorAgentSdkProtocolLogEvent =
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "agent.open";
+        readonly operation: CursorAgentSdkOpenInput["operation"];
+        readonly agentId?: string;
+        readonly options: CursorAgentSdkLoggedAgentOptions;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "agent.opened";
+        readonly agentId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.start";
+        readonly message: string | SDKUserMessage;
+        readonly options: CursorAgentSdkLoggedSendOptions;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.started";
+        readonly runId: string;
+        readonly agentId: string;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "interaction.update";
+        readonly runId: string;
+        readonly update: InteractionUpdate;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.completed";
+        readonly result: RunResult;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.steer";
+        readonly runId: string;
+        readonly text: string;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.steered";
+        readonly runId: string;
+        readonly outcome: SteerAckOutcome;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.cancel";
+        readonly runId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "agent.messages.list";
+        readonly agentId: string;
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "agent.messages";
+        readonly agentId: string;
+        readonly messages: ReadonlyArray<AgentMessage>;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "agent.close";
+        readonly agentId: string;
+      };
+    };
+
+export type CursorAgentSdkProtocolLogger = (
+  event: CursorAgentSdkProtocolLogEvent,
+) => Effect.Effect<void>;
+
+function runnerError(cause: unknown, method: string): CursorAgentSdkRunnerError {
+  return isCursorAgentSdkRunnerError(cause)
+    ? cause
+    : new CursorAgentSdkRunnerError({ method, cause });
+}
+
+function isActiveRunConflict(cause: unknown): boolean {
+  return cause instanceof Error && /already has active run/i.test(cause.message);
+}
+
+export function isCursorCancellationError(cause: unknown): boolean {
+  let current = cause;
+  const seen = new Set<object>();
+
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    if (Reflect.get(current, "name") === "AbortError") {
+      return true;
+    }
+    seen.add(current);
+    current = Reflect.get(current, "cause");
+  }
+
+  return false;
+}
+
+export function loggedCursorAgentOptions(options: AgentOptions): CursorAgentSdkLoggedAgentOptions {
+  return {
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.name === undefined ? {} : { hasName: true }),
+    ...(options.mode === undefined ? {} : { mode: options.mode }),
+    ...(options.local === undefined
+      ? {}
+      : {
+          local: {
+            ...(options.local.cwd === undefined ? {} : { hasCwd: true }),
+            ...(options.local.autoReview === undefined
+              ? {}
+              : { autoReview: options.local.autoReview }),
+            ...(options.local.settingSources === undefined
+              ? {}
+              : { settingSources: options.local.settingSources }),
+            ...(options.local.sandboxOptions === undefined
+              ? {}
+              : { sandboxEnabled: options.local.sandboxOptions.enabled }),
+            ...(options.local.enableAgentRetries === undefined
+              ? {}
+              : { enableAgentRetries: options.local.enableAgentRetries }),
+            ...(options.local.customTools === undefined ? {} : { hasCustomTools: true }),
+          },
+        }),
+    ...(options.agents === undefined ? {} : { agents: Object.keys(options.agents).toSorted() }),
+  };
+}
+
+export function loggedCursorSendOptions(
+  options: Omit<SendOptions, "onDelta"> | undefined,
+): CursorAgentSdkLoggedSendOptions {
+  if (options === undefined) {
+    return {};
+  }
+  const mcpServerNames =
+    options.mcpServers === undefined ? undefined : Object.keys(options.mcpServers).toSorted();
+  return {
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.mode === undefined ? {} : { mode: options.mode }),
+    ...(mcpServerNames === undefined ? {} : { hasMcpServers: true, mcpServerNames }),
+    ...(options.local === undefined
+      ? {}
+      : {
+          local: {
+            ...(options.local.force === undefined ? {} : { force: options.local.force }),
+            ...(options.local.customTools === undefined ? {} : { hasCustomTools: true }),
+          },
+        }),
+    ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+  };
+}
+
+function makeCursorAgentSdkProtocolLogger(input: {
+  readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
+  readonly threadId: ThreadId;
+  readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+}): CursorAgentSdkProtocolLogger | undefined {
+  if (input.nativeEventLogger === undefined) {
+    return undefined;
+  }
+  const nativeEventLogger = input.nativeEventLogger;
+  return (event) =>
+    nativeEventLogger
+      .write(
+        {
+          provider: CURSOR_PROVIDER,
+          protocol: CURSOR_AGENT_SDK_PROTOCOL,
+          kind: "protocol",
+          providerSessionId: input.providerSessionId,
+          event,
+        },
+        input.threadId,
+      )
+      .pipe(Effect.ignore);
+}
+
+interface CursorShellStreamOutput {
+  readonly conversationId?: unknown;
+  readonly toolCallId?: unknown;
+  readonly event: {
+    readonly case: "stdout" | "stderr";
+    readonly value: { readonly data: unknown };
+  };
+}
+
+// The SDK reports shell-output-delta only for user-started shell commands, so
+// patches/@cursor__sdk@1.2.0.patch publishes agent shell output on this hook.
+const SHELL_STREAM_OUTPUT_HOOK = Symbol.for("@cursor/sdk.shellStreamOutput");
+const shellStreamListeners = new Set<(output: CursorShellStreamOutput) => void>();
+
+function subscribeShellStreamOutput(listener: (output: CursorShellStreamOutput) => void) {
+  const hooks = globalThis as Record<symbol, unknown>;
+  hooks[SHELL_STREAM_OUTPUT_HOOK] ??= (output: CursorShellStreamOutput) => {
+    for (const notify of shellStreamListeners) notify(output);
+  };
+  shellStreamListeners.add(listener);
+  return () => {
+    shellStreamListeners.delete(listener);
+  };
+}
+
+export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(function* (
+  protocolLoggerFor: (input: CursorAgentSdkOpenInput) => CursorAgentSdkProtocolLogger | undefined,
+) {
+  const sdk = yield* CursorSdk.CursorSdk;
+
+  // Prime with cursorsandbox before any Full access run; the SDK caches sandbox support per process.
+  const sandboxSupportPrimeStarted = yield* Ref.make(false);
+  const sandboxSupportPrimed = yield* Deferred.make<void>();
+  const primeCursorSandboxSupport = Effect.fn("CursorAgentSdkRunner.primeSandboxSupport")(
+    function* (options: AgentOptions) {
+      if (yield* Ref.getAndSet(sandboxSupportPrimeStarted, true)) {
+        return yield* Deferred.await(sandboxSupportPrimed);
+      }
+      yield* Effect.tryPromise({
+        try: async () => {
+          const cwd = typeof options.local?.cwd === "string" ? options.local.cwd : undefined;
+          const platform = await sdk
+            .load()
+            .createAgentPlatform(cwd === undefined ? {} : { workspaceRef: cwd });
+          const release = await platform.prewarmLocalWorkspace({
+            ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+            local: {
+              ...(cwd === undefined ? {} : { cwd }),
+              settingSources: [],
+              sandboxOptions: { enabled: true },
+            },
+          });
+          await release();
+        },
+        catch: (cause) => runnerError(cause, "prewarmLocalWorkspace"),
+      }).pipe(Effect.ignore, Effect.ensuring(Deferred.succeed(sandboxSupportPrimed, undefined)));
+    },
+  );
+
+  return CursorAgentSdkRunner.of({
+    open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
+      const { Agent, createAgentPlatform } = yield* Effect.try({
+        try: sdk.load,
+        catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+      });
+      if (input.options.local?.sandboxOptions?.enabled === false) {
+        yield* primeCursorSandboxSupport(input.options);
+      }
+      const protocolLogger = protocolLoggerFor(input);
+      const log = (event: CursorAgentSdkProtocolLogEvent) =>
+        protocolLogger === undefined ? Effect.void : protocolLogger(event);
+
+      yield* log({
+        direction: "outgoing",
+        stage: "decoded",
+        payload: {
+          type: "agent.open",
+          operation: input.operation,
+          ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+          options: loggedCursorAgentOptions(input.options),
+        },
+      });
+
+      // Cursor uses cwd for both execution and store lookup; a moved thread keeps its original store.
+      const storeCwd = input.storeCwd;
+      const storePlatform =
+        input.operation === "resume" &&
+        storeCwd !== undefined &&
+        storeCwd !== input.options.local?.cwd
+          ? yield* Effect.tryPromise({
+              try: () =>
+                createAgentPlatform({
+                  workspaceRef: storeCwd,
+                  ...(input.options.local?.store === undefined
+                    ? {}
+                    : { localStore: input.options.local.store }),
+                }),
+              catch: (cause) => runnerError(cause, "agent.resume"),
+            })
+          : undefined;
+      const agent = yield* Effect.tryPromise({
+        try: () =>
+          input.operation === "create"
+            ? Agent.create(input.options)
+            : storePlatform === undefined
+              ? Agent.resume(input.agentId!, input.options)
+              : storePlatform.resumeAgent(input.agentId!, input.options),
+        catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+      });
+
+      yield* log({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          type: "agent.opened",
+          agentId: agent.agentId,
+        },
+      });
+
+      const cwd =
+        typeof input.options.local?.cwd === "string"
+          ? input.options.local.cwd
+          : input.options.local?.cwd?.[0];
+      const runOptions = {
+        runtime: "local" as const,
+        ...(cwd === undefined ? {} : { cwd }),
+        ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
+      };
+      let abandonedRunRecoveryAvailable = input.operation === "resume";
+
+      return {
+        agentId: agent.agentId,
+        send: Effect.fn("CursorAgentSdkSession.send")(function* (sendInput) {
+          const context = yield* Effect.context();
+          yield* log({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: {
+              type: "run.start",
+              message: sendInput.message,
+              options: loggedCursorSendOptions(sendInput.options),
+            },
+          });
+
+          let callbacksReady = false;
+          const pendingUpdates: Array<InteractionUpdate> = [];
+          let callbackFailure: { readonly cause: unknown } | undefined;
+          let callbackChain = Promise.resolve();
+          let runId = "";
+          const dispatchUpdate = (update: InteractionUpdate): Promise<void> => {
+            callbackChain = callbackChain
+              .then(() => {
+                if (callbackFailure !== undefined) {
+                  return;
+                }
+                return Effect.runPromiseWith(context)(
+                  log({
+                    direction: "incoming",
+                    stage: "decoded",
+                    payload: {
+                      type: "interaction.update",
+                      runId,
+                      update,
+                    },
+                  }).pipe(Effect.andThen(sendInput.onDelta?.(update) ?? Effect.void)),
+                );
+              })
+              .catch((cause) => {
+                callbackFailure ??= { cause };
+              });
+            return callbackChain;
+          };
+
+          const startRun = () =>
+            Effect.tryPromise({
+              try: () =>
+                sendInput.summarize === true
+                  ? agent.summarize()
+                  : agent.send(sendInput.message, {
+                      ...sendInput.options,
+                      onDelta: async ({ update }) => {
+                        if (!callbacksReady) {
+                          pendingUpdates.push(update);
+                          return;
+                        }
+                        await dispatchUpdate(update);
+                      },
+                    }),
+              catch: (cause) => runnerError(cause, "run.start"),
+            });
+          const run = yield* startRun().pipe(
+            Effect.catchIf(
+              (error) => abandonedRunRecoveryAvailable && isActiveRunConflict(error.cause),
+              (error) =>
+                Effect.gen(function* () {
+                  abandonedRunRecoveryAvailable = false;
+                  // Local stores list runs oldest first, so the active run is on the
+                  // last page and every page has to be read to reach it.
+                  let activeRun: Run | undefined;
+                  let cursor: string | undefined;
+                  do {
+                    const page = yield* Effect.tryPromise({
+                      try: () =>
+                        storePlatform === undefined
+                          ? Agent.listRuns(agent.agentId, {
+                              ...runOptions,
+                              ...(cursor === undefined ? {} : { cursor }),
+                            })
+                          : storePlatform.listRuns(
+                              agent.agentId,
+                              cursor === undefined ? {} : { cursor },
+                            ),
+                      catch: (cause) => runnerError(cause, "agent.listRuns"),
+                    });
+                    activeRun =
+                      page.items.findLast((candidate) => candidate.status === "running") ??
+                      activeRun;
+                    cursor = page.nextCursor;
+                  } while (cursor !== undefined);
+                  if (activeRun === undefined) {
+                    return yield* error;
+                  }
+                  yield* log({
+                    direction: "outgoing",
+                    stage: "decoded",
+                    payload: { type: "run.cancel", runId: activeRun.id },
+                  });
+                  yield* Effect.tryPromise({
+                    try: () =>
+                      storePlatform === undefined
+                        ? Agent.cancelRun(activeRun.id, runOptions)
+                        : storePlatform.cancelRun(activeRun.id),
+                    catch: (cause) => runnerError(cause, "agent.cancelRun"),
+                  });
+                  return yield* startRun();
+                }),
+            ),
+          );
+          abandonedRunRecoveryAvailable = false;
+          runId = run.id;
+          yield* log({
+            direction: "incoming",
+            stage: "decoded",
+            payload: {
+              type: "run.started",
+              runId: run.id,
+              agentId: run.agentId,
+            },
+          });
+          callbacksReady = true;
+          const unsubscribeShellOutput = subscribeShellStreamOutput((output) => {
+            if (output.conversationId !== agent.agentId || typeof output.toolCallId !== "string") {
+              return;
+            }
+            void dispatchUpdate({
+              type: "shell-output-delta",
+              event: { ...output.event, toolCallId: output.toolCallId },
+            });
+          });
+          for (const update of pendingUpdates) {
+            yield* Effect.tryPromise({
+              try: () => dispatchUpdate(update),
+              catch: (cause) => runnerError(cause, "run.onDelta"),
+            });
+          }
+
+          return {
+            runId: run.id,
+            agentId: run.agentId,
+            wait: Effect.tryPromise({
+              try: async () => {
+                const result = await run.wait();
+                await callbackChain;
+                if (callbackFailure !== undefined) {
+                  throw callbackFailure.cause;
+                }
+                return result;
+              },
+              catch: (cause) => runnerError(cause, "run.wait"),
+            }).pipe(
+              Effect.ensuring(Effect.sync(unsubscribeShellOutput)),
+              Effect.tap((result) =>
+                log({
+                  direction: "incoming",
+                  stage: "decoded",
+                  payload: {
+                    type: "run.completed",
+                    result,
+                  },
+                }),
+              ),
+            ),
+            steer: Effect.fn("CursorAgentSdkRun.steer")((text: string) =>
+              log({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: {
+                  type: "run.steer",
+                  runId: run.id,
+                  text,
+                },
+              }).pipe(
+                Effect.andThen(
+                  Effect.tryPromise({
+                    try: () => run.steer?.(text) ?? Promise.resolve("revert_to_followup" as const),
+                    catch: (cause) => runnerError(cause, "run.steer"),
+                  }),
+                ),
+                Effect.tap((outcome) =>
+                  log({
+                    direction: "incoming",
+                    stage: "decoded",
+                    payload: {
+                      type: "run.steered",
+                      runId: run.id,
+                      outcome,
+                    },
+                  }),
+                ),
+              ),
+            ),
+            cancel: log({
+              direction: "outgoing",
+              stage: "decoded",
+              payload: {
+                type: "run.cancel",
+                runId: run.id,
+              },
+            }).pipe(
+              Effect.andThen(
+                Effect.tryPromise({
+                  try: async () => {
+                    try {
+                      await run.cancel();
+                    } catch (cause) {
+                      if (!isCursorCancellationError(cause)) {
+                        throw cause;
+                      }
+                    }
+                  },
+                  catch: (cause) => runnerError(cause, "run.cancel"),
+                }),
+              ),
+            ),
+          } satisfies CursorAgentSdkRun;
+        }),
+        listMessages: log({
+          direction: "outgoing",
+          stage: "decoded",
+          payload: {
+            type: "agent.messages.list",
+            agentId: agent.agentId,
+          },
+        }).pipe(
+          Effect.andThen(
+            Effect.tryPromise({
+              try: () =>
+                storePlatform === undefined
+                  ? Agent.messages.list(agent.agentId, {
+                      runtime: "local",
+                      ...(cwd === undefined ? {} : { cwd }),
+                      ...(input.options.local?.store === undefined
+                        ? {}
+                        : { store: input.options.local.store }),
+                    })
+                  : storePlatform.getAgentMessages(agent.agentId),
+              catch: (cause) => runnerError(cause, "agent.messages.list"),
+            }),
+          ),
+          Effect.tap((messages) =>
+            log({
+              direction: "incoming",
+              stage: "decoded",
+              payload: {
+                type: "agent.messages",
+                agentId: agent.agentId,
+                messages,
+              },
+            }),
+          ),
+        ),
+        close: log({
+          direction: "outgoing",
+          stage: "decoded",
+          payload: {
+            type: "agent.close",
+            agentId: agent.agentId,
+          },
+        }).pipe(
+          Effect.andThen(
+            Effect.try({
+              try: () => agent.close(),
+              catch: (cause) => runnerError(cause, "agent.close"),
+            }),
+          ),
+        ),
+      } satisfies CursorAgentSdkSession;
+    }),
+    assertComplete: Effect.void,
+  });
+});
+
+export const layer = Layer.effect(
+  CursorAgentSdkRunner,
+  Effect.gen(function* () {
+    const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
+    return yield* makeCursorAgentSdkRunner((input) =>
+      makeCursorAgentSdkProtocolLogger({
+        nativeEventLogger,
+        threadId: input.threadId,
+        providerSessionId: input.providerSessionId,
+      }),
+    );
+  }),
+);

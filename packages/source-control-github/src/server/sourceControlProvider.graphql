@@ -1,0 +1,57 @@
+# The pull request reads behind `GitHubSourceControlProvider`. `PullRequestsByHead` is batched
+# with `GraphQLResolver.aliased`, which repeats it under an alias per lookup, so the lookups a
+# branch sweep makes together share one request and a missing repository fails only its own.
+
+# The pull request fields every read selects.
+fragment PullRequestNode on PullRequest {
+  number
+  title
+  url
+  baseRefName
+  headRefName
+  headRefOid
+  state
+  isDraft
+  mergedAt
+  closedAt
+  updatedAt
+  isCrossRepository
+  headRepository {
+    name
+    nameWithOwner
+  }
+  headRepositoryOwner {
+    login
+  }
+}
+
+query PullRequestsByHead(
+  $owner: String!
+  $name: String!
+  $head: String!
+  $states: [PullRequestState!]
+  $first: Int!
+) {
+  repository(owner: $owner, name: $name) {
+    # `gh pr list` orders the same way, so a head with more matches than the limit keeps the
+    # same rows.
+    pullRequests(
+      headRefName: $head
+      states: $states
+      first: $first
+      orderBy: { field: CREATED_AT, direction: DESC }
+    ) {
+      nodes {
+        ...PullRequestNode
+      }
+    }
+  }
+}
+
+query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      ...PullRequestNode
+    }
+  }
+}

@@ -9,10 +9,6 @@ export interface ShareSegment {
   readonly color: string;
 }
 
-/**
- * One part-to-whole bar with its legend, for cost or tokens split by type or
- * speed. Empty segments are left out, and nothing renders without a total.
- */
 export function UsageShareBar({
   label,
   segments,

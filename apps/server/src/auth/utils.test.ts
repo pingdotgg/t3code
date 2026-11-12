@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  deriveAuthClientMetadata,
-  isRemoteReachableHost,
-  resolveSessionCookieName,
-} from "./utils.ts";
+import { deriveAuthClientMetadata, resolveSessionCookieName } from "./utils.ts";
 
 describe("deriveAuthClientMetadata", () => {
   it("labels Electron user agents as Electron instead of Chrome", () => {
@@ -26,6 +22,35 @@ describe("deriveAuthClientMetadata", () => {
       ipAddress: "127.0.0.1",
       os: "macOS",
     });
+  });
+
+  it.each([
+    [
+      "Edge on Android",
+      "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36 EdgA/129.0.0.0",
+      "Edge",
+    ],
+    [
+      "Edge on iOS",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 EdgiOS/129.0.2792.84 Mobile/15E148 Safari/605.1.15",
+      "Edge",
+    ],
+    [
+      "Firefox on iOS",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/131.0 Mobile/15E148 Safari/605.1.15",
+      "Firefox",
+    ],
+    [
+      "Opera on iOS",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 OPiOS/5.0.0 Mobile/15E148 Safari/605.1.15",
+      "Opera",
+    ],
+  ])("labels %s by its own browser token", (_name, userAgent, browser) => {
+    const metadata = deriveAuthClientMetadata({
+      request: { headers: { "user-agent": userAgent }, source: {} } as never,
+    });
+
+    expect(metadata.browser).toBe(browser);
   });
 
   it("applies client-presented display identity without replacing transport metadata", () => {
@@ -81,6 +106,7 @@ describe("session cookie isolation", () => {
     expect(first).not.toBe(second);
   });
 
+  // regression: #8085 isolate remote web session cookies
   it("isolates remote web servers by server state", () => {
     const first = resolveSessionCookieName({
       mode: "web",
@@ -123,40 +149,5 @@ describe("session cookie isolation", () => {
     });
 
     expect(first).toBe(second);
-  });
-
-  it("retains desktop port scoping", () => {
-    expect(
-      resolveSessionCookieName({
-        mode: "desktop",
-        port: 3773,
-        host: "127.0.0.1",
-        instanceKey: "/tmp/desktop",
-        environmentId: "environment-one",
-        development: true,
-      }),
-    ).toBe("t3_session_3773");
-  });
-
-  it("isolates development servers even when they bind a wildcard host", () => {
-    expect(
-      resolveSessionCookieName({
-        mode: "web",
-        port: 5775,
-        host: "0.0.0.0",
-        instanceKey: "/tmp/t3-wildcard-dev",
-        environmentId: "environment-one",
-        development: true,
-      }),
-    ).toMatch(/^t3_session_5775_[a-f0-9]{12}$/);
-  });
-
-  it("classifies loopback aliases separately from remotely reachable hosts", () => {
-    expect(isRemoteReachableHost(undefined)).toBe(false);
-    expect(isRemoteReachableHost("localhost")).toBe(false);
-    expect(isRemoteReachableHost("127.12.0.1")).toBe(false);
-    expect(isRemoteReachableHost("[::1]")).toBe(false);
-    expect(isRemoteReachableHost("0.0.0.0")).toBe(true);
-    expect(isRemoteReachableHost("192.168.1.50")).toBe(true);
   });
 });

@@ -1,0 +1,71 @@
+diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+index 80c68034b193a47bedb56ca527352de9548e8ac6..1fac4b40c9f376a4f6d6b7fa60e4d247e8ef8550 100644
+--- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
++++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+@@ -9,6 +9,7 @@ import android.view.Menu;
+ import android.view.MenuItem;
+ import android.view.MotionEvent;
+ import android.view.View;
++import android.view.ViewConfiguration;
+ import android.webkit.JavascriptInterface;
+ import android.webkit.ValueCallback;
+ import android.webkit.WebChromeClient;
+@@ -122,14 +123,55 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         cleanupCallbacksAndDestroy();
+     }
+ 
++    private float touchDownX;
++    private float touchDownY;
++    private float lastTouchY;
++    private boolean multiTouch;
++    private boolean horizontalGesture;
++    private final int touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
++
+     @Override
+     public boolean onTouchEvent(MotionEvent event) {
+-        if (this.nestedScrollEnabled) {
+-            requestDisallowInterceptTouchEvent(true);
+-        }
++        requestDisallowInterceptTouchEvent(!shouldYieldToParent(event));
+         return super.onTouchEvent(event);
+     }
+ 
++    // Keep horizontal drags through vertical drift. Only nested scrolling retains
++    // vertical drags until the document's scroll edge. A nested document with no
++    // vertical range keeps its gestures: an iframe may scroll inside it.
++    // A gesture with a second finger stays with the page until every finger lifts.
++    private boolean shouldYieldToParent(MotionEvent event) {
++        switch (event.getActionMasked()) {
++            case MotionEvent.ACTION_DOWN:
++                touchDownX = event.getX();
++                touchDownY = event.getY();
++                lastTouchY = touchDownY;
++                multiTouch = false;
++                horizontalGesture = false;
++                return false;
++            case MotionEvent.ACTION_POINTER_DOWN:
++                multiTouch = true;
++                return false;
++            case MotionEvent.ACTION_MOVE:
++                if (multiTouch || horizontalGesture) return false;
++                float dy = event.getY() - lastTouchY;
++                lastTouchY = event.getY();
++                float distanceX = Math.abs(event.getX() - touchDownX);
++                float distanceY = Math.abs(event.getY() - touchDownY);
++                if (Math.max(distanceX, distanceY) <= touchSlop) return false;
++                if (distanceX > distanceY) {
++                    horizontalGesture = true;
++                    return false;
++                }
++                if (!this.nestedScrollEnabled) return true;
++                if (dy == 0) return false;
++                if (!canScrollVertically(1) && !canScrollVertically(-1)) return false;
++                return !canScrollVertically(dy > 0 ? -1 : 1);
++            default:
++                return false;
++        }
++    }
++
+     @Override
+     protected void onSizeChanged(int w, int h, int ow, int oh) {
+         super.onSizeChanged(w, h, ow, oh);

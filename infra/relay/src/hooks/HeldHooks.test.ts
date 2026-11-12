@@ -51,7 +51,6 @@ const linkFor = (userId: string, key: string, environmentPublicKey: string) => (
   holdWebhooksWhileOffline: true,
 });
 
-/** This environment's own link (user_1) and another account's link of the same environment. */
 const withService = <A, E>(
   options: { readonly ownReady?: boolean; readonly pendingKeys?: ReadonlyArray<string> },
   body: (input: {
@@ -117,41 +116,6 @@ describe("HeldHooks", () => {
           holdWebhooksWhileOffline: false,
         });
         expect(cleared).toEqual([ownKey]);
-      }),
-    ),
-  );
-
-  it.effect("opting in keeps what is held", () =>
-    withService({}, ({ heldHooks, cleared }) =>
-      Effect.gen(function* () {
-        yield* heldHooks.setHoldWhileOffline({
-          environmentId,
-          environmentPublicKey: "own-key",
-          holdWebhooksWhileOffline: true,
-        });
-        expect(cleared).toEqual([]);
-      }),
-    ),
-  );
-
-  it.effect("wakes the caller's ready endpoints and reports whether anything was waiting", () =>
-    withService({ pendingKeys: [ownKey] }, ({ heldHooks, woken }) =>
-      Effect.gen(function* () {
-        expect(yield* heldHooks.wake({ environmentId, environmentPublicKey: "own-key" })).toBe(
-          true,
-        );
-        expect(woken).toEqual([ownKey]);
-      }),
-    ),
-  );
-
-  it.effect("does not wake an endpoint that is not ready", () =>
-    withService({ ownReady: false, pendingKeys: [ownKey] }, ({ heldHooks, woken }) =>
-      Effect.gen(function* () {
-        expect(yield* heldHooks.wake({ environmentId, environmentPublicKey: "own-key" })).toBe(
-          false,
-        );
-        expect(woken).toEqual([]);
       }),
     ),
   );

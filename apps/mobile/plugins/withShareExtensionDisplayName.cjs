@@ -1,12 +1,6 @@
 "use strict";
 
-// expo-sharing intentionally uses a fixed target name and also uses that
-// internal target name as CFBundleDisplayName. Brand the extension while
-// leaving its initially-empty signing team intact: Expo uses that state to
-// select ios.appleTeamId and enable first-time profile provisioning.
-//
-// ORDERING: list this plugin BEFORE expo-sharing. Expo runs same-type mods in
-// reverse registration order, so this executes after the extension exists.
+// Expo replaces the empty signing team with appleTeamId. Reverse-ordered mods run after extension creation.
 
 const fs = require("fs");
 const path = require("path");

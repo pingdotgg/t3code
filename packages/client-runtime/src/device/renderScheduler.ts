@@ -1,4 +1,3 @@
-/** Coalesces invalidations into one render. No work is scheduled while the view is idle. */
 export function createRenderScheduler(
   render: () => void,
   request: (callback: FrameRequestCallback) => number = requestAnimationFrame,

@@ -52,6 +52,7 @@ export interface MergeProcessesInput {
   readonly previous: ReadonlyMap<string, ProcessState>;
   readonly counters: TelemetryCounters;
   readonly updatePrevious: boolean;
+  readonly accumulateCounters?: boolean;
 }
 
 export interface MergeProcessesResult {
@@ -190,11 +191,14 @@ function isElectronDescendant(
   pid: number,
   processesByPid: ReadonlyMap<number, ResourceMonitorProcessSample>,
   electronPids: ReadonlySet<number>,
+  serverPid: number,
 ): boolean {
   const visited = new Set<number>();
   let currentPid = pid;
   while (!visited.has(currentPid)) {
     visited.add(currentPid);
+    // The backend's children belong to the backend even when Electron launched it.
+    if (currentPid === serverPid) return false;
     if (electronPids.has(currentPid)) return true;
     const current = processesByPid.get(currentPid);
     if (!current || current.ppid <= 0 || current.ppid === currentPid) return false;
@@ -506,7 +510,7 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
             ? "electron-main"
             : electronMetric
               ? electronCategory(electronMetric)
-              : isElectronDescendant(process.pid, processesByPid, electronPids)
+              : isElectronDescendant(process.pid, processesByPid, electronPids, input.serverPid)
                 ? inferredElectronCategory(process)
                 : "server-child";
     const firstSeenAt = previous?.process.firstSeenAt ?? DateTime.makeUnsafe(sampledAtMs);
@@ -574,14 +578,15 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
   });
   const ordered = orderProcessTree(normalized, rootPids);
 
-  const counters = input.updatePrevious
-    ? applyLifecycleCounters({
-        counters: input.counters,
-        deltas: processDeltas,
-        current: nextPrevious,
-        previous: input.previous,
-      })
-    : input.counters;
+  const counters =
+    input.updatePrevious && input.accumulateCounters !== false
+      ? applyLifecycleCounters({
+          counters: input.counters,
+          deltas: processDeltas,
+          current: nextPrevious,
+          previous: input.previous,
+        })
+      : input.counters;
   const backendProcesses = ordered.filter(
     (process) => categoryGroup(process.category) === "backend",
   );

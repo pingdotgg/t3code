@@ -1,12 +1,10 @@
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 
 import { Button } from "./ui/button";
 
-/** A shell command to copy and run elsewhere, such as on the environment's host. */
 export function CommandBlock({
   command,
   className,
@@ -38,7 +36,7 @@ export function CommandBlock({
         aria-label="Copy command"
         onClick={() => copyToClipboard(command, undefined)}
       >
-        <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+        {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </Button>
     </div>
   );

@@ -27,12 +27,6 @@ function outboundOfType(transcript: ProviderReplayTranscript, type: string) {
   );
 }
 
-/**
- * Pi rolls back by re-rooting its session tree with `fork(entryId)` at the
- * first user entry of the earliest discarded turn. That id is the discarded
- * turn's strong native ref, captured from `get_entries` when the turn settled.
- * The fork writes a new session file, and the next turn resumes that file.
- */
 export function assertPiThreadRollbackOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -66,8 +60,6 @@ export function assertPiThreadRollbackOutput(
   assert.equal(discardedTurn?.nativeTurnRef?.strength, "strong");
   assert.equal(field(forks[0], "entryId"), discardedTurn?.nativeTurnRef?.nativeId);
 
-  // The fork moved the thread to a new session file; the post-rollback turn
-  // resumes that file, never the pre-rollback one.
   const [providerThread] = projection.providerThreads;
   assert.lengthOf(projection.providerThreads, 1);
   assert.equal(providerThread?.nativeThreadRef?.nativeId, "/pi-sessions/session-2.jsonl");
@@ -76,7 +68,6 @@ export function assertPiThreadRollbackOutput(
     ["/pi-sessions/session-2.jsonl"],
   );
 
-  // The model has only the surviving branch: the discarded exchange is gone.
   const finalAnswer = projection.turnItems.findLast((item) => item.type === "assistant_message");
   assert.include(finalAnswer?.text, "rollback fixture first turn complete");
   assert.notInclude(finalAnswer?.text, "second turn");

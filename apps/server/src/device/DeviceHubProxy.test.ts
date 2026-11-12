@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import type * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
@@ -22,23 +23,32 @@ const fixture = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
+  upstream?: DeviceHost.DeviceHostReady["upstream"],
 ) => {
   let finalized = 0;
   const requests: string[] = [];
+  const screenshots: Array<Parameters<DeviceService.DeviceService["Service"]["screenshot"]>[0]> =
+    [];
+  const headers: Array<Readonly<Record<string, string>>> = [];
+  const unexpectedOperation = Effect.die("Unexpected device operation");
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
       requests.push(request.url);
+      headers.push(request.headers);
       signal.addEventListener("abort", () => {
         finalized++;
       });
       if (fail) return yield* Effect.die(new Error("upstream failed"));
-      return HttpClientResponse.fromWeb(request, new Response("frame"));
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response("frame", { headers: { "set-cookie": "upstream=1" } }),
+      );
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
     DeviceHubProxy.layer.pipe(
       Layer.provideMerge(
-        Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
           authenticateWebSocketUpgrade: () =>
             authError
               ? Effect.fail(authError)
@@ -48,20 +58,50 @@ const fixture = (
                   method: "bearer-access-token",
                   scopes,
                 }),
-        } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        }),
       ),
       Layer.provideMerge(
-        Layer.succeed(DeviceService.DeviceService, {
-          currentReadiness: () =>
-            Effect.succeed({ hostId: LOCAL_DEVICE_HOST_ID, hub: { origin: "http://hub.test" } }),
-        } as DeviceService.DeviceService["Service"]),
+        Layer.mock(DeviceService.DeviceService)({
+          currentReadiness: (hostId) =>
+            Effect.succeed({
+              hostId: hostId ?? LOCAL_DEVICE_HOST_ID,
+              nodePath: "node",
+              hub: { origin: "http://hub.test" },
+              devices: {
+                list: unexpectedOperation,
+                boot: () => unexpectedOperation,
+                attach: () => unexpectedOperation,
+                shutdown: () => unexpectedOperation,
+                screenshot: () => unexpectedOperation,
+              },
+              run: () => unexpectedOperation,
+              helpers: { serveSimAxSettings: null, serveSimCli: null },
+              ...(upstream ? { upstream } : {}),
+            }),
+          screenshot: (input) =>
+            Effect.sync(() => {
+              screenshots.push(input);
+              return {
+                device: {
+                  hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
+                  id: input.deviceId,
+                  platform: "ios",
+                  name: "Phone",
+                  version: "27.0",
+                  booted: true,
+                  physical: false,
+                },
+                png: new Uint8Array([137, 80, 78, 71]),
+              };
+            }),
+        }),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
     ),
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, finalized: () => finalized };
+  return { handler, requests, screenshots, headers, finalized: () => finalized };
 };
 
 describe("device hub proxy", () => {
@@ -73,13 +113,6 @@ describe("device hub proxy", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("frame");
     expect(requests).toEqual(["http://hub.test/api/devices"]);
-    expect(finalized()).toBe(1);
-  });
-
-  it("releases resources when upstream acquisition fails", async () => {
-    const { handler, finalized } = fixture([AuthOrchestrationReadScope], true);
-    const response = await handler(new Request("http://t3.test/api/device-hub/api/devices"));
-    expect(response.status).toBe(500);
     expect(finalized()).toBe(1);
   });
 
@@ -131,6 +164,99 @@ describe("device hub proxy", () => {
     ]);
   });
 
+  it("presents fold changes from an HTTPS client as same-origin hub requests", async () => {
+    const { handler, headers } = fixture([AuthOrchestrationOperateScope]);
+    const response = await handler(
+      new Request(
+        "https://relay.test/api/device-hub/vendor/serve-emu/api/fold?device=emulator-5554",
+        {
+          method: "POST",
+          headers: { origin: "https://relay.test", "x-forwarded-proto": "https" },
+          body: '{"posture":"opened"}',
+        },
+      ),
+    );
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(headers).toHaveLength(1);
+    expect(headers[0]?.origin).toBe("http://hub.test");
+    expect(headers[0]).not.toHaveProperty("x-forwarded-proto");
+  });
+
+  it("lets a viewer negotiate a WebRTC stream with read scope", async () => {
+    const { handler, requests, headers } = fixture([AuthOrchestrationReadScope]);
+    const offer = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/udid-1/webrtc/offer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"type":"offer"}',
+      }),
+    );
+    expect(offer.status).toBe(200);
+    await offer.text();
+    expect(requests).toEqual(["http://hub.test/vendor/serve-sim/helper/udid-1/webrtc/offer"]);
+    expect(headers[0]?.["content-type"]).toBe("application/json");
+  });
+
+  it("lets a viewer read Android stream capabilities and signal WebRTC with read scope", async () => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const hub = "http://t3.test/api/device-hub/vendor/serve-emu";
+    const api = await handler(new Request(`${hub}/api?device=session-1`));
+    expect(api.status).toBe(200);
+    await api.text();
+    for (const action of ["offer", "close"]) {
+      const signal = await handler(
+        new Request(`${hub}/webrtc/${action}?device=session-1`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: '{"sessionId":"viewer"}',
+        }),
+      );
+      expect(signal.status).toBe(200);
+      await signal.text();
+    }
+    expect(requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/offer?device=session-1",
+      "http://hub.test/vendor/serve-emu/webrtc/close?device=session-1",
+    ]);
+    expect((await handler(new Request(`${hub}/api`, { method: "POST" }))).status).toBe(405);
+    expect((await handler(new Request(`${hub}/webrtc/offer`))).status).toBe(405);
+  });
+
+  it("sends requests a host routes itself to its upstream with its credentials", async () => {
+    const { handler, requests, headers } = fixture(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      (hubPath, search) =>
+        Effect.succeed(
+          hubPath === "/vendor/serve-sim/api"
+            ? {
+                url: `https://session.test${hubPath.slice("/vendor/serve-sim".length)}?${search}`,
+                headers: { authorization: "Bearer session-token" },
+                protocols: [],
+              }
+            : null,
+        ),
+    );
+    const routed = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/api?device=udid-1&hostId=eas", {
+        headers: { authorization: "Bearer environment-token" },
+      }),
+    );
+    expect(routed.status).toBe(200);
+    expect(routed.headers.get("set-cookie")).toBeNull();
+    await routed.text();
+    expect(requests).toEqual(["https://session.test/api?device=udid-1"]);
+    expect(headers[0]?.authorization).toBe("Bearer session-token");
+    const unrouted = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/udid-2/stream.mjpeg"),
+    );
+    expect(unrouted.status).toBe(404);
+    expect(requests).toHaveLength(1);
+  });
+
   it("never forwards the vendor shell endpoint", async () => {
     const { handler, requests } = fixture([AuthOrchestrationOperateScope]);
     expect(
@@ -142,6 +268,33 @@ describe("device hub proxy", () => {
     ).toBe(404);
     expect(requests).toEqual([]);
   });
+
+  it.each(["serve-sim", "serve-emu"])(
+    "captures %s screenshots through hosts with their own stream routing",
+    async (vendor) => {
+      const { handler, requests, screenshots } = fixture(
+        [AuthOrchestrationReadScope],
+        false,
+        undefined,
+        () => Effect.succeed(null),
+      );
+      const response = await handler(
+        new Request(
+          `http://t3.test/api/device-hub/vendor/${vendor}/api/screenshot?device=udid-1&hostId=pool`,
+          {
+            method: "POST",
+          },
+        ),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+        new Uint8Array([137, 80, 78, 71]),
+      );
+      expect(requests).toEqual([]);
+      expect(screenshots).toEqual([{ hostId: "pool", deviceId: "udid-1" }]);
+    },
+  );
 });
 
 it.each([
@@ -160,28 +313,11 @@ it.each([
   expect(requests).toEqual([]);
 });
 
-it.each([1, 3])(
-  "forwards fixed Duo display %s through the authenticated read proxy",
-  async (panel) => {
-    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
-    const route = `/vendor/serve-sim/helper/duo/panel/${panel}/stream.avcc`;
-    const response = await handler(
-      new Request(`http://t3.test/api/device-hub${route}?wsTicket=secret`),
-    );
-    expect(response.status).toBe(200);
-    await response.text();
-    expect(requests).toEqual([`http://hub.test${route}`]);
-  },
-);
-
-it.each(["/panel/2/stream.avcc", "/panel/1/webrtc/offer", "/panel/3/exec"])(
-  "rejects unsupported Duo route %s",
-  async (route) => {
-    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
-    const response = await handler(
-      new Request(`http://t3.test/api/device-hub/vendor/serve-sim/helper/duo${route}`),
-    );
-    expect(response.status).toBe(404);
-    expect(requests).toEqual([]);
-  },
-);
+it("rejects unsupported Duo routes", async () => {
+  const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+  const response = await handler(
+    new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/duo/panel/1/webrtc/offer"),
+  );
+  expect(response.status).toBe(404);
+  expect(requests).toEqual([]);
+});

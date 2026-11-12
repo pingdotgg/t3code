@@ -14,10 +14,6 @@ export function claudeBackgroundSubagentAfterRootInput(): OrchestratorFixtureInp
   return {
     steps: [
       { type: "message", text: CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT },
-      // The subagent's frames all arrive after the root settles, so they wait
-      // in the wake buffer; its completion starts continuation run 2, which
-      // drains them. The wake result is held until run 2 has drained the
-      // buffered wake reply, so the recording cannot end the session first.
       {
         type: "await_run_status",
         targetRunIndex: 2,

@@ -1,28 +1,26 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { DesktopEnvironmentBootstrap } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { Atom } from "effect/reactivity";
 
 import { readDesktopSecondaryBootstraps } from "./desktopLocal";
 
 const DESKTOP_LOCAL_BOOTSTRAP_POLL_MS = 2_000;
 
 /**
- * Reactively track the desktop's secondary local backends (e.g. a parallel WSL
- * backend). The bridge exposes no change event, so we re-read on an interval;
- * failed reads retain the latest successful snapshot, while a successful empty
- * read clears it. Use this instead of polling the bridge ad hoc so every
- * renderer consumer reads the same topology.
+ * The bridge exposes no change event, so this re-reads on an interval while
+ * anything reads it; failed reads retain the latest successful snapshot, while
+ * a successful empty read clears it. The reader returns the same array while
+ * nothing changed, so an unchanged poll notifies no one.
  */
-export function useDesktopLocalBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
-  const [bootstraps, setBootstraps] = useState<ReadonlyArray<DesktopEnvironmentBootstrap>>(
-    readDesktopSecondaryBootstraps,
+const desktopLocalBootstrapsAtom = Atom.make((get) => {
+  const interval = setInterval(
+    () => get.setSelf(readDesktopSecondaryBootstraps()),
+    DESKTOP_LOCAL_BOOTSTRAP_POLL_MS,
   );
+  get.addFinalizer(() => clearInterval(interval));
+  return readDesktopSecondaryBootstraps();
+}).pipe(Atom.withLabel("desktop-local-bootstraps"));
 
-  useEffect(() => {
-    const read = () => setBootstraps(readDesktopSecondaryBootstraps());
-    read();
-    const interval = setInterval(read, DESKTOP_LOCAL_BOOTSTRAP_POLL_MS);
-    return () => clearInterval(interval);
-  }, []);
-
-  return bootstraps;
+export function useDesktopLocalBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
+  return useAtomValue(desktopLocalBootstrapsAtom);
 }

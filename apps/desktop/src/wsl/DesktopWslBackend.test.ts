@@ -84,39 +84,13 @@ const layerNet = Layer.succeed(NetService.NetService, {
 } satisfies NetService.NetService["Service"]);
 
 describe("DesktopWslBackend", () => {
-  it.effect("does not discover or start WSL when local execution is disabled", () =>
-    Effect.gen(function* () {
-      const backend = yield* DesktopWslBackend.DesktopWslBackend;
-      yield* backend.reconcile;
-    }).pipe(
-      Effect.provide(
-        DesktopWslBackend.layer.pipe(
-          Layer.provide(Layer.mock(DesktopBackendPool.DesktopBackendPool, {})),
-          Layer.provide(layerBackendConfiguration),
-          Layer.provide(layerServerExposure),
-          Layer.provide(layerNet),
-          Layer.provide(Layer.mock(DesktopWslEnvironment.DesktopWslEnvironment, {})),
-          Layer.provide(
-            DesktopAppSettings.layerTest({
-              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-              localEnvironmentEnabled: false,
-              wslBackendEnabled: true,
-            }),
-          ),
-        ),
-      ),
-    ),
-  );
   it.effect("clears the stored preflight error when a registered WSL backend becomes ready", () => {
     let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
+    let registeredWsl: DesktopBackendPool.DesktopBackendInstance | undefined;
+    let startCount = 0;
     const primary = makeStubInstance({
       id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
       label: "Windows",
-      snapshot: primarySnapshot,
-    });
-    const wsl = makeStubInstance({
-      id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
-      label: "WSL (Ubuntu)",
       snapshot: primarySnapshot,
     });
     const layerPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
@@ -126,14 +100,25 @@ describe("DesktopWslBackend", () => {
             ? Option.some(primary)
             : Option.none<DesktopBackendPool.DesktopBackendInstance>(),
         ),
-      list: Effect.succeed([primary]),
+      list: Effect.sync(() => (registeredWsl === undefined ? [primary] : [primary, registeredWsl])),
       primary: Effect.succeed(primary),
       register: (spec) =>
         Effect.sync(() => {
           registeredSpec = spec;
-          return wsl;
+          registeredWsl = makeStubInstance({
+            id: spec.id,
+            label: "WSL",
+            snapshot: idleSnapshot,
+            start: Effect.sync(() => {
+              startCount += 1;
+            }),
+          });
+          return registeredWsl;
         }),
-      unregister: () => Effect.die("unexpected unregister"),
+      unregister: () =>
+        Effect.sync(() => {
+          registeredWsl = undefined;
+        }),
     } satisfies DesktopBackendPool.DesktopBackendPool["Service"]);
 
     return Effect.gen(function* () {
@@ -146,65 +131,50 @@ describe("DesktopWslBackend", () => {
         throw new Error("Expected WSL backend registration");
       }
       const recordFailure = spec.onPreflightFailed;
+      const recordOwnershipFailure = spec.onStateDirOwned;
       const clearFailure = spec.onReady;
       assert.isDefined(recordFailure);
+      assert.isDefined(recordOwnershipFailure);
       assert.isDefined(clearFailure);
-      if (recordFailure === undefined || clearFailure === undefined) {
+      if (
+        recordFailure === undefined ||
+        recordOwnershipFailure === undefined ||
+        clearFailure === undefined
+      ) {
         throw new Error("Expected WSL backend callbacks");
       }
 
       assert.isFalse(yield* recordFailure({ reason: "Node.js not found", fatal: true }));
       assert.deepEqual(yield* backend.lastPreflightError, Option.some("Node.js not found"));
 
+      yield* recordOwnershipFailure();
+      const refusal = yield* backend.lastPreflightError;
+      assert.include(Option.getOrThrow(refusal), "Another T3 Code server");
+      yield* backend.reconcile;
+      assert.equal(startCount, 1);
+      assert.deepEqual(yield* backend.lastPreflightError, refusal);
+
       yield* clearFailure(new URL("http://127.0.0.1:41773"));
+      assert.deepEqual(yield* backend.lastPreflightError, Option.none());
+      yield* recordOwnershipFailure();
+      const settings = yield* DesktopAppSettings.DesktopAppSettings;
+      yield* settings.setWslDistro("Debian");
+      yield* backend.reconcile;
+      assert.equal(startCount, 2);
+      assert.deepEqual(yield* backend.lastPreflightError, Option.none());
+      const nextSpec = registeredSpec;
+      if (nextSpec?.onStateDirOwned === undefined) throw new Error("Expected ownership callback");
+      yield* nextSpec.onStateDirOwned();
+      yield* settings.setWslBackendEnabled(false);
+      yield* backend.reconcile;
+      yield* settings.setWslBackendEnabled(true);
+      yield* backend.reconcile;
+      assert.equal(startCount, 3);
       assert.deepEqual(yield* backend.lastPreflightError, Option.none());
     }).pipe(
       Effect.provide(
         DesktopWslBackend.layer.pipe(
           Layer.provideMerge(layerPool),
-          Layer.provideMerge(layerBackendConfiguration),
-          Layer.provideMerge(layerServerExposure),
-          Layer.provideMerge(layerNet),
-          Layer.provideMerge(
-            DesktopAppSettings.layerTest({
-              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-              wslBackendEnabled: true,
-              wslDistro: "Ubuntu",
-              wslOnly: false,
-            }),
-          ),
-          Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
-        ),
-      ),
-    );
-  });
-
-  it.effect("retries an unchanged WSL instance when it is idle after failed preflight", () => {
-    let startCount = 0;
-    const primary = makeStubInstance({
-      id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
-      label: "Windows",
-      snapshot: primarySnapshot,
-    });
-    const wsl = makeStubInstance({
-      id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
-      label: "WSL (Ubuntu)",
-      snapshot: idleSnapshot,
-      start: Effect.sync(() => {
-        startCount += 1;
-      }),
-    });
-
-    return Effect.gen(function* () {
-      const backend = yield* DesktopWslBackend.DesktopWslBackend;
-
-      yield* backend.reconcile;
-
-      assert.equal(startCount, 1);
-    }).pipe(
-      Effect.provide(
-        DesktopWslBackend.layer.pipe(
-          Layer.provideMerge(DesktopBackendPool.layerTest([primary, wsl])),
           Layer.provideMerge(layerBackendConfiguration),
           Layer.provideMerge(layerServerExposure),
           Layer.provideMerge(layerNet),

@@ -1,11 +1,15 @@
 import type {
   ModelCapabilities,
+  ModelSelection,
+  ProviderInstanceId,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
+  ServerProviderModel,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  withImplicitFastModeDefault,
 } from "@t3tools/shared/model";
 
 export function resolveProviderOptionDescriptors(input: {
@@ -17,15 +21,27 @@ export function resolveProviderOptionDescriptors(input: {
   }
   return getProviderOptionDescriptors({
     caps: input.capabilities,
-    selections: input.selections,
+    selections: withImplicitFastModeDefault(input.capabilities, input.selections),
   });
 }
 
-/**
- * Applies one option change (by descriptor id) and returns the full selection
- * list to store on the model selection, or null when the change doesn't match
- * an advertised descriptor / choice.
- */
+/** Spells out the Fast off the picker shows, or a provider such as Cursor applies its own default. */
+export function withImplicitFastModeSelection(
+  selection: ModelSelection,
+  providers: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "capabilities">>;
+  }>,
+): ModelSelection {
+  const capabilities = providers
+    .find((provider) => provider.instanceId === selection.instanceId)
+    ?.models.find((model) => model.slug === selection.model)?.capabilities;
+  const options = capabilities
+    ? withImplicitFastModeDefault(capabilities, selection.options)
+    : selection.options;
+  return options === selection.options ? selection : { ...selection, options };
+}
+
 export function applyProviderOptionSelection(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
   change: ProviderOptionSelection,

@@ -12,11 +12,6 @@ import {
 } from "../shared.ts";
 import { OPENCODE_RUNNING_CHILD_APPROVAL_PENDING_SHELL_KEY } from "./input.ts";
 
-/**
- * A task child that is already running a turn asks for a bash permission on
- * its own session. The request is asked on the parent thread and run, under
- * the subagent, because native subagent threads are hidden from the sidebar.
- */
 export function assertOpenCodeRunningChildApprovalOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -63,7 +58,6 @@ export function assertOpenCodeRunningChildApprovalOutput(
   assert.equal(approval.requestId, request.id);
   assert.include(approval.prompt ?? "", "running-child.txt");
 
-  // While OpenCode waited, the parent reported the approval and the child did not.
   const pendingShell = result.capturedShellSnapshots.get(
     OPENCODE_RUNNING_CHILD_APPROVAL_PENDING_SHELL_KEY,
   );
@@ -75,7 +69,6 @@ export function assertOpenCodeRunningChildApprovalOutput(
   assert.isDefined(childShell, "the child thread exists while its approval is pending");
   assert.isNull(childShell.pendingRuntimeRequest);
 
-  // The child keeps its own work and answer, and never holds a request.
   assert.lengthOf(child.runtimeRequests, 0);
   assert.isFalse(child.turnItems.some((item) => item.type === "approval_request"));
   const command = child.turnItems.find((item) => item.type === "command_execution");

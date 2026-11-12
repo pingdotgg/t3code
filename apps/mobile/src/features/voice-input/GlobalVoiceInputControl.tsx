@@ -1,12 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import {
-  ActivityIndicator,
-  Linking,
-  Platform,
-  Pressable,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { useState, type ReactNode } from "react";
+import { Linking, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import Animated, {
   Easing,
   Extrapolation,
@@ -14,15 +8,15 @@ import Animated, {
   interpolate,
   ReduceMotion,
   useAnimatedStyle,
-  useSharedValue,
+  useDerivedValue,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FullWindowOverlay } from "react-native-screens";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { cn } from "../../lib/cn";
 import { CompactVoiceWaveform, DictationElapsedTime } from "./ComposerDictationControl";
 import { useGlobalVoiceInput } from "./VoiceInputProvider";
@@ -31,7 +25,6 @@ import { resolveVoiceComposerPresentation } from "./voiceInputPresentation";
 const PILL_HEIGHT = 36;
 const COLLAPSED_WIDTH = 64;
 const EXPANDED_MAX_WIDTH = 280;
-// Clears Home's floating bottom toolbar (56) and a collapsed thread composer (60).
 const IOS_BOTTOM_CHROME_CLEARANCE = 64;
 const MORPH_TIMING = {
   duration: 260,
@@ -40,26 +33,24 @@ const MORPH_TIMING = {
 } as const;
 const ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 
-/**
- * Keeps an off-screen dictation reachable as a pill on the screen's trailing
- * edge. Wraps the app content so any touch that starts outside the pill,
- * including a scroll, collapses it without claiming the touch.
- */
 export function GlobalVoiceInputControl(props: { readonly children: ReactNode }) {
   const voice = useGlobalVoiceInput();
-  const collapseRef = useRef<(() => void) | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const presentation = resolveVoiceComposerPresentation(voice.state, voice.elapsedSeconds);
   const visible =
     presentation.statusLabel !== null &&
     !(voice.ownerKey && voice.focusedOwners.has(voice.ownerKey));
-  // Mounted only while visible, so each dictation starts collapsed.
-  const pill = visible ? <EdgeDictationPill collapseRef={collapseRef} /> : null;
+  // A pill that reappears starts collapsed.
+  if (!visible && expanded) setExpanded(false);
+  const pill = visible ? (
+    <EdgeDictationPill expanded={expanded} onExpandedChange={setExpanded} />
+  ) : null;
   return (
     <>
       <View
         className="flex-1"
         onStartShouldSetResponderCapture={() => {
-          collapseRef.current?.();
+          if (expanded) setExpanded(false);
           return false;
         }}
       >
@@ -70,28 +61,18 @@ export function GlobalVoiceInputControl(props: { readonly children: ReactNode })
   );
 }
 
-function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void) | null> }) {
+function EdgeDictationPill(props: {
+  readonly expanded: boolean;
+  readonly onExpandedChange: (expanded: boolean) => void;
+}) {
   const voice = useGlobalVoiceInput();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { fabSize } = useAndroidControlSizing();
-  const [expanded, setExpanded] = useState(false);
-  const progress = useSharedValue(0);
-  useEffect(() => {
-    progress.value = withTiming(expanded ? 1 : 0, MORPH_TIMING);
-  }, [expanded, progress]);
-  const { collapseRef } = props;
-  useEffect(() => {
-    if (!expanded) return;
-    collapseRef.current = () => setExpanded(false);
-    return () => {
-      collapseRef.current = null;
-    };
-  }, [collapseRef, expanded]);
+  const { expanded, onExpandedChange: setExpanded } = props;
+  const progress = useDerivedValue(() => withTiming(expanded ? 1 : 0, MORPH_TIMING));
 
   const expandedWidth = Math.min(width - insets.left - insets.right - 32, EXPANDED_MAX_WIDTH);
-  // Each face keeps its final width and stays pinned to the edge, so the
-  // morphing pill reveals the expanded row instead of reflowing it.
   const pillStyle = useAnimatedStyle(() => ({
     width: interpolate(progress.value, [0, 1], [COLLAPSED_WIDTH, expandedWidth]),
   }));
@@ -102,8 +83,6 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
     opacity: interpolate(progress.value, [0.3, 1], [0, 1], Extrapolation.CLAMP),
   }));
 
-  // Sit just above the bottom chrome: the toolbar or composer on iOS, the
-  // new-thread FAB on Android.
   const bottom =
     Platform.OS === "android"
       ? Math.max(insets.bottom, 16) + 16 + fabSize + 12
@@ -154,7 +133,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
                   />
                 </>
               ) : (
-                <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+                <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
               )}
             </Pressable>
           </Animated.View>
@@ -243,7 +222,7 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
                 accessibilityLabel={presentation.statusLabel ?? undefined}
                 className="size-[30px] items-center justify-center"
               >
-                <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+                <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
               </View>
             )}
           </Animated.View>

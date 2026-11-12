@@ -12,7 +12,6 @@ export function ThreadHoverCardPopup({ className, ...props }: ComponentProps<typ
   );
 }
 
-/** Shared title, metadata spacing, and optional footer for thread previews. */
 export function ThreadHoverCard({
   title,
   children,

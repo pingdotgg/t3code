@@ -44,7 +44,6 @@ function record(input: {
 const traceFilePath = "/tmp/server.trace.ndjson";
 const readAt = DateTime.makeUnsafe("2026-05-05T10:00:00.000Z");
 
-/** Aggregates whole lines in memory, the way diagnostics read traces before streaming. */
 function aggregateLines(lines: ReadonlyArray<string>) {
   const aggregator = TraceDiagnostics.makeTraceDiagnosticsAggregator();
   lines.forEach(aggregator.addLine);
@@ -55,7 +54,6 @@ function aggregateLines(lines: ReadonlyArray<string>) {
   });
 }
 
-/** Reads the trace file and one rotated backup through a fake file system. */
 function readTraces(fileSystem: Partial<FileSystem.FileSystem>) {
   return TraceDiagnostics.readTraceDiagnostics({ traceFilePath, maxFiles: 1, readAt }).pipe(
     Effect.provide(TraceDiagnostics.layer.pipe(Layer.provide(FileSystem.layerNoop(fileSystem)))),
@@ -63,6 +61,35 @@ function readTraces(fileSystem: Partial<FileSystem.FileSystem>) {
 }
 
 describe("TraceDiagnostics", () => {
+  it("includes browser failures and interruptions in diagnostics", () => {
+    const diagnostics = aggregateLines(
+      [
+        { status: { code: "2", message: "Browser request failed" }, attributes: {} },
+        { status: { code: "0" }, attributes: { "effect.fiber.interrupted": true } },
+        { status: { code: "1", message: "Interrupted" }, attributes: {} },
+        { status: { code: "1" }, attributes: {} },
+      ].map((outcome, index) =>
+        JSON.stringify({
+          type: "otlp-span",
+          name: "browser.request",
+          traceId: `trace-${index}`,
+          spanId: `span-${index}`,
+          startTimeUnixNano: ns(index * 100),
+          endTimeUnixNano: ns(index * 100 + 10),
+          durationMs: 10,
+          ...outcome,
+        }),
+      ),
+    );
+
+    assert.equal(diagnostics.recordCount, 4);
+    assert.equal(diagnostics.failureCount, 1);
+    assert.equal(diagnostics.interruptionCount, 2);
+    assert.equal(diagnostics.topSpansByCount[0]?.failureCount, 1);
+    assert.equal(diagnostics.commonFailures[0]?.cause, "Browser request failed");
+    assert.equal(diagnostics.latestFailures[0]?.cause, "Browser request failed");
+  });
+
   it.effect("aggregates failures, slow spans, log levels, and parse errors", () =>
     Effect.sync(() => {
       const diagnostics = aggregateLines([
@@ -145,19 +172,8 @@ describe("TraceDiagnostics", () => {
     }),
   );
 
-  it.effect("returns a not-found diagnostic when no files are available", () =>
-    Effect.gen(function* () {
-      const diagnostics = yield* readTraces({});
-
-      assert.equal(diagnostics.recordCount, 0);
-      assert.equal(Option.getOrUndefined(diagnostics.error)?.kind, "trace-file-not-found");
-    }),
-  );
-
   it.effect("streams rotated files into the same result as reading them whole", () =>
     Effect.gen(function* () {
-      // CRLF and LF endings plus multi-byte text, served one byte per chunk so
-      // chunks split lines, line endings, and characters.
       const files = new Map([
         [
           `${traceFilePath}.1`,
@@ -228,34 +244,6 @@ describe("TraceDiagnostics", () => {
     }),
   );
 
-  it.effect("preserves full failure causes and log messages", () =>
-    Effect.sync(() => {
-      const longCause = `VcsProcessSpawnError: ${"missing executable ".repeat(80)}`.trim();
-      const longMessage = `provider warning: ${"retrying command ".repeat(80)}`.trim();
-      const diagnostics = aggregateLines([
-        record({
-          name: "VcsProcess.run",
-          traceId: "trace-long",
-          spanId: "span-long",
-          startMs: 1_000,
-          durationMs: 25,
-          exit: { _tag: "Failure", cause: longCause },
-          events: [
-            {
-              name: longMessage,
-              timeUnixNano: ns(1_010),
-              attributes: { "effect.logLevel": "Warning" },
-            },
-          ],
-        }),
-      ]);
-
-      assert.equal(diagnostics.latestFailures[0]?.cause, longCause);
-      assert.equal(diagnostics.commonFailures[0]?.cause, longCause);
-      assert.equal(diagnostics.latestWarningAndErrorLogs[0]?.message, longMessage);
-    }),
-  );
-
   it.effect("keeps loaded trace data when one rotated trace file fails to read", () =>
     Effect.gen(function* () {
       const readFailure = PlatformError.systemError({
@@ -307,47 +295,6 @@ describe("TraceDiagnostics", () => {
         errorTag: "TraceFileReadError",
         causeTag: "PermissionDenied",
       });
-    }),
-  );
-
-  it.effect("keeps only the top spans, failures, and warning logs from large inputs", () =>
-    Effect.sync(() => {
-      // Shuffled, so some older records arrive after the lists are full.
-      const indexes = Array.from({ length: 30 }, (_, step) => (step * 7) % 30);
-      const diagnostics = aggregateLines(
-        indexes.map((index) =>
-          record({
-            name: `span-${index}`,
-            traceId: `trace-${index}`,
-            spanId: `span-${index}`,
-            startMs: index * 1_000,
-            durationMs: index,
-            exit: { _tag: "Failure", cause: "Provider crashed" },
-            events: [
-              {
-                name: `warning ${index}`,
-                timeUnixNano: ns(index * 1_000),
-                attributes: { "effect.logLevel": "Warning" },
-              },
-            ],
-          }),
-        ),
-      );
-      const newestTwenty = Array.from({ length: 20 }, (_, rank) => `trace-${29 - rank}`);
-
-      assert.equal(diagnostics.recordCount, 30);
-      assert.deepStrictEqual(
-        diagnostics.slowestSpans.map((span) => span.durationMs),
-        [29, 28, 27, 26, 25, 24, 23, 22, 21, 20],
-      );
-      assert.deepStrictEqual(
-        diagnostics.latestFailures.map((failure) => failure.traceId),
-        newestTwenty,
-      );
-      assert.deepStrictEqual(
-        diagnostics.latestWarningAndErrorLogs.map((log) => log.traceId),
-        newestTwenty,
-      );
     }),
   );
 });

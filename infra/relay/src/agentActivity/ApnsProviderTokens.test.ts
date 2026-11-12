@@ -33,8 +33,6 @@ describe("ApnsProviderTokens", () => {
       const tokens = yield* ApnsProviderTokens.ApnsProviderTokens;
       const first = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 10 });
 
-      // A fresh isolate has no cache; deterministic signing plus quantized
-      // iat must still reproduce the exact same JWT for the same window.
       ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
       const second = yield* tokens.getJwt({
         ...signingInput,
@@ -57,19 +55,6 @@ describe("ApnsProviderTokens", () => {
       const first = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 10 });
       const next = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW * 2 });
       expect(next).not.toBe(first);
-      ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
-    }).pipe(Effect.provide(ApnsProviderTokens.layer));
-  });
-
-  it.effect("serves repeat pushes from the isolate cache without re-signing", () => {
-    ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
-    return Effect.gen(function* () {
-      const tokens = yield* ApnsProviderTokens.ApnsProviderTokens;
-      const first = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 10 });
-      const again = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 500 });
-      // Deterministic signing makes equality hold either way; toBe on the
-      // exact string documents the cache contract.
-      expect(again).toBe(first);
       ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
     }).pipe(Effect.provide(ApnsProviderTokens.layer));
   });

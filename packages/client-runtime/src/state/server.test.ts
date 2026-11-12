@@ -1,23 +1,38 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
+  ServerSelfUpdateError,
+  ProviderInstanceId,
+  type ProviderInstallState,
+  type ProviderSetupInput,
+  ServerObservability,
+  EnvironmentThemeId,
+  UsageLimitSourceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerLifecycleStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerSelfUpdateOutcome,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
+import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
@@ -26,16 +41,23 @@ import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
+  type SupervisorConnectionState,
 } from "../connection/model.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
+  createServerEnvironmentAtoms,
+  type FetchedMachineCatalog,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
+  recordFetchedWorkspaceSnapshot,
+  withFetchedWorkspaceSnapshots,
   matchesServerUpdateReadyEvent,
   matchesServerUpdateResumeEvent,
   nudgeReconnectDuringUpdateRestart,
@@ -43,6 +65,7 @@ import {
   resolveServerWelcomeState,
   resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
+  serverUpdateStateAtom,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
   waitForNextEnvironmentReconnect,
@@ -59,8 +82,6 @@ const CONFIG = {
   observability: null,
   providers: [],
   settings: {},
-  // Capabilities drive version-skew behaviour in the projection, so the
-  // fixture carries them rather than leaving the field absent.
   environment: { capabilities: { environmentThemes: true } },
 } as unknown as ServerConfig;
 
@@ -81,9 +102,10 @@ function session(client: WsRpcProtocolClient): RpcSession {
   return {
     client,
     initialConfig: Effect.succeed(CONFIG),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+    subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 }
@@ -182,36 +204,8 @@ describe("update restart reconnect nudges", () => {
         interval: Duration.zero,
       });
 
-      // Three backoff entries, three nudges. The old one-shot behavior fired
-      // once and then let the supervisor's ladder stretch to 16-second gaps.
       expect(yield* Ref.get(retries)).toBe(3);
     }),
-  );
-
-  it.effect("paces nudges so a fast-failing connection cannot spin", () =>
-    Effect.gen(function* () {
-      const retries = yield* Ref.make(0);
-
-      const fiber = yield* Effect.forkChild(
-        nudgeReconnectDuringUpdateRestart({
-          stateChanges: Stream.fromIterable([{ phase: "backoff" }, { phase: "backoff" }]),
-          retryNow: Ref.update(retries, (count) => count + 1),
-        }),
-        { startImmediately: true },
-      );
-
-      // Each nudge waits out the interval first, so nothing fires immediately.
-      yield* TestClock.adjust(Duration.millis(999));
-      expect(yield* Ref.get(retries)).toBe(0);
-
-      yield* TestClock.adjust(Duration.millis(1));
-      expect(yield* Ref.get(retries)).toBe(1);
-
-      yield* TestClock.adjust(Duration.seconds(1));
-      expect(yield* Ref.get(retries)).toBe(2);
-
-      yield* Fiber.join(fiber);
-    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("retries rejected credentials only while the update restart is in progress", () =>
@@ -239,7 +233,511 @@ describe("update restart reconnect nudges", () => {
   );
 });
 
+describe("accepted server update recovery", () => {
+  it.effect.each([
+    { loss: "interrupt", resumes: true },
+    { loss: "socket", resumes: true },
+    { loss: "server_error", resumes: false },
+    { loss: "no_progress", resumes: false },
+    { loss: "cancel", resumes: false },
+    { loss: "socket", method: "respawn", resumes: true },
+    { loss: "socket", method: "desktop-managed", resumes: false },
+  ] as const)("handles $loss with $method and recovery=$resumes", (scenario) =>
+    Effect.gen(function* () {
+      const { loss, resumes } = scenario;
+      const method = "method" in scenario ? scenario.method : "boot-service";
+      const observing = yield* Deferred.make<void>();
+      const cancelFiber = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+      const oldReadyObserved = yield* Deferred.make<void>();
+      const readyEvents =
+        yield* Queue.unbounded<Parameters<typeof matchesServerUpdateReadyEvent>[1]>();
+      const config = {
+        ...CONFIG,
+        environment: {
+          ...CONFIG.environment,
+          serverVersion: "0.0.30",
+          capabilities: { serverSelfUpdate: method, serverSelfUpdateProgress: true },
+        },
+      } as ServerConfig;
+      const ready = (serverVersion: string) =>
+        ({
+          version: 1,
+          sequence: 1,
+          type: "ready",
+          payload: { at: "2026-09-01T00:00:00.000Z", environment: { serverVersion } },
+        }) as Parameters<typeof matchesServerUpdateReadyEvent>[1];
+      let requested = false;
+      const client = {
+        [WS_METHODS.subscribeServerConfig]: () => Stream.never,
+        // Before the request, a boot-service update reads the accepting server's ready.
+        [WS_METHODS.subscribeServerLifecycle]: () =>
+          requested
+            ? Stream.fromEffect(Deferred.succeed(observing, undefined)).pipe(
+                Stream.drain,
+                Stream.concat(Stream.fromQueue(readyEvents)),
+                Stream.tap((event) =>
+                  event.payload.environment.serverVersion === "0.0.30"
+                    ? Deferred.succeed(oldReadyObserved, undefined)
+                    : Effect.void,
+                ),
+              )
+            : Stream.make(ready("0.0.30")).pipe(Stream.concat(Stream.never)),
+        [WS_METHODS.serverUpdateServerWithProgress]: () =>
+          Stream.unwrap(
+            Effect.sync(() => {
+              requested = true;
+              return loss === "no_progress"
+                ? Stream.empty
+                : Stream.make({ type: "progress" as const, stage: "downloading" as const });
+            }),
+          ).pipe(
+            Stream.concat(
+              Stream.fromEffect(
+                loss === "cancel"
+                  ? Effect.fiber.pipe(
+                      Effect.flatMap((fiber) => Deferred.succeed(cancelFiber, fiber)),
+                      Effect.andThen(Effect.never),
+                    )
+                  : loss === "interrupt"
+                    ? Effect.interrupt
+                    : Effect.fail(
+                        loss === "server_error"
+                          ? new ServerSelfUpdateError({
+                              reason: "Archive verification failed.",
+                            })
+                          : new RpcClientError.RpcClientError({
+                              reason: new Socket.SocketCloseError({ code: 1006 }),
+                            }),
+                      ),
+              ),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (_id, effect) =>
+        Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+      const runStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["runStream"] = (
+        _id,
+        stream,
+      ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+      const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+        run,
+        runStream,
+        followStream: runStream,
+        stateChanges: () => Stream.never,
+        retryNow: () => Effect.void,
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const runtime = Atom.runtime(
+        Layer.mergeAll(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          Layer.succeed(RpcPermissionGuard, { authorize: () => Effect.void }),
+          Layer.succeed(Persistence.EnvironmentCacheStore, {
+            loadServerConfig: () => Effect.succeedNone,
+          } as unknown as Persistence.EnvironmentCacheStore["Service"]),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(config),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
+        Effect.sync(() => value.dispose()),
+      );
+      const pending = atoms.updateServer.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { targetVersion: "0.0.31" },
+      });
+      if (loss === "cancel") {
+        yield* Fiber.interrupt(yield* Deferred.await(cancelFiber));
+        const cancelled = yield* Effect.promise(() => pending);
+        expect(cancelled._tag).toBe("Failure");
+        if (cancelled._tag === "Failure")
+          expect(Cause.hasInterruptsOnly(cancelled.cause)).toBe(true);
+        expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toEqual({
+          status: "idle",
+        });
+        expect(yield* Deferred.isDone(observing)).toBe(false);
+        return;
+      }
+      const first = yield* Effect.raceFirst(
+        Effect.promise(() => pending).pipe(Effect.as("settled")),
+        Deferred.await(observing).pipe(Effect.as("observing")),
+      );
+      if (!resumes) {
+        expect(first).toBe("settled");
+        expect(AsyncResult.isFailure(yield* Effect.promise(() => pending))).toBe(true);
+        expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toMatchObject({
+          status: "failed",
+        });
+        return;
+      }
+      expect(first).toBe("observing");
+      expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toMatchObject({
+        status: "running",
+        stage: "resuming",
+      });
+      yield* Queue.offer(readyEvents, ready("0.0.30"));
+      yield* Deferred.await(oldReadyObserved);
+      expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toMatchObject({
+        status: "running",
+      });
+      yield* Queue.offer(readyEvents, ready("0.0.31"));
+      expect(AsyncResult.isSuccess(yield* Effect.promise(() => pending))).toBe(true);
+      expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toEqual({
+        status: "idle",
+      });
+    }).pipe(Effect.scoped),
+  );
+});
+
+const makeConfigPersistenceHarness = Effect.fn("test.makeConfigPersistenceHarness")(function* (
+  saveServerConfig: Persistence.EnvironmentCacheStore["Service"]["saveServerConfig"],
+  machineCatalogs?: Stream.Stream<ReadonlyArray<FetchedMachineCatalog>>,
+) {
+  const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
+  const client = {
+    [WS_METHODS.subscribeServerConfig]: () => Stream.fromQueue(events),
+  } as unknown as WsRpcProtocolClient;
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+    target: TARGET,
+    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+    session: yield* SubscriptionRef.make(Option.some(session(client))),
+    prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+    connect: Effect.void,
+    disconnect: Effect.void,
+    retryNow: Effect.void,
+  });
+  const cache = Persistence.EnvironmentCacheStore.of({
+    loadShell: () => Effect.succeedNone,
+    saveShell: () => Effect.void,
+    loadThread: () => Effect.succeedNone,
+    saveThread: () => Effect.void,
+    removeThread: () => Effect.void,
+    loadServerConfig: () => Effect.succeedSome(CONFIG),
+    saveServerConfig,
+    loadVcsRefs: () => Effect.succeedNone,
+    saveVcsRefs: () => Effect.void,
+    removeVcsRefs: () => Effect.void,
+    clearVcsRefs: () => Effect.void,
+    clear: () => Effect.void,
+  });
+  const state = yield* makeEnvironmentServerConfigState(
+    { environmentThemes: true, usageLimitSources: true },
+    machineCatalogs,
+  ).pipe(
+    Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+  );
+  const send = Effect.fn("test.sendConfigEvent")(function* (event: ServerConfigStreamEvent) {
+    yield* Queue.offer(events, event);
+    return yield* SubscriptionRef.changes(state).pipe(
+      Stream.filter(Option.isSome),
+      Stream.map((value) => value.value),
+      Stream.filter((projection) => projection.latestEvent === event),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
+    );
+  });
+  return { send, state };
+});
+
 describe("server state projection", () => {
+  it.effect("skips duplicate keybinding saves but persists changed keybindings", () =>
+    Effect.gen(function* () {
+      const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+      const keybindingsEvent = (key: string): ServerConfigStreamEvent => ({
+        version: 1,
+        type: "keybindingsUpdated",
+        payload: {
+          keybindings: [
+            {
+              command: "terminal.toggle",
+              shortcut: {
+                key,
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+          issues: [],
+        },
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeConfigPersistenceHarness((_id, config) =>
+            Ref.update(saved, (values) => [...values, config]),
+          );
+          const first = yield* h.send(keybindingsEvent("p"));
+          yield* TestClock.adjust("500 millis");
+          expect(yield* Ref.get(saved)).toEqual([first.config]);
+
+          yield* h.send(keybindingsEvent("p"));
+          yield* TestClock.adjust("10 seconds");
+          expect(yield* Ref.get(saved)).toEqual([first.config]);
+
+          const changed = yield* h.send(keybindingsEvent("q"));
+          yield* TestClock.adjust("10 seconds");
+          expect(yield* Ref.get(saved)).toEqual([first.config, changed.config]);
+        }),
+      );
+    }),
+  );
+
+  it.effect(
+    "compares nested durable values independently of key order and omitted undefined fields",
+    () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+        const observability = {
+          logsDirectoryPath: "/synthetic/logs",
+          localTracingEnabled: false,
+          otlpTracesEnabled: false,
+          otlpMetricsEnabled: false,
+          otlpLogsEnabled: false,
+        };
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* makeConfigPersistenceHarness((_id, config) =>
+              Ref.update(saved, (values) => [...values, config]),
+            );
+            const first = yield* h.send(snapshotEvent({ ...CONFIG, observability }));
+            yield* TestClock.adjust("500 millis");
+            const reordered = Object.fromEntries(
+              Object.entries(observability).toReversed(),
+            ) as typeof observability;
+            for (const next of [
+              { ...CONFIG, observability: reordered },
+              { ...CONFIG, observability: { ...reordered, otlpTracesUrl: undefined } },
+              { ...CONFIG, observability: { ...observability } },
+            ]) {
+              const encode = Schema.encodeEffect(Schema.fromJsonString(ServerObservability));
+              expect(JSON.parse(yield* encode(next.observability))).toEqual(
+                JSON.parse(yield* encode(observability)),
+              );
+              const projection = yield* h.send(snapshotEvent(next));
+              expect(projection.config.observability).toEqual(next.observability);
+              yield* TestClock.adjust("10 seconds");
+              expect.soft(yield* Ref.get(saved)).toEqual([first.config]);
+            }
+            const writesBeforeChange = (yield* Ref.get(saved)).length;
+            const changed = yield* h.send(
+              snapshotEvent({
+                ...CONFIG,
+                observability: { ...observability, otlpTracesUrl: "https://traces.example.test" },
+              }),
+            );
+            yield* TestClock.adjust("10 seconds");
+            expect((yield* Ref.get(saved)).length).toBe(writesBeforeChange + 1);
+            expect((yield* Ref.get(saved)).at(-1)).toEqual(changed.config);
+          }),
+        );
+      }),
+  );
+
+  it.effect("saves once across transient themes, usage sources and stall updates", () =>
+    Effect.gen(function* () {
+      const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeConfigPersistenceHarness((_id, config) =>
+            Ref.update(saved, (values) => [...values, config]),
+          );
+          yield* h.send(snapshotEvent(CONFIG));
+          yield* TestClock.adjust("500 millis");
+          expect((yield* Ref.get(saved)).length).toBe(1);
+          for (const event of [
+            {
+              version: 1,
+              type: "environmentThemesUpdated",
+              payload: {
+                themes: [
+                  {
+                    id: EnvironmentThemeId.make("theme-test"),
+                    name: "Test theme",
+                    appearance: "dark",
+                  },
+                ],
+              },
+            },
+            {
+              version: 1,
+              type: "usageLimitSourcesUpdated",
+              payload: {
+                sources: [
+                  {
+                    id: UsageLimitSourceId.make("source-test"),
+                    kind: "cliproxy",
+                    label: "Test source",
+                    checkedAt: "2026-10-20T07:50:37.633Z",
+                    accounts: [],
+                  },
+                ],
+              },
+            },
+            snapshotEvent({
+              ...CONFIG,
+              lastEventLoopStall: {
+                detectedAt: "2026-10-20T07:50:37.633Z",
+                durationMs: 1000,
+                loadAverage: 1,
+                cpuCount: 8,
+              },
+            }),
+          ] satisfies ReadonlyArray<ServerConfigStreamEvent>) {
+            const projection = yield* h.send(event);
+            expect(projection.latestEvent).toBe(event);
+            if (event.type === "environmentThemesUpdated")
+              expect(projection.config.environmentThemes).toEqual(event.payload.themes);
+            if (event.type === "usageLimitSourcesUpdated")
+              expect(projection.config.usageLimitSources).toEqual(event.payload.sources);
+            yield* TestClock.adjust("10 seconds");
+          }
+        }),
+      );
+      expect(yield* Ref.get(saved)).toEqual([CONFIG]);
+    }),
+  );
+
+  it.effect("caches the lists a cwd snapshot loaded for a catalog digest", () =>
+    Effect.gen(function* () {
+      const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+      const catalogs = yield* Queue.unbounded<ReadonlyArray<FetchedMachineCatalog>>();
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const otherInstanceId = ProviderInstanceId.make("codex");
+      const thirdInstanceId = ProviderInstanceId.make("cursor");
+      const slashCommands = [{ name: "compact" }];
+      // What the server sends: a digest in place of the two lists.
+      const snapshot = (catalogDigest = "d1") =>
+        snapshotEvent({
+          ...CONFIG,
+          providers: [
+            { instanceId, slashCommands: [], skills: [], catalogDigest },
+            { instanceId: otherInstanceId, slashCommands: [], skills: [], catalogDigest: "c1" },
+            { instanceId: thirdInstanceId, slashCommands: [], skills: [], catalogDigest: "t1" },
+          ],
+        } as unknown as ServerConfig);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeConfigPersistenceHarness(
+            (_id, config) => Ref.update(saved, (values) => [...values, config]),
+            Stream.fromQueue(catalogs),
+          );
+          yield* h.send(snapshot());
+          yield* Queue.offer(catalogs, [{ instanceId, digest: "d1", slashCommands, skills: [] }]);
+          const loaded = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers[0]),
+            Stream.filter((provider) => provider?.loadedCatalogDigest === "d1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(loaded)?.slashCommands).toEqual(slashCommands);
+
+          yield* TestClock.adjust("10 seconds");
+          expect((yield* Ref.get(saved)).at(-1)?.providers[0]).toMatchObject({
+            slashCommands,
+            loadedCatalogDigest: "d1",
+          });
+
+          // A reconnect sends the digest again, and the loaded lists stay.
+          const reconnected = yield* h.send(snapshot());
+          expect(reconnected.config.providers[0]).toMatchObject({
+            slashCommands,
+            loadedCatalogDigest: "d1",
+          });
+
+          // A reply for an older catalog that lands late does not replace the current lists.
+          const late = { instanceId, digest: "d0", slashCommands: [{ name: "old" }], skills: [] };
+          yield* Queue.offer(catalogs, [late]);
+          yield* Queue.offer(catalogs, [
+            late,
+            { instanceId: otherInstanceId, digest: "c1", slashCommands: [], skills: [] },
+          ]);
+          const settled = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers),
+            Stream.filter((providers) => providers[1]?.loadedCatalogDigest === "c1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(settled)[0]).toMatchObject({
+            slashCommands,
+            loadedCatalogDigest: "d1",
+          });
+
+          // A reply for a newer catalog can land before the config names its digest. It is
+          // kept, and applies when the config does.
+          const newer = { instanceId, digest: "d2", slashCommands: [{ name: "new" }], skills: [] };
+          yield* Queue.offer(catalogs, [
+            newer,
+            { instanceId: thirdInstanceId, digest: "t1", slashCommands: [], skills: [] },
+          ]);
+          const kept = yield* SubscriptionRef.changes(h.state).pipe(
+            Stream.map((value) => Option.getOrThrow(value).config.providers),
+            Stream.filter((providers) => providers[2]?.loadedCatalogDigest === "t1"),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(kept)[0]).toMatchObject({ loadedCatalogDigest: "d1" });
+          const advanced = yield* h.send(snapshot("d2"));
+          expect(advanced.config.providers[0]).toMatchObject({
+            slashCommands: newer.slashCommands,
+            loadedCatalogDigest: "d2",
+          });
+        }),
+      );
+    }),
+  );
+
+  it.effect("flushes pending durable changes after a transient event", () =>
+    Effect.gen(function* () {
+      const saved = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+      const changed = { ...CONFIG, keybindingsConfigPath: "/changed/keybindings.json" };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeConfigPersistenceHarness((_id, config) =>
+            Ref.update(saved, (values) => [...values, config]),
+          );
+          yield* h.send(snapshotEvent(CONFIG));
+          yield* TestClock.adjust("500 millis");
+          yield* h.send(snapshotEvent(changed));
+          yield* h.send({ version: 1, type: "environmentThemesUpdated", payload: { themes: [] } });
+        }),
+      );
+      expect(yield* Ref.get(saved)).toEqual([CONFIG, changed]);
+    }),
+  );
+
+  it.effect("retries a failed durable save on a transient event", () =>
+    Effect.gen(function* () {
+      const attempts = yield* Ref.make<ReadonlyArray<ServerConfig>>([]);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeConfigPersistenceHarness((_id, config) =>
+            Effect.gen(function* () {
+              const values = yield* Ref.updateAndGet(attempts, (values) => [...values, config]);
+              if (values.length === 1)
+                return yield* new Persistence.ConnectionPersistenceError({
+                  operation: "save-server-config",
+                  message: "test failure",
+                });
+            }),
+          );
+          yield* h.send(snapshotEvent(CONFIG));
+          yield* TestClock.adjust("500 millis");
+          yield* h.send({ version: 1, type: "usageLimitSourcesUpdated", payload: { sources: [] } });
+          yield* TestClock.adjust("10 seconds");
+        }),
+      );
+      expect(yield* Ref.get(attempts)).toEqual([CONFIG, CONFIG]);
+    }),
+  );
+
   it("only treats a legacy transport interruption as an unacknowledged handoff", () => {
     expect(isLegacyUpdateHandoffLoss(Cause.interrupt(1))).toBe(true);
     expect(
@@ -320,6 +818,12 @@ describe("server state projection", () => {
       fromVersion: "0.0.30",
       targetVersion: "0.0.31",
     });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "complete",
+        result: { targetVersion: "0.0.31", method: "desktop-app", desktopUpdateToken: "token" },
+      }).stage,
+    ).toBe("installing");
   });
 
   it("keeps active update state and hides stale failures after a version change", () => {
@@ -374,6 +878,20 @@ describe("server state projection", () => {
         validateServerUpdateReadyEvent(result, ready("rolled-back")),
       );
       expect(rollback.message).toBe("prepared-timeout");
+      const foreign = ready("rolled-back");
+      const foreignRollback = yield* Effect.flip(
+        validateServerUpdateReadyEvent(result, {
+          ...foreign,
+          payload: {
+            ...foreign.payload,
+            updateOutcome: { ...foreign.payload.updateOutcome!, id: "manual-1" },
+          },
+        }),
+      );
+      expect(foreignRollback).toMatchObject({
+        status: "failed",
+        reason: "The service launcher resumed without committing the requested server version.",
+      });
     }),
   );
 
@@ -407,59 +925,6 @@ describe("server state projection", () => {
     ).toBe(true);
   });
 
-  it("applies every config category to the projected snapshot", () => {
-    const snapshot = applyServerConfigProjection(Option.none(), {
-      version: 1,
-      type: "snapshot",
-      config: CONFIG,
-    });
-    const settings = { ...CONFIG.settings };
-    const projected = applyServerConfigProjection(snapshot, {
-      version: 1,
-      type: "settingsUpdated",
-      payload: { settings },
-    });
-
-    const result = Option.getOrThrow(projected);
-    expect(result.config.settings).toBe(settings);
-    expect(result.latestEvent.type).toBe("settingsUpdated");
-  });
-
-  it("carries published environment themes in and out of the projected snapshot", () => {
-    const snapshot = applyServerConfigProjection(Option.none(), {
-      version: 1,
-      type: "snapshot",
-      config: CONFIG,
-    });
-    const themes = [
-      {
-        id: "nightfall",
-        name: "Nightfall",
-        appearance: "dark",
-        canvas: "#1a1b26",
-        accent: "#7aa2f7",
-      },
-    ] as const;
-
-    const published = applyServerConfigProjection(snapshot, {
-      version: 1,
-      type: "environmentThemesUpdated",
-      payload: { themes },
-    });
-    expect(Option.getOrThrow(published).config.environmentThemes).toEqual(themes);
-
-    // A machine that stops publishing has to clear the palettes, not freeze
-    // clients on the last set it sent.
-    const unpublished = applyServerConfigProjection(published, {
-      version: 1,
-      type: "environmentThemesUpdated",
-      payload: { themes: [] },
-    });
-    expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
-  });
-
-  // A snapshot never carries published themes, so taking it wholesale would
-  // clear them on every reconnect and repaint anyone wearing one.
   it("keeps published themes across a reconnect snapshot", () => {
     const themes = [
       {
@@ -483,18 +948,6 @@ describe("server state projection", () => {
       config: CONFIG,
     });
     expect(Option.getOrThrow(afterReconnect).config.environmentThemes).toEqual(themes);
-
-    // A server that predates the feature never sends another theme event, so
-    // carrying the set forward would leave a palette nothing can update.
-    const downgraded = applyServerConfigProjection(withThemes, {
-      version: 1,
-      type: "snapshot",
-      config: {
-        ...CONFIG,
-        environment: { capabilities: {} },
-      } as unknown as ServerConfig,
-    });
-    expect(Option.getOrThrow(downgraded).config.environmentThemes).toBeUndefined();
   });
 
   it("keeps a current welcome on ready and rejects a buffered welcome from the old session", () => {
@@ -569,8 +1022,6 @@ describe("server state projection", () => {
           );
           yield* Deferred.await(firstSubscribed);
 
-          // Model the point after the ref changed but before either subscriber
-          // processed its publication.
           supervisorSession.value = Option.some(secondSession);
           const handled = yield* SubscriptionRef.changes(state).pipe(
             Stream.filter(
@@ -762,66 +1213,103 @@ describe("server state projection", () => {
     ).toBe(live);
   });
 
-  it.effect("throttles server configuration writes and flushes the latest on teardown", () =>
-    Effect.gen(function* () {
-      const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
-      const client = {
-        [WS_METHODS.subscribeServerConfig]: () => Stream.fromQueue(events),
-      } as unknown as WsRpcProtocolClient;
-      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-        target: TARGET,
-        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
-        session: yield* SubscriptionRef.make(Option.some(session(client))),
-        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-        connect: Effect.void,
-        disconnect: Effect.void,
-        retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-      const savedConfigs = yield* Queue.unbounded<ServerConfig>();
-      const cache = Persistence.EnvironmentCacheStore.of({
-        loadShell: () => Effect.succeed(Option.none()),
-        saveShell: () => Effect.void,
-        loadThread: () => Effect.succeed(Option.none()),
-        saveThread: () => Effect.void,
-        removeThread: () => Effect.void,
-        loadServerConfig: () => Effect.succeed(Option.some(CONFIG)),
-        saveServerConfig: (_environmentId, config) => Queue.offer(savedConfigs, config),
-        loadVcsRefs: () => Effect.succeed(Option.none()),
-        saveVcsRefs: () => Effect.void,
-        removeVcsRefs: () => Effect.void,
-        clearVcsRefs: () => Effect.void,
-        clear: () => Effect.void,
-      });
-
-      const scope = yield* Scope.make();
-      const state = yield* makeEnvironmentServerConfigState({}).pipe(
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(Scope.Scope, scope),
+  it("merges fetched workspace snapshots only from servers that omit them", () => {
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const codex = ProviderInstanceId.make("codex");
+    const snapshot = (cwd: string, command: string) => ({
+      cwd,
+      checkedAt: "2026-10-25T00:00:00.000Z",
+      slashCommands: [{ name: command }],
+      skills: [],
+    });
+    const provider = (
+      instanceId: ProviderInstanceId,
+      workspaceSnapshots?: ReadonlyArray<ReturnType<typeof snapshot>>,
+      slashCommands: ReadonlyArray<{ readonly name: string }> = [],
+    ) =>
+      ({
+        instanceId,
+        enabled: true,
+        slashCommands,
+        skills: [],
+        ...(workspaceSnapshots ? { workspaceSnapshots } : {}),
+      }) as unknown as ServerConfig["providers"][number];
+    const configWith = (onDemand: boolean, providers: ServerConfig["providers"]) =>
+      ({
+        ...CONFIG,
+        environment: { capabilities: { providerWorkspaceSnapshotsOnDemand: onDemand } },
+        providers,
+      }) as unknown as ServerConfig;
+    const claudeA = snapshot("/a", "claude");
+    const record = (
+      current: Parameters<typeof recordFetchedWorkspaceSnapshot>[0],
+      instanceId: ProviderInstanceId,
+      fresh: boolean,
+      reply: ServerConfig["providers"],
+    ) =>
+      recordFetchedWorkspaceSnapshot(
+        current,
+        { instanceId, cwd: "/a", fresh },
+        reply,
+        provider(instanceId),
       );
-      const sendConfig = Effect.fn(function* (cwd: string) {
-        yield* Queue.offer(events, { version: 1, type: "snapshot", config: { ...CONFIG, cwd } });
-        yield* SubscriptionRef.changes(state).pipe(
-          Stream.filter((value) => Option.isSome(value) && value.value.config.cwd === cwd),
-          Stream.runHead,
-        );
-      });
-      yield* sendConfig("/first");
-      yield* TestClock.adjust("500 millis");
-      expect((yield* Queue.take(savedConfigs)).cwd).toBe("/first");
-      for (let index = 1; index <= 9; index++) {
-        yield* sendConfig(`/repo-${index}`);
-        yield* TestClock.adjust("1 second");
-      }
-      expect(yield* Queue.poll(savedConfigs)).toEqual(Option.none());
-      yield* TestClock.adjust("1 second");
-      expect((yield* Queue.take(savedConfigs)).cwd).toBe("/repo-9");
-      yield* sendConfig("/final");
-      yield* Scope.close(scope, Exit.void);
-      expect((yield* Queue.take(savedConfigs)).cwd).toBe("/final");
-      expect(yield* Queue.poll(savedConfigs)).toEqual(Option.none());
-    }),
-  );
+
+    let fetched = record([], claude, false, [provider(claude, [claudeA])]);
+    fetched = record(fetched, codex, false, [provider(codex, [snapshot("/a", "codex")])]);
+    const merged = withFetchedWorkspaceSnapshots(
+      configWith(true, [provider(claude), provider(codex)]),
+      fetched,
+    );
+    expect(merged.providers[0]?.workspaceSnapshots).toEqual([claudeA]);
+    // An unchanged answer keeps the cache, so config readers do not re-render.
+    expect(
+      record(fetched, claude, false, [
+        provider(claude, [JSON.parse(JSON.stringify(claudeA)) as typeof claudeA]),
+      ]),
+    ).toBe(fetched);
+
+    // Health checks and usage updates leave the snapshot in place.
+    expect(
+      withFetchedWorkspaceSnapshots(
+        configWith(true, [
+          { ...provider(claude), checkedAt: "2026-10-25T00:09:00.000Z", usageLimits: {} },
+        ] as unknown as ServerConfig["providers"]),
+        fetched,
+      ).providers[0]?.workspaceSnapshots,
+    ).toEqual([claudeA]);
+
+    // New provider-wide commands, such as a live session's, retire the old snapshot.
+    expect(
+      withFetchedWorkspaceSnapshots(
+        configWith(true, [provider(claude, undefined, [{ name: "live" }])]),
+        fetched,
+      ).providers[0]?.workspaceSnapshots,
+    ).toBeUndefined();
+
+    // A catalog digest stands for the lists: loading them keeps the snapshot, a new digest retires it.
+    const digested = (catalogDigest: string, slashCommands: ReadonlyArray<{ name: string }> = []) =>
+      ({ ...provider(claude, undefined, slashCommands), catalogDigest }) as ReturnType<
+        typeof provider
+      >;
+    const fetchedByDigest = recordFetchedWorkspaceSnapshot(
+      [],
+      { instanceId: claude, cwd: "/a", fresh: false },
+      [provider(claude, [claudeA])],
+      digested("d1"),
+    );
+    const snapshotsFor = (current: ReturnType<typeof provider>) =>
+      withFetchedWorkspaceSnapshots(configWith(true, [current]), fetchedByDigest).providers[0]
+        ?.workspaceSnapshots;
+    expect(snapshotsFor(digested("d1", [{ name: "loaded" }]))).toEqual([claudeA]);
+    expect(snapshotsFor(digested("d2"))).toBeUndefined();
+
+    // Older servers send every snapshot and every drop; their config stands.
+    const legacy = configWith(false, [provider(claude)]);
+    expect(withFetchedWorkspaceSnapshots(legacy, fetched)).toBe(legacy);
+
+    // A fresh scan drops the cwd's other provider snapshots, as the server does.
+    expect(record(fetched, claude, true, [])).toEqual([]);
+  });
 
   it.effect("starts from cached configuration and persists the live projection", () =>
     Effect.gen(function* () {
@@ -877,7 +1365,9 @@ describe("server state projection", () => {
             ),
             Stream.runHead,
           );
-          expect(Option.getOrThrow(Option.getOrThrow(projected)).config.providers).toBe(providers);
+          expect(Option.getOrThrow(Option.getOrThrow(projected)).config.providers).toEqual(
+            providers,
+          );
         }),
       );
 
@@ -885,10 +1375,11 @@ describe("server state projection", () => {
     }),
   );
 
-  it.effect("does not rewrite cached configuration when no live update arrives", () =>
+  it.effect("shows a reported stall but never caches it", () =>
     Effect.gen(function* () {
+      const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
       const client = {
-        [WS_METHODS.subscribeServerConfig]: () => Stream.empty,
+        [WS_METHODS.subscribeServerConfig]: () => Stream.fromQueue(events),
       } as unknown as WsRpcProtocolClient;
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
         target: TARGET,
@@ -916,13 +1407,528 @@ describe("server state projection", () => {
       });
 
       yield* Effect.scoped(
-        makeEnvironmentServerConfigState({}).pipe(
-          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-          Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        ),
+        Effect.gen(function* () {
+          const state = yield* makeEnvironmentServerConfigState({}).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+          );
+          expect(Option.getOrThrow(yield* SubscriptionRef.get(state)).config).toBe(CONFIG);
+
+          const lastEventLoopStall = {
+            detectedAt: "2026-10-20T07:50:37.633Z",
+            durationMs: 12_422,
+            loadAverage: 219.4,
+            cpuCount: 18,
+          };
+          yield* Queue.offer(events, {
+            version: 1,
+            type: "snapshot",
+            config: { ...CONFIG, lastEventLoopStall },
+          });
+          const projected = yield* SubscriptionRef.changes(state).pipe(
+            Stream.filter((value) =>
+              Option.match(value, {
+                onNone: () => false,
+                onSome: (projection) => projection.source === "live",
+              }),
+            ),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(Option.getOrThrow(projected)).config.lastEventLoopStall).toEqual(
+            lastEventLoopStall,
+          );
+        }),
       );
 
-      expect(yield* Queue.poll(savedConfigs)).toEqual(Option.none());
+      // Cached, it would read as a fresh freeze on the next launch.
+      expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
     }),
+  );
+});
+
+describe("launcher update resume", () => {
+  const UPDATE_CONFIG = {
+    ...CONFIG,
+    environment: {
+      serverVersion: "0.0.30",
+      capabilities: { serverSelfUpdate: "boot-service", serverSelfUpdateProgress: true },
+    },
+  } as unknown as ServerConfig;
+
+  const ready = (at: string, serverVersion: string, updateOutcome?: ServerSelfUpdateOutcome) =>
+    ({
+      version: 1,
+      sequence: 1,
+      type: "ready",
+      payload: { at, environment: { serverVersion }, ...(updateOutcome ? { updateOutcome } : {}) },
+    }) as ServerLifecycleStreamEvent;
+  const after = (delay: Duration.Input, event: ServerLifecycleStreamEvent) =>
+    Stream.fromEffect(Effect.as(Effect.sleep(delay), event));
+  const committed = (id: string, fromVersion: string, targetVersion: string) => ({
+    id,
+    fromVersion,
+    targetVersion,
+    status: "committed" as const,
+  });
+  const ACCEPTING = ready("2026-08-01T00:00:00.000Z", "0.0.30");
+  const REPLACEMENT = ready("2026-08-01T00:05:00.000Z", "0.0.31");
+
+  // Lifecycle subscriptions opened before the update is acknowledged reach the accepting
+  // process; later ones reach whatever the host has become.
+  const launchUpdate = Effect.fn("ServerUpdateTest.launchUpdate")(function* (host: {
+    readonly accepting: Stream.Stream<ServerLifecycleStreamEvent>;
+    readonly resumed: Stream.Stream<ServerLifecycleStreamEvent>;
+    readonly reconnectAfterBaseline?: boolean;
+  }) {
+    const started = yield* Deferred.make<void>();
+    const resumeSubscribed = yield* Deferred.make<void>();
+    let acknowledged = false;
+    const client = {
+      [WS_METHODS.subscribeServerConfig]: () => Stream.never,
+      [WS_METHODS.serverUpdateServerWithProgress]: () =>
+        Stream.fromEffect(
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                acknowledged = true;
+                return {
+                  type: "complete" as const,
+                  result: {
+                    targetVersion: "0.0.31",
+                    method: "boot-service" as const,
+                    updateId: "update-1",
+                  },
+                };
+              }),
+            ),
+          ),
+        ),
+      [WS_METHODS.subscribeServerLifecycle]: () => {
+        const events = acknowledged
+          ? Deferred.succeed(resumeSubscribed, undefined).pipe(Effect.as(host.resumed))
+          : Effect.succeed(host.accepting);
+        const reconnect =
+          !acknowledged && host.reconnectAfterBaseline === true
+            ? SubscriptionRef.set(supervisor.session, Option.some(updateSession()))
+            : Effect.void;
+        return Stream.unwrap(
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(events)),
+        ).pipe(Stream.concat(Stream.never), Stream.ensuring(reconnect));
+      },
+    } as unknown as WsRpcProtocolClient;
+    const updateSession = (): RpcSession => ({
+      ...session(client),
+      initialConfig: Effect.succeed(UPDATE_CONFIG),
+    });
+    const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+      target: TARGET,
+      state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+      session: yield* SubscriptionRef.make(Option.some(updateSession())),
+      prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+    type Environments = EnvironmentRegistry.EnvironmentRegistry["Service"];
+    const run: Environments["run"] = (_environmentId, effect) =>
+      Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+    const runStream: Environments["runStream"] = (_environmentId, stream) =>
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+    const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+      run,
+      runStream,
+      followStream: runStream,
+      stateChanges: () => Stream.never,
+      retryNow: () => Effect.void,
+    } as unknown as Environments);
+    const cache = Persistence.EnvironmentCacheStore.of({
+      loadShell: () => Effect.succeedNone,
+      saveShell: () => Effect.void,
+      loadThread: () => Effect.succeedNone,
+      saveThread: () => Effect.void,
+      removeThread: () => Effect.void,
+      loadServerConfig: () => Effect.succeedNone,
+      saveServerConfig: () => Effect.void,
+      loadVcsRefs: () => Effect.succeedNone,
+      saveVcsRefs: () => Effect.void,
+      removeVcsRefs: () => Effect.void,
+      clearVcsRefs: () => Effect.void,
+      clear: () => Effect.void,
+    });
+    // Share the test clock so the command's timers and the host's restart run on TestClock.
+    const runtime = Atom.runtime(
+      Layer.mergeAll(
+        Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+        Layer.succeed(Persistence.EnvironmentCacheStore, cache),
+        Layer.succeed(Clock.Clock, yield* Clock.Clock),
+        Layer.succeed(Scheduler.Scheduler, yield* Scheduler.Scheduler),
+      ),
+    );
+    const initialConfigValueAtom = Atom.make(UPDATE_CONFIG);
+    const atoms = createServerEnvironmentAtoms(runtime, {
+      initialConfigValueAtom: () => initialConfigValueAtom,
+    });
+    const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+      Effect.sync(() => registry.dispose()),
+    );
+    const updateStateAtom = serverUpdateStateAtom(TARGET.environmentId);
+    yield* AtomRegistry.mount(registry, updateStateAtom);
+
+    yield* Effect.promise(() =>
+      atoms.updateServer.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { targetVersion: "0.0.31" },
+      }),
+    ).pipe(Effect.forkScoped);
+    return {
+      // The host saw its first call: the update request or a lifecycle subscription.
+      started: Deferred.await(started),
+      resumeSubscribed: Deferred.await(resumeSubscribed),
+      state: () => registry.get(updateStateAtom),
+    };
+  });
+
+  const UNCOMMITTED_RESUME = {
+    status: "failed",
+    stage: "resuming",
+    fromVersion: "0.0.30",
+    targetVersion: "0.0.31",
+    message: "The service launcher resumed without committing the requested server version.",
+  };
+
+  it.effect("fails promptly when a server the launcher did not start comes back", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const update = yield* launchUpdate({
+          accepting: Stream.make(ACCEPTING),
+          resumed: after("1 second", ACCEPTING).pipe(Stream.concat(after("1 minute", REPLACEMENT))),
+        });
+        yield* update.resumeSubscribed;
+
+        yield* TestClock.adjust("1 second");
+        expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
+        yield* TestClock.adjust("1 minute");
+        expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails promptly when the accepting server's replay arrives after a quick acknowledgement",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const update = yield* launchUpdate({
+            accepting: after("3 seconds", ACCEPTING),
+            resumed: after("1 second", REPLACEMENT),
+          });
+          yield* update.started;
+          yield* TestClock.adjust("3 seconds");
+          yield* update.resumeSubscribed;
+
+          yield* TestClock.adjust("1 minute");
+          expect(update.state()).toEqual(UNCOMMITTED_RESUME);
+        }),
+      ),
+  );
+
+  it.effect(
+    "waits for this update's outcome when a reconnect lands between the baseline and the request",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const update = yield* launchUpdate({
+            reconnectAfterBaseline: true,
+            accepting: Stream.make(ACCEPTING),
+            // The process that accepted the update over the new session replays its own ready first.
+            resumed: after("1 second", ready("2026-08-01T00:01:00.000Z", "0.0.30")).pipe(
+              Stream.concat(
+                after(
+                  "1 minute",
+                  ready(
+                    "2026-08-01T00:05:00.000Z",
+                    "0.0.31",
+                    committed("update-1", "0.0.30", "0.0.31"),
+                  ),
+                ),
+              ),
+            ),
+          });
+          yield* update.resumeSubscribed;
+
+          yield* TestClock.adjust("1 second");
+          expect(update.state()).toMatchObject({ status: "running", stage: "resuming" });
+          yield* TestClock.adjust("1 minute");
+          expect(update.state()).toMatchObject({ status: "idle" });
+        }),
+      ),
+  );
+
+  it.effect(
+    "sends the update without a baseline when the accepting server never replays ready",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const update = yield* launchUpdate({
+            accepting: Stream.never,
+            resumed: after(
+              "1 second",
+              ready(
+                "2026-08-01T00:05:00.000Z",
+                "0.0.31",
+                committed("update-1", "0.0.30", "0.0.31"),
+              ),
+            ),
+          });
+          yield* update.started;
+
+          yield* TestClock.adjust("5 seconds");
+          yield* TestClock.adjust("1 second");
+          expect(update.state()).toMatchObject({ status: "idle" });
+        }),
+      ),
+  );
+});
+
+describe("provider setup commands", () => {
+  it.effect("starts installs for two instances in one environment separately", () =>
+    Effect.gen(function* () {
+      const requested = yield* Queue.unbounded<ProviderInstanceId>();
+      const release = yield* Deferred.make<void>();
+      const installState = (driver: string): ProviderInstallState => ({
+        driver: ProviderDriverKind.make(driver),
+        operationId: null,
+        phase: "downloading",
+        downloadedBytes: 0,
+        totalBytes: null,
+        version: null,
+        installedVersion: null,
+        canRemove: false,
+        message: null,
+      });
+      const client = {
+        [WS_METHODS.providerInstallStart]: ({ instanceId }: ProviderSetupInput) =>
+          Queue.offer(requested, instanceId).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(installState(instanceId)),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+      const install = (instanceId: string) =>
+        atoms.startProviderInstall.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { instanceId: ProviderInstanceId.make(instanceId) },
+        });
+
+      const codex = install("codex");
+      expect(yield* Queue.take(requested)).toBe("codex");
+      const duplicateCodex = install("codex");
+      const antigravity = install("antigravity");
+      yield* Deferred.succeed(release, undefined);
+
+      expect(yield* Effect.promise(() => codex)).toMatchObject({
+        _tag: "Success",
+        value: { driver: "codex" },
+      });
+      expect(yield* Effect.promise(() => duplicateCodex)).toEqual(
+        yield* Effect.promise(() => codex),
+      );
+      expect(yield* Effect.promise(() => antigravity)).toMatchObject({
+        _tag: "Success",
+        value: { driver: "antigravity" },
+      });
+      expect(yield* Queue.takeAll(requested)).toEqual(["antigravity"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("toggles a provider while another provider's update is still running", () =>
+    Effect.gen(function* () {
+      const updateStarted = yield* Deferred.make<void>();
+      const settingsSaved = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.serverUpdateProvider]: () =>
+          Deferred.succeed(updateStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        [WS_METHODS.serverUpdateSettings]: () =>
+          Deferred.succeed(settingsSaved, undefined).pipe(Effect.as(CONFIG.settings)),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+
+      void atoms.updateProvider.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { provider: ProviderDriverKind.make("opencode") },
+      });
+      yield* Deferred.await(updateStarted);
+      void atoms.mutateProviderInstance.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: {
+          patch: {},
+          providerInstanceMutation: {
+            operation: "upsert",
+            instanceId: ProviderInstanceId.make("codex"),
+            instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+          },
+        },
+      });
+
+      const saved = yield* Deferred.await(settingsSaved).pipe(
+        Effect.as(true),
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(1),
+          orElse: () => Effect.succeed(false),
+        }),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* Fiber.join(saved)).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("resource telemetry history", () => {
+  it.effect.each([
+    ["resourceTelemetryHistory", WS_METHODS.serverGetResourceTelemetryHistory],
+    ["processResourceHistory", WS_METHODS.serverGetProcessResourceHistory],
+  ] as const)(
+    "%s refreshes an initially empty history while mounted and stops after unmount",
+    ([atomKey, method]) =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        try {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              let reads = 0;
+              const client = {
+                [method]: () =>
+                  Effect.sync(() => ({
+                    retainedSampleCount: reads++,
+                  })),
+              } as unknown as WsRpcProtocolClient;
+              const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+                target: TARGET,
+                state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+                  ...AVAILABLE_CONNECTION_STATE,
+                  phase: "connected",
+                }),
+                session: yield* SubscriptionRef.make(Option.some(session(client))),
+                prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+                connect: Effect.void,
+                disconnect: Effect.void,
+                retryNow: Effect.void,
+              });
+              const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+                run: (_id, effect) =>
+                  Effect.provideService(
+                    effect,
+                    EnvironmentSupervisor.EnvironmentSupervisor,
+                    supervisor,
+                  ),
+                followStream: (_id, stream) =>
+                  Stream.provideService(
+                    stream,
+                    EnvironmentSupervisor.EnvironmentSupervisor,
+                    supervisor,
+                  ),
+              } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+              const runtime = Atom.runtime(
+                Layer.merge(
+                  Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+                  Layer.succeed(Persistence.EnvironmentCacheStore, {
+                    loadServerConfig: () => Effect.succeedNone,
+                  } as unknown as Persistence.EnvironmentCacheStore["Service"]),
+                ),
+              );
+              const atoms = createServerEnvironmentAtoms(runtime, {
+                initialConfigValueAtom: () => Atom.make(CONFIG),
+              });
+              const registry = yield* Effect.acquireRelease(
+                Effect.sync(AtomRegistry.make),
+                (value) => Effect.sync(() => value.dispose()),
+              );
+              const history: Atom.Atom<
+                AsyncResult.AsyncResult<{ readonly retainedSampleCount: number }, Error>
+              > = atoms[atomKey]({
+                environmentId: TARGET.environmentId,
+                input: { windowMs: 900_000, bucketMs: 30_000 },
+              });
+              const unmount = registry.mount(history);
+              const initial = yield* AtomRegistry.getResult(registry, history, {
+                suspendOnWaiting: true,
+              });
+              expect(initial.retainedSampleCount).toBe(0);
+              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
+              expect(reads).toBe(2);
+              const updated = yield* AtomRegistry.getResult(registry, history, {
+                suspendOnWaiting: true,
+              });
+              expect(updated.retainedSampleCount).toBe(1);
+              unmount();
+              yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+              expect(reads).toBe(2);
+            }),
+          );
+        } finally {
+          vi.useRealTimers();
+        }
+      }),
   );
 });

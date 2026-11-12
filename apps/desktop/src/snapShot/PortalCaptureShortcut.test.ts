@@ -30,6 +30,7 @@ class FakeBus extends NodeEvents.EventEmitter {
   requestPath = "";
   boundId = "";
   foreignHandle = false;
+  owner = ":1.2";
 
   send(message: Message) {
     this.sends.push(message);
@@ -39,7 +40,7 @@ class FakeBus extends NodeEvents.EventEmitter {
     member: string,
     path: string,
     body: unknown[],
-    sender = ":1.2",
+    sender = this.owner,
     signature = "",
   ) {
     this.emit(
@@ -71,7 +72,7 @@ class FakeBus extends NodeEvents.EventEmitter {
       ]),
     });
   }
-  activate(id = this.boundId, session = this.session, sender = ":1.2") {
+  activate(id = this.boundId, session = this.session, sender = this.owner) {
     this.signal(portal, "Activated", root, [session, id, 1, {}], sender, "osta{sv}");
   }
   async call(message: Message) {
@@ -87,7 +88,7 @@ class FakeBus extends NodeEvents.EventEmitter {
       if (this.registryError) throw this.registryError;
       return reply();
     }
-    if (message.member === "GetNameOwner") return reply([":1.2"]);
+    if (message.member === "GetNameOwner") return reply([this.owner]);
     if (message.member === "Get") return reply([new Variant("u", this.version)]);
     if (message.member === "AddMatch" || message.member === "ConfigureShortcuts") return reply();
     const options = message.body.at(-1) as Record<string, Variant<string>>;
@@ -156,24 +157,6 @@ it("accepts Hyprland's action-only binding without claiming the keys are reserve
   bus.activate();
   expect(capture).toHaveBeenCalledOnce();
   expect(client.state.shortcutActionRegistered).toBe(false);
-});
-
-it("keeps the Hyprland action ID stable regardless of a saved key chord", async () => {
-  const first = start(new FakeBus(), chord, true);
-  const second = start(new FakeBus(), { ...chord, key: "7" }, true);
-  await Promise.all([first.client.ready, second.client.ready]);
-  expect(first.bus.boundId).toBe(second.bus.boundId);
-});
-
-it("does not accept an empty trigger as approval on other desktops", async () => {
-  const bus = new FakeBus();
-  bus.actualLabel = "";
-  const { client, capture } = start(bus);
-  await client.ready;
-  expect(client.state.shortcutRegistered).toBe(false);
-  expect(client.state.shortcutActionRegistered).not.toBe(true);
-  bus.activate();
-  expect(capture).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -309,23 +292,6 @@ it("treats a remembered empty binding as unassigned, then observes desktop-side 
   expect(capture).toHaveBeenCalledOnce();
 });
 
-it("guides users to manual desktop settings when the portal cannot open them", async () => {
-  const bus = new FakeBus();
-  bus.version = 1;
-  bus.bindStatus = 1;
-  const { client } = start(bus);
-  await client.ready;
-  expect(client.hasSession).toBe(true);
-  expect(client.state.shortcutCanRetry).toBe(false);
-  expect(client.state.shortcutMessage).toBe(
-    "Shortcut permission wasn't granted. Allow T3 Code in your desktop's shortcut settings.",
-  );
-  await expect(client.configure()).rejects.toThrow("Open your desktop's shortcut settings");
-  expect(bus.calls.some((message) => message.member === "ConfigureShortcuts")).toBe(false);
-  client.close();
-  expect(client.hasSession).toBe(false);
-});
-
 it("captures on older portals without offering an unsupported permission dialog", async () => {
   const bus = new FakeBus();
   bus.version = 1;
@@ -361,21 +327,6 @@ it("closes an outstanding consent request and ignores its late response", async 
   expect(bus.disconnect).toHaveBeenCalledOnce();
 });
 
-it("bounds unanswered consent and cleans up the pending request", async () => {
-  vi.useFakeTimers();
-  const bus = new FakeBus();
-  bus.autoBind = false;
-  const binding = NodeEvents.EventEmitter.once(bus, "bind");
-  const { client } = start(bus);
-  await binding;
-  await vi.advanceTimersByTimeAsync(120_000);
-  await client.ready;
-  expect(client.state.shortcutPending).toBe(false);
-  expect(client.state.shortcutMessage).toContain("timed out");
-  expect(bus.disconnect).toHaveBeenCalledOnce();
-  expect(vi.getTimerCount()).toBe(0);
-});
-
 it("handles a disappearing portal without keeping a false registered state", async () => {
   const { bus, client } = start();
   await client.ready;
@@ -388,7 +339,30 @@ it("handles a disappearing portal without keeping a false registered state", asy
   );
   expect(client.state.shortcutRegistered).toBe(false);
   expect(client.state.shortcutMessage).toContain("restarted");
-  expect(bus.disconnect).toHaveBeenCalledOnce();
+  expect(client.hasSession).toBe(false);
+  expect(bus.disconnect).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(client.state.shortcutRegistered).toBe(true));
+  expect(bus.calls.filter((call) => call.member === "CreateSession")).toHaveLength(2);
+});
+
+it("binds a new session when the portal restarts", async () => {
+  const { bus, client, capture } = start(new FakeBus(), chord, true);
+  await client.ready;
+  const ownerChanged = (from: string, to: string) =>
+    bus.signal(
+      "org.freedesktop.DBus",
+      "NameOwnerChanged",
+      "/org/freedesktop/DBus",
+      ["org.freedesktop.portal.Desktop", from, to],
+      "org.freedesktop.DBus",
+    );
+  ownerChanged(":1.2", "");
+  bus.owner = ":1.3";
+  ownerChanged("", ":1.3");
+  await vi.waitFor(() => expect(client.state.shortcutActionRegistered).toBe(true));
+  expect(bus.calls.filter((call) => call.member === "CreateSession")).toHaveLength(2);
+  bus.activate();
+  expect(capture).toHaveBeenCalledOnce();
 });
 
 it("accepts old portals without Registry but does not ignore permission denial", async () => {

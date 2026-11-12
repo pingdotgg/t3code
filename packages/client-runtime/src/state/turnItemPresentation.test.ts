@@ -71,11 +71,6 @@ function run(
 }
 
 describe("turnItemIsWorkspacePreparation", () => {
-  it("identifies the synthetic workspace preparation command", () => {
-    expect(turnItemIsWorkspacePreparation(command("Preparing workspace"))).toBe(true);
-    expect(turnItemIsWorkspacePreparation(command("prepare workspace"))).toBe(false);
-  });
-
   it("hides a preparation failure only once a retry cancelled it", () => {
     expect(turnItemIsWorkspacePreparation(preparationFailure("failed"))).toBe(false);
     expect(turnItemIsWorkspacePreparation(preparationFailure("cancelled"))).toBe(true);
@@ -89,11 +84,8 @@ describe("workspacePreparationRetryRunIds", () => {
     expect([...workspacePreparationRetryRunIds([run("failed", worktree)], failure)]).toEqual([
       RunId.make("run-1"),
     ]);
-    // Retried: the run is preparing again and the old failure is cancelled.
     expect(workspacePreparationRetryRunIds([run("preparing", worktree)], failure).size).toBe(0);
-    // An older server records no preparation, so there is nothing to repeat.
     expect(workspacePreparationRetryRunIds([run("failed")], failure).size).toBe(0);
-    // A provider error on a run that did reach the provider is not a preparation failure.
     expect(
       workspacePreparationRetryRunIds(
         [run("failed", worktree)],

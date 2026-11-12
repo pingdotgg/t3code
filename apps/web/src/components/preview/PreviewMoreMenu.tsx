@@ -1,5 +1,3 @@
-"use client";
-
 import type { DesktopPreviewColorScheme } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
@@ -8,6 +6,7 @@ import {
   Menu,
   MenuItem,
   MenuPopup,
+  MenuShortcut,
   MenuRadioGroup,
   MenuRadioItem,
   MenuGroup,
@@ -29,11 +28,6 @@ const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
   { value: "dark", label: "Dark" },
 ];
 
-/**
- * What the menu's items do for the active tab. Desktop tabs run them through
- * the desktop bridge; server tabs, whether streamed or rendered natively by
- * the desktop app, run them through the environment server.
- */
 export interface PreviewMoreMenuActions {
   readonly hardReload: () => void;
   readonly setColorScheme: (colorScheme: DesktopPreviewColorScheme) => void;
@@ -42,28 +36,22 @@ export interface PreviewMoreMenuActions {
   readonly resetZoom: () => void;
   readonly clearCookies: () => void;
   readonly clearCache: () => void;
-  /** Absent where there is no inspector to open, such as a streamed server tab. */
   readonly openDevTools?: () => void;
-  /** Absent where the tab cannot get its own window. */
   readonly toggleNativePictureInPicture?: () => void;
+  readonly find?: () => void;
 }
 
 interface Props {
-  /** False until the tab can take these actions, such as before its page attaches. */
   enabled: boolean;
   actions: PreviewMoreMenuActions;
-  /** Current zoom factor as a number (1.0 = 100%). */
   zoomFactor: number;
-  /** Emulated `prefers-color-scheme` for the page. */
   colorScheme: DesktopPreviewColorScheme;
-  /** Fixed viewport modes expose the device toolbar and resize rails. */
   deviceToolbarVisible: boolean;
-  /** Switches between fill-panel mode and a fixed responsive viewport. */
   onToggleDeviceToolbar: () => void;
-  /** Whether the separate native always-on-top preview window is open. */
   nativePictureInPicture: boolean;
-  /** Profile display name, shown so the menu says which data is being cleared. */
   profileName: string | undefined;
+  findShortcutLabel?: string | null;
+  move?: { readonly label: string; readonly onMove: () => void };
 }
 
 const MenuTriggerButton = () => (
@@ -81,7 +69,6 @@ const MenuTriggerButton = () => (
   </Tooltip>
 );
 
-/** Three-dot menu in the chrome row; the same items for every kind of tab. */
 export function PreviewMoreMenu({
   enabled,
   actions,
@@ -91,6 +78,8 @@ export function PreviewMoreMenu({
   onToggleDeviceToolbar,
   nativePictureInPicture,
   profileName,
+  findShortcutLabel,
+  move,
 }: Props) {
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
   const disabled = !enabled;
@@ -98,6 +87,12 @@ export function PreviewMoreMenu({
     <Menu>
       <MenuTriggerButton />
       <MenuPopup align="end" sideOffset={6}>
+        {actions.find ? (
+          <MenuItem onClick={actions.find} disabled={disabled}>
+            Find on page
+            {findShortcutLabel ? <MenuShortcut>{findShortcutLabel}</MenuShortcut> : null}
+          </MenuItem>
+        ) : null}
         <MenuItem onClick={actions.hardReload} disabled={disabled}>
           Hard reload
         </MenuItem>
@@ -113,6 +108,7 @@ export function PreviewMoreMenu({
               : "Open separate preview window"}
           </MenuItem>
         ) : null}
+        {move ? <MenuItem onClick={move.onMove}>{move.label}</MenuItem> : null}
         <MenuItem onClick={onToggleDeviceToolbar} disabled={disabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
         </MenuItem>
@@ -132,10 +128,6 @@ export function PreviewMoreMenu({
           </MenuSubPopup>
         </MenuSub>
         <MenuSeparator />
-        {/*
-          Zoom row: label + inline control cluster. `closeOnClick=false`
-          keeps the menu open while the user clicks the +/− buttons.
-        */}
         <MenuItem
           closeOnClick={false}
           onClick={(event: React.MouseEvent) => event.preventDefault()}
@@ -180,16 +172,8 @@ export function PreviewMoreMenu({
           </span>
         </MenuItem>
         <MenuSeparator />
-        {/*
-          Grouped so the heading has a `MenuGroup` ancestor — `MenuGroupLabel`
-          reads its context and throws without one. The heading also answers
-          which profile the tab is in, which is otherwise invisible: it is fixed
-          at open and nothing else in the chrome shows it.
-        */}
         <MenuGroup>
           {profileName ? (
-            // Truncation needs a block box: `text-overflow` on an inline child
-            // never applies and a long name would push the popup past its width.
             <MenuGroupLabel className="max-w-64">
               <span className="block truncate">Profile: {profileName}</span>
             </MenuGroupLabel>

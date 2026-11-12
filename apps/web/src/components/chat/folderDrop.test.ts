@@ -1,66 +1,82 @@
-import { describe, expect, it } from "@effect/vitest";
+import {
+  BearerConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import { EnvironmentId } from "@t3tools/contracts";
-import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
+import { describe, expect, it } from "vite-plus/test";
 
-const environmentId = EnvironmentId.make("environment-1");
+import { folderDropTarget } from "./folderDrop";
+
+const environmentId = EnvironmentId.make("saved-local");
+const base = { environmentId, label: "server" };
+const savedServer = (httpBaseUrl: string, connectionId = "saved-1") => ({
+  target: new BearerConnectionTarget({ ...base, connectionId }),
+  httpBaseUrl,
+});
+const thinClient = {
+  localEnvironmentDisabled: true,
+  environmentId,
+  primaryEnvironmentId: null,
+  isDesktopRenderer: true,
+};
 
 describe("folderDropTarget", () => {
-  it("targets local when the thread is on the primary environment", () => {
-    expect(
-      folderDropTarget({
+  it.each([
+    [
+      "the bundled primary",
+      {
+        ...thinClient,
         localEnvironmentDisabled: false,
-        environmentId,
         primaryEnvironmentId: environmentId,
-      }),
-    ).toBe("local");
-  });
-
-  it("targets remote when Electron has no local environment", () => {
-    expect(
-      folderDropTarget({
-        localEnvironmentDisabled: true,
-        environmentId,
-        primaryEnvironmentId: environmentId,
-      }),
-    ).toBe("remote");
-  });
-
-  it("targets remote when the thread lives on another environment", () => {
-    expect(
-      folderDropTarget({
-        localEnvironmentDisabled: false,
-        environmentId: EnvironmentId.make("environment-2"),
-        primaryEnvironmentId: environmentId,
-      }),
-    ).toBe("remote");
-  });
-
-  it("targets remote when no primary environment is known", () => {
-    expect(
-      folderDropTarget({
-        localEnvironmentDisabled: false,
-        environmentId,
-        primaryEnvironmentId: null,
-      }),
-    ).toBe("remote");
-  });
-});
-
-describe("resolveDroppedFolderPath", () => {
-  it("returns the native path when the bridge provides it", () => {
-    const folder = new File([], "contracts");
-    expect(resolveDroppedFolderPath(folder, () => "/tmp/project/contracts")).toBe(
-      "/tmp/project/contracts",
-    );
-  });
-
-  it("returns null for an outside-folder drop even when the folder name matches a project directory", () => {
-    const folder = new File([], "contracts");
-    expect(resolveDroppedFolderPath(folder, undefined)).toBeNull();
-  });
-
-  it("returns null when the bridge returns an empty path", () => {
-    const folder = new File([], "contracts");
-    expect(resolveDroppedFolderPath(folder, () => "")).toBeNull();
+        connection: null,
+      },
+      "local",
+    ],
+    [
+      "a saved loopback server on desktop",
+      { ...thinClient, connection: savedServer("http://127.0.0.1:3773") },
+      "local",
+    ],
+    [
+      "a saved LAN server",
+      { ...thinClient, connection: savedServer("http://192.168.1.20:3773") },
+      "remote",
+    ],
+    [
+      "a saved loopback server in a browser",
+      { ...thinClient, isDesktopRenderer: false, connection: savedServer("http://localhost:3773") },
+      "remote",
+    ],
+    [
+      "a desktop WSL backend",
+      { ...thinClient, connection: savedServer("http://127.0.0.1:3774", "local:wsl-ubuntu") },
+      "remote",
+    ],
+    [
+      "an SSH forward on loopback",
+      {
+        ...thinClient,
+        connection: {
+          target: new SshConnectionTarget({ ...base, connectionId: "ssh-1" }),
+          httpBaseUrl: "http://127.0.0.1:41000",
+        },
+      },
+      "remote",
+    ],
+    [
+      "a relay connection",
+      {
+        ...thinClient,
+        connection: {
+          target: new RelayConnectionTarget(base),
+          httpBaseUrl: "https://relay.t3.codes",
+        },
+      },
+      "remote",
+    ],
+    ["an unprepared connection", { ...thinClient, connection: null }, "remote"],
+  ] as const)("targets %s", (_name, input, expected) => {
+    expect(folderDropTarget(input)).toBe(expected);
   });
 });

@@ -1,5 +1,4 @@
-import { makeAggregateState } from "./agentActivityAggregate.ts";
-export {
+import {
   makeAggregateState,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
@@ -8,6 +7,7 @@ import type {
   RelayDeliveryResult,
   RelayPublishResponse,
 } from "@t3tools/contracts/relay";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -44,10 +44,14 @@ export class AgentActivityPublisher extends Context.Service<
       readonly userId: string;
       readonly deviceId: string;
     }) => Effect.Effect<RelayDeliveryResult | null, AgentActivityPublishError>;
+    readonly endIdleLiveActivities: Effect.Effect<
+      void,
+      LiveActivities.LiveActivityIdleTargetListPersistenceError
+    >;
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
@@ -143,6 +147,59 @@ export const make = Effect.gen(function* () {
         replay: true,
       });
     }),
+    // An idle card receives no more publishes to clear its expired finished rows.
+    endIdleLiveActivities: Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const idleTargets = yield* liveActivities.listIdleArmedTargets({
+        deliveredBefore: DateTime.formatIso(
+          DateTime.subtract(now, { milliseconds: TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS }),
+        ),
+      });
+      yield* Effect.annotateCurrentSpan({ "relay.live_activities.idle_count": idleTargets.length });
+      yield* Effect.forEach(
+        Object.entries(Arr.groupBy(idleTargets, (target) => target.user_id)),
+        ([userId, candidates]) =>
+          Effect.gen(function* () {
+            const activeStates = yield* rows.listForUser({ userId });
+            const aggregate = makeAggregateState({
+              activeStates,
+              terminalState: null,
+              nowMs: now.epochMilliseconds,
+            });
+            if (aggregate !== null) return;
+            const targets = yield* liveActivities.listTargets({ userId });
+            const idleDeviceIds = new Set(candidates.map((target) => target.device_id));
+            yield* Effect.forEach(
+              targets.filter((target) => idleDeviceIds.has(target.device_id)),
+              (target) =>
+                apnsDeliveries
+                  .sendForTarget({
+                    target,
+                    aggregate: null,
+                    nowMs: now.epochMilliseconds,
+                    replay: true,
+                  })
+                  .pipe(
+                    Effect.catch((error) =>
+                      Effect.logWarning("Failed to end idle Live Activity", {
+                        deviceId: target.device_id,
+                        error,
+                      }),
+                    ),
+                  ),
+              { discard: true },
+            );
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Failed to list idle Live Activity content or targets", {
+                userId,
+                error,
+              }),
+            ),
+          ),
+        { concurrency: 4, discard: true },
+      );
+    }).pipe(Effect.withSpan("relay.agent_activity_publisher.end_idle_live_activities")),
     publish: Effect.fn("relay.agent_activity_publisher.publish")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.environment_id": input.environmentId,
@@ -150,10 +207,7 @@ export const make = Effect.gen(function* () {
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
       if (input.state) {
-        // Terminal states are persisted too (pruned by the cron after they
-        // age out) so a thread that finishes while other agents are active
-        // stays visible as Done/Failed in subsequent aggregates instead of
-        // silently vanishing from the Live Activity.
+        // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
         yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,

@@ -1,16 +1,12 @@
 import { useEffect, useRef } from "react";
 
-export function workspaceMutationRefreshToken(
+function workspaceMutationRefreshToken(
   resourceKey: string,
   mutationId: string | null,
 ): string | null {
   return mutationId === null ? null : `${resourceKey}\u0000${mutationId}`;
 }
 
-/**
- * Refreshes once per mutation and resource. Disabled mutations stay pending,
- * which lets an editable file catch up after its local save finishes.
- */
 export function useWorkspaceMutationRefresh(input: {
   readonly enabled?: boolean;
   readonly mutationId: string | null;
@@ -20,6 +16,7 @@ export function useWorkspaceMutationRefresh(input: {
   const { enabled = true, mutationId, refresh, resourceKey } = input;
   const handledTokenRef = useRef<string | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refetches the resource once per new workspace mutation token
   useEffect(() => {
     if (!enabled) return;
     const token = workspaceMutationRefreshToken(resourceKey, mutationId);

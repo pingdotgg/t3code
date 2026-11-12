@@ -1,7 +1,7 @@
 import * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -17,7 +17,7 @@ const NotificationBadge = Schema.Struct({
   ),
 });
 
-export function applyNotificationBadge(
+function applyNotificationBadge(
   platform: NodeJS.Platform,
   { count, image }: typeof NotificationBadge.Type,
 ): void {
@@ -45,7 +45,7 @@ export const installNotificationBadge = Effect.fn("desktop.ipc.installNotificati
   function* () {
     const ipc = yield* DesktopIpc.DesktopIpc;
     const app = yield* ElectronApp.ElectronApp;
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const clear = () => {
       applyNotificationBadge(platform, { count: 0, image: null });
       for (const window of Electron.BrowserWindow.getAllWindows()) {

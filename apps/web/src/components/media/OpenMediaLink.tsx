@@ -4,7 +4,6 @@ import { resolveExternalWebLinkHost } from "../chat/externalLinkContextMenu";
 import { Button } from "../ui/button";
 import { resolveProtocolRelativeMediaUrl } from "./mediaContent";
 
-/** Navigates directly so the browser handles video playback and downloads, without fetching bytes. */
 export function OpenMediaLink(props: {
   readonly originalUrl?: string | undefined;
   readonly src?: string | null | undefined;

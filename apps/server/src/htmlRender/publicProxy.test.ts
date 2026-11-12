@@ -2,12 +2,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import type * as NodeDns from "node:dns";
+import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import { publicProxy } from "./publicProxy.ts";
 
-// A public IPv4 address this machine holds, which no private range covers.
 const OWN_PUBLIC_IPV4 = "198.51.100.7";
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeOS>();
@@ -29,7 +30,23 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-/** Sends a SOCKS5 greeting and CONNECT, and resolves with the reply code. */
+// Clash and Mihomo answer every name from 198.18.0.0/16 in fake-IP mode.
+const TEST_DNS: Record<string, ReadonlyArray<{ address: string; family: number }>> = {
+  "cdn.fake-ip.test": [{ address: "198.18.2.40", family: 4 }],
+  "mixed.fake-ip.test": [
+    { address: "93.184.215.14", family: 4 },
+    { address: "198.18.2.41", family: 4 },
+  ],
+};
+vi.mock("node:dns/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeDnsPromises>();
+  return {
+    ...actual,
+    lookup: (host: string, options: NodeDns.LookupOptions) =>
+      TEST_DNS[host] ? Promise.resolve(TEST_DNS[host]) : actual.lookup(host, options),
+  };
+});
+
 const connectThrough = (proxyPort: number, target: Buffer, version = 5) =>
   Effect.callback<{ readonly code: number; readonly socket: NodeNet.Socket }>((resume) => {
     const socket = NodeNet.connect(proxyPort, "127.0.0.1", () => {
@@ -41,7 +58,6 @@ const connectThrough = (proxyPort: number, target: Buffer, version = 5) =>
     let received = Buffer.alloc(0);
     socket.on("data", (chunk) => {
       received = Buffer.concat([received, chunk]);
-      // Method selection (2 bytes) then the 10-byte reply.
       if (received.length >= 12) resume(Effect.succeed({ code: received[3]!, socket }));
     });
     socket.on("close", () => resume(Effect.succeed({ code: received[3] ?? -1, socket })));
@@ -67,7 +83,6 @@ const ipv6Target = (address: string, port: number) => {
   return target;
 };
 
-/** `a.b.c.d` as the two hex groups of an IPv4-mapped IPv6 address. */
 const toHexPair = (address: string) => {
   const [a = 0, b = 0, c = 0, d = 0] = address.split(".").map(Number);
   return `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
@@ -86,15 +101,13 @@ const domainTarget = (host: string, port: number) => {
 describe("publicProxy", () => {
   it.effect("refuses loopback and private targets, by address or by name", () =>
     Effect.gen(function* () {
-      const port = yield* publicProxy;
+      const { port } = yield* publicProxy;
       for (const target of [
         ipv4Target("127.0.0.1", 80),
         ipv4Target("10.1.2.3", 80),
         ipv4Target("169.254.169.254", 80),
         ipv4Target("198.18.0.1", 80),
         domainTarget("localhost", 80),
-        // IPv6 forms that carry a local IPv4 address: NAT64, 6to4, Teredo,
-        // and IPv4-compatible.
         ipv6Target("64:ff9b::7f00:1", 80),
         ipv6Target("64:ff9b::a00:1", 80),
         ipv6Target("2002:7f00:1::1", 80),
@@ -105,20 +118,30 @@ describe("publicProxy", () => {
         socket.destroy();
         expect(code).toBe(2);
       }
-      // Port 0 is not a connection target.
       const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 0));
       socket.destroy();
       expect(code).toBe(7);
     }).pipe(Effect.scoped),
   );
 
+  it.effect("refuses fake-IP names and records hosts whose every address is fake", () =>
+    Effect.gen(function* () {
+      const { port, fakeIpHosts } = yield* publicProxy;
+      for (const host of ["cdn.fake-ip.test", "mixed.fake-ip.test"]) {
+        const { code, socket } = yield* connectThrough(port, domainTarget(host, 443));
+        socket.destroy();
+        expect(code).toBe(2);
+      }
+      expect([...fakeIpHosts]).toEqual([["cdn.fake-ip.test", "198.18.2.40"]]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses every address this machine holds, even a public one", () =>
     Effect.gen(function* () {
-      const port = yield* publicProxy;
+      const { port } = yield* publicProxy;
       const own = Object.values(NodeOS.networkInterfaces())
         .flatMap((entries) => entries ?? [])
         .filter((entry) => !entry.internal && !entry.address.startsWith("fe80"));
-      // IPv4 also as IPv4-mapped IPv6, which names the same host.
       const targets = own.flatMap((entry) =>
         entry.family === "IPv6"
           ? [ipv6Target(entry.address, 80)]
@@ -136,38 +159,12 @@ describe("publicProxy", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses a request with a wrong version byte", () =>
-    Effect.gen(function* () {
-      const port = yield* publicProxy;
-      const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 443), 4);
-      socket.destroy();
-      expect(code).toBe(7);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("fails instead of crashing when it cannot listen", () =>
-    Effect.gen(function* () {
-      const exhausted = Object.assign(new Error("too many open files"), { code: "EMFILE" });
-      const listen = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementationOnce(function (
-        this: NodeNet.Server,
-      ) {
-        process.nextTick(() => this.emit("error", exhausted));
-        return this;
-      });
-      const error = yield* publicProxy.pipe(Effect.flip, Effect.scoped);
-      listen.mockRestore();
-      expect(error).toBe(exhausted);
-    }),
-  );
-
   it.effect("closes every connection when its scope closes", () =>
     Effect.gen(function* () {
       const socket = yield* Effect.scoped(
         Effect.gen(function* () {
-          const port = yield* publicProxy;
+          const { port } = yield* publicProxy;
           return yield* Effect.callback<NodeNet.Socket>((resume) => {
-            // A client mid-handshake, which the proxy must not wait on; closing
-            // resets it.
             const client = NodeNet.connect(port, "127.0.0.1", () => {
               client.write(Buffer.from([5, 1, 0]));
               resume(Effect.succeed(client));

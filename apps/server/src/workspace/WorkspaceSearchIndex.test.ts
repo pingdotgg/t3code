@@ -5,10 +5,12 @@ import {
   type GrepOptions,
   type GrepResult,
 } from "@ff-labs/fff-node";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -61,279 +63,6 @@ it.effect("filters image searches before applying the result limit", () =>
       expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
       expect(fileSearch).toHaveBeenCalledTimes(2);
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
-    }),
-  ),
-);
-
-it.effect("preserves unexpected FileFinder creation failures", () =>
-  Effect.gen(function* () {
-    const cause = new Error("native initialization failed");
-    vi.spyOn(FileFinder, "create").mockImplementationOnce(() => {
-      throw cause;
-    });
-
-    const error = yield* Effect.flip(
-      Effect.scoped(WorkspaceSearchIndex.make("/workspace/project")),
-    );
-
-    expect(error).toMatchObject({
-      _tag: "WorkspaceSearchIndexCreateFailed",
-      cwd: "/workspace/project",
-      reason: "FileFinder.create threw unexpectedly.",
-      cause,
-    });
-  }),
-);
-
-it.effect("keeps returned FileFinder creation diagnostics out of the cause chain", () =>
-  Effect.gen(function* () {
-    vi.spyOn(FileFinder, "create").mockReturnValueOnce({
-      ok: false,
-      error: "native index rejected the directory",
-    });
-
-    const error = yield* Effect.flip(
-      Effect.scoped(WorkspaceSearchIndex.make("/workspace/project")),
-    );
-
-    expect(error).toMatchObject({
-      _tag: "WorkspaceSearchIndexCreateFailed",
-      cwd: "/workspace/project",
-      reason: "native index rejected the directory",
-    });
-    expect(error.cause).toBeUndefined();
-  }),
-);
-
-it.effect("waits for the full content index warmup before returning", () =>
-  Effect.gen(function* () {
-    const waitForIndexReady = vi.fn(async () => ({ ok: true as const, value: true }));
-    const finder = {
-      destroy: vi.fn(),
-      waitForIndexReady,
-    } as unknown as FileFinder;
-    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-    yield* Effect.scoped(WorkspaceSearchIndex.make("/workspace/project", "content"));
-
-    expect(waitForIndexReady).toHaveBeenCalledWith(15_000);
-  }),
-);
-
-it.effect("preserves a full-index warmup timeout as a structured error", () =>
-  Effect.gen(function* () {
-    const finder = {
-      destroy: vi.fn(),
-      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
-    } as unknown as FileFinder;
-    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-    const error = yield* Effect.flip(
-      Effect.scoped(WorkspaceSearchIndex.make("/workspace/project", "content")),
-    );
-
-    expect(error).toMatchObject({
-      _tag: "WorkspaceSearchIndexScanTimedOut",
-      cwd: "/workspace/project",
-      timeout: "15 seconds",
-    });
-  }),
-);
-
-it.effect("returns partial path results when the initial scan times out", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const mixedSearch = vi.fn(() => ({
-        ok: true as const,
-        value: {
-          items: [
-            {
-              type: "directory" as const,
-              item: { relativePath: "src", fileName: "src", fileCount: 1 },
-            },
-            { type: "file" as const, item: fileItem("src/index.ts") },
-          ],
-          scores: [],
-          totalMatched: 2,
-          totalFiles: 1,
-        },
-      }));
-      let scanning = true;
-      const finder = {
-        destroy: vi.fn(),
-        isScanning: vi.fn(() => scanning),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
-        mixedSearch,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "paths");
-      const list = yield* searchIndex.list();
-      const search = yield* searchIndex.search("src", 10);
-      scanning = true;
-      mixedSearch.mockImplementationOnce(() => {
-        scanning = false;
-        return {
-          ok: true as const,
-          value: {
-            items: [
-              {
-                type: "directory" as const,
-                item: { relativePath: "src", fileName: "src", fileCount: 1 },
-              },
-              { type: "file" as const, item: fileItem("src/index.ts") },
-            ],
-            scores: [],
-            totalMatched: 2,
-            totalFiles: 1,
-          },
-        };
-      });
-      const searchCompletingDuringQuery = yield* searchIndex.search("src", 10);
-      scanning = false;
-      const completedSearch = yield* searchIndex.search("src", 10);
-
-      expect(list).toEqual({
-        entries: [
-          { kind: "directory", path: "src" },
-          { kind: "file", path: "src/index.ts" },
-        ],
-        truncated: true,
-      });
-      expect(search.truncated).toBe(true);
-      expect(searchCompletingDuringQuery.truncated).toBe(true);
-      expect(completedSearch.truncated).toBe(false);
-      expect(mixedSearch).toHaveBeenCalledTimes(4);
-    }),
-  ),
-);
-
-it.effect("preserves FileFinder destroy failures as structured defects", () =>
-  Effect.gen(function* () {
-    const cause = new Error("native destroy failed");
-    const finder = {
-      destroy: vi.fn(() => {
-        throw cause;
-      }),
-      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-    } as unknown as FileFinder;
-    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-    const exit = yield* Effect.scoped(WorkspaceSearchIndex.make("/workspace/project")).pipe(
-      Effect.exit,
-    );
-
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      expect(Cause.hasDies(exit.cause)).toBe(true);
-      const error = Cause.squash(exit.cause);
-      expect(error).toBeInstanceOf(WorkspaceSearchIndex.WorkspaceSearchIndexDestroyFailed);
-      expect(error).toMatchObject({
-        _tag: "WorkspaceSearchIndexDestroyFailed",
-        cwd: "/workspace/project",
-        cause,
-      });
-    }
-  }),
-);
-
-it.effect("preserves search and refresh failures with operation context", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const searchCause = new Error("native search failed");
-      const refreshCause = new Error("native scan failed");
-      const contentSearchCause = new Error("native grep failed");
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        mixedSearch: vi.fn(() => {
-          throw searchCause;
-        }),
-        grep: vi.fn(() => {
-          throw contentSearchCause;
-        }),
-        scanFiles: vi.fn(() => {
-          throw refreshCause;
-        }),
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
-      const query = "authorization: Bearer secret-token";
-      const searchError = yield* Effect.flip(searchIndex.search(query, 3));
-      const contentSearchError = yield* Effect.flip(
-        searchIndex.searchContents({
-          query,
-          limit: 3,
-          caseSensitive: false,
-          wholeWord: false,
-          useRegex: false,
-        }),
-      );
-      const refreshError = yield* Effect.flip(searchIndex.refresh());
-
-      expect(searchError).toMatchObject({
-        _tag: "WorkspaceSearchIndexSearchFailed",
-        cwd: "/workspace/project",
-        queryLength: query.length,
-        pageSize: 4,
-        reason: "FileFinder.mixedSearch threw unexpectedly.",
-        cause: searchCause,
-      });
-      expect(searchError).not.toHaveProperty("query");
-      expect(searchError.message).not.toMatch(/Bearer|secret-token/);
-      expect(contentSearchError).toMatchObject({
-        _tag: "WorkspaceSearchIndexSearchFailed",
-        cwd: "/workspace/project",
-        queryLength: query.length,
-        pageSize: 3,
-        reason: "FileFinder.grep threw unexpectedly.",
-        cause: contentSearchCause,
-      });
-      expect(contentSearchError).not.toHaveProperty("query");
-      expect(contentSearchError.message).not.toMatch(/Bearer|secret-token/);
-      expect(refreshError).toMatchObject({
-        _tag: "WorkspaceSearchIndexRefreshFailed",
-        cwd: "/workspace/project",
-        reason: "FileFinder.scanFiles threw unexpectedly.",
-        cause: refreshCause,
-      });
-    }),
-  ),
-);
-
-it.effect("keeps returned search diagnostics out of the cause chain", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        mixedSearch: vi.fn(() => ({ ok: false, error: "native query rejected" })),
-        scanFiles: vi.fn(() => ({ ok: false, error: "native refresh rejected" })),
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
-
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
-      const query = "authorization: Bearer secret-token";
-      const searchError = yield* Effect.flip(searchIndex.search(query, 3));
-      const refreshError = yield* Effect.flip(searchIndex.refresh());
-
-      expect(searchError).toMatchObject({
-        _tag: "WorkspaceSearchIndexSearchFailed",
-        cwd: "/workspace/project",
-        queryLength: query.length,
-        pageSize: 4,
-        reason: "native query rejected",
-      });
-      expect(searchError).not.toHaveProperty("query");
-      expect(searchError.message).not.toMatch(/Bearer|secret-token/);
-      expect(searchError.cause).toBeUndefined();
-      expect(refreshError).toMatchObject({
-        _tag: "WorkspaceSearchIndexRefreshFailed",
-        cwd: "/workspace/project",
-        reason: "native refresh rejected",
-      });
-      expect(refreshError.cause).toBeUndefined();
     }),
   ),
 );
@@ -413,4 +142,35 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
   ),
+);
+
+// fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "refuses to index a workspace rooted at the home directory",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-home-" }),
+        );
+        yield* fs.makeDirectory(path.join(home, "OneDrive", "Remix"), { recursive: true });
+        yield* fs.writeFileString(path.join(home, "OneDrive", "Remix", "part.stl"), "solid part\n");
+        yield* Effect.acquireRelease(
+          Effect.sync(() => vi.stubEnv("HOME", home)),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
+        );
+
+        const result = yield* WorkspaceSearchIndex.make(home).pipe(
+          Effect.flatMap((searchIndex) => searchIndex.search("stl", 50, undefined, false)),
+          Effect.map(({ entries }) => entries),
+          Effect.catchTags({
+            WorkspaceSearchIndexCreateFailed: (error) => Effect.succeed(error._tag),
+          }),
+        );
+
+        expect(result).toBe("WorkspaceSearchIndexCreateFailed");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -30,10 +30,6 @@ export const callRpc = <A>(
     }),
   );
 
-/**
- * Runs a notification handler so it cannot stop the caller: a typed failure is
- * dropped, as notifications have no reply, and a defect is logged.
- */
 export const isolateNotificationHandler = <E, R>(effect: Effect.Effect<void, E, R>) =>
   effect.pipe(
     Effect.catchCause((cause) =>

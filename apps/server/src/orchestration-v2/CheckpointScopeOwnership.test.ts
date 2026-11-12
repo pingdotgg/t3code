@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -219,6 +219,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
             getCheckpointContext: () => Effect.succeed(context),
           }),
           Layer.mock(CheckpointStore.CheckpointStore)({
+            listAuthoredPaths: () => Effect.succeed(null),
             diffCheckpoints: (input) => {
               assert.equal(input.cwd, "/prepared-repo");
               assert.equal(input.fromCheckpointRef, checkpointRefs[0]);

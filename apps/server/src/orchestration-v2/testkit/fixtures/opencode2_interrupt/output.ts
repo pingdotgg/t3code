@@ -12,10 +12,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * Stop during a running shell call: `session.interrupt`, then OpenCode fails the
- * tool as aborted and ends the execution with `interrupted`.
- */
 export function assertOpenCode2InterruptOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

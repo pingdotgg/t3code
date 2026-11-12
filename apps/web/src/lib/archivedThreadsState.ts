@@ -5,9 +5,10 @@ import {
   makeArchivedThreadsEnvironmentKey,
 } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 
 import { orchestrationEnvironment } from "../state/orchestration";
+import { serverEnvironment } from "../state/server";
+import { environmentThreadShells } from "../state/threads";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
@@ -19,6 +20,10 @@ function archivedSnapshotAtom(environmentId: EnvironmentId) {
 
 const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
   getSnapshotAtom: archivedSnapshotAtom,
+  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
+  hiddenThreadKeysAtom: environmentThreadShells.hiddenThreadKeysAtom,
+  liveThreadRefsAtom: environmentThreadShells.threadRefsAtom,
+  anyEnvironmentHidingAtom: environmentThreadShells.anyEnvironmentHidingAtom,
   labelPrefix: "web:archived-thread-snapshots",
 });
 
@@ -32,16 +37,13 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
   readonly isLoading: boolean;
   readonly refresh: () => void;
 } {
-  const environmentKey = useMemo(
-    () => makeArchivedThreadsEnvironmentKey(environmentIds),
-    [environmentIds],
-  );
+  const environmentKey = makeArchivedThreadsEnvironmentKey(environmentIds);
   const result = useAtomValue(archivedSnapshotsAtom(environmentKey));
-  const refresh = useCallback(() => {
+  const refresh = () => {
     for (const environmentId of environmentIds) {
       appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
     }
-  }, [environmentIds]);
+  };
 
   return {
     ...result,

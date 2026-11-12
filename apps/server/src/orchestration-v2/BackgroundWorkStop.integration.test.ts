@@ -24,47 +24,40 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2InterruptInput,
-  ProviderAdapterV2Shape,
-  ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
-// Codex turns leave commands running, then the thread moves to another
-// provider thread (a provider switch). Stop must end all of the Codex work,
-// including when it selects an older resumed run on the other provider thread.
 const stopEarlierBackgroundWork = ({
+  wakeAfterStop = false,
   failedStart = false,
   stopWithQueue,
   olderStart = false,
+  backgroundWorkAfterStop,
   stalledRun,
+  workflowMember = false,
 }: {
+  readonly wakeAfterStop?: boolean;
   readonly failedStart?: boolean;
+  readonly backgroundWorkAfterStop?: "running" | "unknown";
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
-  readonly stalledRun?:
-    | "missing-session"
-    | "missing-session-terminal"
-    | "returned-interrupt"
-    | "returned-interrupt-terminal"
-    | "superseded-attempt";
+  readonly workflowMember?: boolean;
+  readonly stalledRun?: "missing-session-terminal" | "returned-interrupt" | "superseded-attempt";
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("background-work-stop");
-      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-      const started: ProviderAdapterV2TurnInput[] = [];
-      const interrupts: ProviderAdapterV2InterruptInput[] = [];
-      const adapter: ProviderAdapterV2Shape = {
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
+      const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
+      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
         getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -89,6 +82,22 @@ const stopEarlierBackgroundWork = ({
                 lastError: null,
               },
               events: Stream.fromQueue(events),
+              ...(failedStart
+                ? {
+                    hasPendingBackgroundWorkForThread: (providerThread) =>
+                      Effect.gen(function* () {
+                        if (
+                          !interrupts.some((input) => input.providerThread.id === providerThread.id)
+                        ) {
+                          return false;
+                        }
+                        if (backgroundWorkAfterStop === "unknown") {
+                          return yield* Effect.die("Background work probe failed");
+                        }
+                        return backgroundWorkAfterStop === "running";
+                      }),
+                  }
+                : {}),
               ensureThread: ({ threadId }) =>
                 Effect.succeed({
                   id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
@@ -185,6 +194,46 @@ const stopEarlierBackgroundWork = ({
         });
         yield* worker.drain();
         yield* Fiber.join(running);
+        if (wakeAfterStop) {
+          const send = (id: string, provider = false) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(id),
+              threadId,
+              messageId: MessageId.make(`message:${id}`),
+              text: id,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: provider ? "agent" : "user",
+              creationSource: provider ? "provider" : "web",
+            });
+          yield* send("follow-up");
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop"),
+            threadId,
+          });
+          // Stop is committed, but its provider interrupt has not run yet.
+          yield* send("Background task completed.", true);
+          const [stopped, followUp, wake] = (yield* orchestrator.getThreadProjection(threadId))
+            .runs;
+          assert.equal(stopped?.status, "running");
+          assert.isTrue(followUp?.queueHeld);
+          assert.isTrue(wake?.queueHeld);
+
+          yield* worker.drain();
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            after.runs.map((run) => run.status),
+            ["interrupted", "queued", "queued"],
+          );
+          assert.isTrue(after.runs.find((run) => run.id === followUp?.id)?.queueHeld);
+          assert.isTrue(after.runs.find((run) => run.id === wake?.id)?.queueHeld);
+          assert.lengthOf(started, 1);
+          return;
+        }
         const first = started[0]!;
         const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
         const devServerId = TurnItemId.make("turn-item:dev-server");
@@ -223,7 +272,7 @@ const stopEarlierBackgroundWork = ({
           const run = before.runs[0]!;
           const node = before.nodes.find((candidate) => candidate.id === run.rootNodeId)!;
           const attempt = before.attempts[0]!;
-          if (stalledRun === "missing-session" || stalledRun === "missing-session-terminal") {
+          if (stalledRun === "missing-session-terminal") {
             const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
             const failed = yield* watch(
               (event) => event.type === "run.updated" && event.payload.status === "failed",
@@ -233,7 +282,6 @@ const stopEarlierBackgroundWork = ({
               reason: "runtime_error",
             });
             yield* Fiber.join(failed);
-            // Disk exhaustion can lose these terminal writes. Restore that stale state.
             yield* sink.write({
               events: [
                 {
@@ -419,8 +467,140 @@ const stopEarlierBackgroundWork = ({
 
         const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
           .providerThreads[0]!;
-        // A settled run with its root node, attempt, provider turn and,
-        // optionally, a command or native subagent it left running.
+        const backgroundTasks = [
+          { taskId: "sleep", description: "Wait before the recheck", kind: "command" as const },
+        ];
+        const otherBackgroundTasks = [{ ...backgroundTasks[0]!, taskId: "other-sleep" }];
+        const subagentThread = (name: string) =>
+          Effect.gen(function* () {
+            const subagentThreadId = ThreadId.make(`thread:${name}`);
+            const rootId = NodeId.make(`node:${name}-root`);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`create-${name}`),
+              threadId: subagentThreadId,
+              projectId: ProjectId.make("project:background-work-stop"),
+              title: name,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+              createdBy: "agent",
+              creationSource: "provider",
+            });
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`${name}-root`),
+                  type: "node.updated",
+                  threadId: subagentThreadId,
+                  occurredAt: now,
+                  payload: {
+                    id: rootId,
+                    threadId: subagentThreadId,
+                    runId: null,
+                    parentNodeId: null,
+                    rootNodeId: rootId,
+                    kind: "root_turn",
+                    status: "running",
+                    countsForRun: false,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    runtimeRequestId: null,
+                    checkpointScopeId: null,
+                    startedAt: now,
+                    completedAt: null,
+                  },
+                },
+              ],
+            });
+            return { threadId: subagentThreadId, rootId };
+          });
+        const { threadId: reviewerThreadId, rootId: reviewerRootId } =
+          yield* subagentThread("reviewer");
+        const tester = yield* subagentThread("tester");
+        const nestedSubagentId = NodeId.make("subagent:nested");
+        const nestedItemId = TurnItemId.make("turn-item:nested-subagent");
+        const nested = {
+          threadId: reviewerThreadId,
+          runId: null,
+          origin: "provider_native",
+          driver,
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId: tester.threadId,
+          prompt: "Check the tests",
+          title: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        } as const;
+        yield* sink.write({
+          events: [
+            ...(workflowMember
+              ? []
+              : [
+                  {
+                    id: EventId.make("nested-subagent-item"),
+                    type: "turn-item.updated",
+                    threadId: reviewerThreadId,
+                    occurredAt: now,
+                    payload: {
+                      ...nested,
+                      id: nestedItemId,
+                      nodeId: nestedSubagentId,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 1,
+                      type: "subagent",
+                      subagentId: nestedSubagentId,
+                    },
+                  } as const,
+                ]),
+            {
+              id: EventId.make("nested-subagent"),
+              type: "subagent.updated",
+              threadId: reviewerThreadId,
+              occurredAt: now,
+              payload: {
+                ...nested,
+                id: nestedSubagentId,
+                parentNodeId: reviewerRootId,
+                createdBy: "agent",
+                nativeTaskRef: workflowMember
+                  ? { driver, nativeId: "workflow:member", strength: "strong" }
+                  : null,
+                model: null,
+              },
+            },
+          ],
+        });
+        if (workflowMember) {
+          const memberRoot = (yield* orchestrator.getThreadProjection(tester.threadId)).nodes[0]!;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("workflow-member-node"),
+                type: "node.updated",
+                threadId: reviewerThreadId,
+                occurredAt: now,
+                payload: {
+                  ...memberRoot,
+                  id: nestedSubagentId,
+                  threadId: reviewerThreadId,
+                  parentNodeId: reviewerRootId,
+                  rootNodeId: reviewerRootId,
+                  kind: "subagent",
+                },
+              },
+            ],
+          });
+        }
         const settledRun = (input: {
           readonly ordinal: number;
           readonly providerThreadId: ProviderThreadId;
@@ -547,26 +727,45 @@ const stopEarlierBackgroundWork = ({
                   ? { ...base, type: "command_execution", input: "vp run test --watch" }
                   : {
                       ...base,
-                      // A native subagent item names its own provider thread
-                      // but its parent's provider turn.
                       providerThreadId: ProviderThreadId.make("provider-thread:codex-subagent"),
                       type: "subagent",
                       subagentId: NodeId.make(`subagent:${input.ordinal}`),
                       origin: "provider_native",
                       driver,
                       providerInstanceId: instanceId,
-                      childThreadId: null,
+                      childThreadId: reviewerThreadId,
                       prompt: "Review the change",
                       result: null,
                     },
             });
+            if (item.kind === "subagent") {
+              events.push({
+                id: EventId.make(`subagent:${input.ordinal}`),
+                type: "subagent.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...base,
+                  id: NodeId.make(`subagent:${input.ordinal}`),
+                  parentNodeId: nodeId,
+                  origin: "provider_native",
+                  createdBy: "agent",
+                  driver,
+                  providerInstanceId: instanceId,
+                  providerThreadId: null,
+                  childThreadId: reviewerThreadId,
+                  nativeTaskRef: null,
+                  prompt: "Review the change",
+                  model: null,
+                  result: null,
+                },
+              });
+            }
           }
           return { runId, providerTurnId, events };
         };
 
-        // Later Codex runs leave a second command and a native subagent. Then
-        // the thread moves on to another provider thread, which also has a
-        // live session.
         const watcherId = TurnItemId.make("turn-item:watcher");
         const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
         const watcherRun = settledRun({
@@ -595,47 +794,82 @@ const stopEarlierBackgroundWork = ({
                 id: otherProviderThreadId,
                 firstRunOrdinal: 4,
                 lastRunOrdinal: 4,
+                ...(failedStart ? { pendingBackgroundTasks: otherBackgroundTasks } : {}),
               },
             },
             ...latestRun.events,
           ],
         });
 
-        const failedRun = settledRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
+        const failedRun = settledRun({ ordinal: 5, providerThreadId: codexProviderThread.id });
         if (failedStart) {
           yield* sink.write({
-            events: failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
-              switch (event.type) {
-                case "provider-turn.updated":
-                  return [];
-                case "run.created":
-                  return [{ ...event, payload: { ...event.payload, status: "failed" } }];
-                case "node.updated":
-                  return [
-                    {
-                      ...event,
-                      payload: { ...event.payload, status: "failed", providerTurnId: null },
-                    },
-                  ];
-                case "run-attempt.created":
-                  return [
-                    {
-                      ...event,
-                      payload: { ...event.payload, status: "failed", providerTurnId: null },
-                    },
-                  ];
-                default:
-                  return [event];
-              }
-            }),
+            events: [
+              {
+                id: EventId.make("failed-start-roster"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...codexProviderThread,
+                  lastRunOrdinal: 5,
+                  pendingBackgroundTasks: backgroundTasks,
+                },
+              },
+              ...failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
+                switch (event.type) {
+                  case "provider-turn.updated":
+                    return [];
+                  case "run.created":
+                    return [{ ...event, payload: { ...event.payload, status: "failed" } }];
+                  case "node.updated":
+                    return [
+                      {
+                        ...event,
+                        payload: { ...event.payload, status: "failed", providerTurnId: null },
+                      },
+                    ];
+                  case "run-attempt.created":
+                    return [
+                      {
+                        ...event,
+                        payload: { ...event.payload, status: "failed", providerTurnId: null },
+                      },
+                    ];
+                  default:
+                    return [event];
+                }
+              }),
+            ],
           });
+          // The older turn reports an empty roster, but the refused run owns the row now.
+          const clear = yield* sink.writeIfProviderThreadOwner({
+            providerThreadId: codexProviderThread.id,
+            runId: reviewerRun.runId,
+            activeAttemptId: RunAttemptId.make("attempt:3"),
+            expectedLastRunOrdinal: 3,
+            events: [
+              {
+                id: EventId.make("dropped-roster-clear"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...codexProviderThread, pendingBackgroundTasks: [] },
+              },
+            ],
+          });
+          assert.isFalse(clear.committed);
+          const beforeStop = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).providerThreads.find((thread) => thread.id === codexProviderThread.id)!;
+          assert.equal(beforeStop.lastRunOrdinal, 5);
+          assert.deepEqual(beforeStop.pendingBackgroundTasks, backgroundTasks);
         }
 
         if (stopWithQueue !== undefined) {
           const owner = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.id === latestRun.runId,
           )!;
-          // A message queues while checkpointing finishes, then the user holds the queue.
           yield* sink.write({
             events: [
               {
@@ -687,7 +921,6 @@ const stopEarlierBackgroundWork = ({
           const older = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.id === watcherRun.runId,
           )!;
-          // A resumed queue can start a lower-ordinal run after later runs have ended.
           yield* sink.write({
             events: [
               {
@@ -723,12 +956,12 @@ const stopEarlierBackgroundWork = ({
         );
         yield* worker.drain();
 
-        // The Codex interrupt targets its latest pending work, the subagent's parent turn,
-        // so its settlement covers the Codex background work.
         assert.sameDeepMembers(
           interrupts.map((interrupt) => [interrupt.providerThread.id, interrupt.providerTurnId]),
           [
-            ...(olderStart ? [] : [[otherProviderThreadId, latestRun.providerTurnId]]),
+            ...(olderStart || failedStart
+              ? []
+              : [[otherProviderThreadId, latestRun.providerTurnId]]),
             [codexProviderThread.id, reviewerRun.providerTurnId],
           ],
         );
@@ -752,6 +985,36 @@ const stopEarlierBackgroundWork = ({
             ? ["interrupted", "interrupted"]
             : ["interrupted", "interrupted", "interrupted"],
         );
+        assert.equal(after.subagents[0]?.status, "interrupted");
+        const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
+        assert.equal(reviewerThread.nodes[0]?.status, "interrupted");
+        assert.equal(reviewerThread.subagents[0]?.status, "interrupted");
+        if (workflowMember) {
+          assert.isUndefined(reviewerThread.turnItems.find((item) => item.id === nestedItemId));
+          assert.equal(
+            reviewerThread.nodes.find((node) => node.id === nestedSubagentId)?.status,
+            "interrupted",
+          );
+        } else {
+          assert.equal(
+            reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
+            "interrupted",
+          );
+        }
+        const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
+        assert.equal(testerThread.nodes[0]?.status, "interrupted");
+        if (failedStart) {
+          assert.deepEqual(
+            after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
+              ?.pendingBackgroundTasks,
+            backgroundWorkAfterStop === undefined ? [] : backgroundTasks,
+          );
+          assert.deepEqual(
+            after.providerThreads.find((candidate) => candidate.id === otherProviderThreadId)
+              ?.pendingBackgroundTasks,
+            otherBackgroundTasks,
+          );
+        }
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -768,9 +1031,17 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
   stopEarlierBackgroundWork({}),
 );
 
+it.effect("Stop settles workflow members without subagent turn items", () =>
+  stopEarlierBackgroundWork({ workflowMember: true }),
+);
+
 it.effect(
-  "Stop reaches earlier background work after the newest run fails before provider start",
+  "Stop clears a stale roster after a refused run takes ownership of the provider thread",
   () => stopEarlierBackgroundWork({ failedStart: true }),
+);
+
+it.effect("Stop preserves the roster when the background work probe fails", () =>
+  stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "unknown" }),
 );
 
 it.effect.each(["thread.stop", "run.interrupt"] as const)(
@@ -783,12 +1054,11 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
   (stopType) => stopEarlierBackgroundWork({ stopWithQueue: stopType, olderStart: true }),
 );
 
-it.effect.each([
-  "missing-session",
-  "missing-session-terminal",
-  "returned-interrupt",
-  "returned-interrupt-terminal",
-  "superseded-attempt",
-] as const)("Stop recovers a stalled run after %s without changing a newer attempt", (stalledRun) =>
-  stopEarlierBackgroundWork({ stalledRun }),
+it.effect.each(["missing-session-terminal", "returned-interrupt", "superseded-attempt"] as const)(
+  "Stop recovers a stalled run after %s without changing a newer attempt",
+  (stalledRun) => stopEarlierBackgroundWork({ stalledRun }),
+);
+
+it.effect("Stop holds a provider wake that queues before the stopped turn ends", () =>
+  stopEarlierBackgroundWork({ wakeAfterStop: true }),
 );

@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 
@@ -24,7 +25,6 @@ describe("ResetCreditCoordinator", () => {
       assert.isTrue(first._tag === "Failure");
       const second = yield* redeem("acct", consume);
       assert.strictEqual(second, "reset");
-      // A fresh redemption after success must be a fresh attempt.
       yield* redeem("acct", consume);
 
       const seen = yield* Ref.get(keys);
@@ -68,7 +68,6 @@ describe("ResetCreditCoordinator", () => {
           return "reset" as const;
         });
 
-      // Two instances of the same account redeem at once.
       const a = yield* redeem("acct", consume).pipe(Effect.forkChild);
       const b = yield* redeem("acct", consume).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
@@ -101,5 +100,30 @@ describe("ResetCreditCoordinator", () => {
       yield* Fiber.join(b);
       assert.strictEqual(yield* Ref.get(peak), 2);
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
+  it.effect("re-probes after a reset until the limits are fresh, then gives up", () =>
+    Effect.gen(function* () {
+      const stale = { usageLimits: { checkedAt: "t0", windows: [] } };
+      const run = (freshFrom: number) =>
+        Effect.gen(function* () {
+          const probes = yield* Ref.make(0);
+          const refresh = Ref.updateAndGet(probes, (n) => n + 1).pipe(
+            Effect.map((n) =>
+              n >= freshFrom ? { usageLimits: { checkedAt: `t${n}`, windows: [] } } : stale,
+            ),
+          );
+          const fiber = yield* ResetCreditCoordinator.refreshAfterRedemption({
+            outcome: "reset",
+            getSnapshot: Effect.succeed(stale),
+            refresh,
+          }).pipe(Effect.forkChild);
+          yield* TestClock.adjust("1 minute");
+          return { confirmed: yield* Fiber.join(fiber), probes: yield* Ref.get(probes) };
+        });
+
+      assert.deepStrictEqual(yield* run(3), { confirmed: true, probes: 3 });
+      assert.deepStrictEqual(yield* run(Infinity), { confirmed: false, probes: 4 });
+    }),
   );
 });

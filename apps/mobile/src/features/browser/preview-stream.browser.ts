@@ -17,7 +17,6 @@ declare global {
   }
 }
 
-/** WebKit's presentation API, the only picture in picture entry on older iOS. */
 interface PresentationVideo extends HTMLVideoElement {
   webkitSetPresentationMode?: (mode: "inline" | "picture-in-picture") => void;
   webkitPresentationMode?: string;
@@ -33,16 +32,12 @@ const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_SLOP_PX = 4;
 const WHEEL_LINE_PX = 16;
-// JPEG frames past 2x cost bandwidth without a visible gain on a phone.
 const MAX_PIXEL_RATIO = 2;
-// A tap this close to an answered probe, this soon, reuses its answer. On a slow
-// link the answer lands after touch end, too late for iOS to raise the keyboard.
+// Reuse nearby probe answers: slow replies arrive too late after touch-end to raise the iOS keyboard.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
-// Kept in the hidden textarea so a soft keyboard's backspace has something to
-// delete and fires `input`; Gboard's keydown carries keyCode 229 and no key.
+// A sentinel makes backspace fire input; Gboard keydown supplies only keyCode 229.
 const SENTINEL = "\u200b";
-// The agent cursor stays bright while the agent acts, then dims like the web panel's.
 const AGENT_CURSOR_ACTIVE_MS = 700;
 const AGENT_CURSOR_SVG =
   '<svg width="20" height="20" viewBox="0 0 24 24" fill="#fff" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>';
@@ -50,7 +45,7 @@ const AGENT_CURSOR_SVG =
 interface Viewer {
   readonly stop: () => void;
   readonly command: (input: PreviewStreamInput) => void;
-  readonly togglePictureInPicture: () => Promise<void>;
+  readonly togglePictureInPicture: () => void;
 }
 
 let activeViewer: Viewer | null = null;
@@ -60,13 +55,12 @@ export function stop() {
   activeViewer = null;
 }
 
-/** Navigation and history from the native chrome require current browser control. */
 export function command(input: PreviewStreamInput) {
   activeViewer?.command(input);
 }
 
 export function pictureInPicture() {
-  void activeViewer?.togglePictureInPicture();
+  activeViewer?.togglePictureInPicture();
 }
 
 export function start(configuration: PreviewStreamConfiguration) {
@@ -99,7 +93,6 @@ export function start(configuration: PreviewStreamConfiguration) {
   let streaming = false;
   let viewport: PreviewStreamViewport | null = null;
   let size: { width: number; height: number } | null = null;
-  // Frame cap in device px, fixed per socket. It only grows, so only outgrowing it reconnects.
   let cap: { width: number; height: number } | null = null;
   let client: PreviewStreamClient | null = null;
   let control: PreviewStreamControl | null = null;
@@ -110,8 +103,6 @@ export function start(configuration: PreviewStreamConfiguration) {
   let pendingMouse: MouseInput | null = null;
   let mouseButtons = 0;
   const mouseClicks = { left: 1, middle: 1, right: 1, none: 1 };
-  // The latest probe. `editable` is the answer its tap acts on, null until known;
-  // `end` records what touch end did, so a late answer can still act or correct it.
   let probe: {
     readonly x: number;
     readonly y: number;
@@ -126,7 +117,6 @@ export function start(configuration: PreviewStreamConfiguration) {
     readonly editable: boolean;
     readonly time: number;
   } | null = null;
-  // A keydown already sent this key; its `input` must not send it again.
   let keySent = false;
   let touch: {
     start: PointerEvent;
@@ -147,6 +137,7 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
   const painter = createPreviewFramePainter(canvas, () => {
     if (!streaming && !stopped) reportStatus("streaming");
+    sendPictureInPictureFrame();
   });
   const send = (message: PreviewStreamInput) => client?.send(message) ?? false;
   const clearInput = () => {
@@ -164,7 +155,6 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
 
   const connect = () => {
-    // Stopping suppresses the old socket's disconnect report; native also drops its control.
     if (client) reportStatus("connecting");
     client?.stop();
     control = null;
@@ -207,8 +197,7 @@ export function start(configuration: PreviewStreamConfiguration) {
           probe = null;
           if (current.end === "panned") return;
           if (current.end === "acted" && current.editable === result.editable) return;
-          // Late or corrected answer: Android still raises the keyboard; iOS waits
-          // for the next tap, which can reuse this answer.
+          // Late answers can raise Android's keyboard; iOS needs another tap.
           if (result.editable) input.focus({ preventScroll: true });
           else input.blur();
         },
@@ -216,7 +205,6 @@ export function start(configuration: PreviewStreamConfiguration) {
           const previous = control;
           control = nextControl;
           post({ type: "control", ...nextControl });
-          // Taking over hides the agent cursor; the person's own touch is the pointer now.
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();
           else {
@@ -250,7 +238,6 @@ export function start(configuration: PreviewStreamConfiguration) {
     size = next;
     if (interactive) send({ type: "resize", ...next });
     const ratio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
-    // The floating player scales a page of any shape into its box, so its cap is square.
     const side = Math.max(next.width, next.height);
     const width = Math.round((interactive ? next.width : side) * ratio);
     const height = Math.round((interactive ? next.height : side) * ratio);
@@ -260,13 +247,11 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
   const observer = new ResizeObserver(() => {
     if (resizeTimer !== null) clearTimeout(resizeTimer);
-    // The first size connects right away; later ones settle before resizing the page.
     resizeTimer = setTimeout(measure, size === null ? 0 : RESIZE_DEBOUNCE_MS);
   });
   observer.observe(container);
 
-  // iOS keeps the layout viewport under the soft keyboard; follow the visible area
-  // so the page resizes above it.
+  // iOS keeps its layout viewport under the keyboard; resize to the visual viewport.
   const visualViewport = window.visualViewport;
   const followVisualViewport = () => {
     if (!visualViewport) return;
@@ -279,7 +264,6 @@ export function start(configuration: PreviewStreamConfiguration) {
   }
 
   let agentCursorTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Mirrors the frame's letterbox so the cursor lands on the element the agent targets. */
   const showAgentCursor = (pointer: PreviewStreamPointer) => {
     if (!viewport || canvas.width === 0 || canvas.height === 0 || control?.controller === "you")
       return;
@@ -307,7 +291,6 @@ export function start(configuration: PreviewStreamConfiguration) {
     if (!viewport || canvas.width === 0 || canvas.height === 0 || control?.controller !== "you")
       return null;
     const rect = canvas.getBoundingClientRect();
-    // `object-fit: contain` letterboxes the frame inside the canvas box.
     const fit = Math.min(rect.width / canvas.width, rect.height / canvas.height);
     const width = canvas.width * fit;
     const height = canvas.height * fit;
@@ -324,7 +307,6 @@ export function start(configuration: PreviewStreamConfiguration) {
     };
   };
 
-  // Wheel deltas coalesce to one message per animation frame.
   const flushWheel = () => {
     if (wheelFrame !== null) cancelAnimationFrame(wheelFrame);
     wheelFrame = null;
@@ -415,7 +397,6 @@ export function start(configuration: PreviewStreamConfiguration) {
       editable: reuse ? cached.editable : null,
       end: "touching",
     };
-    // Sent even with a cached answer, so the next tap reuses a fresh one.
     send({ type: "probe", x: point.x, y: point.y });
   };
   const onPointerMove = (event: PointerEvent) => {
@@ -459,7 +440,6 @@ export function start(configuration: PreviewStreamConfiguration) {
     }
     touch.panning = true;
     const point = pagePoint(event.clientX, event.clientY, true);
-    // Dragging the page up scrolls it down, following the finger.
     if (point) {
       queueWheel(
         point,
@@ -511,7 +491,6 @@ export function start(configuration: PreviewStreamConfiguration) {
     send({ type: "mouse", action: "down", ...at, button: "left", buttons: 1, clickCount });
     send({ type: "mouse", action: "up", ...at, button: "left", buttons: 0, clickCount });
   };
-  // Trackpads and mice on tablets scroll with wheel events.
   const onWheel = (event: WheelEvent) => {
     const point = pagePoint(event.clientX, event.clientY, false);
     if (!point) return;
@@ -524,12 +503,10 @@ export function start(configuration: PreviewStreamConfiguration) {
           : 1;
     queueWheel(point, event.deltaX * unit, event.deltaY * unit);
   };
-  // Keeps focus in the page input and stops native selection and callouts.
   const preventDefault = (event: Event) => event.preventDefault();
 
   const onKey = (action: "down" | "up", event: KeyboardEvent) => {
     if (control?.controller !== "you") return;
-    // IME and soft keyboards deliver text through composition and input events.
     if (
       event.isComposing ||
       event.keyCode === 229 ||
@@ -539,8 +516,6 @@ export function start(configuration: PreviewStreamConfiguration) {
       return;
     }
     const shortcut = event.ctrlKey || event.metaKey;
-    // Paste arrives as input text from this device's clipboard. Copy and cut run in
-    // the page, which sends the copied text back. Shift+Insert is the same paste.
     if (shortcut && event.key.toLowerCase() === "v") return;
     if (event.shiftKey && event.key === "Insert") return;
     // Enter carries "\r" like Puppeteer's key table, so forms submit and textareas break lines.
@@ -561,7 +536,6 @@ export function start(configuration: PreviewStreamConfiguration) {
       modifiers: previewStreamModifiers(event),
     });
     // Some Android keyboards edit the textarea even when keydown is prevented.
-    // Shortcuts keep their default, so a paste still arrives as text.
     keySent =
       action === "down" &&
       !shortcut &&
@@ -620,10 +594,13 @@ export function start(configuration: PreviewStreamConfiguration) {
   const pictureInPictureSupported =
     interactive &&
     typeof canvas.captureStream === "function" &&
+    typeof CanvasCaptureMediaStreamTrack === "function" &&
     ((document.pictureInPictureEnabled === true &&
       typeof videoPrototype.requestPictureInPicture === "function") ||
       typeof videoPrototype.webkitSetPresentationMode === "function");
+  // WebKit revokes activation after return; start picture in picture before awaiting. Prepare paused video before the tap.
   let video: PresentationVideo | null = null;
+  let track: CanvasCaptureMediaStreamTrack | null = null;
   const pictureInPictureActive = () =>
     video !== null &&
     (document.pictureInPictureElement === video ||
@@ -635,16 +612,20 @@ export function start(configuration: PreviewStreamConfiguration) {
       active: pictureInPictureActive(),
       ...(detail ? { detail } : {}),
     });
-  const ensureVideo = () => {
-    if (video) return video;
+  // Called after each paint. A frame drawn before the player attached is lost, so retry.
+  const sendPictureInPictureFrame = () => {
+    if (video && (video.readyState === HTMLMediaElement.HAVE_NOTHING || pictureInPictureActive())) {
+      track?.requestFrame();
+    }
+  };
+  if (pictureInPictureSupported) {
+    const stream = canvas.captureStream(0);
+    const [captured] = stream.getVideoTracks();
     const element: PresentationVideo = document.createElement("video");
     element.muted = true;
     element.playsInline = true;
-    element.autoplay = true;
     // Under the canvas at full size: WebKit pauses muted video it considers off screen.
-    element.srcObject = canvas.captureStream();
-    // A static page sends no new frames; repaint once so the stream has one.
-    if (canvas.width > 0 && canvas.height > 0) canvas.getContext("2d")?.drawImage(canvas, 0, 0);
+    element.srcObject = stream;
     for (const name of [
       "enterpictureinpicture",
       "leavepictureinpicture",
@@ -656,25 +637,37 @@ export function start(configuration: PreviewStreamConfiguration) {
       });
     }
     container.prepend(element);
+    canvas.style.background = configuration.background;
     video = element;
-    return element;
-  };
-  const togglePictureInPicture = async () => {
-    if (!pictureInPictureSupported) return;
-    try {
-      if (pictureInPictureActive()) {
-        if (document.pictureInPictureElement) await document.exitPictureInPicture();
-        else video?.webkitSetPresentationMode?.("inline");
-        return;
-      }
-      const element = ensureVideo();
-      await element.play();
-      if (document.pictureInPictureEnabled) await element.requestPictureInPicture();
-      else element.webkitSetPresentationMode?.("picture-in-picture");
-    } catch (error) {
+    track = captured instanceof CanvasCaptureMediaStreamTrack ? captured : null;
+  }
+  const togglePictureInPicture = () => {
+    const element = video;
+    if (!element) return;
+    if (pictureInPictureActive()) {
+      if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => {});
+      else element.webkitSetPresentationMode?.("inline");
+      return;
+    }
+    if (element.readyState === HTMLMediaElement.HAVE_NOTHING) {
+      reportPictureInPicture("The page has not shown yet. Try again in a moment.");
+      return;
+    }
+    // The page may have changed since the video's last frame. WebKit captures only on a draw.
+    track?.requestFrame();
+    canvas.getContext("2d")?.drawImage(canvas, 0, 0);
+    const fail = (error: unknown) => {
+      element.pause();
       reportPictureInPicture(
         error instanceof Error ? error.message : "Picture in picture is unavailable.",
       );
+    };
+    if (document.pictureInPictureEnabled) {
+      const entering = element.requestPictureInPicture();
+      void Promise.all([entering, element.play()]).catch(fail);
+    } else {
+      element.webkitSetPresentationMode?.("picture-in-picture");
+      void element.play().catch(fail);
     }
   };
 
@@ -691,14 +684,8 @@ export function start(configuration: PreviewStreamConfiguration) {
       painter.stop();
       client?.stop();
       client = null;
-      if (video) {
-        for (const track of video.srcObject instanceof MediaStream
-          ? video.srcObject.getTracks()
-          : []) {
-          track.stop();
-        }
-        video.srcObject = null;
-      }
+      track?.stop();
+      if (video) video.srcObject = null;
     },
     command: (message) => {
       send(message);

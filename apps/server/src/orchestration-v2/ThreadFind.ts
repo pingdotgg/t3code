@@ -1,0 +1,471 @@
+import {
+  OrchestrationV2TurnItemJson,
+  type OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2SearchThreadInput,
+  type OrchestrationV2SearchThreadResult,
+  type OrchestrationV2TurnItem,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
+import { searchableMessageSegments, searchablePlanSegments } from "@t3tools/shared/threadFindText";
+import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
+import * as Cache from "effect/Cache";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as RcRef from "effect/RcRef";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as SqlClient from "effect/sql/SqlClient";
+import {
+  ProjectionStoreReadError,
+  ProjectionStoreThreadNotFoundError,
+  type ProjectionStoreV2Error,
+} from "./ProjectionStore.ts";
+
+interface FindRow {
+  readonly position: number;
+  readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
+  readonly sourceThreadId: ThreadId;
+  readonly sourceItemId: TurnItemId;
+}
+interface FindPayload extends FindRow {
+  readonly payload: string;
+  readonly entryId: string;
+  readonly runId: OrchestrationV2TurnItem["runId"];
+  readonly type: OrchestrationV2TurnItem["type"];
+  readonly emptyText: boolean;
+}
+interface FindDocument extends FindRow {
+  readonly entryId: string;
+  readonly runId: OrchestrationV2TurnItem["runId"];
+  readonly count: number;
+}
+type CompletedScans = Map<
+  string,
+  {
+    sequence: number;
+    documents: readonly FindDocument[];
+    sourceThreadIds: readonly ThreadId[];
+  }
+>;
+class TextKey extends Data.Class<{
+  text: string;
+  role: "user" | "assistant" | "plan";
+  streaming: boolean;
+  hasContext: boolean;
+  cwd: string | undefined;
+  skills: NonNullable<OrchestrationV2SearchThreadInput["skills"]>;
+}> {}
+
+function textKey(
+  item: OrchestrationV2TurnItem,
+  cwd: string | undefined,
+  skills: TextKey["skills"],
+) {
+  return new TextKey({
+    text:
+      item.type === "proposed_plan"
+        ? item.markdown
+        : item.type === "user_message" || item.type === "assistant_message"
+          ? item.text
+          : "",
+    role:
+      item.type === "proposed_plan" ? "plan" : item.type === "user_message" ? "user" : "assistant",
+    streaming: item.type === "assistant_message" && item.streaming,
+    hasContext: item.type === "user_message" && item.context !== undefined,
+    cwd,
+    skills,
+  });
+}
+
+function parseText(key: TextKey): readonly string[] {
+  return key.role === "plan"
+    ? searchablePlanSegments(key.text, key.cwd)
+    : (searchableMessageSegments(
+        {
+          role: key.role,
+          text: key.text,
+          streaming: key.streaming,
+          context: key.hasContext ? { version: 1, records: [] } : undefined,
+        },
+        key.cwd,
+        key.skills,
+      ) ?? []);
+}
+
+function documentFor(row: OrchestrationV2ProjectedTurnItem, count: number): FindDocument {
+  return {
+    position: row.position,
+    visibility: row.visibility,
+    sourceThreadId: row.sourceThreadId,
+    sourceItemId: row.sourceItemId,
+    entryId:
+      row.item.type === "user_message" || row.item.type === "assistant_message"
+        ? row.item.messageId
+        : row.item.id,
+    runId: row.item.runId,
+    count,
+  };
+}
+
+function countSegments(segments: readonly string[], query: string) {
+  return segments.reduce((sum, text) => sum + countThreadSearchOccurrences(text, query), 0);
+}
+
+function selectMatch(
+  documents: readonly FindDocument[],
+  input: Pick<OrchestrationV2SearchThreadInput, "index" | "start" | "offset">,
+) {
+  const totalMatches = documents.reduce((sum, doc) => sum + doc.count, 0);
+  let requestedIndex = input.index ?? 0;
+  if (input.index === undefined && input.start) {
+    const startIndex = documents.findIndex((doc) => doc.entryId === input.start?.entryId);
+    if (startIndex >= 0) {
+      requestedIndex =
+        documents.slice(0, startIndex).reduce((sum, doc) => sum + doc.count, 0) +
+        Math.min(input.start.occurrence, documents[startIndex]!.count);
+      if (requestedIndex >= totalMatches) requestedIndex = 0;
+    }
+  }
+  const activeIndex =
+    input.index === undefined && totalMatches > 0
+      ? (((requestedIndex + (input.offset ?? 0)) % totalMatches) + totalMatches) % totalMatches
+      : Math.min(requestedIndex, Math.max(0, totalMatches - 1));
+  let occurrence = activeIndex;
+  for (const document of documents) {
+    if (occurrence < document.count) return { totalMatches, activeIndex, document, occurrence };
+    occurrence -= document.count;
+  }
+  return { totalMatches, activeIndex, document: null, occurrence: 0 };
+}
+
+function resultForSelection(
+  selected: ReturnType<typeof selectMatch>,
+  documents: readonly FindDocument[],
+  snapshotSequence: number,
+): OrchestrationV2SearchThreadResult {
+  let startIndex = 0;
+  const entries = documents.flatMap(({ entryId, runId, count }) => {
+    const entry = { entryId, runId, count, startIndex };
+    startIndex += count;
+    return count > 0 ? [entry] : [];
+  });
+  const selectedEntry = entries.findIndex((entry) => entry.entryId === selected.document?.entryId);
+  const navigation =
+    entries.length <= 17
+      ? entries
+      : Array.from(
+          { length: 17 },
+          (_, i) => entries[(selectedEntry + i - 8 + entries.length) % entries.length]!,
+        );
+  return {
+    snapshotSequence,
+    totalMatches: selected.totalMatches,
+    activeIndex: selected.activeIndex,
+    navigation,
+    match:
+      selected.document === null
+        ? null
+        : {
+            entryId: selected.document.entryId,
+            runId: selected.document.runId,
+            occurrence: selected.occurrence,
+          },
+  };
+}
+
+export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
+  readIndex: (threadId: ThreadId) => Effect.Effect<
+    readonly (Omit<FindRow, "position"> & {
+      readonly item: Pick<OrchestrationV2TurnItem, "type" | "runId">;
+    })[],
+    ProjectionStoreV2Error
+  >,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const encodeCacheKey = Schema.encodeEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        threadId: ThreadId,
+        cwd: Schema.optional(Schema.String),
+        query: Schema.String,
+        skills: OrchestrationV2SearchThreadInput.fields.skills,
+      }),
+    ),
+  );
+  const encodeThreadIds = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(ThreadId)));
+  const encodeSources = Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Array(Schema.Struct({ threadId: ThreadId, id: TurnItemId }))),
+  );
+  const decodeItem = Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2TurnItemJson));
+  const isSnapshotError = Schema.is(
+    Schema.Union([ProjectionStoreReadError, ProjectionStoreThreadNotFoundError]),
+  );
+  const load = Effect.fn("ThreadFind.load")(function* (
+    threadId: ThreadId,
+    rows: readonly FindRow[],
+  ) {
+    if (rows.length === 0) return [];
+    const sources = yield* encodeSources(
+      rows.map((row) => ({ threadId: row.sourceThreadId, id: row.sourceItemId })),
+    ).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+    const payloads = yield* sql<{
+      thread_id: string;
+      turn_item_id: string;
+      payload_json: string;
+      entry_id: string;
+      run_id: OrchestrationV2TurnItem["runId"];
+      item_type: OrchestrationV2TurnItem["type"];
+      empty_text: number | null;
+    }>`
+      SELECT item.thread_id, item.turn_item_id, item.payload_json,
+        COALESCE(json_extract(item.payload_json, '$.messageId'), item.turn_item_id) AS entry_id,
+        json_extract(item.payload_json, '$.runId') AS run_id,
+        json_extract(item.payload_json, '$.type') AS item_type,
+        json_extract(item.payload_json, '$.text') = '' AS empty_text
+      FROM orchestration_v2_projection_turn_items AS item
+      JOIN json_each(${sources}) AS wanted
+        ON item.thread_id = json_extract(wanted.value, '$.threadId')
+          AND item.turn_item_id = json_extract(wanted.value, '$.id')
+    `.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+    const byThread = new Map<string, Map<string, (typeof payloads)[number]>>();
+    for (const row of payloads) {
+      let items = byThread.get(row.thread_id);
+      if (!items) byThread.set(row.thread_id, (items = new Map()));
+      items.set(row.turn_item_id, row);
+    }
+    return yield* Effect.forEach(rows, (row) => {
+      const payload = byThread.get(row.sourceThreadId)?.get(row.sourceItemId);
+      return payload === undefined
+        ? Effect.fail(new ProjectionStoreReadError({ threadId }))
+        : Effect.succeed({
+            ...row,
+            payload: payload.payload_json,
+            entryId: payload.entry_id,
+            runId: payload.run_id,
+            type: payload.item_type,
+            emptyText: payload.empty_text === 1,
+          });
+    });
+  });
+  const makeTextCache = (capacity: number) =>
+    Cache.make({ capacity, lookup: (key: TextKey) => Effect.sync(() => parseText(key)) });
+  // Text keys are message content, so entries never go stale. Cache TTL only expires on access
+  // and would keep the last searched threads forever. Each search borrows this for its whole
+  // stream, and all of it is dropped once Find is idle.
+  const findCaches = yield* RcRef.make({
+    acquire: Effect.all({
+      // Scans visit every message; a cache smaller than the thread churns without hits.
+      text: makeTextCache(8192),
+      // Bounded separately because each entry can hold a large body; typing reuses the parse.
+      largeText: makeTextCache(32),
+      scans: Effect.sync((): CompletedScans => new Map()),
+    }),
+    idleTimeToLive: "1 minute",
+  });
+  const readRevision = Effect.fn("ThreadFind.readRevision")(function* (
+    threadIds: readonly ThreadId[],
+  ) {
+    const sources = yield* encodeThreadIds(threadIds);
+    const revision = yield* sql<{ sequence: number }>`
+      WITH RECURSIVE source_threads(thread_id) AS (
+        SELECT value FROM json_each(${sources})
+        UNION
+        SELECT json_extract(t.payload_json, '$.forkedFrom.threadId')
+        FROM orchestration_v2_projection_threads t
+        JOIN source_threads s ON s.thread_id = t.thread_id
+        WHERE json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
+      )
+      SELECT COALESCE(MAX(sequence), 0) AS sequence FROM orchestration_events
+      -- The planner otherwise walks every V2 event backwards from the newest,
+      -- which takes seconds for a thread that has been idle a long time.
+      INDEXED BY idx_orch_events_stream_sequence
+      WHERE application_event_version = 2 AND aggregate_kind = 'thread'
+        AND stream_id IN (SELECT thread_id FROM source_threads)
+    `;
+    return revision[0]?.sequence ?? 0;
+  });
+  const snapshot = Effect.fn("ThreadFind.snapshot")(
+    function* (input: OrchestrationV2SearchThreadInput, scans: CompletedScans) {
+      const { threadId } = input;
+      const active = yield* sql<{ cwd: string | null }>`
+      SELECT COALESCE(json_extract(t.payload_json, '$.worktreePath'), p.workspace_root) AS cwd
+      FROM orchestration_v2_projection_threads t JOIN projection_projects p ON p.project_id = t.project_id
+      WHERE t.thread_id = ${threadId} AND t.deleted_at IS NULL AND p.deleted_at IS NULL
+    `;
+      if (!active[0]) return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+      const cwd = active[0].cwd ?? undefined;
+      const cacheKey = yield* encodeCacheKey({
+        threadId,
+        cwd,
+        query: input.query,
+        skills: input.skills ?? [],
+      });
+      const cached = scans.get(cacheKey);
+      if (cached && cached.sequence === (yield* readRevision(cached.sourceThreadIds))) {
+        const selected = selectMatch(cached.documents, input);
+        scans.delete(cacheKey);
+        scans.set(cacheKey, cached);
+        return { result: resultForSelection(selected, cached.documents, cached.sequence) };
+      }
+      const index = yield* readIndex(threadId);
+      const sourceThreadIds = [...new Set([threadId, ...index.map((row) => row.sourceThreadId)])];
+      const sequence = yield* readRevision(sourceThreadIds);
+      const candidates = index
+        .map((row, position) => ({ ...row, position }))
+        .filter((row) =>
+          ["user_message", "assistant_message", "proposed_plan", "user_input_request"].includes(
+            row.item.type,
+          ),
+        );
+      const loadAll = Effect.fnUntraced(function* (rows: readonly FindRow[]) {
+        const loaded: FindPayload[] = [];
+        for (let start = 0; start < rows.length; start += 128) {
+          loaded.push(...(yield* load(threadId, rows.slice(start, start + 128))));
+        }
+        return loaded;
+      });
+      const payloads = yield* loadAll(candidates);
+      // Only runs with an empty reply can hide its fallback, so other tool payloads stay unread.
+      const emptyReplyRunIds = new Set(
+        payloads.flatMap((row) =>
+          row.type === "assistant_message" && row.emptyText && row.runId !== null
+            ? [row.runId]
+            : [],
+        ),
+      );
+      const toolPayloads = yield* loadAll(
+        index
+          .map((row, position) => ({ ...row, position }))
+          .filter(
+            (row) =>
+              row.item.type === "dynamic_tool" &&
+              row.item.runId !== null &&
+              emptyReplyRunIds.has(row.item.runId),
+          ),
+      );
+      return { payloads, toolPayloads, cwd, sequence, cacheKey, sourceThreadIds };
+    },
+    (effect) => sql.withTransaction(effect).pipe(NodeSqliteClient.readOnly),
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isSnapshotError(cause)
+            ? cause
+            : new ProjectionStoreReadError({ threadId: input.threadId, cause }),
+        ),
+      ),
+  );
+  const searchThreadStream = (input: OrchestrationV2SearchThreadInput) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const { scans, ...textCache } = yield* RcRef.get(findCaches);
+        // Release SQLite before decoding and parsing. Both frames describe one snapshot.
+        const data = yield* snapshot(input, scans);
+        if (data.result) return Stream.succeed(data.result);
+        const { payloads, toolPayloads, cwd, sequence, cacheKey, sourceThreadIds } = data;
+        const decode = (row: FindPayload) =>
+          decodeItem(row.payload).pipe(
+            Effect.map((item) => ({ ...row, item })),
+            Effect.mapError(
+              (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
+            ),
+          );
+        // Answers rendered inside question cards must not appear as separate matches.
+        const foldedAnswerRunIds = new Map<string, OrchestrationV2TurnItem["runId"]>();
+        for (const payload of payloads) {
+          if (payload.type !== "user_input_request") continue;
+          const { item } = yield* decode(payload);
+          if (item.type === "user_input_request" && item.questionAnswer)
+            foldedAnswerRunIds.set(`async-answer:${item.questionAnswer.requestId}`, item.runId);
+        }
+        // The timeline hides an empty reply's fallback when its run shows an HTML render or MCP app.
+        const embeddedResultRunIds = new Set<OrchestrationV2TurnItem["runId"]>();
+        for (const payload of toolPayloads) {
+          const { item } = yield* decode(payload);
+          if (
+            item.type === "dynamic_tool" &&
+            ((item.status === "completed" && htmlRenderFromToolItem(item)) ||
+              mcpAppFromToolItem(item))
+          )
+            embeddedResultRunIds.add(item.runId);
+        }
+        const rows = payloads.filter(
+          (row) =>
+            row.type !== "user_input_request" &&
+            !(row.type === "user_message" && foldedAnswerRunIds.get(row.entryId) === row.runId),
+        );
+        const documents = new Map<number, FindDocument>();
+        const count = Effect.fnUntraced(function* (row: FindPayload) {
+          const cached = documents.get(row.position);
+          if (cached) return cached;
+          const decoded = yield* decode(row);
+          if (
+            decoded.item.type === "assistant_message" &&
+            decoded.item.text === "" &&
+            embeddedResultRunIds.has(decoded.item.runId)
+          ) {
+            const document = documentFor(decoded, 0);
+            documents.set(row.position, document);
+            return document;
+          }
+          const key = textKey(decoded.item, cwd, input.skills ?? []);
+          const segments = yield* Cache.get(
+            key.text.length <= 32_768 ? textCache.text : textCache.largeText,
+            key,
+          );
+          const document = documentFor(decoded, countSegments(segments, input.query));
+          documents.set(row.position, document);
+          yield* Effect.yieldNow;
+          return document;
+        });
+        const finish = Effect.gen(function* () {
+          for (const row of rows) yield* count(row);
+          const ordered = rows.map((row) => documents.get(row.position)!);
+          scans.delete(cacheKey);
+          scans.set(cacheKey, { sequence, documents: ordered, sourceThreadIds });
+          if (scans.size > 8) {
+            const oldest = scans.keys().next().value;
+            if (oldest !== undefined) scans.delete(oldest);
+          }
+          return resultForSelection(selectMatch(ordered, input), ordered, sequence);
+        });
+        if (input.index !== undefined || (input.offset ?? 0) !== 0)
+          return Stream.fromEffect(finish);
+        const anchor = Math.max(
+          0,
+          rows.findIndex((row) => row.entryId === input.start?.entryId),
+        );
+        for (let step = 0; step <= rows.length; step++) {
+          const index = (anchor + step) % rows.length;
+          const row = rows[index];
+          if (!row) break;
+          const document = yield* count(row);
+          const occurrence =
+            step === 0 && row.entryId === input.start?.entryId
+              ? Math.min(input.start.occurrence, document.count)
+              : 0;
+          if (occurrence >= document.count) continue;
+          const first: OrchestrationV2SearchThreadResult = {
+            complete: false,
+            snapshotSequence: sequence,
+            totalMatches: 1,
+            activeIndex: 0,
+            match: { entryId: document.entryId, runId: document.runId, occurrence },
+          };
+          return Stream.concat(Stream.succeed(first), Stream.fromEffect(finish));
+        }
+        return Stream.fromEffect(finish);
+      }),
+    );
+  return {
+    searchThreadStream,
+    searchThread: (input: OrchestrationV2SearchThreadInput) =>
+      searchThreadStream(input).pipe(
+        Stream.runCollect,
+        Effect.map((results) => results[results.length - 1]!),
+      ),
+  };
+});

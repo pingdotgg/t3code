@@ -1,0 +1,415 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
+import { assert, describe, it } from "@effect/vitest";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as TestClock from "effect/testing/TestClock";
+
+import { readCursorAccountUsage } from "./accountUsage.ts";
+
+interface DashboardRequest {
+  readonly url: string;
+  readonly init: RequestInit;
+  readonly page: number;
+  readonly headers: Headers;
+}
+
+const dashboard = (answer: (request: DashboardRequest) => Response | Promise<Response>) =>
+  HttpClient.make((request, url, signal, fiber) =>
+    Effect.tryPromise({
+      try: async () => {
+        const init = Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit);
+        const body =
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+        if (
+          url.pathname === "/auth/exchange_user_api_key" &&
+          request.headers.authorization?.startsWith("Bearer header.")
+        ) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ accessToken: request.headers.authorization.slice(7) }),
+          );
+        }
+        const response = await answer({
+          url: url.toString(),
+          init: { ...init, signal, body },
+          page: JSON.parse(body).page,
+          headers: new Headers(request.headers),
+        });
+        return HttpClientResponse.fromWeb(request, response);
+      },
+      catch: (cause) =>
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, cause }),
+        }),
+    }),
+  );
+
+const readAccountUsage = (
+  credentialSource: Parameters<typeof readCursorAccountUsage>[0],
+  sinceMs: number,
+  endDate: number,
+  answer: (request: DashboardRequest) => Response | Promise<Response>,
+) =>
+  readCursorAccountUsage(credentialSource, sinceMs, endDate).pipe(
+    Effect.provideService(HttpClient.HttpClient, dashboard(answer)),
+  );
+
+describe("Cursor account history", () => {
+  it.effect(
+    "reads paginated Cursor account history including headless calls with separate cache tokens",
+    () =>
+      Effect.gen(function* () {
+        const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp: 4102444800 })).toString("base64url")}.signature`;
+        const credential = { kind: "apiKey", apiKey: accessToken } as const;
+        const pages: number[] = [];
+        const signals: AbortSignal[] = [];
+        const request = ({ url, init, headers, page }: DashboardRequest) => {
+          assert.strictEqual(
+            url,
+            "https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents",
+          );
+          assert.strictEqual(init.redirect, "error");
+          assert.strictEqual(headers.get("connect-protocol-version"), "1");
+          assert.strictEqual(headers.get("content-type"), "application/json");
+          assert.strictEqual(headers.get("authorization"), `Bearer ${accessToken}`);
+          const body = { page };
+          pages.push(body.page);
+          if (init.signal) signals.push(init.signal);
+          return Response.json({
+            totalUsageEventsCount: 1001,
+            usageEventsDisplay: Array.from({ length: body.page === 1 ? 1000 : 1 }, (_, index) => ({
+              timestamp: String(1780000000000 + ((body.page - 1) * 1000 + index) * 1000),
+              model: "claude-sonnet-4-5",
+              conversationId: `conversation-${body.page}`,
+              isHeadless: body.page === 2,
+              chargedCents: 0,
+              tokenUsage: {
+                inputTokens: 10,
+                outputTokens: 5,
+                cacheReadTokens: 30,
+                cacheWriteTokens: 2,
+                totalCents: 25,
+              },
+            })),
+          });
+        };
+        const result = yield* readAccountUsage(credential, 0, 1781000000000, request);
+        assert.isNull(result.error);
+        assert.deepStrictEqual(pages, [1, 2]);
+        assert.lengthOf(signals, 2);
+        assert.notStrictEqual(signals[0], signals[1]);
+        assert.strictEqual(result.records.length, 1001);
+        assert.strictEqual(result.records.at(-1)?.sessionId, "conversation-2");
+        assert.deepStrictEqual(result.records[0]?.totals, {
+          uncachedInputTokens: 10,
+          cachedInputTokens: 30,
+          cacheCreationTokens: 2,
+          outputTokens: 5,
+          reasoningTokens: 0,
+        });
+        assert.strictEqual(result.records[0]?.reportedCostUsd, 0.25);
+        assert.strictEqual(
+          result.records[0]?.dedupeKey,
+          "cursor-account:2188c26da759c4fae3aa0252fc6d725eff0922ef0b022551e6f0987d02bfab33:3149aaf8419ad6b66ef7330853d8fe85e6f2e9876e2ad5e85f88bee8c8d6d133:0",
+        );
+        assert.isFalse(result.accountKey?.includes("demo") ?? true);
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reads Cursor account history beyond 100 pages", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const credential = { kind: "apiKey", apiKey: accessToken } as const;
+      const fullPage = Array.from({ length: 1000 }, () => ({ tokenUsage: null }));
+      let requests = 0;
+      const result = yield* readAccountUsage(credential, 0, 1781000000000, async () => {
+        requests += 1;
+        return Response.json({
+          totalUsageEventsCount: 100_001,
+          usageEventsDisplay: requests <= 100 ? fullPage : [{ tokenUsage: null }],
+        });
+      });
+      assert.isNull(result.error);
+      assert.strictEqual(requests, 101);
+      assert.deepStrictEqual(result.records, []);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("accepts confirmed empty Cursor usage but rejects error envelopes", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const credential = { kind: "apiKey", apiKey: accessToken } as const;
+      for (const body of [
+        {},
+        { totalUsageEventsCount: 0 },
+        { totalUsageEventsCount: 0, usageEventsDisplay: [] },
+      ]) {
+        const result = yield* readAccountUsage(credential, 0, 1781000000000, async () =>
+          Response.json(body),
+        );
+        assert.isNull(result.error);
+        assert.deepStrictEqual(result.records, []);
+        assert.isFalse(result.missing);
+      }
+      for (const body of [
+        { error: "upstream error" },
+        { detail: "unknown error envelope" },
+        { totalUsageEventsCount: 0, error: "upstream error" },
+        null,
+        [],
+        "invalid",
+        0,
+      ]) {
+        const result = yield* readAccountUsage(credential, 0, 1781000000000, async () =>
+          Response.json(body),
+        );
+        assert.isNotNull(result.error);
+        assert.deepStrictEqual(result.records, []);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("requires a terminal Cursor page after a full page reaches the reported count", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const credential = { kind: "apiKey", apiKey: accessToken } as const;
+      let requests = 0;
+      const result = yield* readAccountUsage(credential, 0, 1781000000000, async () => {
+        requests++;
+        return Response.json(
+          requests === 1
+            ? {
+                totalUsageEventsCount: 1000,
+                usageEventsDisplay: Array.from({ length: 1000 }, (_, index) => ({
+                  timestamp: String(1780000000000 + index),
+                  model: "gpt-5",
+                  tokenUsage: { inputTokens: 10, outputTokens: 5 },
+                })),
+              }
+            : { totalUsageEventsCount: 1000 },
+        );
+      });
+      assert.isNull(result.error);
+      assert.strictEqual(result.records.length, 1000);
+      assert.strictEqual(requests, 2);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "removes only count-proven Cursor boundary copies and preserves identical billed events",
+    () =>
+      Effect.gen(function* () {
+        const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+        const credential = { kind: "apiKey", apiKey: accessToken } as const;
+        const event = (index: number) => ({
+          timestamp: String(1780000000000 + index),
+          model: "gpt-5",
+          tokenUsage: { inputTokens: 10, outputTokens: 5, totalCents: 1 },
+        });
+        for (const total of [2000, 2001, undefined]) {
+          const expectedCount = total ?? 2001;
+          let requests = 0;
+          const result = yield* readAccountUsage(credential, 0, 1781000000000, async () => {
+            requests++;
+            return Response.json({
+              totalUsageEventsCount: total,
+              usageEventsDisplay:
+                requests === 1
+                  ? Array.from({ length: 1000 }, (_, index) => event(index))
+                  : requests === 2
+                    ? Array.from({ length: 1000 }, (_, index) => {
+                        const row = event(999 + index);
+                        return {
+                          tokenUsage: {
+                            totalCents: row.tokenUsage.totalCents,
+                            outputTokens: row.tokenUsage.outputTokens,
+                            inputTokens: row.tokenUsage.inputTokens,
+                          },
+                          model: row.model,
+                          timestamp: row.timestamp,
+                        };
+                      })
+                    : [event(1999)],
+            });
+          });
+          assert.isNull(result.error);
+          assert.strictEqual(result.records.length, expectedCount);
+          assert.strictEqual(requests, 3);
+          assert.strictEqual(result.records.at(-1)?.timestampMs, 1780000001999);
+          assert.strictEqual(
+            result.records.filter((record) => record.timestampMs === 1780000000999).length,
+            total === 2000 ? 1 : 2,
+          );
+          assert.strictEqual(
+            new Set(result.records.map((record) => record.dedupeKey)).size,
+            expectedCount,
+          );
+        }
+        let requests = 0;
+        const inconsistent = yield* readAccountUsage(credential, 0, 1781000000000, async () => {
+          requests++;
+          return Response.json({
+            totalUsageEventsCount: 1001,
+            usageEventsDisplay:
+              requests === 1
+                ? Array.from({ length: 1000 }, (_, index) => event(index))
+                : [event(500), event(1000)],
+          });
+        });
+        assert.isNotNull(inconsistent.error);
+        assert.deepStrictEqual(inconsistent.records, []);
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "does not present truncated Cursor account pages or authentication failures as complete history",
+    () =>
+      Effect.gen(function* () {
+        const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo", exp: 4102444800 })).toString("base64url")}.signature`;
+        const credential = { kind: "apiKey", apiKey: accessToken } as const;
+        const truncated = yield* readAccountUsage(credential, 0, 1781000000000, async () =>
+          Response.json({ totalUsageEventsCount: 101, usageEventsDisplay: [] }),
+        );
+        assert.isNotNull(truncated.error);
+        assert.deepStrictEqual(truncated.records, []);
+        const denied = yield* readAccountUsage(
+          credential,
+          0,
+          1781000000000,
+          async () => new Response(accessToken, { status: 401 }),
+        );
+        assert.isNotNull(denied.error);
+        assert.isFalse(denied.error?.includes(accessToken) ?? true);
+        assert.deepStrictEqual(denied.records, []);
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+});
+
+describe("readCursorAccountUsage", () => {
+  it.effect("reads an API key's account history through Cursor's API", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const requests: Array<readonly [string, string | null]> = [];
+      const result = yield* readAccountUsage(
+        { kind: "apiKey", apiKey: "api-key" },
+        0,
+        1781000000000,
+        ({ url, headers }) => {
+          requests.push([url, headers.get("authorization")]);
+          return url.endsWith("/auth/exchange_user_api_key")
+            ? Response.json({ accessToken })
+            : Response.json({
+                totalUsageEventsCount: 1,
+                usageEventsDisplay: [
+                  { timestamp: "1780000000000", model: "gpt-5", tokenUsage: { outputTokens: 4 } },
+                ],
+              });
+        },
+      );
+      assert.isNull(result.error);
+      assert.deepStrictEqual(requests, [
+        ["https://api2.cursor.sh/auth/exchange_user_api_key", "Bearer api-key"],
+        [
+          "https://api2.cursor.sh/aiserver.v1.DashboardService/GetFilteredUsageEvents",
+          `Bearer ${accessToken}`,
+        ],
+      ]);
+      assert.strictEqual(result.records[0]?.totals.outputTokens, 4);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("stops waiting for an API key exchange that never answers", () =>
+    Effect.gen(function* () {
+      const read = yield* Effect.forkChild(
+        readAccountUsage(
+          { kind: "apiKey", apiKey: "api-key" },
+          0,
+          1781000000000,
+          () => new Promise<Response>(() => {}),
+        ),
+      );
+      yield* TestClock.adjust("10 seconds");
+      const result = yield* Fiber.join(read);
+      assert.strictEqual(result.error, "Cursor account usage could not be read.");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reads the pages behind the first together and keeps them in page order", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      let inFlight = 0;
+      let mostInFlight = 0;
+      const result = yield* readAccountUsage(
+        { kind: "apiKey", apiKey: accessToken },
+        0,
+        1781000000000,
+        async ({ page }) => {
+          inFlight++;
+          mostInFlight = Math.max(mostInFlight, inFlight);
+          for (let turn = page; turn < 9; turn++) await Promise.resolve();
+          inFlight--;
+          return Response.json({
+            totalUsageEventsCount: 8001,
+            usageEventsDisplay: Array.from({ length: page === 9 ? 1 : 1000 }, (_, index) => ({
+              timestamp: String(1780000000000 + (page - 1) * 1000 + index),
+              model: "gpt-5",
+              tokenUsage: { inputTokens: 1 },
+            })),
+          });
+        },
+      );
+      assert.isNull(result.error);
+      assert.strictEqual(mostInFlight, 6);
+      assert.deepStrictEqual(
+        result.records.map((record) => record.timestampMs),
+        Array.from({ length: 8001 }, (_, index) => 1780000000000 + index),
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("ends like a page-by-page read when a page fails, leaving no request open", () =>
+    Effect.gen(function* () {
+      const accessToken = `header.${Buffer.from(JSON.stringify({ sub: "auth|demo" })).toString("base64url")}.signature`;
+      const fullPage = {
+        totalUsageEventsCount: 8001,
+        usageEventsDisplay: Array.from({ length: 1000 }, () => ({ tokenUsage: null })),
+      };
+      for (const [secondPage, error] of [
+        [() => Response.json(fullPage), "Cursor account usage could not be read."],
+        [
+          () => new Response(null, { status: 401 }),
+          "Sign in to Cursor again to read account usage.",
+        ],
+      ] as const) {
+        let open = 0;
+        const result = yield* readAccountUsage(
+          { kind: "apiKey", apiKey: accessToken },
+          0,
+          1781000000000,
+          ({ init, page }) => {
+            if (page === 1) return Promise.resolve(Response.json(fullPage));
+            if (page === 2) return Promise.resolve(secondPage());
+            if (page === 3) return Promise.reject(new Error("connection reset"));
+            open++;
+            return new Promise((_resolve, reject) => {
+              init.signal?.addEventListener("abort", () => {
+                open--;
+                reject(init.signal?.reason);
+              });
+            });
+          },
+        );
+        assert.strictEqual(result.error, error);
+        assert.deepStrictEqual(result.records, []);
+        assert.strictEqual(open, 0);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+});

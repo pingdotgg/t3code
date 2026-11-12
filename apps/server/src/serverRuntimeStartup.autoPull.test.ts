@@ -5,6 +5,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpServer } from "effect/http";
@@ -12,6 +13,7 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import { SERVICE_LAUNCHER_PROTOCOL } from "./cloud/serviceProtocol.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -30,6 +32,7 @@ import { ServerActivation } from "./serverActivation.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
@@ -117,7 +120,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         Layer.mock(Orchestrator.OrchestratorV2)({ recoverDelegatedTasks: Effect.void }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ shutdown: Effect.void }),
         Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ start: () => Effect.void }),
-        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.never }),
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: () => Effect.never }),
         Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...event, sequence: 1 }),
         }),
@@ -139,21 +142,17 @@ it.effect("parks automatic pull until activation without delaying command readin
         }),
         Layer.mock(ProjectService.ProjectService)({ snapshot: Effect.succeed(snapshot) }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: [],
-              archivedThreads: [],
-            }),
+          countThreads: () => Effect.succeed(0),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: true,
-          prepareTrial: Deferred.succeed(prepared, undefined).pipe(
-            Effect.andThen(Deferred.await(commitTrial)),
-            Effect.as(undefined),
-          ),
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          prepareTrial: () =>
+            Deferred.succeed(prepared, undefined).pipe(
+              Effect.andThen(Deferred.await(commitTrial)),
+              Effect.as(undefined),
+            ),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           statusDetails: (root) =>
@@ -163,6 +162,9 @@ it.effect("parks automatic pull until activation without delaying command readin
             ),
         }),
         Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.void }),
+        // No provider logins or Connect link, so startup records no owners.
+        FileSystem.layerNoop({}),
+        Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
         NodeCrypto.layer,
         Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
         Layer.mock(ExternalLauncher.ExternalLauncher)({}),
@@ -176,8 +178,6 @@ it.effect("parks automatic pull until activation without delaying command readin
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
 
-        // A reverted, awaited pull reaches statusDetails instead of prepareTrial.
-        // Race the two receipts so that regression fails without a timeout.
         yield* Effect.raceFirst(Deferred.await(prepared), Deferred.await(statusCalled));
         expect(yield* Deferred.isDone(activation)).toBe(false);
         expect(yield* Deferred.isDone(statusCalled)).toBe(false);
@@ -186,7 +186,6 @@ it.effect("parks automatic pull until activation without delaying command readin
         yield* Deferred.succeed(commitTrial, undefined);
         yield* Deferred.await(activation);
         expect(yield* Deferred.await(statusCalled)).toBe(cwd);
-        // statusDetails can never finish; readiness must not depend on it.
         yield* startup.awaitCommandReady;
       }).pipe(
         Effect.provide(

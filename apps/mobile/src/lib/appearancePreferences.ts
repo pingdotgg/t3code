@@ -12,15 +12,11 @@ export const MIN_BASE_FONT_SIZE = 11;
 export const MAX_BASE_FONT_SIZE = 22;
 export const BASE_FONT_SIZE_STEP = 1;
 
-export const DEFAULT_CODE_FONT_SIZE = MOBILE_CODE_SURFACE.fontSize;
+const DEFAULT_CODE_FONT_SIZE = MOBILE_CODE_SURFACE.fontSize;
 export const MIN_CODE_FONT_SIZE = 8;
 export const MAX_CODE_FONT_SIZE = 18;
 export const CODE_FONT_SIZE_STEP = 1;
 
-/**
- * User-configurable appearance preferences as stored. `null` overrides mean
- * "automatic": the value is derived from the base font size.
- */
 export interface AppearancePreferences {
   readonly baseFontSize: number;
   readonly terminalFontSize: number | null;
@@ -28,7 +24,6 @@ export interface AppearancePreferences {
   readonly codeWordBreak: boolean;
 }
 
-/** Effective appearance values after applying base-size derivation. */
 export interface ResolvedAppearance {
   readonly baseFontSize: number;
   readonly terminalFontSize: number;
@@ -87,13 +82,11 @@ function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
   return value === true;
 }
 
-/** Terminal size derived from base: 10.5pt at base 16, snapped to 0.5pt steps. */
 function deriveTerminalFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeTerminalFontSize(Math.round(DEFAULT_TERMINAL_FONT_SIZE * scale * 2) / 2);
 }
 
-/** Code/diff size derived from base: 12pt at base 16. */
 function deriveCodeFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeCodeFontSize(Math.round(DEFAULT_CODE_FONT_SIZE * scale));
@@ -101,7 +94,6 @@ function deriveCodeFontSize(baseFontSize: number): number {
 
 interface StoredAppearancePreferences {
   readonly baseFontSize?: number | null | undefined;
-  /** Legacy key from before base font size existed; migrated to baseFontSize. */
   readonly markdownFontSize?: number | null | undefined;
   readonly terminalFontSize?: number | null | undefined;
   readonly codeFontSize?: number | null | undefined;
@@ -171,10 +163,7 @@ export function resolveMarkdownFontSizes(baseFontSize: number): ResolvedMarkdown
   };
 }
 
-/**
- * Maps the Uniwind `--text-*` theme variables (see global.css) to the
- * MOBILE_TYPOGRAPHY roles they were authored from. Keep in sync with both.
- */
+/** Keep text-variable roles in sync with global.css and MOBILE_TYPOGRAPHY. */
 const TEXT_SCALE_VARIABLE_ROLES = {
   "--text-3xs": MOBILE_TYPOGRAPHY.micro,
   "--text-2xs": MOBILE_TYPOGRAPHY.caption,
@@ -187,11 +176,6 @@ const TEXT_SCALE_VARIABLE_ROLES = {
   "--text-3xl": MOBILE_TYPOGRAPHY.display,
 } as const;
 
-/**
- * Scaled values for every `--text-*` size and line-height variable, ready to
- * pass to `Uniwind.updateCSSVariables`. All className-based text (`text-sm`,
- * `text-base`, ...) re-resolves live when these are injected.
- */
 export function resolveTextScaleVariables(baseFontSize: number): Record<string, number> {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   const variables: Record<string, number> = {};
@@ -204,13 +188,6 @@ export function resolveTextScaleVariables(baseFontSize: number): Record<string, 
   return variables;
 }
 
-/**
- * The line height a MOBILE_TYPOGRAPHY role renders at under the given base
- * font size — the same value resolveTextScaleVariables injects for the role's
- * `--text-*--line-height` variable. For layout code that must predict
- * text-driven heights (e.g. the thread feed's fixed item sizes) instead of
- * measuring them.
- */
 export function scaledTypographyLineHeight(
   role: { readonly lineHeight: number },
   baseFontSize: number,
@@ -219,7 +196,6 @@ export function scaledTypographyLineHeight(
   return Math.max(10, Math.round(role.lineHeight * scale));
 }
 
-/** Text dimensions shared by React Native and Compose consumers of an appearance role. */
 export function resolveScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY, baseFontSize: number) {
   const typography = MOBILE_TYPOGRAPHY[role];
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
@@ -251,10 +227,4 @@ export function stepTerminalFontSize(current: number, direction: -1 | 1): number
   return normalizeTerminalFontSize(next);
 }
 
-export {
-  DEFAULT_TERMINAL_FONT_SIZE,
-  MAX_TERMINAL_FONT_SIZE,
-  MIN_TERMINAL_FONT_SIZE,
-  TERMINAL_FONT_SIZE_STEP,
-  normalizeTerminalFontSize,
-};
+export { MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TERMINAL_FONT_SIZE_STEP };

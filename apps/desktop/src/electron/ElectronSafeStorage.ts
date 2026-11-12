@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const electronSafeStorageErrorFields = {
   cause: Schema.Defect(),
@@ -65,25 +65,27 @@ export class ElectronSafeStorage extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronSafeStorage") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
 
   return ElectronSafeStorage.of({
     isEncryptionAvailable: Effect.try({
       try: () => Electron.safeStorage.isEncryptionAvailable(),
       catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),
     }),
-    encryptString: (value) =>
-      Effect.try({
+    encryptString: Effect.fn("ElectronSafeStorage.encryptString")(function (value) {
+      return Effect.try({
         try: () => Electron.safeStorage.encryptString(value),
         catch: (cause) => new ElectronSafeStorageEncryptError({ cause }),
-      }),
-    decryptString: (value) =>
-      Effect.try({
+      });
+    }),
+    decryptString: Effect.fn("ElectronSafeStorage.decryptString")(function (value) {
+      return Effect.try({
         try: () => Electron.safeStorage.decryptString(Buffer.from(value)),
         catch: (cause) => new ElectronSafeStorageDecryptError({ cause }),
-      }),
+      });
+    }),
     selectedStorageBackend: Effect.sync(() => {
       if (platform !== "linux") {
         return Option.none();

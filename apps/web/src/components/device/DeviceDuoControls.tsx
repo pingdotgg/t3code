@@ -1,5 +1,7 @@
+import { useState } from "react";
 import {
   duoFoldState,
+  duoHoldOrientation,
   type DuoCommand,
   type DuoControlState,
 } from "@t3tools/client-runtime/device/duo-control";
@@ -18,12 +20,6 @@ const STANDS = [
   { id: "tent", label: "Tent stand" },
 ] as const;
 
-/**
- * Fold shapes move only the hinge, so the device opens around whichever edge it
- * currently rests on: a vertical phone opens as a book into a landscape tablet,
- * a horizontal one as a laptop into a portrait tablet. Stands are native presets
- * that also place the device. Pinching supplies continuous hinge control.
- */
 export function DeviceDuoControls(props: {
   screen: DeviceScreenSize;
   state: DuoControlState;
@@ -31,7 +27,14 @@ export function DeviceDuoControls(props: {
   onCommand: (command: DuoCommand) => void;
 }) {
   const { screen } = props;
-  const { fold, stand, phoneVertical } = duoFoldState(screen);
+  const { fold, stand, phoneVertical: reportedVertical, settled } = duoFoldState(screen);
+  const [settledVertical, setSettledVertical] = useState(reportedVertical);
+  if (settled && settledVertical !== reportedVertical) setSettledVertical(reportedVertical);
+  const [standVertical, setStandVertical] = useState(settledVertical);
+  const phoneVertical = stand ? standVertical : settledVertical;
+  // Only one command can wait; defer fold controls until stand rotation and queued commands settle in the
+  // correct display frame.
+  const foldWaits = props.state.pending && (stand || props.state.requested?.control === "pose");
   const foldLabels = {
     closed: "Closed",
     half: phoneVertical ? "Book" : "Laptop",
@@ -43,6 +46,7 @@ export function DeviceDuoControls(props: {
     pressed: boolean,
     onClick: () => void,
     glyph: React.ReactNode,
+    waits = false,
   ) => (
     <Tooltip key={key}>
       <TooltipTrigger
@@ -50,7 +54,7 @@ export function DeviceDuoControls(props: {
           <Button
             size="icon"
             variant={pressed ? "secondary" : "ghost"}
-            disabled={!props.enabled}
+            disabled={!props.enabled || waits}
             aria-label={label}
             aria-pressed={pressed}
             data-pressed={pressed ? "" : undefined}
@@ -73,8 +77,16 @@ export function DeviceDuoControls(props: {
             id,
             foldLabels[id],
             !stand && fold === id,
-            () => props.onCommand({ control: "angle", value }),
+            () => {
+              if (stand)
+                props.onCommand({
+                  control: "orientation",
+                  value: duoHoldOrientation(standVertical, screen.screenId),
+                });
+              props.onCommand({ control: "angle", value });
+            },
             <DeviceDuoGlyph pose={id === "half" ? "book" : id} rotated={!phoneVertical} />,
+            foldWaits,
           ),
         )}
       </div>
@@ -84,7 +96,10 @@ export function DeviceDuoControls(props: {
             id,
             label,
             screen.hingePose === id,
-            () => props.onCommand({ control: "pose", value: id }),
+            () => {
+              if (!stand) setStandVertical(settledVertical);
+              props.onCommand({ control: "pose", value: id });
+            },
             <DeviceDuoGlyph pose={id} />,
           ),
         )}

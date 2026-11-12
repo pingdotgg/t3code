@@ -1,16 +1,15 @@
+import { CHAT_MARKDOWN_REHYPE_PLUGINS } from "@t3tools/shared/markdownPipeline";
 import type { Root } from "mdast";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import type { Plugin } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remarkCodexDirectives } from "@t3tools/client-runtime/codex-markdown-directives";
-import { remarkGithubAlerts } from "./markdown-github-alerts";
+import { remarkCodexDirectives } from "@t3tools/shared/codexMarkdownDirectives";
+import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
-import { remarkNormalizeListItemIndentation } from "./markdown-list-indentation";
+import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
 
 function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: string[]) {
   let tree: Root | undefined;
@@ -37,7 +36,7 @@ function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: 
         remarkCodexDirectives,
         ...(incremental ? [incremental] : []),
       ]}
-      rehypePlugins={[rehypeRaw, rehypeSanitize]}
+      rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
     >
       {source}
     </ReactMarkdown>,

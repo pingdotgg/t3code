@@ -1,5 +1,6 @@
 import * as Layer from "effect/Layer";
 
+import * as PullRequestCacheStore from "../connection/pull-request-cache-store";
 import * as EnvironmentCacheStore from "../connection/environment-cache-store";
 import * as MobileDatabase from "./mobile-database";
 import * as MobilePreferences from "./mobile-preferences";
@@ -11,6 +12,7 @@ const layerDependent = Layer.mergeAll(
   MobilePreferences.layer,
   MobileStorage.layer,
   EnvironmentCacheStore.layer,
+  PullRequestCacheStore.layer,
 ).pipe(Layer.provide(layerBase));
 
 export const layer = Layer.merge(layerBase, layerDependent);

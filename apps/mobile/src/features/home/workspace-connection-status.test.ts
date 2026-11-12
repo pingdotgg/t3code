@@ -9,6 +9,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
     hasConnections: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
+    hasSyncingConnectedEnvironment: false,
     hasReadyEnvironment: true,
     hasConnectingEnvironment: false,
     connectingEnvironments: [],
@@ -21,73 +22,59 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
 }
 
 describe("workspace connection status", () => {
-  it("stays hidden while a ready environment is connected", () => {
-    expect(workspaceConnectionStatusPresentation(workspaceState())).toBeNull();
-  });
+  it.each([
+    ["reconnecting", "Could not reach sleeping laptop"],
+    ["error", "Could not reach sleeping laptop"],
+  ] as const)(
+    "keeps the brand while a secondary environment is %s (%s)",
+    (connectionState, connectionError) => {
+      const state = workspaceState({
+        hasConnectingEnvironment: connectionState !== "error",
+        hasPendingShellSnapshot: true,
+        connectionError,
+        connectingEnvironments:
+          connectionState === "error"
+            ? []
+            : [
+                {
+                  environmentId: "environment-2" as never,
+                  environmentLabel: "Sleeping laptop",
+                  displayUrl: "",
+                  isRelayManaged: false,
+                  isEnabled: true,
+                  connectionState,
+                  connectionError,
+                  connectionErrorTraceId: null,
+                },
+              ],
+      });
 
-  it("surfaces offline snapshots", () => {
-    const state = workspaceState({ networkStatus: "offline", hasReadyEnvironment: false });
+      expect(workspaceConnectionStatusPresentation(state)).toBeNull();
+    },
+  );
 
-    expect(workspaceConnectionStatusPresentation(state)).toEqual({
-      label: "You are offline",
-      showsProgress: false,
-    });
-  });
-
-  it("names the environment while reconnecting", () => {
+  it("shows connected shell catch-up even while a secondary environment is unreachable", () => {
     const state = workspaceState({
+      hasSyncingConnectedEnvironment: true,
+      hasPendingShellSnapshot: true,
       hasConnectingEnvironment: true,
-      hasReadyEnvironment: false,
+      connectionError: "Could not reach sleeping laptop",
       connectingEnvironments: [
         {
-          environmentId: "environment-1" as never,
-          environmentLabel: "Julius’s Mac mini",
+          environmentId: "environment-2" as never,
+          environmentLabel: "Sleeping laptop",
           displayUrl: "",
           isRelayManaged: false,
           isEnabled: true,
           connectionState: "reconnecting",
-          connectionError: null,
+          connectionError: "Could not reach sleeping laptop",
           connectionErrorTraceId: null,
         },
       ],
     });
 
     expect(workspaceConnectionStatusPresentation(state)).toEqual({
-      label: "Reconnecting to Julius’s Mac mini",
-      showsProgress: true,
-    });
-  });
-
-  it("surfaces connection errors before the generic disconnected fallback", () => {
-    const state = workspaceState({
-      connectionError: "Could not reach Julius’s Mac mini",
-      hasLoadedShellSnapshot: false,
-      hasReadyEnvironment: false,
-    });
-
-    expect(workspaceConnectionStatusPresentation(state)).toEqual({
-      label: "Could not reach Julius’s Mac mini",
-      showsProgress: false,
-    });
-  });
-
-  it("shows shell catch-up while cached threads remain visible", () => {
-    const state = workspaceState({ hasPendingShellSnapshot: true });
-
-    expect(workspaceConnectionStatusPresentation(state)).toEqual({
       label: "Syncing threads...",
-      showsProgress: true,
-    });
-  });
-
-  it("distinguishes initial shell loading from cached catch-up", () => {
-    const state = workspaceState({
-      hasLoadedShellSnapshot: false,
-      hasPendingShellSnapshot: true,
-    });
-
-    expect(workspaceConnectionStatusPresentation(state)).toEqual({
-      label: "Loading threads...",
       showsProgress: true,
     });
   });

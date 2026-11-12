@@ -6,22 +6,19 @@ import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../../config.ts";
-import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import { OpenCodeAdapterV2Driver } from "@t3tools/provider-opencode/server";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import {
-  makeReplayServerConfig,
-  type OrchestratorV2ProviderReplayHarness,
-} from "../testkit/ProviderReplayHarness.ts";
+import { type OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import {
   OPENCODE_DEFAULT_INSTANCE_ID,
   OPENCODE_PROVIDER,
   OPENCODE_SDK_PROTOCOL,
-  OpenCodeAdapterV2Driver,
-} from "./OpenCodeAdapterV2.ts";
+} from "@t3tools/provider-opencode/testing";
 
 const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
 
@@ -131,17 +128,10 @@ function materializeMessageIds(value: unknown, messageIds: ReadonlyMap<string, s
   );
 }
 
-/**
- * Replays one transcript at a client boundary: each outbound call must match the
- * next `expect_outbound`, then answers with its `sdk.response`; `sdk.event`
- * frames feed the event stream. Shared by the 1.x SDK and 2.x HTTP transports.
- */
 export class OpenCodeReplayController {
   private cursor = 0;
-  /** Set once the event stream reached a successful `runtime_exit`: the server is gone. */
   exited = false;
 
-  /** Whether every entry has been used, so a stopped server is not coming back. */
   get finished(): boolean {
     return this.cursor >= this.transcript.entries.length;
   }
@@ -161,8 +151,6 @@ export class OpenCodeReplayController {
       const actualFrame = frameRecord(actual);
       const messageIds = new Map(this.messageIds);
       let conflictingMessageId = false;
-      // A message id the client picks (1.x prompts, 2.x steers) replaces the
-      // recorded one everywhere after it, so replies and events carry the live id.
       const idKey = expectedFrame?.type === "session.promptAsync" ? "messageID" : "id";
       if (
         (expectedFrame?.type === "session.promptAsync" ||
@@ -235,11 +223,6 @@ export class OpenCodeReplayController {
     }
   }
 
-  /**
-   * Resolves once the server events recorded before the next entry have been
-   * delivered. For transports whose events and requests travel separately, a
-   * request is matched at its recorded point instead of racing those events.
-   */
   async untilEventsDelivered(): Promise<void> {
     while (true) {
       this.throwFailure();
@@ -249,11 +232,7 @@ export class OpenCodeReplayController {
     }
   }
 
-  /**
-   * Like {@link untilEventsDelivered}, but also waits for recorded responses to
-   * be taken: over HTTP a request can start while an earlier one's answer is
-   * still in flight, and must not be matched against that answer.
-   */
+  /** Waits for events and responses to be consumed so concurrent HTTP requests cannot match earlier answers. */
   async untilInboundDelivered(): Promise<void> {
     while (true) {
       this.throwFailure();
@@ -273,7 +252,6 @@ export class OpenCodeReplayController {
       if (entry?.type === "emit_inbound") {
         const frame = frameRecord(entry.frame);
         if (frame?.type === "sdk.event") {
-          // A scenario can hold an event until it has done what happened meanwhile.
           if (beforeEmit !== undefined) await beforeEmit(entry.label);
           if (entry.afterMs !== undefined && entry.afterMs > 0) {
             await Effect.runPromise(Effect.sleep(Duration.millis(entry.afterMs)));
@@ -430,13 +408,6 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
-        loadInventoryFromCli: () =>
-          Effect.fail(
-            new OpenCodeRuntime.OpenCodeRuntimeError({
-              operation: "loadInventoryFromCli",
-              detail: "OpenCode replay does not load inventory.",
-            }),
-          ),
         loadOpenCodeSkills: () =>
           Effect.fail(
             new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -444,36 +415,25 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
               detail: "OpenCode replay does not load skills.",
             }),
           ),
-        loadSkillsFromCli: () =>
-          Effect.fail(
-            new OpenCodeRuntime.OpenCodeRuntimeError({
-              operation: "loadSkillsFromCli",
-              detail: "OpenCode replay does not load skills.",
-            }),
-          ),
-      } satisfies OpenCodeRuntime.OpenCodeRuntimeShape);
+      } satisfies OpenCodeRuntime.OpenCodeRuntime["Service"]);
     }),
   );
 }
 
 function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
-  const layerServerConfig = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [OpenCodeAdapterV2Driver],
-    configMap: {
-      [OPENCODE_DEFAULT_INSTANCE_ID]: {
-        driver: OPENCODE_PROVIDER,
-        config: { serverUrl: "replay://opencode" },
-      },
-    },
-  }).pipe(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    OpenCodeAdapterV2Driver.create({
+      instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
+      environment: [],
+      displayName: undefined,
+      enabled: true,
+      config: { ...OpenCodeAdapterV2Driver.defaultConfig(), serverUrl: "replay://opencode" },
+    }).pipe(Effect.map((adapter) => [adapter])),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerOpenCodeReplayRuntime(transcript),
-        layerServerConfig,
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         NodeServices.layer,
         IdAllocator.layer,
         Layer.succeed(

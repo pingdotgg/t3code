@@ -12,9 +12,15 @@ client can produce reassuring timings while missing the active transport path.
 
 The v2 checks pin these invariants:
 
-- Client cold opens target 75 recent timeline rows and about 1 MiB of encoded data. Required
-  control records and the at-least-one-row rule can exceed the byte target; it is not a hard cap.
-- The bounded snapshot does not retain the full duplicate conversation-message table.
+- Cold opens and history pages stop at about 1 MiB of encoded rows. A window that holds a user
+  turn also stops at 10 user turns (20 on older pages) or 500 rows, so ordinary turns stay whole.
+  Any other window, including the inside of one turn longer than 500 rows, stops at 75 rows. The
+  snapshot query applies the same rule before it decodes payloads. Clients can opt into deferring
+  large work groups until expansion. Messages and items outside those groups remain in normal
+  history paging. Required control records and
+  the at-least-one-row rule can exceed the byte target; it is not a hard cap.
+- The bounded snapshot does not retain the full duplicate conversation-message table. Messages of
+  a run that is still in progress are the exception: all of them accompany the window.
 - Older activity is fetched in bounded HTTP pages and merged without disturbing the live scroll
   window.
 - Clients with confirmed history paging opt into socket snapshot fallbacks that use the same
@@ -29,12 +35,29 @@ The v2 checks pin these invariants:
   projects small can increase server allocations on repeated large tool updates.
 - Raw command output, dynamic-tool result bodies, and inline file-change bodies are omitted at
   the wire boundary, including small outputs. Explicit failure flags and bounded result IDs
-  preserve status and grouped action counts without shipping those bodies. Persisted events
-  remain complete; the existing diff endpoints still provide file content when requested.
+  preserve status and grouped action counts without shipping those bodies. Reasoning text,
+  command lines, and search results ship when their work group loads. Subagent prompts and results
+  and checkpoint control records still accompany the initial window.
+  Persisted events remain complete; the existing diff endpoints still provide file content when
+  requested.
+  Explicit cross-environment transcript exports preserve full tool bodies so the destination
+  agent can read the context. The export rejects timeline JSON above the file attachment limit
+  before sending it, and before decoding any row when the tool output text alone is over that
+  limit; the client still applies its attachment limit to the complete file.
+- Live command output reaches a client only through `orchestration.subscribeCommandOutput`, which
+  an expanded command row opens and closes with itself. Raw output deltas are never orchestration
+  events: adapters send them to the
+  [command output hub](../../apps/server/src/orchestration-v2/CommandOutputHub.ts) ahead of
+  ingestion, which keeps one bounded tail per running command and throttles each subscriber. Do not
+  route output deltas through `turn_item.updated`: a busy command would flood the event store and
+  block ingestion for every other thread.
 - The initial shell contains active navigation rows only. Archived rows use the dedicated archive
   query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project
-  and thread snapshot.
+  and thread snapshot. A cursor at the head sequence always resumes, even below the pruned
+  boundary, so a client that just loaded the HTTP snapshot never downloads it again over the
+  socket. That client also names the snapshot's project identities, and a server whose
+  identities did not change since resends only the roots that resolved to no identity.
 - Auto, steer, and restart sends resolve delivery from authoritative state inside the
   server's per-thread dispatch lock. Model selection and identified-checkpoint rollback also
   dispatch without first fetching a full thread projection when the server advertises support.
@@ -47,7 +70,32 @@ transport performance fixtures validate contract encoding and compare pre-compre
 for the same synthetic workload, preserving historical application-object counts separately.
 These are neither compressed WebSocket captures nor measurements of server RSS, and command
 fixtures exclude unrelated settings calls and subscription events. Payload budgets belong in
-these tests so regressions fail locally.
+these tests so regressions fail locally. The transfer budget integration test
+(`apps/server/integration/transferBudgetV2.integration.test.ts`) sends the opt-ins current clients
+send. Its opt-in objects are typed `Required` against the contracts, so an opt-in added to a
+contract fails typecheck until the test sends it; give a fixture the data the opt-in saves. The
+test caps decoded bytes and rows for a 900-row agent turn in both states: while the turn runs (the
+bounded snapshot and one older page) and after it finishes (the deferred cold open over HTTP and
+over the socket alone, and the first page of its deferred work). It caps the socket bytes of three
+resumes that must not send a snapshot: a thread after one ordinary turn, an idle thread, and a
+shell cursor too old to replay. It caps the cold-connect shell for a sidebar of settled threads and
+idle subagents, and the subscription a client opens from that snapshot with its project identities.
+It caps both answers of the HTTP shell route to a client that holds rows and names their cursor: the
+few bytes that keep them, and the snapshot that replaces rows too old to replay. It also caps the
+bytes and
+the node, subagent, plan, provider turn and checkpoint counts of the bounded snapshot for a thread
+of 40 finished runs behind one working run, so finished runs cannot ride along with a window. The
+working run has a ready context handoff, so its history cannot ride along either.
+
+CI prints every row in the job summary. The pull request comment compares the budgeted rows with
+`main`, lists the rows that changed or failed, and names each ceiling a pull request raises. A row
+added to `scenarioRows` in `TransferBudgetReport.integration.ts` reaches the pass/fail check, the
+summary and the comment.
+
+The server config has its own budget in `apps/server/src/ws.test.ts`. A client that asks for
+catalog digests and status deltas gets the provider list of its first config in under 1 KiB, for a
+provider with 250 slash commands and 200 skills. The lists load with the first cwd snapshot, and a
+machine refresh sends back an empty provider list.
 
 ## Event store and startup
 
@@ -79,9 +127,9 @@ sessions. The orchestrator still validates the current thread before applying se
 
 Read receipts use `ProjectionStore.getThread` to load only canonical thread metadata. A visit
 advances `lastVisitedAt` monotonically without changing `updatedAt` or decoding history. Shell
-queries use a covering thread/run index for item counts and a partial index for nonterminal
-background items, including idle items. Latest user-message reads use an index ordered by update
-time.
+queries read item counts from a per-thread, per-run table that turn-item triggers keep exact, and
+use a partial index for nonterminal background items, including idle items. Latest user-message
+reads use an index ordered by update time.
 
 Command palette results keep live VCS and linked pull-request queries leased to the visible
 viewport, including a small overscan region. Cached badges remain available while leases are
@@ -89,6 +137,12 @@ released. Local Git status reads skip divergence calculations; callers that need
 counts keep the full status path. Cached fetch failures share the existing backoff and log only
 the actual failed attempt. Unchanged desktop environment bootstrap reads retain their array
 identity so polling does not invalidate subscribers.
+
+Local trace records and provider event logs use asynchronous, serialized file writes and rotation.
+Batching synchronous appends still stalls the server event loop on slow storage, especially on
+Windows. While a trace write is slow, producers keep up to one trace file of records, so the spans
+that time a stall survive it; records drop only while the disk stays stuck. Provider logging
+retains backpressure. Shutdown drains accepted writes before closing their scope.
 
 Relay awareness queues one pending publication per thread and retains a follow-up when the thread
 changes during a send. Transcript deltas and tool output do not enqueue awareness work. Run,
@@ -100,5 +154,18 @@ After the budget is exhausted, publication waits for another relevant event inst
 continuous traffic during an outage.
 
 Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.ts`,
-`runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`,
-`ThreadStatusIndicators.subscriptions.test.tsx`, and `desktopLocal.test.ts`.
+`runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`, and
+`desktopLocal.test.ts`.
+
+## Mobile looping animations
+
+`apps/mobile/package.json` sets Reanimated's `DISABLE_COMMIT_PAUSING_MECHANISM` so keyboard avoiding
+animates on iOS. Reanimated documents that flag as safe only alongside React Native's
+`preventShadowTreeCommitExhaustion`, which defaults to off and needs React Native built from source,
+so our builds run without it. Reanimated commits each animation frame to the shadow tree, and
+without commit pausing those commits can starve React's: the JS thread keeps retrying its commit,
+the screen freezes, and back does nothing. Release builds retry forever; dev builds abort with
+`ShadowTree.cpp: assertion failed (attempts < 1024)`. Looping animations that stay on screen while
+heavy content renders should use React Native's `Animated` with `useNativeDriver: true`, which
+updates views without commits, not Reanimated's `withRepeat`. The running-thread shimmer in
+`thread-work-log.tsx` is the example.

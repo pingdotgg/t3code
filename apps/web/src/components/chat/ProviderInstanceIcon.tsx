@@ -1,20 +1,25 @@
 import { type CSSProperties, memo } from "react";
 
-import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  providerAccentForegroundColor,
+  providerInstanceInitials,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
 import {
+  AnthropicIcon,
   AntigravityIcon,
   ClaudeAI,
-  CursorIcon,
-  GrokIcon,
   Icon,
+  OllamaIcon,
   OpenAI,
-  OpenCodeIcon,
-  PiAgentIcon,
+  OpenRouterIcon,
 } from "../Icons";
 
 import { cn } from "~/lib/utils";
+import { providerClients } from "../settings/providerDriverMeta";
+import { ProviderPackageIcon } from "./ProviderPackageIcon";
 import {
   AcpRegistryAgentIcon,
   officialAcpRegistryIconUrlForAgentId,
@@ -24,25 +29,49 @@ import {
 const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
   [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
-  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
-  [ProviderDriverKind.make("cursor")]: CursorIcon,
-  [ProviderDriverKind.make("grok")]: GrokIcon,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
-  [ProviderDriverKind.make("pi")]: PiAgentIcon,
+  // Text generators, by the service they reach (see textGeneratorBrand).
+  [ProviderDriverKind.make("openai")]: OpenAI,
+  [ProviderDriverKind.make("anthropic")]: AnthropicIcon,
+  [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
+  [ProviderDriverKind.make("ollama")]: OllamaIcon,
 };
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "text-black dark:text-white",
   [ProviderDriverKind.make("claudeAgent")]: "text-[#d97757]",
-  [ProviderDriverKind.make("cursor")]: "text-[#26251E] dark:text-[#EDECEC]",
-  [ProviderDriverKind.make("grok")]: "text-[#0F0F0F] dark:text-[#F5F5F5]",
-  [ProviderDriverKind.make("pi")]: "text-[#0F0F0F] dark:text-[#F5F5F5]",
-  [ProviderDriverKind.make("opencode")]: "text-[#211E1E] dark:text-[#F1ECEC]",
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
+  [ProviderDriverKind.make("openai")]: "text-black dark:text-white",
+  [ProviderDriverKind.make("anthropic")]: "text-black dark:text-white",
+  [ProviderDriverKind.make("openrouter")]: "text-black dark:text-white",
+  [ProviderDriverKind.make("ollama")]: "text-black dark:text-white",
 };
 
-export function providerTextColorClassName(driverKind: ProviderDriverKind): string | undefined {
-  return PROVIDER_TEXT_COLOR_BY_PROVIDER[driverKind];
+const BUNDLED_LOGO_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
+  [ProviderDriverKind.make("claudeAgent")]: "#d97757",
+  [ProviderDriverKind.make("antigravity")]: "#5b87bf",
+};
+
+/** The logo's own color, or null for logos that swap between black and white per theme. */
+export function providerLogoColor(driverKind: ProviderDriverKind): string | null {
+  const fill = providerClients.get(driverKind)?.icon?.fill;
+  if (fill) return fill.light === fill.dark ? fill.light : null;
+  return BUNDLED_LOGO_COLOR_BY_PROVIDER[driverKind] ?? null;
+}
+
+export function providerTextColor(driverKind: ProviderDriverKind): {
+  readonly className?: string;
+  readonly style?: CSSProperties;
+} {
+  const icon = providerClients.get(driverKind)?.icon;
+  if (icon) {
+    return {
+      className: "text-(--icon-light) dark:text-(--icon-dark)",
+      style: { "--icon-light": icon.fill.light, "--icon-dark": icon.fill.dark } as CSSProperties,
+    };
+  }
+  const className = PROVIDER_TEXT_COLOR_BY_PROVIDER[driverKind];
+  return className ? { className } : {};
 }
 
 export function resolveProviderInstanceAcpRegistryIconUrl(input: {
@@ -65,19 +94,27 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   acpRegistryIconUrl?: string | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
+  size?: "default" | "compact";
   className?: string;
   iconClassName?: string;
   badgeClassName?: string;
-  statusDotClassName?: string;
   indicatorBackground?: string;
 }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  const packageIcon = providerClients.get(props.driverKind)?.icon;
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
-  const accentStyle = props.accentColor
-    ? ({ "--provider-accent": props.accentColor } as CSSProperties)
+  const accentColor = normalizeProviderAccentColor(props.accentColor);
+  const accentStyle = accentColor
+    ? ({
+        "--provider-accent": accentColor,
+        "--provider-accent-foreground": providerAccentForegroundColor(accentColor),
+      } as CSSProperties)
     : undefined;
   const badgeContent = props.badgeContent ?? "initials";
+  const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
   const isAcpRegistry = props.driverKind === "acpRegistry";
+  // A custom OpenAI-compatible endpoint has no brand: show its name, marked with the protocol.
+  const isCustomEndpoint = props.driverKind === "openaiCompatible";
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,
@@ -91,40 +128,59 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
         props.className,
       )}
       style={accentStyle}
-      data-provider-accent-color={props.accentColor}
+      data-provider-accent-color={accentColor}
     >
       {isAcpRegistry ? (
         <AcpRegistryAgentIcon
-          // The search-tile radius would crop most of the glyph at these
-          // inline sizes.
-          className={cn("size-5 rounded-none bg-transparent", props.iconClassName)}
+          className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"
           icon={acpRegistryIconUrl}
         />
+      ) : isCustomEndpoint ? (
+        // The tile is a size container: below ~18px it keeps one letter and drops the mark.
+        <span
+          className={cn(
+            "@container relative flex size-5 shrink-0 items-center justify-center rounded-md border bg-card text-4xs font-semibold leading-none text-foreground",
+            iconClassName,
+          )}
+          aria-hidden
+        >
+          {Array.from(providerInstanceInitials(props.displayName))[0]}
+          <span className="@max-[1.1rem]:hidden">
+            {Array.from(providerInstanceInitials(props.displayName)).slice(1).join("")}
+          </span>
+          <span
+            className={cn(
+              "pointer-events-none absolute right-[-0.3125rem] bottom-[-0.3125rem] z-10 flex size-3 items-center justify-center rounded-full border bg-card text-foreground shadow-sm @max-[1.1rem]:hidden",
+              props.badgeClassName,
+            )}
+            style={{ borderColor: indicatorBackground }}
+          >
+            <OpenAI className="size-2" />
+          </span>
+        </span>
+      ) : packageIcon ? (
+        <ProviderPackageIcon
+          icon={packageIcon}
+          className={cn("size-5 shrink-0", iconClassName)}
+          aria-hidden
+        />
       ) : Icon ? (
-        <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
+        <Icon className={cn("size-5 shrink-0", iconClassName)} aria-hidden />
       ) : (
-        <span className={cn("text-3xs font-semibold leading-none", props.iconClassName)}>
+        <span className={cn("text-3xs font-semibold leading-none", iconClassName)}>
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {props.statusDotClassName ? (
-        <span
-          className={cn(
-            "pointer-events-none absolute -left-0.5 -top-0.5 z-10 size-2 rounded-full",
-            props.statusDotClassName,
-          )}
-          style={{ boxShadow: `0 0 0 2px ${indicatorBackground}` }}
-          aria-hidden
-        />
-      ) : null}
-      {props.showBadge ? (
+      {isCustomEndpoint ? null : props.showBadge ? (
         <span
           className={cn(
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",
-            props.accentColor
-              ? "bg-(--provider-accent) text-white"
+            accentColor
+              ? "bg-(--provider-accent) text-(--provider-accent-foreground)"
               : "bg-card text-muted-foreground",
+            props.size === "compact" &&
+              "right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs",
             props.badgeClassName,
           )}
           style={{ borderColor: indicatorBackground }}

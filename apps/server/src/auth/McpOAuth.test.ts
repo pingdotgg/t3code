@@ -1,12 +1,18 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  AuthAdministrativeScopes,
+  AuthMcpClientAccess,
+  AuthStandardClientScopes,
   type AuthCreatePairingCredentialInput,
+  type EnvironmentCloudLinkStateResult,
   EnvironmentHttpApi,
+  MCP_PEER_LINK_SOFTWARE_ID,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
@@ -17,14 +23,18 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Schema from "effect/Schema";
 
+import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
+import { makeDpopKey } from "./dpop.testkit.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 class AuthTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.auth)
@@ -32,20 +42,38 @@ class AuthTestApi extends HttpApi.make("environment")
 
 const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-oauth-test-" });
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(Sqlite.layerMemory),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
-// Each router gets its own database; the capture hands that router's EnvironmentAuth to its test.
-const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void) =>
+const notLinked: EnvironmentCloudLinkStateResult = {
+  linked: false,
+  cloudUserId: null,
+  relayUrl: null,
+  relayIssuer: null,
+  publishAgentActivity: false,
+};
+const makeLayerRoutes = (
+  capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void,
+  linkState: EnvironmentCloudLinkStateResult,
+) =>
   Layer.mergeAll(
     Layer.effectDiscard(
       EnvironmentAuth.EnvironmentAuth.pipe(Effect.tap((auth) => Effect.sync(() => capture(auth)))),
     ),
     HttpApiBuilder.layer(AuthTestApi).pipe(
       Layer.provide(AuthHttp.layer),
-      Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
+      Layer.provide(
+        McpOAuthHttp.layer.pipe(
+          Layer.provide(McpOAuth.layer),
+          Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+          Layer.provide(
+            Layer.mock(CloudLink.CloudLink)({ linkState: () => Effect.succeed(linkState) }),
+          ),
+        ),
+      ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
   ).pipe(
@@ -53,21 +81,19 @@ const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Servic
     Layer.provide(layerConfig),
     Layer.provideMerge(
       HttpPlatform.layer.pipe(
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         Layer.provideMerge(Etag.layerWeak),
       ),
     ),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const ORIGIN = "https://box.example.ts.net";
 const REDIRECT = "http://localhost/callback";
 const verifier = "a".repeat(43) + "-verifier-for-tests";
-/** base64url(SHA-256(verifier)), the S256 challenge for `verifier`. */
 const challenge = "DeB41nTVkPwpbbYecrnqtVq7VXLezustdHAK4SWt13c";
 
-/** Requests as they arrive behind an https proxy: plain http with the public Host. */
 const at = (path: string, init?: RequestInit) =>
   new Request(`http://127.0.0.1${path}`, {
     ...init,
@@ -83,42 +109,51 @@ type Handler = (request: Request) => Effect.Effect<Response>;
 
 const withRoutes = <A, E>(
   use: (handler: Handler, auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  linkState = notLinked,
 ) =>
   Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const context = Context.make(Crypto.Crypto, crypto);
+    const random = yield* SecureRandom.SecureRandom;
+    const context = Context.make(SecureRandom.SecureRandom, random);
     let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
     const layerRoutes = makeLayerRoutes((auth) => {
       routerAuth = auth;
-    });
+    }, linkState);
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (web) =>
         Effect.gen(function* () {
           const handler: Handler = (request) => Effect.promise(() => web.handler(request, context));
-          // The router builds its layer on first request; a metadata read warms it.
           yield* handler(at("/.well-known/oauth-authorization-server"));
           return yield* use(handler, routerAuth!);
         }),
       (web) => Effect.promise(() => web.dispose()),
     );
-  }).pipe(Effect.provide(NodeServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 const json = <A>(response: Response) => Effect.promise(() => response.json() as Promise<A>);
 
-const postJson = (path: string, body: unknown, cookie?: string) =>
+/** `credential` is a browser cookie, `Bearer <token>`, or the headers of a DPoP request. */
+const postJson = (path: string, body: unknown, credential?: string | Record<string, string>) =>
   at(path, {
     method: "POST",
-    headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+    headers: {
+      "content-type": "application/json",
+      ...(credential === undefined
+        ? {}
+        : typeof credential !== "string"
+          ? credential
+          : credential.startsWith("Bearer ")
+            ? { authorization: credential }
+            : { cookie: credential }),
+    },
     body: encodeJson(body),
   });
 
-/** What the approval page posts: the agent's request plus the user's choice. */
 const decide = (
   handler: Handler,
   authorization: Record<string, string>,
   decision: Record<string, string>,
-  cookie?: string,
+  cookie?: string | Record<string, string>,
 ) =>
   handler(postJson("/oauth/mcp/decision", { authorization, decision }, cookie)).pipe(
     Effect.flatMap((response) =>
@@ -217,7 +252,6 @@ it.live("registers loopback and https clients and never redirects for an unverif
       expect(unregistered.status).toBe(400);
       expect(unregistered.headers.get("location")).toBeNull();
 
-      // A valid request is handed to the web app's approval page, query intact.
       const query = new URLSearchParams(authorizeParams(clientId)).toString();
       const handoff = yield* handler(at(`/oauth/mcp/authorize?${query}`));
       expect(handoff.status).toBe(302);
@@ -231,7 +265,6 @@ it.live("registers loopback and https clients and never redirects for an unverif
         environmentHost: "box.example.ts.net",
       });
 
-      // The approval endpoints re-check the request: a forged client gets a message, not a URL.
       const forgedDetails = yield* handler(
         postJson("/oauth/mcp/approval", authorizeParams(`${clientId.split(".")[0]}.forged`)),
       );
@@ -290,17 +323,17 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
       };
       expect(token.scope).toBe("orchestration:read orchestration:operate");
 
-      // Codes are single use.
       expect((yield* exchange(verifier)).status).toBe(400);
 
-      const client = yield* auth.authenticateMcpClient(
-        HttpServerRequest.fromWeb(
-          at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
-        ),
-      );
-      expect(client).toMatchObject({ label: "Claude Code", access: "auto" });
+      for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
+        const client = yield* auth.authenticateMcpClient(
+          HttpServerRequest.fromWeb(
+            at("/mcp", { headers: { authorization: `${scheme} ${token.access_token}` } }),
+          ),
+        );
+        expect(client).toMatchObject({ label: "Claude Code", access: "auto" });
+      }
 
-      // The same token is refused by the rest of the environment.
       const session = yield* handler(
         at("/api/auth/session", { headers: { authorization: `Bearer ${token.access_token}` } }),
       );
@@ -336,7 +369,6 @@ it.live("signs in a hosted agent with an https callback that asked for a client 
         client_id: string;
         token_endpoint_auth_method: string;
       };
-      // Registered as a public client: PKCE, not a secret, proves it at the token endpoint.
       expect(client.token_endpoint_auth_method).toBe("none");
 
       const params = authorizeParams(client.client_id, callbackUrl);
@@ -362,7 +394,6 @@ it.live("signs in a hosted agent with an https callback that asked for a client 
             code: callback.searchParams.get("code")!,
             redirect_uri: callbackUrl,
             client_id: client.client_id,
-            // Sent by a client that asked for one; there is none to check.
             client_secret: "unused",
             code_verifier: verifier,
           }),
@@ -429,7 +460,6 @@ it.live(
         const approveWith = (code: string) =>
           decide(handler, params, { _tag: "pairing-code", access: "auto", code });
 
-        // A T3 Connect code is bound to a device key: refused, and still usable by its device.
         const bound = yield* auth.createPairingLink({
           proofKeyThumbprint: "device-key-thumbprint",
         });
@@ -451,13 +481,20 @@ it.live(
         const readOnlyResponse = yield* approveWith(readOnly.credential);
         expect(readOnlyResponse.status).toBe(400);
         expect(readOnlyResponse.message).toContain("cannot grant this access");
+        const operator = yield* auth.issuePairingCredential({
+          scopes: ["orchestration:read", "orchestration:operate"],
+        });
+        const operatorFull = yield* decide(handler, params, {
+          _tag: "pairing-code",
+          access: "full-access",
+          code: operator.credential,
+        });
+        expect(operatorFull.status).toBe(400);
 
-        // A read-only code can approve read-only access.
-        const readOnlyCode = yield* auth.issuePairingCredential({ scopes: ["orchestration:read"] });
         const readOnlyApproval = yield* decide(handler, params, {
           _tag: "pairing-code",
           access: "read-only",
-          code: readOnlyCode.credential,
+          code: readOnly.credential,
         });
         expect(readOnlyApproval.status).toBe(200);
         const readOnlyToken = yield* handler(
@@ -484,12 +521,155 @@ it.live(
     ),
 );
 
+it.live("a code minted with an access level's scopes approves that access", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const params = authorizeParams(yield* registeredClientId(handler));
+      for (const access of AuthMcpClientAccess.literals) {
+        const code = yield* auth.issuePairingCredential({ scopes: [...mcpClientScopes(access)] });
+        const approval = yield* decide(handler, params, {
+          _tag: "pairing-code",
+          access,
+          code: code.credential,
+        });
+        expect(approval.status, access).toBe(200);
+      }
+    }),
+  ),
+);
+
+it.live("an app approval code approves only an app sign-in, at its own level", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const params = authorizeParams(clientId);
+      const issued = yield* auth.issuePairingCredential({ access: "approval-required" });
+      expect(issued.access).toBe("approval-required");
+      const code = issued.credential;
+      expect(code).toMatch(/^SUPERVISED-[2-9A-HJ-NP-Z]{12}$/);
+
+      // Signing in a browser, a token exchange and linking all refuse it and leave it unspent.
+      const browser = yield* handler(
+        at("/api/auth/browser-session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({ credential: code }),
+        }),
+      );
+      expect(browser.status).toBe(401);
+      const exchanged = yield* auth
+        .exchangeBootstrapCredentialForAccessToken(code, undefined, { deviceType: "bot" })
+        .pipe(Effect.flip);
+      expect(exchanged._tag).toBe("ServerAuthInvalidCredentialError");
+      const peer = yield* handler(
+        at("/oauth/mcp/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: encodeJson({
+            client_name: "Studio",
+            software_id: MCP_PEER_LINK_SOFTWARE_ID,
+            redirect_uris: [REDIRECT],
+          }),
+        }),
+      ).pipe(Effect.flatMap(json<{ client_id: string }>));
+      const linked = yield* decide(handler, authorizeParams(peer.client_id), {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code,
+      });
+      expect(linked.status).toBe(400);
+
+      // Supervised and Auto share scopes, so only the code's own level may spend it.
+      const otherLevel = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "auto",
+        code,
+      });
+      expect(otherLevel.status).toBe(400);
+
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "approval-required",
+        code: code.toLowerCase(),
+      });
+      expect(approved.status).toBe(200);
+      const token = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code: new URL(approved.redirectTo!).searchParams.get("code")!,
+            redirect_uri: params.redirect_uri,
+            client_id: clientId,
+            code_verifier: verifier,
+          }),
+        ),
+      ).pipe(Effect.flatMap(json<{ access_token: string }>));
+      const signedIn = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+        ),
+      );
+      expect(signedIn.access).toBe("approval-required");
+      expect(
+        (yield* decide(handler, params, {
+          _tag: "pairing-code",
+          access: "approval-required",
+          code,
+        })).status,
+      ).toBe(400);
+    }),
+  ),
+);
+
+it.live(
+  "sends an app sign-in on the linked tunnel to the hosted app, and a link to its own page",
+  () =>
+    Effect.gen(function* () {
+      const handoff = (tunnelHostname: string, peerLink = false) =>
+        withRoutes(
+          (handler) =>
+            Effect.gen(function* () {
+              const registered = yield* handler(
+                at("/oauth/mcp/register", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: encodeJson({
+                    client_name: "Agent",
+                    redirect_uris: [REDIRECT],
+                    token_endpoint_auth_method: "none",
+                    ...(peerLink ? { software_id: MCP_PEER_LINK_SOFTWARE_ID } : {}),
+                  }),
+                }),
+              ).pipe(Effect.flatMap(json<{ client_id: string }>));
+              const query = new URLSearchParams(
+                authorizeParams(registered.client_id, "http://localhost:51234/callback"),
+              );
+              const response = yield* handler(at(`/oauth/mcp/authorize?${query}`));
+              return { location: response.headers.get("location")!, query: query.toString() };
+            }),
+          { ...notLinked, linked: true, cloudUserId: "user_1", tunnelHostname },
+        );
+
+      const onTunnel = yield* handoff("box.example.ts.net");
+      const hosted = new URL(onTunnel.location);
+      expect(`${hosted.origin}${hosted.pathname}`).toBe("https://app.t3.codes/approve-agent");
+      expect(hosted.searchParams.get("environment")).toEqual(expect.any(String));
+      hosted.searchParams.delete("environment");
+      expect(hosted.searchParams.toString()).toBe(onTunnel.query);
+
+      const elsewhere = yield* handoff("other.t3coderelay.com");
+      expect(elsewhere.location).toBe(`/connect-agent?${elsewhere.query}`);
+      const peerLink = yield* handoff("box.example.ts.net", true);
+      expect(peerLink.location).toBe(`/connect-agent?${peerLink.query}`);
+    }),
+);
+
 it.live("one-click approves only access the browser session holds the scopes for", () =>
   withRoutes((handler, auth) =>
     Effect.gen(function* () {
       const clientId = yield* registeredClientId(handler);
       const params = authorizeParams(clientId);
-      // Signs a browser in through the real route and returns its session cookie.
       const browserCookie = (scopes: NonNullable<AuthCreatePairingCredentialInput["scopes"]>) =>
         Effect.gen(function* () {
           const pairing = yield* auth.issuePairingCredential({ scopes });
@@ -507,7 +687,7 @@ it.live("one-click approves only access the browser session holds the scopes for
           Effect.flatMap(json<{ csrfToken?: string; oneClickAccess?: ReadonlyArray<string> }>),
         );
 
-      const admin = yield* browserCookie([...AuthAdministrativeScopes]);
+      const admin = yield* browserCookie([...AuthStandardClientScopes]);
       const adminDetails = yield* details(admin);
       expect(adminDetails.csrfToken).toEqual(expect.any(String));
       expect(adminDetails.oneClickAccess).toEqual([
@@ -525,7 +705,6 @@ it.live("one-click approves only access the browser session holds the scopes for
       );
       expect(new URL(oneClick.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
 
-      // access:write alone cannot hand an agent thread control it does not hold.
       const accessOnly = yield* browserCookie(["access:read", "access:write"]);
       expect((yield* details(accessOnly)).csrfToken).toBeUndefined();
       const forged = yield* decide(
@@ -537,11 +716,9 @@ it.live("one-click approves only access the browser session holds the scopes for
       expect(forged.status).toBe(400);
       expect(forged.message).toContain("Enter a pairing code instead");
 
-      // A session that can read but not operate threads may approve read-only access only.
       const reader = yield* browserCookie(["access:write", "orchestration:read"]);
       const readerDetails = yield* details(reader);
       expect(readerDetails.csrfToken).toEqual(expect.any(String));
-      // The page shows the pairing-code field for anything above read only.
       expect(readerDetails.oneClickAccess).toEqual(["read-only"]);
       const tooBroad = yield* decide(
         handler,
@@ -557,6 +734,62 @@ it.live("one-click approves only access the browser session holds the scopes for
         reader,
       );
       expect(new URL(readOnly.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
+
+      // The hosted app approves with the owner's T3 Connect session, which sends no cookie.
+      const connect = `Bearer ${(yield* auth.issueSession({ scopes: [...AuthStandardClientScopes] })).token}`;
+      const connectDetails = yield* details(connect);
+      expect(connectDetails.oneClickAccess).toContain("full-access");
+      const viaConnect = yield* decide(
+        handler,
+        params,
+        { _tag: "browser-session", access: "auto", csrfToken: connectDetails.csrfToken! },
+        connect,
+      );
+      expect(new URL(viaConnect.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
+
+      // The hosted app may load and decide with two credentials minted for the same browser key.
+      const key = makeDpopKey();
+      const dpopSession = (thumbprint: string) =>
+        auth.issuePairingCredential({ scopes: [...AuthStandardClientScopes] }).pipe(
+          Effect.flatMap((pairing) =>
+            auth.exchangeBootstrapCredentialForAccessToken(
+              pairing.credential,
+              undefined,
+              { deviceType: "desktop" },
+              { proofKeyThumbprint: thumbprint },
+            ),
+          ),
+          Effect.map((exchanged) => exchanged.access_token),
+        );
+      const iat = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+      const dpopHeaders = (signer: typeof key, token: string, path: string) => ({
+        authorization: `DPoP ${token}`,
+        dpop: signer.sign({ method: "POST", url: `${ORIGIN}${path}`, token, iat }),
+      });
+      const loadedWith = yield* dpopSession(key.thumbprint);
+      const loaded = yield* handler(
+        postJson(
+          "/oauth/mcp/approval",
+          params,
+          dpopHeaders(key, loadedWith, "/oauth/mcp/approval"),
+        ),
+      ).pipe(Effect.flatMap(json<{ csrfToken?: string }>));
+      const renewed = yield* dpopSession(key.thumbprint);
+      const sameKey = yield* decide(
+        handler,
+        params,
+        { _tag: "browser-session", access: "auto", csrfToken: loaded.csrfToken! },
+        dpopHeaders(key, renewed, "/oauth/mcp/decision"),
+      );
+      expect(new URL(sameKey.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
+      const otherKey = makeDpopKey();
+      const elsewhere = yield* decide(
+        handler,
+        params,
+        { _tag: "browser-session", access: "auto", csrfToken: loaded.csrfToken! },
+        dpopHeaders(otherKey, yield* dpopSession(otherKey.thumbprint), "/oauth/mcp/decision"),
+      );
+      expect(elsewhere.status).toBe(400);
     }),
   ),
 );

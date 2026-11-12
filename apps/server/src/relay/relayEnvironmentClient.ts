@@ -5,10 +5,6 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
-/**
- * A typed RelayApi client that authenticates as this environment, for the
- * environment-credential endpoints (link preferences, held webhooks).
- */
 export const makeRelayEnvironmentClient = (connection: {
   readonly url: string;
   readonly environmentCredential: string;

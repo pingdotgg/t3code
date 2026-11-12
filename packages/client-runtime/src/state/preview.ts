@@ -1,4 +1,5 @@
 import { WS_METHODS } from "@t3tools/contracts";
+import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -28,6 +29,8 @@ export function createPreviewEnvironmentAtoms<R, E>(
     events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:events",
       tag: WS_METHODS.subscribePreviewEvents,
+      // Stream atoms publish only the last value per chunk; every preview event must arrive.
+      transform: (stream) => stream.pipe(Stream.rechunk(1)),
     }),
     discoveredServers: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:discovered-servers",
@@ -39,12 +42,6 @@ export function createPreviewEnvironmentAtoms<R, E>(
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:open",
       tag: WS_METHODS.previewOpen,
-      scheduler: lifecycleScheduler,
-      concurrency: lifecycleConcurrency,
-    }),
-    navigate: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:navigate",
-      tag: WS_METHODS.previewNavigate,
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
@@ -60,12 +57,6 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
-    refresh: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:refresh",
-      tag: WS_METHODS.previewRefresh,
-      scheduler: lifecycleScheduler,
-      concurrency: lifecycleConcurrency,
-    }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:close",
       tag: WS_METHODS.previewClose,
@@ -75,6 +66,15 @@ export function createPreviewEnvironmentAtoms<R, E>(
     clearProfile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:clear-profile",
       tag: WS_METHODS.previewClearProfile,
+    }),
+    reportProfiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:report-profiles",
+      tag: WS_METHODS.previewReportProfiles,
+      concurrency: { mode: "latest", key: ({ environmentId }) => environmentId },
+    }),
+    stopLocalServer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:stop-local-server",
+      tag: WS_METHODS.previewStopLocalServer,
     }),
     reportStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-status",

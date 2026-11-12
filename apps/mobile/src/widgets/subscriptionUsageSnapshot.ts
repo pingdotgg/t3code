@@ -2,10 +2,14 @@ import {
   collectLimitAccounts,
   collectLimitPools,
   type LimitAccount,
+  type LimitPoolWindow,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
 
+import type { WidgetTheme } from "./widgetTheme";
+
 export interface SubscriptionUsageSnapshot {
+  theme?: WidgetTheme;
   url?: string;
   checkedAt: number;
   providers: Array<{
@@ -17,12 +21,10 @@ export interface SubscriptionUsageSnapshot {
   }>;
 }
 
-// Snapshots expire after 15 minutes; background refresh needs a
-// separate authenticated transport while the mobile app is suspended.
+// Snapshots expire after 15 minutes; suspended refresh requires a separate authenticated transport.
 const SNAPSHOT_MAX_AGE = 15 * 60_000;
 export const WIDGET_REFRESH_INTERVAL = 5 * 60_000;
 
-/** Bound probes across config updates, reconnects, and foreground transitions. */
 export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>) {
   const attempted = new Map<Id, number>();
   const pending = new Set<Id>();
@@ -42,6 +44,10 @@ export function createWidgetRefresher<Id>(refresh: (id: Id) => Promise<unknown>)
     );
   };
 }
+
+// A reset at or before its account's observation already happened, so it cannot expire the snapshot.
+const isUpcoming = (reset: LimitPoolWindow["resets"][number]) =>
+  reset.at > Date.parse(reset.member.account.limits.checkedAt);
 
 function subscriptionUsageProps(
   accounts: readonly LimitAccount[],
@@ -74,13 +80,14 @@ function subscriptionUsageProps(
         const checkedAt = Math.min(...pool.accounts.map((a) => Date.parse(a.limits.checkedAt)));
         const expiresAt = Math.min(
           checkedAt + SNAPSHOT_MAX_AGE,
-          ...pool.windows.flatMap((window) => window.resets.map((reset) => reset.at)),
+          ...pool.windows.flatMap((window) =>
+            window.resets.filter(isUpcoming).map((reset) => reset.at),
+          ),
         );
         const fresh = Number.isFinite(expiresAt) && expiresAt > now;
         const sortedWindows = [...pool.windows].sort(
           (a, b) => a.remainingPercent - b.remainingPercent,
         );
-        // Keep a session and weekly limit when scoped limits fill the storage budget.
         const selectedWindows = [
           ...new Set([
             sortedWindows.find((window) => window.kind === "session"),
@@ -106,7 +113,9 @@ function subscriptionUsageProps(
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
                 reset: window.resets[0]
-                  ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
+                  ? `${isUpcoming(window.resets[0]) ? "Next reset" : "Reset"} ${new Date(
+                      window.resets[0].at,
+                    ).toLocaleString(undefined, {
                       month: "short",
                       day: "numeric",
                       hour: "numeric",
@@ -120,13 +129,11 @@ function subscriptionUsageProps(
   };
 }
 
-/** Deduplicate accounts before pooling, and only publish display data to the OS. */
 export function buildSubscriptionUsageSnapshot(
   presentations: LimitPresentations,
   url: string,
   maxWindowsPerProvider = 6,
 ): SubscriptionUsageSnapshot {
-  // Freshness is evaluated at publication/render time, not on unrelated config emissions.
   const configuredDrivers = new Set(
     [...presentations.values()].flatMap((presentation) =>
       (presentation.serverConfig?.providers ?? [])

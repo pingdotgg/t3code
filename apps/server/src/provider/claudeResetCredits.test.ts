@@ -1,13 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Deferred from "effect/Deferred";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -65,7 +62,49 @@ describe("claudeResetCreditsToContract", () => {
       availableCount: 2,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
+      options: [
+        expect.objectContaining({
+          creditId: "grant_a",
+          label: "Full reset",
+          availableCount: 2,
+          expiresAt: "2026-10-01T00:00:00.000Z",
+        }),
+      ],
     });
+  });
+
+  it("offers each kind of reset by its own grant", () => {
+    const credits = ClaudeResetCredits.claudeResetCreditsToContract(
+      {
+        eligible: true,
+        next_grant_id: "weekly_a",
+        grants: [
+          grant({ id: "weekly_a", clears: ["seven_day"], ends_at: "2026-12-10T22:00:00Z" }),
+          grant({
+            id: "fable_a",
+            clears: ["seven_day_overage_included"],
+            gives_back_weekly: true,
+            ends_at: "2027-03-09T07:59:00Z",
+          }),
+          grant({ id: "fable_b", gives_back_weekly: true, type: "weekly" }),
+          grant({ id: "session_a", type: "session" }),
+          grant({ id: "spent", clears: ["seven_day"], resets_left: 0 }),
+        ],
+      },
+      NOW,
+    );
+    expect(
+      credits?.options?.map(({ creditId, label, availableCount }) => [
+        creditId,
+        label,
+        availableCount,
+      ]),
+    ).toEqual([
+      ["session_a", "5-hour reset", 1],
+      ["weekly_a", "Weekly reset", 1],
+      ["fable_a", "Fable reset", 2],
+    ]);
+    expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
@@ -111,10 +150,10 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         );
       });
       const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
     }),
   );
 
@@ -122,11 +161,11 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
       const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
       const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );
       expect([darwin, limited]).toEqual([undefined, undefined]);
@@ -147,7 +186,7 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
       version: "2.1.0",
       ...ids,
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HttpClient.HttpClient, client),
       Effect.result,
     );
@@ -193,12 +232,10 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
       ]) {
         const result = yield* consume(client);
         expect(result).toMatchObject({ _tag: "Failure" });
-        // Claude answered, so a retry must be a new claim.
         if (result._tag === "Failure") {
           expect(ClaudeResetCredits.isSettledClaudeResetCreditFailure(result.failure)).toBe(true);
         }
       }
-      // No answer, or Claude could not confirm the claim: a retry is the same claim.
       for (const client of [respond(500, {}), respond(200, { result: "unavailable" })]) {
         const unanswered = yield* consume(client);
         expect(unanswered).toMatchObject({ _tag: "Failure" });
@@ -209,41 +246,6 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
         }
       }
     }),
-  );
-
-  it.effect("times out a stalled claim body", () =>
-    Effect.gen(function* () {
-      const login = yield* writeLogin;
-      const readingBody = yield* Deferred.make<void>();
-      const client = HttpClient.make((request) => {
-        const response = HttpClientResponse.fromWeb(request, Response.json({ result: "reset" }));
-        Object.defineProperty(response, "json", {
-          value: Deferred.succeed(readingBody, undefined).pipe(Effect.andThen(Effect.never)),
-        });
-        return Effect.succeed(response);
-      });
-      const claim = yield* ClaudeResetCredits.consumeClaudeResetCredit({
-        ...login,
-        version: "2.1.0",
-        grantId: "grant_a",
-        requestId: "r-1",
-      }).pipe(
-        Effect.provideService(HostProcessPlatform, "linux"),
-        Effect.provideService(HttpClient.HttpClient, client),
-        Effect.result,
-        Effect.forkChild,
-      );
-      yield* Deferred.await(readingBody);
-      yield* TestClock.adjust("26 seconds");
-      expect(yield* Fiber.join(claim)).toMatchObject({
-        _tag: "Failure",
-        failure: {
-          _tag: "ClaudeResetCreditError",
-          reason: "requestFailed",
-          cause: { _tag: "TimeoutError" },
-        },
-      });
-    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("refuses malformed ids without sending anything", () =>

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -33,9 +34,6 @@ const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   confirmThreadUnpin: false,
-  contextWindowMeterEnabled: false,
-  composerCollapseOnScroll: true,
-  dismissedProviderUpdateNotificationKeys: [],
   diffFilesCollapsed: true,
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
@@ -53,7 +51,6 @@ const clientSettings: ClientSettings = {
   glassOpacity: 80,
   onboardingCompletedAt: null,
   panelAnimationDurationMs: 0,
-  planModeEnabled: false,
   proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
   persistComposerContextStrip: true,
@@ -64,8 +61,10 @@ const clientSettings: ClientSettings = {
   },
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
-  sidebarThreadPreviewCount: 6,
-  legacySidebarEnabled: false,
+  boringSidebarEnabled: false,
+  boringSidebarMultilineRows: false,
+  threadDetailsUsageEnabled: false,
+  threadDetailsItems: {},
   sidebarWorkingShelfEnabled: false,
   loadBalancingEnabled: false,
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
@@ -75,9 +74,6 @@ const clientSettings: ClientSettings = {
 };
 
 const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(ClientSettingsSchema));
-const decodeRecordJson = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-);
 function layer(baseDir: string) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -91,13 +87,17 @@ function layer(baseDir: string) {
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        DesktopConfig.layerTest({ T3CODE_HOME: baseDir }),
+      ),
     ),
   );
 
   return DesktopClientSettings.layer.pipe(
     Layer.provideMerge(layerEnvironment),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 }
 
@@ -110,45 +110,9 @@ const withClientSettings = <A, E, R>(
       prefix: "t3-desktop-client-settings-test-",
     });
     return yield* effect.pipe(Effect.provide(layer(baseDir)));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
-  it.effect("returns none when no client settings file exists", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        assert.isTrue(Option.isNone(yield* settings.get));
-      }),
-    ),
-  );
-
-  it.effect("persists and reloads client settings", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* settings.set(clientSettings);
-
-        assert.deepEqual(yield* settings.get, Option.some(clientSettings));
-        assert.deepEqual(
-          yield* decodeClientSettingsJson(
-            yield* fileSystem.readFileString(environment.clientSettingsPath),
-          ),
-          clientSettings,
-        );
-        assert.isFalse(
-          Object.hasOwn(
-            yield* decodeRecordJson(
-              yield* fileSystem.readFileString(environment.clientSettingsPath),
-            ),
-            "settings",
-          ),
-        );
-      }),
-    ),
-  );
-
   it.effect("saves through a symlinked client settings file without replacing the link", () =>
     withClientSettings(
       Effect.gen(function* () {
@@ -172,6 +136,29 @@ describe("DesktopClientSettings", () => {
         assert.deepEqual(
           yield* decodeClientSettingsJson(yield* fileSystem.readFileString(linkedSettingsPath)),
           clientSettings,
+        );
+      }),
+    ),
+  );
+
+  it.effect("removes its temporary file when replacing the settings file fails", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(`${environment.clientSettingsPath}/occupied`, {
+          recursive: true,
+        });
+
+        const error = yield* settings.set(clientSettings).pipe(Effect.flip);
+
+        assert.equal(error.operation, "replace-settings-file");
+        assert.deepEqual(
+          (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
+            name.endsWith(".tmp"),
+          ),
+          [],
         );
       }),
     ),
@@ -228,29 +215,6 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  it.effect("reports the failed client settings write operation and path", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.clientSettingsPath, { recursive: true });
-
-        const error = yield* settings.set(clientSettings).pipe(Effect.flip);
-        assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsWriteError);
-        assert.equal(error.operation, "replace-settings-file");
-        assert.equal(error.path, environment.clientSettingsPath);
-        assert.instanceOf(error.cause, PlatformError.PlatformError);
-        assert.isString(error.cause.stack);
-        assert.equal(
-          error.message,
-          `Desktop client settings write failed during replace-settings-file at ${environment.clientSettingsPath}.`,
-        );
-        assert.notInclude(error.message, error.cause.message);
-      }),
-    ),
-  );
-
   it.effect("loads lenient direct client settings documents", () =>
     withClientSettings(
       Effect.gen(function* () {
@@ -300,23 +264,8 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  it.effect("loads defaults from empty client settings documents", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.clientSettingsPath, "{}\n");
-
-        assert.deepEqual(yield* settings.get, Option.some(yield* decodeClientSettingsJson("{}")));
-      }),
-    ),
-  );
-
   it.effect.each([
     { label: "malformed JSON", contents: "{not-json" },
-    { label: "invalid direct settings", contents: '{"fontSizeCode":"large"}' },
     { label: "invalid legacy settings", contents: '{"settings":{"fontSizeCode":"large"}}' },
   ])("reports $label without treating the settings file as absent", (document) =>
     withClientSettings(

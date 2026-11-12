@@ -6,7 +6,6 @@ function terminalNumber(terminalId: string): string | undefined {
   )?.[1];
 }
 
-/** Human-readable label for a terminal tab; matches mobile and web sidebars. */
 export function getTerminalLabel(terminalId: string): string {
   const numericSuffix = terminalNumber(terminalId);
   if (numericSuffix) {
@@ -16,7 +15,6 @@ export function getTerminalLabel(terminalId: string): string {
   return terminalId;
 }
 
-/** Prefer server summary label when present; otherwise fall back to `getTerminalLabel`. */
 export function resolveTerminalSessionLabel(
   terminalId: string,
   summary: Pick<TerminalSummary, "label"> | null | undefined,
@@ -28,13 +26,7 @@ export function resolveTerminalSessionLabel(
   return getTerminalLabel(terminalId);
 }
 
-/**
- * Client-side terminal id allocator. Ids are ALWAYS chosen by the client and sent explicitly
- * on every `terminal.open` / `terminal.attach` call — the server never allocates.
- *
- * Returns the lowest unused `term-N` number. When metadata is unavailable,
- * callers append a UUID so an unseen host session cannot be reused accidentally.
- */
+/** Append a UUID when metadata is unavailable to avoid reusing unseen host sessions. */
 export function nextTerminalId(
   existingTerminalIds: ReadonlyArray<string>,
   uniqueSuffix?: string,

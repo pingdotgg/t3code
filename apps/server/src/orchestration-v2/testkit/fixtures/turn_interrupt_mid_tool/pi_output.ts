@@ -16,11 +16,6 @@ function frameType(frame: unknown): unknown {
   return typeof frame === "object" && frame !== null ? Reflect.get(frame, "type") : undefined;
 }
 
-/**
- * User Stop while Pi runs a bash tool. The adapter aborts first, so Pi ends
- * the tool as an error and settles, then the adapter terminates the process
- * (Stop-with-restart) because it cannot trust abort to have landed.
- */
 export function assertTurnInterruptMidToolPiOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -49,7 +44,6 @@ export function assertTurnInterruptMidToolPiOutput(
   const commandItem = projection.turnItems.find((item) => item.type === "command_execution");
   assert.isDefined(commandItem);
   assert.include(commandItem.input, "node -e");
-  // Pi reports the aborted tool as an error; a Stop presents it as interrupted.
   assert.equal(commandItem.status, "interrupted");
   const interruptResult = projection.turnItems.find((item) => item.type === "run_interrupt_result");
   assert.equal(interruptResult?.status, "interrupted");
@@ -57,7 +51,6 @@ export function assertTurnInterruptMidToolPiOutput(
     projection.providerTurns.map((turn) => turn.status),
     ["interrupted"],
   );
-  // Read before Stop kills Pi, so a later rollback can fork at this turn.
   assert.equal(projection.providerTurns[0]?.nativeTurnRef?.strength, "strong");
   assert.deepEqual(
     projection.providerSessions.map((session) => [session.status, session.lastError]),

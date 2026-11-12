@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import {
   computeDpopAccessTokenHash,
@@ -53,6 +54,31 @@ describe("verifyDpopProof", () => {
     iat: 100,
     privateKey,
     publicJwk,
+  });
+
+  it("computes the RFC 7638 thumbprint whatever the host locale", () => {
+    // Latvian collation sorts "y" before "kty", which broke every remote client.
+    const latvian = new Intl.Collator("lv");
+    const localeCompare = vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (
+      this: string,
+      that: string,
+    ) {
+      return latvian.compare(this, that);
+    });
+    try {
+      const rfc7638Input = JSON.stringify({
+        crv: publicJwk.crv,
+        kty: publicJwk.kty,
+        x: publicJwk.x,
+        y: publicJwk.y,
+      });
+      assert.equal(
+        computeDpopJwkThumbprint(publicJwk),
+        NodeCrypto.createHash("sha256").update(rfc7638Input).digest("base64url"),
+      );
+    } finally {
+      localeCompare.mockRestore();
+    }
   });
 
   it("verifies an ES256 DPoP proof and returns the RFC 7638 thumbprint", () => {
@@ -181,6 +207,27 @@ describe("verifyDpopProof", () => {
       assert.fail("Expected a proof signed by a different key to fail.");
     }
     assert.equal(invalidSignature.code, "invalid_signature");
+  });
+
+  it("accepts clock offsets through 300 seconds in either direction", () => {
+    for (const { offset, accepted } of [
+      { offset: -300, accepted: true },
+      { offset: 300, accepted: true },
+      { offset: -301, accepted: false },
+      { offset: 301, accepted: false },
+    ]) {
+      const result = verifyDpopProof({
+        proof,
+        method: "POST",
+        url: "https://example.com/oauth/token",
+        nowEpochSeconds: 100 + offset,
+      });
+
+      assert.equal(result.ok, accepted, `Clock offset: ${offset}s`);
+      if (!result.ok) {
+        assert.equal(result.code, "time_window");
+      }
+    }
   });
 
   it("requires the RFC 9449 access token hash when an access token is expected", () => {

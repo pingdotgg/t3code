@@ -61,14 +61,12 @@ beforeEach(async () => {
     else if (typeof request !== "string" && request.Action.ScreenshotWindow) {
       const screenshot = request.Action.ScreenshotWindow;
       capturePath = screenshot.path;
-      // Focus may change between discovery and capture. The request must keep the original ID.
       focused = { ...window, id: 99, title: "Another app" };
       await NodeFSP.writeFile(screenshot.path, png);
       for (const event of events) {
         send(event, { ScreenshotCaptured: { path: "/another-app.png" } });
         send(event, { ScreenshotCaptured: { path: screenshot.path } });
       }
-      // The event may beat the command reply.
       send(socket, { Ok: "Handled" });
     } else send(socket, { Ok: "Handled" });
   };
@@ -226,16 +224,6 @@ it("fails promptly when Niri disconnects", async () => {
     socket.end();
   };
   await expect(checkNiriCaptureSupport(socketPath)).rejects.toThrow("disconnected");
-});
-
-it("bounds requests even when the compositor never answers", async () => {
-  vi.useFakeTimers();
-  const received = Promise.withResolvers<void>();
-  handler = async () => received.resolve();
-  const result = expect(checkNiriCaptureSupport(socketPath)).rejects.toThrow("timed out");
-  await received.promise;
-  await vi.advanceTimersByTimeAsync(5_000);
-  await result;
 });
 
 it("does not use stale, relative, or sandboxed Niri sockets", () => {

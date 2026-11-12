@@ -1,8 +1,9 @@
+import { Observe } from "expo-observe";
 import { Component, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 
-import { AppText as Text } from "./AppText";
-import { MaterialButton } from "./MaterialButton";
+import { AppText as Text } from "./ui/AppText";
+import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
 interface RenderErrorBoundaryProps {
@@ -33,7 +34,6 @@ function errorDetails(error: unknown, componentStack?: string): string {
   return componentStack ? `${description}\nComponent stack:\n${componentStack}` : description;
 }
 
-/** A failed subtree remounts on retry or when its identifying inputs change. */
 export class RenderErrorBoundary extends Component<
   RenderErrorBoundaryProps,
   RenderErrorBoundaryState
@@ -61,7 +61,9 @@ export class RenderErrorBoundary extends Component<
     return { failed: true, error };
   }
 
-  override componentDidCatch(_error: unknown, info: { componentStack?: string }) {
+  override componentDidCatch(error: unknown, info: { componentStack?: string }) {
+    // A caught render error never reaches Observe's global handler.
+    Observe.reportError(error);
     this.setState({ componentStack: info.componentStack });
   }
 
@@ -107,19 +109,14 @@ export function RenderFailureView(
         {props.details.split("\n", 1)[0]?.slice(0, 300)}
       </Text>
       <View className="w-full max-w-xs gap-2">
-        <MaterialButton label="Try again" onPress={props.retry} tone="primary" fullWidth />
-        <MaterialButton
+        <Button label="Try again" onPress={props.retry} tone="primary" fullWidth />
+        <Button
           label="Copy details"
           onPress={() => copyTextWithHaptic(props.details, { target: "error details" })}
           fullWidth
         />
         {props.exit ? (
-          <MaterialButton
-            label={props.exit.label}
-            onPress={props.exit.onPress}
-            tone="text"
-            fullWidth
-          />
+          <Button label={props.exit.label} onPress={props.exit.onPress} tone="text" fullWidth />
         ) : null}
       </View>
     </ScrollView>

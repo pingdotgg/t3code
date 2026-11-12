@@ -1,8 +1,14 @@
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
-import { useMemo, useRef, useState } from "react";
+import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { useRef, useState } from "react";
 
-import { useEnvironments } from "~/state/environments";
+import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
+import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   canOneClickUpdateProviderCandidate,
@@ -14,38 +20,110 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/**
- * Updates every outdated provider on every connected machine at once, then
- * reports the results in one toast. Each server queues updates that share an
- * installer, so sending them all together is safe. The server still checks
- * permissions: a session that cannot operate a machine gets a failure line for
- * it. Renders nothing when no machine has a one-click update.
- */
-export function ProviderUpdatesAction() {
+// `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
+// drops it only when the model manifest changed.
+export function useCheckProviderUpdates() {
   const { environments } = useEnvironments();
+  const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const inFlight = useRef<Promise<void> | null>(null);
+
+  const check = async (quiet: boolean) => {
+    const failures = await Promise.all(
+      environments
+        .filter(
+          (environment) =>
+            environment.connection.phase === "connected" &&
+            manageableIds.has(environment.environmentId),
+        )
+        .map(async ({ environmentId, label }) => {
+          const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
+          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
+          const error = squashAtomCommandFailure(result);
+          return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];
+        }),
+    );
+    const lines = failures.flat();
+    if (quiet || lines.length === 0) return;
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not check provider updates",
+        description: <span className="whitespace-pre-line">{lines.join("\n")}</span>,
+      }),
+    );
+  };
+
+  // A repeat click must not start a second model rediscovery while one is running.
+  return ({ quiet = false }: { readonly quiet?: boolean } = {}) => {
+    if (inFlight.current) return inFlight.current;
+    const running = check(quiet).finally(() => {
+      inFlight.current = null;
+    });
+    inFlight.current = running;
+    return running;
+  };
+}
+
+export function useProviderUpdates() {
+  const { environments } = useEnvironments();
+  const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
+  const providersByEnvironment = useEnvironmentProviders();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
+  const machines = environments.flatMap((environment) => {
+    const providers = providersByEnvironment.get(environment.environmentId) ?? [];
+    if (
+      environment.connection.phase !== "connected" ||
+      !manageableIds.has(environment.environmentId)
+    ) {
+      return [];
+    }
+    const candidates = collectProviderUpdateCandidates(providers).filter((candidate) =>
+      canOneClickUpdateProviderCandidate(candidate, providers),
+    );
+    return candidates.length > 0
+      ? [{ environmentId: environment.environmentId, label: environment.label, candidates }]
+      : [];
+  });
+
+  const updateAll = async ({ quiet = false }: { readonly quiet?: boolean } = {}) => {
+    const runs = await Promise.all(
+      machines.flatMap(({ environmentId, label, candidates }) =>
+        candidates.map(async (candidate): Promise<ProviderUpdateRun> => ({
+          environmentId,
+          machineLabel: label,
+          driver: candidate.driver,
+          instanceId: candidate.instanceId,
+          result: await updateProvider({
+            environmentId,
+            input: { provider: candidate.driver, instanceId: candidate.instanceId },
+          }),
+        })),
+      ),
+    );
+    const view = quiet ? null : getProviderUpdateRunToastView(runs);
+    if (view) {
+      toastManager.add(
+        stackedThreadToast({
+          ...view,
+          description: <span className="whitespace-pre-line">{view.description}</span>,
+        }),
+      );
+    }
+    return runs;
+  };
+
+  return { machines, updateAll };
+}
+
+export function ProviderUpdatesAction() {
+  const { machines, updateAll } = useProviderUpdates();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
-  const machines = useMemo(
-    () =>
-      environments.flatMap((environment) => {
-        const providers = environment.serverConfig?.providers ?? [];
-        if (environment.connection.phase !== "connected") {
-          return [];
-        }
-        const candidates = collectProviderUpdateCandidates(providers).filter((candidate) =>
-          canOneClickUpdateProviderCandidate(candidate, providers),
-        );
-        return candidates.length > 0
-          ? [{ environmentId: environment.environmentId, label: environment.label, candidates }]
-          : [];
-      }),
-    [environments],
-  );
-  // Candidates leave the list as soon as their servers report them queued, so
-  // keep the button while the run is in flight.
   if (machines.length === 0 && !isPending) {
     return null;
   }
@@ -54,33 +132,9 @@ export function ProviderUpdatesAction() {
     if (pending.current) return;
     pending.current = true;
     setIsPending(true);
-    try {
-      const runs = await Promise.all(
-        machines.flatMap(({ environmentId, label, candidates }) =>
-          candidates.map(async (candidate): Promise<ProviderUpdateRun> => ({
-            machineLabel: label,
-            driver: candidate.driver,
-            instanceId: candidate.instanceId,
-            result: await updateProvider({
-              environmentId,
-              input: { provider: candidate.driver, instanceId: candidate.instanceId },
-            }),
-          })),
-        ),
-      );
-      const view = getProviderUpdateRunToastView(runs);
-      if (view) {
-        toastManager.add(
-          stackedThreadToast({
-            ...view,
-            description: <span className="whitespace-pre-line">{view.description}</span>,
-          }),
-        );
-      }
-    } finally {
-      pending.current = false;
-      setIsPending(false);
-    }
+    await settlePromise(() => updateAll());
+    pending.current = false;
+    setIsPending(false);
   };
 
   return (

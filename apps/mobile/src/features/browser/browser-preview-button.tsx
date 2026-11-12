@@ -1,9 +1,8 @@
 import { Pressable, View } from "react-native";
 
-import { AppText } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 
-/** Opens the thread's server-hosted browser tabs. Sits beside the device preview button. */
 export function BrowserPreviewButton(props: {
   readonly count: number;
   readonly onPress: () => void;
@@ -28,7 +27,7 @@ export function BrowserPreviewButton(props: {
           {props.count === 1 ? "One tab open" : `${props.count} tabs open`}
         </AppText>
       ) : props.count > 1 ? (
-        <View className="absolute right-0.5 top-0.5 min-w-4 items-center rounded-full bg-primary px-1">
+        <View className="absolute right-1.5 top-1.5 min-w-4 items-center rounded-full bg-primary px-1">
           <AppText className="text-2xs font-t3-bold text-primary-foreground">{props.count}</AppText>
         </View>
       ) : null}

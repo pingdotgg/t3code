@@ -1,4 +1,5 @@
 import * as Arr from "effect/Array";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,26 +25,11 @@ import {
   type ProviderSessionRuntimeRepositoryError,
 } from "./Errors.ts";
 
-/**
- * ProviderSessionRuntimeRepository - Repository interface for provider runtime sessions.
- *
- * Owns persistence operations for provider runtime metadata and resume cursors.
- *
- * @module ProviderSessionRuntimeRepository
- */
-
 const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "stopped", "error"]);
 
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,
   providerName: Schema.String,
-  /**
-   * User-defined routing key for the configured provider instance that
-   * owns this session. Nullable only at the storage/migration boundary:
-   * rows persisted before the driver/instance split carry only
-   * `providerName`. Repository consumers must materialize a concrete
-   * instance id before routing.
-   */
   providerInstanceId: Schema.NullOr(ProviderInstanceId),
   adapterKey: Schema.String,
   runtimeMode: RuntimeMode,
@@ -70,31 +56,18 @@ export interface ProviderSessionRuntimeUpsertOptions {
   readonly onConflict?: "update" | "ignore";
 }
 
-/**
- * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
- */
 export class ProviderSessionRuntimeRepository extends Context.Service<
   ProviderSessionRuntimeRepository,
   {
-    /**
-     * Insert or replace a provider runtime row.
-     *
-     * Upserts by canonical `threadId`, retaining imported transcript records
-     * from the current database row.
-     */
     readonly upsert: (
       runtime: ProviderSessionRuntime,
       options?: ProviderSessionRuntimeUpsertOptions,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
-    /** Record one source file without replacing the current session state. */
     readonly recordImportedTranscript: (
       input: RecordImportedTranscriptInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
-    /**
-     * Read provider runtime state by canonical thread id.
-     */
     readonly getByThreadId: (
       input: GetProviderSessionRuntimeInput,
     ) => Effect.Effect<
@@ -102,12 +75,6 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
       ProviderSessionRuntimeRepositoryError
     >;
 
-    /**
-     * List provider runtime rows.
-     *
-     * Returned in ascending last-seen order. `excludeStopped` filters stopped
-     * rows in SQL. Long-lived installs keep thousands for their resume cursors.
-     */
     readonly list: (options?: {
       readonly excludeStopped?: boolean;
     }) => Effect.Effect<
@@ -115,9 +82,6 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
       ProviderSessionRuntimeRepositoryError
     >;
 
-    /**
-     * Delete provider runtime state by canonical thread id.
-     */
     readonly deleteByThreadId: (
       input: DeleteProviderSessionRuntimeInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
@@ -170,12 +134,11 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Runtime writes can carry stale payloads. Only recordImportedTranscript may
-  // change source records, so restore that field from the row being updated.
+  // Runtime payloads may be stale; only recordImportedTranscript can change source records.
   const upsertRuntimeRow = SqlSchema.void({
     Request: ProviderSessionRuntimeDbRowSchema,
     execute: (runtime) =>
@@ -394,6 +357,7 @@ export const make = Effect.gen(function* () {
 
   const getByThreadId: ProviderSessionRuntimeRepository["Service"]["getByThreadId"] = (input) =>
     getRuntimeRowByThreadId(input).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.getByThreadId:query",
@@ -421,6 +385,7 @@ export const make = Effect.gen(function* () {
 
   const list: ProviderSessionRuntimeRepository["Service"]["list"] = (options) =>
     listRuntimeRows({ excludeStopped: options?.excludeStopped === true }).pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.list:query",
@@ -428,9 +393,6 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rows) =>
-        // Skip rows that no longer decode (e.g. written by an older build)
-        // instead of failing the whole list — one stale row must not disable
-        // every consumer that enumerates sessions, such as the reaper.
         Effect.forEach(rows, (row) =>
           decodeRuntimeRow(row).pipe(
             Effect.asSome,
