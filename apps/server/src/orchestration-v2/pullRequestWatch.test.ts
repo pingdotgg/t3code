@@ -236,6 +236,27 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  // regression: #25497 an early failure in the gate left the rest finishing without a wake
+  it("wakes once when the other gate checks finish after a reported failure", () => {
+    const required = (name: string, status: PullRequestCheck["status"]) => ({
+      ...check(name, status),
+      required: true,
+    });
+    const cases = [
+      [required("labels", "failure"), required("test", "pending"), required("test", "success")],
+      [check("vercel", "failure"), check("verify", "pending"), check("verify", "success")],
+    ] as const;
+    for (const [failing, running, finished] of cases) {
+      const early = detail({ checks: [failing, running] });
+      const failure = evaluatePullRequestWatch(watch(), early, noRemarks);
+      assert.deepEqual(failure.changes, [{ kind: "checks-failed", failed: [failing] }]);
+      const done = detail({ checks: [failing, finished] });
+      const final = evaluatePullRequestWatch(failure.next, done, noRemarks);
+      assert.equal(final.changes.length, 1);
+      assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+    }
+  });
+
   it("reports passed once the required checks pass, whatever the others do", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),
