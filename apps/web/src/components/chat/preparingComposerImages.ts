@@ -24,8 +24,14 @@ export function usePreparingComposerImages(targetKey: string) {
   );
 }
 
+export function getPreparingComposerImages(
+  targetKey: string,
+): ReadonlyArray<PreparingComposerImage> {
+  return usePreparingComposerImageStore.getState().byTargetKey[targetKey] ?? NO_PREPARING_IMAGES;
+}
+
 export function countPreparingComposerImages(targetKey: string): number {
-  return usePreparingComposerImageStore.getState().byTargetKey[targetKey]?.length ?? 0;
+  return getPreparingComposerImages(targetKey).length;
 }
 
 export function addPreparingComposerImages(

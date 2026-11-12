@@ -26,7 +26,9 @@ import {
 import {
   classifyComposerAttachmentFile,
   composerFileAttachmentMimeType,
+  composerImageSourceKey,
   normalizeComposerImageFileMimeType,
+  rememberComposerImageSource,
 } from "./composerAttachmentFiles";
 import {
   fileAttachmentTooLargeMessage,
@@ -48,6 +50,7 @@ import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
 import {
   addPreparingComposerImages,
+  getPreparingComposerImages,
   isPreparingComposerImage,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
@@ -155,9 +158,22 @@ export function useComposerAttachmentIntake(input: {
     const replacedReattachMarkerIds = new Set<string>();
     const acceptedImages: File[] = [];
     const acceptedFiles: ComposerFileAttachment[] = [];
+    // The store drops a repeated image only after compressing it, which flashes a preparing
+    // tile; skipping it here also keeps it from taking an attachment slot.
+    const imageSourceKeys = new Set(
+      [...composerImagesRef.current, ...getPreparingComposerImages(attachmentTargetKey)].map(
+        (image) => composerImageSourceKey(image.file),
+      ),
+    );
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
+      const image = attachmentKind === "image" ? normalizeComposerImageFileMimeType(file) : null;
+      if (image) {
+        const sourceKey = composerImageSourceKey(image);
+        if (imageSourceKeys.has(sourceKey)) continue;
+        imageSourceKeys.add(sourceKey);
+      }
       const fileMimeType =
         attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
       const matchingReattachMarker =
@@ -183,8 +199,8 @@ export function useComposerAttachmentIntake(input: {
         error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.`;
         continue;
       }
-      if (attachmentKind === "image") {
-        acceptedImages.push(normalizeComposerImageFileMimeType(file));
+      if (image) {
+        acceptedImages.push(image);
       } else {
         if (fileStagingLimit === null) {
           error = "This server does not support file attachments.";
@@ -273,6 +289,7 @@ export function useComposerAttachmentIntake(input: {
         continue;
       }
       inheritComposerImageThumbnail(file, result.file);
+      rememberComposerImageSource(file, result.file);
       compressed.push({ id, file: result.file });
     }
     const questionDiscarded =
