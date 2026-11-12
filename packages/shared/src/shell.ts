@@ -646,13 +646,22 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   }
 
   const pathValue = resolvePathEnvironmentVariable(env);
-  if (pathValue.length === 0) {
-    return null;
-  }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
-  );
+  // On POSIX, also search common CLI install directories that GUI apps may not
+  // have on their PATH (~/.local/bin, Homebrew, nvm, bun, npm global).
+  // This mirrors magpie's `proc.FindTool` fallback.
+  const knownPosixDirs = platform !== "win32" ? resolveKnownPosixCliDirs(env) : [];
+
+  // Include the fallback directories in the cache key: calls with the same PATH
+  // but different HOME/NVM_DIR/npm_config_prefix must not reuse each other's
+  // cached result, since the fallback search space differs.
+  const cacheKey = [
+    platform,
+    pathValue,
+    windowsPathExtensions.join(";"),
+    knownPosixDirs.join(pathDelimiterForPlatform(platform)),
+    command,
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
@@ -669,6 +678,13 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
 
     seenPathEntries.add(pathEntry);
     pathEntries.push(pathEntry);
+  }
+
+  for (const knownDir of knownPosixDirs) {
+    if (!seenPathEntries.has(knownDir)) {
+      seenPathEntries.add(knownDir);
+      pathEntries.push(knownDir);
+    }
   }
 
   const listings = yield* PathDirectoryListings;
@@ -973,6 +989,61 @@ function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<strin
       ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
       : []),
   ];
+}
+
+/**
+ * Common CLI installation directories on POSIX (macOS/Linux) that may not be on
+ * the GUI app's PATH. GUI apps launched from Finder/Dock do not source the user's
+ * shell profile, so directories added there (~/.local/bin, Homebrew, nvm, bun,
+ * npm global) are invisible. This mirrors magpie's `proc.FindTool` fallback.
+ */
+function resolveKnownPosixCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+  const home = env.HOME?.trim();
+  const dirs: string[] = [];
+
+  if (home) {
+    // Native installer locations (Claude Code, Antigravity, etc.)
+    dirs.push(`${home}/.local/bin`);
+    // Bun global installs
+    dirs.push(`${home}/.bun/bin`);
+    // pnpm
+    dirs.push(`${home}/Library/pnpm`);
+    // Volta
+    dirs.push(`${home}/.volta/bin`);
+  }
+
+  // Homebrew (Apple Silicon)
+  dirs.push("/opt/homebrew/bin");
+  dirs.push("/opt/homebrew/sbin");
+  // Homebrew (Intel) / Linux common
+  dirs.push("/usr/local/bin");
+  dirs.push("/usr/local/sbin");
+
+  // npm global prefix (if set)
+  const npmPrefix = env.npm_config_prefix?.trim();
+  if (npmPrefix) {
+    dirs.push(`${npmPrefix}/bin`);
+  }
+
+  // nvm default node version
+  const nvmDir = env.NVM_DIR?.trim() ?? (home ? `${home}/.nvm` : undefined);
+  if (nvmDir) {
+    try {
+      const versionsDir = NodePath.join(nvmDir, "versions", "node");
+      const versions = NodeFS.readdirSync(versionsDir).filter((v) => v.startsWith("v"));
+      if (versions.length > 0) {
+        // Compare version components numerically so v22.10.0 sorts above v22.9.0.
+        const latest = versions.sort((a, b) =>
+          b.localeCompare(a, undefined, { numeric: true }),
+        )[0]!;
+        dirs.push(NodePath.join(versionsDir, latest, "bin"));
+      }
+    } catch {
+      // nvm not installed or no versions
+    }
+  }
+
+  return dirs;
 }
 
 /** Keep one PATH spelling in copied Windows environment records. */
