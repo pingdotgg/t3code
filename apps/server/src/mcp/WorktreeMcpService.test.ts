@@ -74,7 +74,13 @@ const makeProjection = (
   sourceRunId?: RunId,
 ): OrchestrationV2ThreadProjection =>
   ({
-    runs: sourceRunId === undefined ? [] : [{ id: sourceRunId, status: "running" }],
+    runs:
+      sourceRunId === undefined
+        ? []
+        : [
+            { id: RunId.make("run:older-background-work"), ordinal: 1, status: "waiting" },
+            { id: sourceRunId, ordinal: 2, status: "running" },
+          ],
     thread: {
       id: threadId,
       projectId,

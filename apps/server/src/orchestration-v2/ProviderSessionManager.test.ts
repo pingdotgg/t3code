@@ -1766,7 +1766,7 @@ it.effect("ProviderSessionManagerV2 stops a session still opening when its layer
 );
 
 it.effect.each(["pending", "running", "completed"] as const)(
-  "orders detach after a selected %s turn and interrupts it before ending the subscription",
+  "orders detach after a selected %s turn and only interrupts active native work",
   (status) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
