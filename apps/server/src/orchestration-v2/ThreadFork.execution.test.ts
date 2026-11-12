@@ -1029,6 +1029,33 @@ it.effect("a side chat waits for the parent's new worktree, also after its setup
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect("a side chat opens once a later run has worked in the project checkout", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make("side-chat-worktree-abandoned-parent");
+    const sideChatId = ThreadId.make("side-chat-worktree-abandoned-child");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("side-chat-worktree-abandoned-run-1"),
+      ordinal: 1,
+      status: "interrupted",
+      text: "Stopped during setup",
+    });
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("side-chat-worktree-abandoned-run-2"),
+      ordinal: 2,
+      status: "completed",
+      text: "Worked in the project checkout",
+      stable: true,
+    });
+
+    yield* forkSideChat("side-chat-worktree-abandoned-fork", parentId, sideChatId);
+    assert.isNull((yield* orchestrator.getThreadProjection(sideChatId)).thread.deletedAt);
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("closing a side chat deletes it only while unused; a deleted parent takes no more", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
