@@ -661,8 +661,10 @@ const followVitePlusSystemFirstShim = Effect.fn("followVitePlusSystemFirstShim")
   const path = yield* Path.Path;
   const shimDir = path.dirname(context.resolvedCommandPath);
   const dataDir = path.dirname(shimDir);
-  // The XDG layout keeps shims in `~/.local/share/vite-plus` and config in `$XDG_CONFIG_HOME/vite-plus`.
-  const home = /^(.*)\/\.local\/share\/vite-plus$/.exec(dataDir.replaceAll("\\", "/"))?.[1];
+  // Without VP_HOME, the XDG layout keeps shims in `~/.local/share/vite-plus` and config in `$XDG_CONFIG_HOME/vite-plus`.
+  const home = context.env.VP_HOME
+    ? undefined
+    : /^(.*)\/\.local\/share\/vite-plus$/.exec(dataDir.replaceAll("\\", "/"))?.[1];
   const configPaths = [
     ...(home !== undefined
       ? [path.join(context.env.XDG_CONFIG_HOME || path.join(home, ".config"), "vite-plus")]
