@@ -65,7 +65,7 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
   return (
     <>
       <span aria-hidden className="size-2 shrink-0 rounded-full bg-destructive" />
-      <Text variant="meta" tone="muted" numeric className="shrink-0">
+      <Text variant="meta" tone="muted" numeric>
         {formatElapsed(elapsedSeconds)}
         {props.recordingLimitSeconds !== undefined
           ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
