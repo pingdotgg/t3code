@@ -141,7 +141,11 @@ export function CommitWorkflowForm(props: {
           <p className="text-sm">Branch: {props.branch ?? "(detached HEAD)"}</p>
           {scope === "working_tree" ? (
             props.fileSelection
-          ) : (
+          ) : range.data?.layerBase ? (
+            <p className="text-xs text-muted-foreground">
+              Current layer only · after {range.data.layerBase}
+            </p>
+          ) : range.data || baseRef ? (
             <label className="block space-y-2 text-sm">
               <span>Base branch (optional)</span>
               <Input
@@ -155,7 +159,7 @@ export function CommitWorkflowForm(props: {
                 maxLength={256}
               />
             </label>
-          )}
+          ) : null}
           {scope === "branch" && (
             <div className="space-y-3">
               {range.isPending ? (

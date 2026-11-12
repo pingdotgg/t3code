@@ -41,6 +41,7 @@ import type {
 import {
   DEFAULT_SERVER_SETTINGS,
   CommandId,
+  type GitStartCommitWorkflowInput,
   EventId,
   GitCommandError,
   MessageId,
@@ -4507,6 +4508,101 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       ).toBe("");
     }),
+  );
+
+  it.effect.each(["inferred", "tracked", "parent-advanced", "parent-rebased"] as const)(
+    "restricts commit rewriting to the current stack layer: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const cwd = yield* createStackedBranches();
+        let plans = 0;
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitPlan: (context) => {
+              plans++;
+              return Effect.succeed({
+                commits: [
+                  {
+                    subject: "Regroup current layer",
+                    body: "",
+                    hunkIds: context.changeUnitSummary
+                      .split("\n")
+                      .map((line) => line.split("\t")[0]!),
+                  },
+                ],
+              });
+            },
+          },
+        });
+        if (mode !== "inferred")
+          yield* manager.manageStack({
+            cwd,
+            action: "adopt",
+            base: "main",
+            branches: ["stack/first", "stack/second", "stack/feature"],
+          });
+        const boundary = (yield* runGit(cwd, ["rev-parse", "stack/second"])).stdout.trim();
+        if (mode === "parent-advanced" || mode === "parent-rebased") {
+          yield* runGit(cwd, ["checkout", "stack/second"]);
+          if (mode === "parent-advanced") {
+            NodeFS.writeFileSync(NodePath.join(cwd, "lower-only.txt"), "lower change\n");
+            yield* runGit(cwd, ["add", "lower-only.txt"]);
+            yield* runGit(cwd, ["commit", "-m", "Advance lower layer"]);
+          } else yield* runGit(cwd, ["commit", "--amend", "-m", "Reword lower layer"]);
+          yield* runGit(cwd, ["checkout", "stack/feature"]);
+        }
+        const lowerRefs = (yield* runGit(cwd, [
+          "show-ref",
+          "--heads",
+          "stack/first",
+          "stack/second",
+        ])).stdout;
+        const tree = (yield* runGit(cwd, ["rev-parse", "HEAD^{tree}"])).stdout;
+        const candidates = yield* manager.listRewriteableCommits({ cwd });
+        expect(candidates.commits.map((commit) => commit.subject)).toEqual([
+          "Add feature",
+          "Test feature",
+        ]);
+        expect(candidates.layerBase).toBe("stack/second");
+        expect(
+          (yield* manager.listRewriteableCommits({
+            cwd,
+            baseRef: candidates.commits[0]!.sha,
+          })).commits.map((commit) => commit.subject),
+        ).toEqual(["Test feature"]);
+        yield* manager.listRewriteableCommits({ cwd, baseRef: "main" }).pipe(Effect.flip);
+        const request = {
+          commandId: CommandId.make("layer-rewrite"),
+          threadId: ThreadId.make("thread"),
+          cwd,
+          expectedBranch: "stack/feature",
+        };
+        const run = (scope: GitStartCommitWorkflowInput["scope"]) =>
+          manager.runCommitWorkflow({
+            request: { ...request, scope },
+            modelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+            style: DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+          });
+        yield* run({ type: "branch", baseRef: "main" }).pipe(Effect.flip);
+        yield* run({ type: "branch_range", startCommit: boundary }).pipe(Effect.flip);
+        yield* manager
+          .rewriteCommitMessages({
+            cwd,
+            expectedHeadSha: candidates.headSha,
+            commitShas: [boundary],
+          })
+          .pipe(Effect.flip);
+        expect(plans).toBe(0);
+        yield* run({ type: "branch" });
+        expect(plans).toBe(1);
+        expect(
+          (yield* runGit(cwd, ["log", "--format=%s", `${boundary}..HEAD`])).stdout.trim(),
+        ).toBe("Regroup current layer");
+        expect(
+          (yield* runGit(cwd, ["show-ref", "--heads", "stack/first", "stack/second"])).stdout,
+        ).toBe(lowerRefs);
+        expect((yield* runGit(cwd, ["rev-parse", "HEAD^{tree}"])).stdout).toBe(tree);
+      }),
   );
 
   it.effect.each([

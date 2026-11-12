@@ -254,20 +254,26 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               )}
               {workflowScope === "branch" && (
                 <>
-                  <TextInput
-                    accessibilityLabel="Base branch"
-                    value={baseRef}
-                    onChangeText={(value) => {
-                      setBaseRef(value);
-                      setStartCommit("");
-                      setEndCommit("");
-                    }}
-                    maxLength={256}
-                    placeholder="Repository default branch"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    className="min-h-12 rounded-xl bg-subtle px-4"
-                  />
+                  {range.data?.layerBase ? (
+                    <Text className="text-xs text-foreground-secondary">
+                      Current layer only · after {range.data.layerBase}
+                    </Text>
+                  ) : range.data || baseRef ? (
+                    <TextInput
+                      accessibilityLabel="Base branch"
+                      value={baseRef}
+                      onChangeText={(value) => {
+                        setBaseRef(value);
+                        setStartCommit("");
+                        setEndCommit("");
+                      }}
+                      maxLength={256}
+                      placeholder="Repository default branch"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      className="min-h-12 rounded-xl bg-subtle px-4"
+                    />
+                  ) : null}
                   {range.isPending ? (
                     <Text className="text-sm text-foreground-secondary">Loading commits…</Text>
                   ) : range.error ? (

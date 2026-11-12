@@ -2649,20 +2649,84 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  const resolveLayerRewriteBase = Effect.fn("GitManager.resolveLayerRewriteBase")(function* (
+    cwd: string,
+    requestedBaseRef?: string,
+  ) {
+    const stack = yield* branchStacks.inspect(cwd);
+    const layer = stack.layers.find((candidate) => candidate.current);
+    if (!layer || (!stack.managed && stack.layers.length < 2))
+      return { baseRef: requestedBaseRef, layerBase: undefined };
+    const output = Effect.fn("GitManager.layerRewriteBase.git")(function* (
+      args: readonly string[],
+    ) {
+      return (yield* gitCore.execute({
+        cwd,
+        operation: "GitManager.layerRewriteBase",
+        args,
+      })).stdout.trim();
+    });
+    const fail = (detail: string) =>
+      new GitManagerError({ cwd, operation: "rewriteLayer", detail });
+    let boundary = layer.parentHead;
+    if (!boundary) {
+      const parentRef = (yield* gitCore.resolveBranchName(cwd, `refs/heads/${layer.parent}`))
+        ? `refs/heads/${layer.parent}`
+        : yield* resolveBaseRangeRef(cwd, layer.parent);
+      if (layer.parent !== stack.base) {
+        const ancestor = yield* gitCore.execute({
+          cwd,
+          operation: "GitManager.layerRewriteBase.ancestor",
+          args: ["merge-base", "--is-ancestor", parentRef, "HEAD"],
+          allowNonZeroExit: true,
+        });
+        if (ancestor.exitCode !== 0)
+          return yield* fail("Restack the current layer onto its parent before rewriting commits.");
+      }
+      boundary = yield* output(["merge-base", "HEAD", parentRef]);
+    }
+    const onLayer = yield* gitCore.execute({
+      cwd,
+      operation: "GitManager.layerRewriteBase.current",
+      args: ["merge-base", "--is-ancestor", boundary, "HEAD"],
+      allowNonZeroExit: true,
+    });
+    if (onLayer.exitCode !== 0)
+      return yield* fail(
+        "The stack layer boundary changed. Restack the branch before rewriting commits.",
+      );
+    if (requestedBaseRef) {
+      const requested = yield* output([
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        `${requestedBaseRef}^{commit}`,
+      ]);
+      const effective = yield* output(["merge-base", "HEAD", requested]);
+      const within = yield* gitCore.execute({
+        cwd,
+        operation: "GitManager.layerRewriteBase.range",
+        args: ["merge-base", "--is-ancestor", boundary, effective],
+        allowNonZeroExit: true,
+      });
+      if (within.exitCode !== 0)
+        return yield* fail(
+          `Only commits in the current stack layer, after ${layer.parent}, can be rewritten.`,
+        );
+      boundary = effective;
+    }
+    return { baseRef: boundary, layerBase: layer.parent };
+  });
+
   const runCommitWorkflow: GitManager["Service"]["runCommitWorkflow"] = Effect.fn(
     "GitManager.runCommitWorkflow",
   )(function* (input) {
     yield* branchStacks.assertIdle(input.request.cwd, false);
     let request = input.request;
-    if (
-      (request.scope.type === "branch" || request.scope.type === "branch_range") &&
-      !request.scope.baseRef
-    ) {
-      const stack = yield* branchStacks.inspect(request.cwd, false);
-      const parent = stack.managed
-        ? stack.layers.find((layer) => layer.current)?.parent
-        : undefined;
-      if (parent) request = { ...request, scope: { ...request.scope, baseRef: parent } };
+    if (request.scope.type === "branch" || request.scope.type === "branch_range") {
+      const boundary = yield* resolveLayerRewriteBase(request.cwd, request.scope.baseRef);
+      if (boundary.baseRef)
+        request = { ...request, scope: { ...request.scope, baseRef: boundary.baseRef } };
     }
     const result = yield* performCommitWorkflow(request, {
       modelSelection: input.modelSelection,
@@ -3698,9 +3762,8 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const stack = yield* branchStacks.inspect(cwd, false);
-    if (!requestedBaseRef && stack.managed)
-      requestedBaseRef = stack.layers.find((layer) => layer.current)?.parent;
+    const layer = yield* resolveLayerRewriteBase(cwd, requestedBaseRef);
+    requestedBaseRef = layer.baseRef;
     const headResult = yield* gitCore.execute({
       operation: "GitManager.resolveRewriteableCommitObjects.head",
       cwd,
@@ -3752,7 +3815,7 @@ export const make = Effect.gen(function* () {
     const commits = yield* Effect.forEach(shas, (sha) => readCommitObject(cwd, sha), {
       concurrency: 4,
     });
-    return { branch: status.branch, headSha, commits };
+    return { branch: status.branch, headSha, commits, layerBase: layer.layerBase };
   });
 
   const listCommitFiles = Effect.fn("listCommitFiles")(function* (
@@ -3800,6 +3863,7 @@ export const make = Effect.gen(function* () {
     return {
       branch: resolved.branch,
       headSha: resolved.headSha,
+      ...(resolved.layerBase ? { layerBase: resolved.layerBase } : {}),
       commits,
     };
   });
