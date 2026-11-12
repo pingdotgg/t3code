@@ -124,26 +124,18 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
 const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   ...shared,
   description:
-    "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
+    "New top-level thread with workspace bound first. `message` is the task. Inherit project/model/modes when omitted. Retry with the same `clientRequestId`. Name its `link`.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optional(ProjectId),
     scratch: Schema.optional(
-      Schema.Boolean.annotate({
-        description:
-          "No project: a new Scratch folder. Not with `projectId` or `workspaceStrategy`.",
-      }),
+      Schema.Boolean.annotate({ description: "Scratch folder; not with `projectId`." }),
     ),
     title: TrimmedNonEmptyString,
     modelSelection: Schema.optional(ModelSelection),
     runtimeMode: Schema.optional(RuntimeMode),
     interactionMode: Schema.optional(ProviderInteractionMode),
-    workspaceStrategy: Schema.optional(
-      OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
-        description:
-          "'worktree': new checkout from `baseRef`. Honor a requested base. Otherwise, independent work uses the default branch as `remote/branch` (e.g. `origin/main`) with `startFromOrigin: true`; with no remote, use the local default branch. Required unpublished commits and dependent or stacked work use their local base with `startFromOrigin: false`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Uncommitted edits are not copied.",
-      }),
-    ),
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
     message: Schema.optional(
       Schema.String.check(Schema.isMaxLength(120000)).annotate({
         description: "First prompt. Omit it and `attachments` for idle.",

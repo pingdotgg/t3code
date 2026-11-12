@@ -69,7 +69,7 @@ const EnvironmentPortTarget = BrowserNavigationTarget.members[1];
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Open a preview tab in this thread and show it. For a dev server, pass `target` instead of `url`. `open=false` keeps it in the background. Reuses your current tab unless `tabId` or `reuseExistingTab=false` says otherwise. Parallel subagents in one session must each use `reuseExistingTab=false`, then their own returned `tabId`.",
+      "Open a preview tab. Dev server: `target` not `url`. `open:false` keeps it hidden.",
     parameters: PreviewAutomationOpenInput.mapFields(
       (fields) => ({ ...fields, target: Schema.optional(EnvironmentPortTarget) }),
       { unsafePreserveChecks: true },
@@ -95,8 +95,7 @@ const PreviewDialogTool = browserTool(
 
 const PreviewNavigateTool = safeBrowserTool(
   Tool.make("preview_navigate", {
-    description:
-      "Navigate the chosen tab. Pass `url` for a website, or `target:{kind:'environment-port',port}` for a dev server. Exactly one of `url` and `target`.",
+    description: "Navigate the tab by `url` or dev-server `target`.",
     parameters: PreviewAutomationNavigateInput,
     success: PreviewAutomationStatus,
     failure: PreviewToolFailure,
@@ -160,7 +159,7 @@ export const PreviewSnapshotTool = safeBrowserTool(
 const PreviewActTool = browserTool(
   Tool.make("preview_act", {
     description:
-      "Act on the chosen tab. Target with `locator='aria-ref=<ref>'` from `preview_snapshot`; `x` and `y` go together. `timeoutMs` defaults to 15000. click: `button`, `clickCount` 1 to 3. type: literal `text`, `clear=true` replaces it. hover: shows menus or tooltips. select: `values` in one native <select>, by value or label; for a custom dropdown, click it open, then click the option. drag: `source` onto `target`. upload: absolute `paths` answer the file picker `preview_status` reports, [] cancels it, or a `locator` sets an <input type=file>. press: one `key`, such as 'Enter', with `modifiers`, to the focused element; click a field first to focus it. scroll: the tab, or one container with a locator; positive `deltaY` scrolls down, positive `deltaX` right.",
+      "Act on the tab: click, type, hover, select, drag, upload, press, scroll. Target with `locator` from `preview_snapshot`.",
     parameters: PreviewAutomationActInput,
     success: Schema.Union([
       Schema.Struct({ ...PreviewAutomationSelectResult.fields, ...presentationFields }),

@@ -29,6 +29,11 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   resolveSpecialistBinding,
   specialistBindingsEqual,
+  ThreadSpecialistInstructions,
+  ThreadSpecialistKey,
+  ThreadSpecialistLabel,
+  ThreadSpecialistMcpServers,
+  ThreadSpecialistSkillNames,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
@@ -3010,6 +3015,33 @@ const make = Effect.gen(function* () {
           "Pass projectId: this MCP client is not running inside a T3 thread.",
         );
         const key = yield* requestKey(input.clientRequestId);
+        const specialistKey = yield* Schema.decodeUnknown(ThreadSpecialistKey)(input.key).pipe(
+          Effect.mapError(() => failure("invalid_input", "Invalid specialist key.")),
+        );
+        const label =
+          input.label === undefined
+            ? undefined
+            : yield* Schema.decodeUnknown(ThreadSpecialistLabel)(input.label).pipe(
+                Effect.mapError(() => failure("invalid_input", "Invalid specialist label.")),
+              );
+        const instructions =
+          input.instructions === undefined
+            ? undefined
+            : yield* Schema.decodeUnknown(ThreadSpecialistInstructions)(input.instructions).pipe(
+                Effect.mapError(() => failure("invalid_input", "Invalid specialist instructions.")),
+              );
+        const skills =
+          input.skills === undefined
+            ? undefined
+            : yield* Schema.decodeUnknown(ThreadSpecialistSkillNames)(input.skills).pipe(
+                Effect.mapError(() => failure("invalid_input", "Invalid specialist skills.")),
+              );
+        const mcpServers =
+          input.mcpServers === undefined
+            ? undefined
+            : yield* Schema.decodeUnknown(ThreadSpecialistMcpServers)(input.mcpServers).pipe(
+                Effect.mapError(() => failure("invalid_input", "Invalid specialist mcpServers.")),
+              );
         // Same identity as the create path so a retry cannot fall into resume and re-send.
         const createCommandId = stableCommandId({
           scope: callerScope,
@@ -3033,7 +3065,7 @@ const make = Effect.gen(function* () {
           .filter(
             (thread) =>
               thread.deletedAt === null &&
-              thread.specialist?.key === input.key &&
+              thread.specialist?.key === specialistKey &&
               isListedThreadLineage(thread.lineage),
           )
           .toSorted(
@@ -3045,11 +3077,11 @@ const make = Effect.gen(function* () {
         if (existing !== undefined && !(isCreateRetry && existing.id === createThreadId)) {
           const prior = existing.specialist;
           const specialist = resolveSpecialistBinding({
-            key: input.key,
-            ...(input.label === undefined ? {} : { label: input.label }),
-            ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-            ...(input.skills === undefined ? {} : { skills: input.skills }),
-            ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+            key: specialistKey,
+            ...(label === undefined ? {} : { label }),
+            ...(instructions === undefined ? {} : { instructions }),
+            ...(skills === undefined ? {} : { skills }),
+            ...(mcpServers === undefined ? {} : { mcpServers }),
             ...(prior === undefined ? {} : { prior }),
           });
           const needsRebind = !specialistBindingsEqual(prior, specialist);
@@ -3151,11 +3183,11 @@ const make = Effect.gen(function* () {
         }
 
         const specialist = resolveSpecialistBinding({
-          key: input.key,
-          ...(input.label === undefined ? {} : { label: input.label }),
-          ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-          ...(input.skills === undefined ? {} : { skills: input.skills }),
-          ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+          key: specialistKey,
+          ...(label === undefined ? {} : { label }),
+          ...(instructions === undefined ? {} : { instructions }),
+          ...(skills === undefined ? {} : { skills }),
+          ...(mcpServers === undefined ? {} : { mcpServers }),
         });
         const { scope, parent } = yield* loadThreadCaller(callerScope, "find_or_open_specialist");
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
@@ -3186,22 +3218,17 @@ const make = Effect.gen(function* () {
           parent,
           target:
             committedThread === null
-              ? input.target
+              ? undefined
               : {
-                  ...input.target,
                   providerInstanceId: committedThread.modelSelection.instanceId,
                 },
           providers,
           skipProjectEnablementFilter: isCreateRetry,
         });
-        const runtimeMode = yield* resolveRuntimeMode(
-          parent.thread.runtimeMode,
-          input.runtimeMode,
-          target,
-        );
+        const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, undefined, target);
         const interactionMode = yield* resolveInteractionMode(
           parent.thread.interactionMode,
-          input.interactionMode,
+          undefined,
         );
         yield* assertTargetEnabledForProject(parent, createCommandId, target);
         const title = threadTitle({
@@ -3352,7 +3379,7 @@ const make = Effect.gen(function* () {
           .filter(
             (thread) =>
               thread.deletedAt === null &&
-              thread.specialist?.key === input.key &&
+              thread.specialist?.key === specialistKey &&
               isListedThreadLineage(thread.lineage),
           )
           .toSorted(
@@ -3460,15 +3487,6 @@ const make = Effect.gen(function* () {
           "One-shot exec requires an active run owned by this MCP provider session.",
         );
       }
-      if (
-        input.target?.projectId !== undefined &&
-        input.target.projectId !== parent.thread.projectId
-      ) {
-        return yield* failure(
-          "invalid_request",
-          "A local exec runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
-        );
-      }
       const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
@@ -3491,22 +3509,17 @@ const make = Effect.gen(function* () {
         parent,
         target:
           committedThread === null
-            ? input.target
+            ? undefined
             : {
-                ...input.target,
                 providerInstanceId: committedThread.modelSelection.instanceId,
               },
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedCreation,
       });
-      const runtimeMode = yield* resolveRuntimeMode(
-        parent.thread.runtimeMode,
-        input.runtimeMode,
-        target,
-      );
+      const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, undefined, target);
       const interactionMode = yield* resolveInteractionMode(
         parent.thread.interactionMode,
-        input.interactionMode,
+        undefined,
       );
       yield* assertTargetEnabledForProject(parent, commandId, target);
       const title = threadTitle({
@@ -3654,6 +3667,12 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
+      const specialistKeyFilter =
+        input.specialistKey === undefined
+          ? undefined
+          : yield* Schema.decodeUnknown(ThreadSpecialistKey)(input.specialistKey).pipe(
+              Effect.mapError(() => failure("invalid_input", "Invalid specialistKey filter.")),
+            );
       const filtered = projectThreads
         .filter((thread) => statuses === null || statuses.has(listedThreadStatus(thread)))
         .filter(
@@ -3669,7 +3688,7 @@ const make = Effect.gen(function* () {
         )
         .filter(
           (thread) =>
-            input.specialistKey === undefined || thread.specialist?.key === input.specialistKey,
+            specialistKeyFilter === undefined || thread.specialist?.key === specialistKeyFilter,
         );
       const cursor = input.cursor ?? 0;
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
@@ -3821,8 +3840,6 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
-          ...(input.consult === true ? { consult: true } : {}),
-          ...(input.contextHandoffOnFresh ? { contextHandoffOnFresh: true } : {}),
           createdBy: "agent",
           creationSource: "mcp",
         })

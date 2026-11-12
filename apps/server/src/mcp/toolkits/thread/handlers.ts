@@ -477,7 +477,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               actorThreadId,
             }));
           }
-          default: {
+          case "cancel": {
             const itemId = yield* required(input.itemId, "itemId");
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
@@ -487,6 +487,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               actorThreadId,
             }));
           }
+          default:
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `Unknown owned work action '${input.action}'.`,
+            });
         }
       }),
     ),

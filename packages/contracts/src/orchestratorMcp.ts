@@ -35,14 +35,7 @@ import {
 import { secretRequestPageUrl } from "./secretRequest.ts";
 import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
-import {
-  ThreadSpecialist,
-  ThreadSpecialistInstructions,
-  ThreadSpecialistKey,
-  ThreadSpecialistLabel,
-  ThreadSpecialistMcpServers,
-  ThreadSpecialistSkillNames,
-} from "./threadSpecialist.ts";
+import { ThreadSpecialist, ThreadSpecialistKey } from "./threadSpecialist.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
@@ -325,23 +318,10 @@ export type OrchestratorMcpCreateThreadsResult = typeof OrchestratorMcpCreateThr
  * MCP; results stay in ordinary thread history (no exec dashboard).
  */
 export const OrchestratorMcpExecInput = Schema.Struct({
-  task: OrchestratorMcpPrompt.annotate({
-    description:
-      "Bounded task for a one-shot coding harness run. No parent history. Prefer this over `delegate_task` when you need a report and not a lasting owned child seat.",
-  }),
+  task: OrchestratorMcpPrompt,
   title: Schema.optional(OrchestratorMcpTitle),
-  target: Schema.optional(OrchestratorMcpTarget),
-  timeoutMs: Schema.optional(Schema.Finite).annotate({
-    description: "Default 10 min. A timeout does not cancel the run.",
-  }),
+  timeoutMs: Schema.optional(Schema.Finite),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  runtimeMode: Schema.optional(
-    OrchestratorMcpRuntimeMode.annotate({
-      description:
-        "Omit unless the user asks for a supervised run. Narrow modes pause for human approval, not read-only. Above yours is rejected.",
-    }),
-  ),
-  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
 export type OrchestratorMcpExecInput = typeof OrchestratorMcpExecInput.Type;
 
@@ -383,46 +363,18 @@ export const OrchestratorMcpEnvironmentTarget = Schema.optional(
 );
 
 /** Resume or create a project-scoped durable specialist thread (OpenRig-style named role). */
+/** Slim JSON for MCP; validate with {@link ThreadSpecialistMcpServers} at execution. */
+const OrchestratorMcpSpecialistMcpServers = Schema.Record(Schema.String, Schema.Unknown);
+
 export const OrchestratorMcpFindOrOpenSpecialistInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,
-  key: ThreadSpecialistKey.annotate({
-    description: "Stable slug, e.g. `dev-ui`. Unique per project among non-deleted threads.",
-  }),
-  label: Schema.optional(
-    ThreadSpecialistLabel.annotate({
-      description: "Display name. Default: the key. Used when creating or rebinding.",
-    }),
-  ),
-  instructions: Schema.optional(
-    ThreadSpecialistInstructions.annotate({
-      description: "Domain brief stored on the binding. Applied when creating or rebinding.",
-    }),
-  ),
-  skills: Schema.optional(
-    ThreadSpecialistSkillNames.annotate({
-      description:
-        "Skill names attached to this role. Agents in the role get them in their loadout automatically.",
-    }),
-  ),
-  mcpServers: Schema.optional(
-    ThreadSpecialistMcpServers.annotate({
-      description:
-        "Extra MCP servers merged into the provider session for this role (http or stdio).",
-    }),
-  ),
-  title: Schema.optional(
-    OrchestratorMcpTitle.annotate({
-      description: "Title for a newly created specialist thread. Default: the label.",
-    }),
-  ),
-  prompt: Schema.optional(
-    OrchestratorMcpPrompt.annotate({
-      description: "Optional first message when creating, or follow-up when resuming.",
-    }),
-  ),
-  target: Schema.optional(OrchestratorMcpTarget),
-  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
-  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  key: TrimmedNonEmptyString,
+  label: Schema.optional(TrimmedNonEmptyString),
+  instructions: Schema.optional(Schema.String),
+  skills: Schema.optional(Schema.Array(Schema.String)),
+  mcpServers: Schema.optional(OrchestratorMcpSpecialistMcpServers),
+  title: Schema.optional(OrchestratorMcpTitle),
+  prompt: Schema.optional(OrchestratorMcpPrompt),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpFindOrOpenSpecialistInput =
@@ -446,14 +398,8 @@ export type OrchestratorMcpFindOrOpenSpecialistResult =
  */
 export const OrchestratorMcpRetireSpecialistInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,
-  key: ThreadSpecialistKey.annotate({
-    description: "Specialist key to stop and archive. Binding is kept for later restore.",
-  }),
-  reason: Schema.optional(
-    TrimmedNonEmptyString.check(Schema.isMaxLength(2_000)).annotate({
-      description: "Why this specialist is stepping down.",
-    }),
-  ),
+  key: ThreadSpecialistKey,
+  reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpRetireSpecialistInput = typeof OrchestratorMcpRetireSpecialistInput.Type;
@@ -476,11 +422,7 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
     Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
   ),
   titleContains: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
-  specialistKey: Schema.optional(
-    ThreadSpecialistKey.annotate({
-      description: "Only threads bound to this durable specialist key.",
-    }),
-  ),
+  specialistKey: Schema.optional(Schema.String),
   settled: Schema.optional(Schema.Boolean),
   snoozed: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
@@ -654,17 +596,10 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   freshContext: Schema.optional(
     Schema.Boolean.annotate({
-      description: "Fresh session without earlier context like /clear.",
-    }),
-  ),
-  consult: Schema.optional(
-    Schema.Boolean.annotate({
       description:
-        "Message without owned follow-up work. A send to a finished child then stays a message and does not create a fresh taskId.",
+        "Start a new provider session without the thread's earlier context, like /clear. Never steers.",
     }),
   ),
-  /** With `freshContext`, include a written recap (`/recap`) in the new session. */
-  contextHandoffOnFresh: Schema.optional(Schema.Boolean),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
@@ -683,9 +618,7 @@ export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendRe
 export const OrchestratorMcpThreadAskInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
-  message: OrchestratorMcpPrompt.annotate({
-    description: "Question for an existing thread. Does not create a child task or owned work.",
-  }),
+  message: OrchestratorMcpPrompt,
   timeoutMs: Schema.optional(Schema.Finite),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
@@ -711,33 +644,14 @@ export const OrchestratorMcpThreadBroadcastInput = Schema.Struct({
   message: OrchestratorMcpPrompt,
   projectId: OrchestratorMcpProjectTarget,
   threadIds: Schema.optional(
-    Schema.Array(ThreadId)
-      .check(
-        Schema.isMinLength(1),
-        Schema.isMaxLength(ORCHESTRATOR_MCP_THREAD_BROADCAST_MAX_TARGETS),
-      )
-      .annotate({
-        description:
-          "Threads to message. Omit to message every active unsettled agent in the project (excluding this thread).",
-      }),
+    Schema.Array(ThreadId).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(ORCHESTRATOR_MCP_THREAD_BROADCAST_MAX_TARGETS),
+    ),
   ),
-  includeSubagents: Schema.optional(
-    Schema.Boolean.annotate({
-      description: "Include delegated child threads when discovering active agents. Default false.",
-    }),
-  ),
-  mode: Schema.optional(
-    Schema.Literals(["auto", "queue"]).annotate({
-      description:
-        "`queue` (default) starts a follow-up turn. `auto` steers a running turn when possible.",
-    }),
-  ),
-  roomThreadId: Schema.optional(
-    ThreadId.annotate({
-      description:
-        "Optional shared room thread that receives one audit copy naming the recipients.",
-    }),
-  ),
+  includeSubagents: Schema.optional(Schema.Boolean),
+  mode: Schema.optional(Schema.Literals(["auto", "queue"])),
+  roomThreadId: Schema.optional(ThreadId),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadBroadcastInput = typeof OrchestratorMcpThreadBroadcastInput.Type;

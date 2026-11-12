@@ -1,12 +1,9 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
-  HTML_RENDER_LAYOUT_GUIDE,
-  HTML_RENDER_MAX_FIT_HEIGHT,
   HTML_RENDER_MAX_HEIGHT,
   HTML_RENDER_MAX_TITLE_LENGTH,
   HTML_RENDER_MIN_HEIGHT,
-  HTML_RENDER_THEME_GUIDE,
   HTML_RENDER_TOOL_NAME,
 } from "@t3tools/shared/htmlRender";
 import * as Schema from "effect/Schema";
@@ -24,11 +21,8 @@ const HtmlPath = Schema.String.annotate({
   description: "Absolute .html file path.",
 });
 
-const PAGE_RULES =
-  "Self-contained: inline <style> and <script>. Local images as absolute paths are inlined. Remote URLs load as-is.";
-
 export const HtmlPreviewTool = Tool.make("html_preview", {
-  description: `Check an HTML page before html_render. Returns PNG, contentHeight, and console output. ${PAGE_RULES} Theme and layout rules are in html_render.`,
+  description: "Preview HTML before html_render. Returns screenshot, contentHeight, console.",
   parameters: Schema.Struct({
     path: Schema.optional(HtmlPath),
     html: Schema.optional(Html),
@@ -76,7 +70,8 @@ export const HtmlPreviewTool = Tool.make("html_preview", {
 
 // This affects only the caller's thread, not its workspace, so read-only sandboxes and plan mode may use it.
 const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
-  description: `Show a finished HTML page (chart, diagram, mockup) inline in this thread, above your final reply. Do not announce or restate the page. Frame fits height to ${HTML_RENDER_MAX_FIT_HEIGHT}px. On mobile, content past the given height scrolls. ${HTML_RENDER_LAYOUT_GUIDE} ${HTML_RENDER_THEME_GUIDE}`,
+  description:
+    "Show finished HTML inline in this thread. Preview with html_preview first; set `height` from its contentHeight.",
   parameters: Schema.Struct({
     path: Schema.optional(HtmlPath),
     html: Schema.optional(Html),

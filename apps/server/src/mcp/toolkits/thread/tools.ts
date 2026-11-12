@@ -15,7 +15,6 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
-  OwnedWorkClosureReason,
   OwnedWorkItem,
   OwnedWorkItemId,
   OrchestrationV2RuntimeRequest,
@@ -115,35 +114,23 @@ const QueueTool = Tool.make("t3_queue", {
   ]),
 }).annotate(Tool.Destructive, true);
 
-const OWNED_WORK_READ_ACTIONS = ["list", "read"] as const;
 const OwnedWorkTool = Tool.make("t3_owned_work", {
   ...commandTool,
   description:
-    "Owned work on a thread (Thread Details): assign → claim → progress → hold/attention → handoff → close. Omit `threadId` for this thread. list/read (history on each item). assign: `title`. claim/progress/handoff/hold/resume/attention/complete/cancel: `itemId` (+ `progress`, `toThreadId`, `reason`/`note`, or complete `closureReason`). complete needs `closureReason` (done|canceled|handed_off|denied|escalation|superseded|no_follow_on); handed_off/escalation need `closureTarget`. Closure is delivery, not acceptance. Hold/attention keep the thread open until resume.",
+    "Thread Details owned work: list/read; assign (`title`); claim/progress/hold/resume/attention/handoff/complete/cancel (`itemId`). `complete` needs `closureReason`; handed_off/escalation need `closureTarget`. Omit `threadId` for this thread.",
   parameters: Schema.Struct({
-    action: Schema.Literals([
-      ...OWNED_WORK_READ_ACTIONS,
-      "assign",
-      "claim",
-      "progress",
-      "handoff",
-      "hold",
-      "resume",
-      "attention",
-      "complete",
-      "cancel",
-    ]),
+    action: Schema.String,
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     itemId: Schema.optional(OwnedWorkItemId),
     title: Schema.optional(TrimmedNonEmptyString),
-    description: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    description: Schema.optional(Schema.String),
     assigneeThreadId: Schema.optional(Schema.NullOr(ThreadId)),
     toThreadId: Schema.optional(ThreadId),
-    progress: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
-    note: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
-    reason: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
-    closureReason: Schema.optional(OwnedWorkClosureReason),
+    progress: Schema.optional(Schema.String),
+    note: Schema.optional(Schema.String),
+    reason: Schema.optional(Schema.String),
+    closureReason: Schema.optional(Schema.String),
     closureTarget: Schema.optional(TrimmedNonEmptyString),
     openOnly: Schema.optional(Schema.Boolean),
   }),
@@ -154,7 +141,6 @@ const OwnedWorkTool = Tool.make("t3_owned_work", {
   ]),
 }).annotate(Tool.Destructive, true);
 
-const WORK_REVIEW_READ_ACTIONS = ["list", "read"] as const;
 const WorkReviewSummary = Schema.Struct({
   requestId: RuntimeRequestId,
   status: OrchestrationV2RuntimeRequest.fields.status,
@@ -168,15 +154,15 @@ const WorkReviewSummary = Schema.Struct({
 const WorkReviewTool = Tool.make("t3_work_review", {
   ...commandTool,
   description:
-    "Ask for human review of unfinished work as a pending approval card. Omit `threadId` for this thread. list/read pending or recent reviews. request: `criteria` (+ optional `name`, `note`, `deliverable`). accept/reject: `requestId` (+ optional `note` as feedback). Decline clears the ask so you can fix and request again; Accept records acceptance.",
+    "Human review card on unfinished work. list/read; request (`criteria`); accept/reject (`requestId`). Omit `threadId` for this thread.",
   parameters: Schema.Struct({
-    action: Schema.Literals([...WORK_REVIEW_READ_ACTIONS, "request", "accept", "reject"]),
+    action: Schema.String,
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
     requestId: Schema.optional(RuntimeRequestId),
     name: Schema.optional(TrimmedNonEmptyString),
-    criteria: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
-    note: Schema.optional(Schema.String.check(Schema.isMaxLength(100000))),
+    criteria: Schema.optional(Schema.String),
+    note: Schema.optional(Schema.String),
     deliverable: Schema.optional(WorkReviewDeliverable),
     openOnly: Schema.optional(Schema.Boolean),
   }),
@@ -298,7 +284,7 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
 const RosterFindTool = Tool.make("t3_roster_find", {
   ...commandTool,
   description:
-    "Who already knows this topic? Ranked top-level threads by title, branch, PR, project, or messages. `relation`: owns (title/branch/PR) or discussed (message mention); prefer owns for a specialist. Skips subagents. Includes branch, provider, model, tags, hit strength. `projectId`: one project, else yours, else all. Not exhaustive.",
+    "Rank threads for a `topic` (title/branch/PR/messages). `relation` owns vs discussed. Skips subagents. Not exhaustive.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     topic: TrimmedNonEmptyString.check(

@@ -9,9 +9,7 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const ThreadSpecialistKey = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.makeFilter((value) =>
-    /^[a-z][a-z0-9-]{0,62}$/.test(value)
-      ? true
-      : "A specialist key must be a lowercase slug (letters, digits, hyphens).",
+    /^[a-z][a-z0-9-]{0,62}$/.test(value) ? true : "Lowercase slug (a-z, 0-9, hyphens).",
   ),
 );
 export type ThreadSpecialistKey = typeof ThreadSpecialistKey.Type;
@@ -34,9 +32,7 @@ export type ThreadSpecialistSkillNames = typeof ThreadSpecialistSkillNames.Type;
 const ThreadSpecialistMcpServerName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
   Schema.makeFilter((value) =>
-    value === "t3-code" || value === "t3-code-direct"
-      ? "t3-code is reserved for T3's orchestrator MCP."
-      : true,
+    value === "t3-code" || value === "t3-code-direct" ? "Reserved." : true,
   ),
 );
 
@@ -69,9 +65,7 @@ export const ThreadSpecialistMcpServers = Schema.Record(
   ThreadSpecialistMcpServerName,
   ThreadSpecialistMcpServer,
 ).check(
-  Schema.makeFilter((value) =>
-    Object.keys(value).length <= 16 ? true : "A specialist may declare at most 16 MCP servers.",
-  ),
+  Schema.makeFilter((value) => (Object.keys(value).length <= 16 ? true : "At most 16 servers.")),
 );
 export type ThreadSpecialistMcpServers = typeof ThreadSpecialistMcpServers.Type;
 
