@@ -130,11 +130,15 @@ export function resolveSidebarProjectScopeKeys(input: {
 
 export function filterSidebarProjectScopeKeysByEnvironment(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly environmentIds: readonly EnvironmentId[];
   readonly keys: readonly string[];
   readonly settings?: ProjectGroupingSettings;
   readonly previousExcludedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly excludedEnvironmentIds: ReadonlySet<EnvironmentId>;
 }): string[] {
+  if (input.environmentIds.every((id) => input.excludedEnvironmentIds.has(id))) {
+    return [...input.keys];
+  }
   return input.keys.filter(
     (key) =>
       resolveSidebarProjectScopeKey({

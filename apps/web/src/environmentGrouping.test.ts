@@ -152,8 +152,10 @@ describe("environment grouping", () => {
     };
     const groups = buildSidebarProjectSnapshots({ ...input, projects: [local, remote] });
     const key = groups[0]!.projectKey;
+    const environmentIds = [primaryEnvironmentId, remoteEnvironmentId];
     const scope = {
       key,
+      environmentIds,
       previousExcludedEnvironmentIds: new Set<EnvironmentId>(),
       excludedEnvironmentIds: new Set([remoteEnvironmentId]),
     };
@@ -167,6 +169,39 @@ describe("environment grouping", () => {
       }),
     ).toEqual(persistedKeys);
 
+    for (const steps of [
+      [new Set(environmentIds), new Set([primaryEnvironmentId])],
+      [new Set<EnvironmentId>(), new Set([primaryEnvironmentId])],
+    ]) {
+      let keys = persistedKeys;
+      let previousExcludedEnvironmentIds = scope.excludedEnvironmentIds;
+      for (const excludedEnvironmentIds of steps) {
+        keys = filterSidebarProjectScopeKeysByEnvironment({
+          ...scope,
+          groups,
+          keys,
+          previousExcludedEnvironmentIds,
+          excludedEnvironmentIds,
+        });
+        expect(keys).toEqual(persistedKeys);
+        previousExcludedEnvironmentIds = excludedEnvironmentIds;
+      }
+      expect(
+        resolveSidebarProjectScopeKey({
+          groups,
+          key,
+          excludedEnvironmentIds: previousExcludedEnvironmentIds,
+        }),
+      ).toBe(key);
+    }
+    expect(
+      resolveSidebarProjectScopeKey({
+        groups,
+        key,
+        excludedEnvironmentIds: new Set(environmentIds),
+      }),
+    ).toBeNull();
+
     const remainingGroups = buildSidebarProjectSnapshots({ ...input, projects: [remote] });
     expect(remainingGroups[0]!.projectKey).toBe(key);
     expect(resolveSidebarProjectScopeKey({ ...scope, groups: remainingGroups })).toBeNull();
@@ -174,12 +209,14 @@ describe("environment grouping", () => {
       filterSidebarProjectScopeKeysByEnvironment({
         ...scope,
         groups: remainingGroups,
+        environmentIds,
         keys: persistedKeys,
       }),
     ).toEqual(["unloaded-project"]);
     expect(
       filterSidebarProjectScopeKeysByEnvironment({
         groups: remainingGroups,
+        environmentIds,
         keys: persistedKeys,
         previousExcludedEnvironmentIds: scope.excludedEnvironmentIds,
         excludedEnvironmentIds: new Set([
@@ -191,6 +228,7 @@ describe("environment grouping", () => {
     expect(
       filterSidebarProjectScopeKeysByEnvironment({
         groups: remainingGroups,
+        environmentIds,
         keys: persistedKeys,
         previousExcludedEnvironmentIds: scope.excludedEnvironmentIds,
         excludedEnvironmentIds: new Set(),

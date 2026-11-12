@@ -67,7 +67,9 @@ restores every environment. Your choices are saved on this client across reloads
 including when an environment goes offline. Newly connected environments are shown
 by default.
 If you deselect every environment for the selected project, the project filter
-resets to **All projects**.
+resets to **All projects** while other environments remain selected. With no
+environments selected, your project choice is kept and returns when you check
+an environment that contains it.
 
 ## Pin and reorder threads
 

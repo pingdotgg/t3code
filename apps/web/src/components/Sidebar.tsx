@@ -1243,6 +1243,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setSearchHighlightKey(null);
     const visibleScopeKeys = filterSidebarProjectScopeKeysByEnvironment({
       groups: projectGroups,
+      environmentIds: environments.map((environment) => environment.environmentId),
       keys: persistedProjectScopeKeys,
       settings: projectGroupingSettings,
       previousExcludedEnvironmentIds: excludedEnvironmentIds,
