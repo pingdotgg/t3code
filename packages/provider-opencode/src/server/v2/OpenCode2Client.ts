@@ -16,6 +16,8 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { readServerUsageLimits } from "./usageLimits.ts";
+
 /** OpenCode 2 accepts only HTTP Basic auth, always with this user name. */
 const OPENCODE_USERNAME = "opencode";
 
@@ -52,6 +54,17 @@ export type OpenCode2StreamEvent =
   | OpenCode2UnreadableTerminal
   | OpenCode2UnreadableStart;
 
+const ShellJobs = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literal("shell"),
+      shellID: Schema.String,
+      sessionID: Schema.String,
+      command: Schema.String,
+      status: Schema.Literals(["running", "completed", "error", "cancelled"]),
+    }),
+  ),
+});
 export class OpenCode2ImageError extends Schema.TaggedError<OpenCode2ImageError>()(
   "OpenCode2ImageError",
   { cause: Schema.Defect() },
@@ -82,6 +95,12 @@ const decodeImageJob = Schema.decodeUnknownOption(NativeImageJob);
 /** events resolves on subscription acceptance; subscribe before work because the stream is volatile. */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;
+  readonly usageLimits: (
+    directory: string,
+  ) => Effect.Effect<import("@t3tools/contracts").ServerProviderUsageLimits | undefined>;
+  readonly shellJobs?: (
+    sessionID: string,
+  ) => Effect.Effect<typeof ShellJobs.Type, HttpClientError.HttpClientError | Schema.SchemaError>;
   readonly imageJobs: (
     sessionID: string,
   ) => Effect.Effect<ReadonlyArray<typeof NativeImageJob.Type>, OpenCode2ImageError>;
@@ -249,6 +268,23 @@ export const make = Effect.gen(function* () {
         Effect.provideService(HttpClient.HttpClient, fillCompactionRecents(authenticated)),
         Effect.map((client) => ({
           client,
+          usageLimits: (directory) =>
+            readServerUsageLimits(directory).pipe(
+              Effect.provideService(
+                HttpClient.HttpClient,
+                HttpClient.mapRequest(authenticated, HttpClientRequest.prependUrl(baseUrl)),
+              ),
+            ),
+          shellJobs: Effect.fn("OpenCode2Client.shellJobs")(function (sessionID: string) {
+            return authenticated
+              .get(`${baseUrl}/api/experimental/job`, {
+                urlParams: { sessionID, kind: "shell", descendants: "true" },
+              })
+              .pipe(
+                Effect.flatMap(HttpClientResponse.filterStatusOk),
+                Effect.flatMap(HttpClientResponse.schemaBodyJson(ShellJobs)),
+              );
+          }),
           imageJobs: (sessionID: string) =>
             authenticated
               .get(`${baseUrl}/api/experimental/job`, {
