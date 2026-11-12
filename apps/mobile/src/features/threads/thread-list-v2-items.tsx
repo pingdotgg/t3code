@@ -1392,6 +1392,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               accentColor={providerInstance.accentColor}
               showBadge={providerInstance.showBadge}
               surfaceColor={rowAppearance.providerIconSurfaceColor}
+              dimmed
             />
             {providerNameLabel ? (
               <Text

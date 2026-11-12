@@ -59,6 +59,7 @@ export function ComposerModelControl(props: {
       size={props.size}
       disabled={props.disabled}
       emphasized
+      iconTrailingGap={badge?.showBadge ? 3 : undefined}
       renderIcon={(size) =>
         badge?.showBadge ? (
           <ProviderInstanceIcon

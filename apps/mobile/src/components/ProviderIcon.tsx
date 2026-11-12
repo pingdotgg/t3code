@@ -10,7 +10,6 @@ import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
-import { cn } from "../lib/cn";
 import { getProviderClient, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 
 type ProviderIconProps = {
@@ -175,44 +174,59 @@ export function ProviderInstanceIcon(props: {
   readonly accentColor?: string;
   readonly showBadge?: boolean;
   readonly surfaceColor?: string;
+  readonly dimmed?: boolean;
 }) {
   const accentColor = normalizeProviderAccentColor(props.accentColor);
   return (
     <View style={{ position: "relative" }}>
-      <View style={{ opacity: 0.6 }}>
+      <View style={{ opacity: props.dimmed ? 0.6 : 1 }}>
         <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
       </View>
       {props.showBadge ? (
         // An absolute badge alone is capped at icon width and clips initials.
         <View
           pointerEvents="none"
-          style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}
+          style={{
+            position: "absolute",
+            right: -8.5,
+            bottom: -5.5,
+            width: 32,
+            alignItems: "flex-end",
+          }}
         >
+          {/* A border would show the fill through a translucent surface, so the ring is a wrapper. */}
           <View
-            className={cn(!accentColor && "bg-card", !props.surfaceColor && "border-screen")}
+            className={props.surfaceColor ? undefined : "bg-screen"}
             style={{
-              height: 12,
-              minWidth: 12,
-              paddingHorizontal: 2,
+              padding: 1.5,
               borderRadius: 999,
-              borderWidth: 1,
-              ...(props.surfaceColor ? { borderColor: props.surfaceColor } : {}),
-              backgroundColor: accentColor,
-              alignItems: "center",
-              justifyContent: "center",
+              ...(props.surfaceColor ? { backgroundColor: props.surfaceColor } : {}),
             }}
           >
-            <Text
-              className={accentColor ? undefined : "text-foreground-muted"}
+            <View
+              className={accentColor ? undefined : "bg-foreground"}
               style={{
-                fontSize: 7,
-                fontWeight: "600",
-                lineHeight: 9,
-                color: accentColor ? providerAccentForegroundColor(accentColor) : undefined,
+                height: 9,
+                minWidth: 9,
+                paddingHorizontal: 2,
+                borderRadius: 999,
+                ...(accentColor ? { backgroundColor: accentColor } : {}),
+                alignItems: "center",
+                justifyContent: "center",
               }}
             >
-              {providerInstanceInitials(props.displayName)}
-            </Text>
+              <Text
+                className={accentColor ? undefined : "text-screen"}
+                style={{
+                  fontSize: 5.5,
+                  fontWeight: "700",
+                  lineHeight: 9,
+                  ...(accentColor ? { color: providerAccentForegroundColor(accentColor) } : {}),
+                }}
+              >
+                {providerInstanceInitials(props.displayName)}
+              </Text>
+            </View>
           </View>
         </View>
       ) : null}
