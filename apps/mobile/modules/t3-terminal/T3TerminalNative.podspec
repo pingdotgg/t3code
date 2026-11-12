@@ -14,6 +14,10 @@ Pod::Spec.new do |s|
   s.source = { :path => '.' }
   s.source_files = 'ios/**/*.{h,m,mm,swift}'
   s.vendored_frameworks = 'Vendor/libghostty/GhosttyKit.xcframework'
+  # libghostty has no x86_64 simulator slice, so a simulator build for every
+  # architecture (EAS's generic destination) fails to resolve GhosttyKit.
+  s.pod_target_xcconfig = { 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'x86_64' }
+  s.user_target_xcconfig = { 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'x86_64' }
   s.frameworks = 'IOSurface', 'Metal', 'MetalKit', 'QuartzCore', 'UIKit'
   s.libraries = 'c++', 'z'
   s.swift_version = '5.9'

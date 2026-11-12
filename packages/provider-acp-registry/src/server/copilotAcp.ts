@@ -1,16 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
+import * as AcpErrors from "effect-acp/errors";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type {
   AcpAdapterV2ExtensionContext,
   AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
 
-// Only its opt-in raw event feed says who wrote a chunk: each chunk is preceded
-// by an `assistant.*_delta` carrying the spawning `task` tool call id. Both
-// arrive inline on the same reader, in wire order, so the delta just before a
-// chunk is that chunk's author.
+// The opt-in raw feed identifies each chunk by the preceding assistant.*_delta task call id.
 
 const COPILOT_META_KEY = "github.com/copilot";
 const COPILOT_SESSION_EVENT = "github.com/copilot/sessionEvent";
@@ -26,6 +24,26 @@ export const copilotClientCapabilitiesMeta = {
     ],
   },
 };
+
+const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+
+/** Copilot keeps failing every prompt with these until its process is replaced. */
+const COPILOT_LOST_SESSION_MARKERS = [
+  "session event delivery failed: session not found: ",
+  "session lock unavailable during is_session_generation_current: acquisition timed out",
+];
+
+export function isCopilotLostSessionError(error: unknown): boolean {
+  if (!isAcpRequestError(error) || error.method !== "session/prompt" || error.code !== -32603) {
+    return false;
+  }
+  // Older Copilot reports the cause in data.details; its native ACP layer (1.0.105) in the message.
+  return [error.errorMessage, record(error.data)?.details].some(
+    (text) =>
+      typeof text === "string" &&
+      COPILOT_LOST_SESSION_MARKERS.some((marker) => text.includes(marker)),
+  );
+}
 
 const CopilotSessionEvent = Schema.Struct({
   sessionId: Schema.String,

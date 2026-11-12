@@ -23,9 +23,7 @@ layer(localRuntimeLayer)("Data binding", (it) => {
       });
 
       const res = yield* fetch("/");
-      const bytes = new Uint8Array(
-        yield* Effect.promise(() => res.arrayBuffer()),
-      );
+      const bytes = new Uint8Array(yield* Effect.promise(() => res.arrayBuffer()));
       expect(Array.from(bytes)).toEqual([1, 2, 3, 4]);
     }),
   );
