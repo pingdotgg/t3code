@@ -329,6 +329,7 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
+  readonly supportsNativeGoals?: Effect.Effect<boolean>;
   readonly clientCapabilitiesMeta?: NonNullable<
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
@@ -1720,11 +1721,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const postSettleContinuationEnabled =
     flavor.enablePostSettleContinuation === true && continuationRequests !== undefined;
 
+  const readCapabilities = Effect.gen(function* () {
+    if (flavor.supportsNativeGoals === undefined) return flavor.capabilities;
+    return {
+      ...flavor.capabilities,
+      turns: {
+        ...flavor.capabilities.turns,
+        supportsNativeGoals: yield* flavor.supportsNativeGoals,
+      },
+    };
+  });
+
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver,
-    getCapabilities: Effect.fn("AcpAdapter.getCapabilities")(function () {
-      return Effect.succeed(flavor.capabilities);
+    getCapabilities: Effect.fn("AcpAdapter.getCapabilities")(function* () {
+      return yield* readCapabilities;
     }),
     planSelectionTransition: Effect.fn("AcpAdapter.planSelectionTransition")(function (input) {
       return Effect.succeed(acpSelectionTransition(input));
@@ -7182,7 +7194,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
         const capabilities = negotiatedCapabilities(
-          flavor.capabilities,
+          yield* readCapabilities,
           started,
           flavor.modelOptionArrivesLate === true,
           flavor.forkFromTurn?.supported(started.initializeResult) === true,

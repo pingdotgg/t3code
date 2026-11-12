@@ -146,44 +146,49 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 compaction", () => {
-  it.effect("does not expose unsupported manual compaction on the provider session", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const crypto = yield* SecureRandom.SecureRandom;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
-      const adapter = yield* makeAntigravityAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
-            ...input,
-            childProcessSpawner,
-            spawn: {
-              command: process.execPath,
-              args: [mockAgentPath],
-              cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
-            },
-          }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
-        withProcess: (_stop, task) => task,
-        defaultModel: Effect.undefined,
-      });
-      const session = yield* adapter.openSession({
-        threadId: ThreadId.make("thread-antigravity-compaction"),
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
-        modelSelection: { instanceId, model: "gemini-test-low" },
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        }),
-      });
-      assert.isUndefined(session.compactThread);
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  it.effect.each([false, true])(
+    "negotiates native goals (%s) without enabling manual compaction",
+    (nativeGoals) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+          supportsNativeGoals: Effect.succeed(nativeGoals),
+        });
+        const session = yield* adapter.openSession({
+          threadId: ThreadId.make("thread-antigravity-compaction"),
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
+          modelSelection: { instanceId, model: "gemini-test-low" },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        });
+        assert.isUndefined(session.compactThread);
+        assert.equal(session.providerSession.capabilities.turns.supportsNativeGoals, nativeGoals);
+        assert.equal((yield* adapter.getCapabilities()).turns.supportsNativeGoals, nativeGoals);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 

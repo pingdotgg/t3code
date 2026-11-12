@@ -135,6 +135,16 @@ Before removing a managed runtime, disable its instances and cancel any active
 installation. Clear any explicit binary path pointing into that runtime. Removal
 is refused while the runtime is in use.
 
+## Run a native goal
+
+When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
+objective. Antigravity keeps working until it completes the goal or you cancel it.
+The bundled 1.4.5 ACP runtime does not offer this command; use a newer `agy acp`
+runtime through the binary path setting, then refresh provider status.
+
+To cancel a goal, send a follow-up asking Antigravity to stop the current goal.
+T3 does not support Antigravity goal status, pause, resume, or clear commands.
+
 ## Check access and troubleshoot
 
 Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowances
