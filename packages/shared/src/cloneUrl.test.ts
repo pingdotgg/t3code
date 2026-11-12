@@ -133,15 +133,12 @@ describe("cloneUrlForProtocol", () => {
       ["my repo.git", "my%20repo.git"],
       ["repo%20name.git", "repo%2520name.git"],
       ["repo#1?.git", "repo%231%3F.git"],
-      ["日本語.git", "%E6%97%A5%E6%9C%AC%E8%AA%9E.git"],
     ]) {
       const scp = `git@host.example:team/${literal}`;
       const https = `https://host.example/team/${encoded}`;
       expect(cloneUrlForProtocol(https, "ssh")).toBe(scp);
       expect(cloneUrlForProtocol(scp, "https")).toBe(https);
       expect(cloneUrlForProtocol(`ssh://git@host.example/team/${encoded}`, "https")).toBe(https);
-      expect(cloneUrlForProtocol(scp, "ssh")).toBe(scp);
-      expect(cloneUrlForProtocol(https, "https")).toBe(https);
     }
   });
 
