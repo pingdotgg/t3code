@@ -325,6 +325,20 @@ const make = Effect.gen(function* () {
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
+            // Other recorded transcripts mean this one changed after the import, and the
+            // thread does not hold its new messages, so it must stay unrecorded.
+            const recorded = Option.flatMap(yield* runtimes.getByThreadId({ threadId }), (row) =>
+              AgentSessionScanner.decodeImportedTranscriptPayload(row.runtimePayload),
+            ).pipe(Option.flatMapNullishOr((payload) => payload.importedTranscripts));
+            if (
+              Option.isSome(recorded) &&
+              recorded.value.length > 0 &&
+              !recorded.value.some((imported) =>
+                AgentSessionScanner.sameTranscriptIdentity(imported, source),
+              )
+            ) {
+              return false;
+            }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
             return true;
