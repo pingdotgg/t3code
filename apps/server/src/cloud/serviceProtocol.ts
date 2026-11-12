@@ -63,6 +63,14 @@ export function serviceUnitBaseDirOf(contents: string): string | undefined {
   return task === undefined ? undefined : unquoteWindowsArgument(task);
 }
 
+/** The file systemd or launchd appends the service's output to. */
+export function serviceUnitLogPathOf(contents: string): string | undefined {
+  const systemd = /^StandardOutput=append:(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) return unquoteSystemdValue(systemd.trim());
+  const plist = /<key>StandardOutPath<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  return plist === undefined ? undefined : unescapeXmlText(plist);
+}
+
 /** The executable an installed unit, plist, or task starts: the launcher's runtime. */
 export function serviceUnitProgramOf(contents: string): string | undefined {
   const systemd = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(contents)?.[1];
