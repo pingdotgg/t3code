@@ -35,13 +35,18 @@ const fromRelay = (relayError: RelayProtectedError) =>
     }),
   );
 
-const unavailable = (endpointFailure: "tunnel_down" | "origin_unreachable") =>
+const unavailable = (endpointFailure: "tunnel_down" | "origin_unreachable" | "host_clock_behind") =>
   fromRelay(
     new RelayEnvironmentEndpointUnavailableError({
       code: "environment_endpoint_unavailable",
       reason: "endpoint_request_failed",
       endpointFailure,
-      endpointStatus: endpointFailure === "tunnel_down" ? 530 : 502,
+      endpointStatus:
+        endpointFailure === "tunnel_down"
+          ? 530
+          : endpointFailure === "host_clock_behind"
+            ? 401
+            : 502,
       traceId: "trace-1",
     }),
   );
@@ -63,6 +68,13 @@ describe("presentConnectionDiagnosis", () => {
       "tunnel:ok",
       "server:failed",
     ]);
+  });
+
+  it("tells the user to sync a host clock that refused the relay's request", () => {
+    const diagnosis = diagnose(backoff(unavailable("host_clock_behind")));
+    expect(diagnosis?.headline).toBe("Mac mini's clock is behind");
+    expect(diagnosis?.steps).toEqual(["Turn on automatic date and time on Mac mini, then retry."]);
+    expect(diagnosis?.moreInfoUrl).toContain("#the-clock-is-off");
   });
 
   it("blames this device when it cannot reach a tunnel the relay already reached", () => {

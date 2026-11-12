@@ -392,6 +392,7 @@ export const RelayEnvironmentEndpointFailure = Schema.Literals([
   "refused",
   "timeout",
   "invalid_response",
+  "host_clock_behind",
   "unknown",
 ]);
 export type RelayEnvironmentEndpointFailure = typeof RelayEnvironmentEndpointFailure.Type;

@@ -1,7 +1,9 @@
+import { EnvironmentHttpUnauthorizedError } from "@t3tools/contracts";
 import type { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 export interface EndpointFailureDiagnosis {
@@ -59,10 +61,18 @@ export function classifyTransportFailure(cause: unknown): RelayEnvironmentEndpoi
   return "unknown";
 }
 
+const isEnvironmentUnauthorized = Schema.is(EnvironmentHttpUnauthorizedError);
+
 const ERROR_BODY_READ_TIMEOUT = Duration.seconds(2);
 
 /** Turns a failed environment request into the cause the client shows the user. */
 export const diagnoseEndpointFailure = Effect.fnUntraced(function* (cause: unknown) {
+  if (isEnvironmentUnauthorized(cause) && cause.reason === "host_clock_behind") {
+    return {
+      endpointFailure: "host_clock_behind",
+      endpointStatus: 401,
+    } satisfies EndpointFailureDiagnosis;
+  }
   if (!HttpClientError.isHttpClientError(cause)) {
     return { endpointFailure: "invalid_response" } satisfies EndpointFailureDiagnosis;
   }

@@ -65,7 +65,13 @@ const connectErrorCases = {
   CloudLinkNotLinkedError: badRequest,
   CloudLinkAccountMismatchError: conflict,
   CloudLinkAuthorizationMissingError: unauthorized,
-  CloudLinkProofRejectedError: unauthorized,
+  CloudLinkProofRejectedError: (error: CloudLink.CloudLinkProofRejectedError) =>
+    Effect.fail(
+      new EnvironmentHttpUnauthorizedError({
+        message: error.message,
+        ...(error.hostClockBehind ? { reason: "host_clock_behind" as const } : {}),
+      }),
+    ),
   CloudLinkProofReplayedError: conflict,
   CloudLinkTunnelSupersededError: conflict,
   ManagedPolicyRefusedError: (error: ManagedLimits.ManagedPolicyRefusedError) =>
