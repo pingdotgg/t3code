@@ -21,6 +21,7 @@ const requestSingleInstanceLockMock = vi.fn(() => true);
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopLaunchLinks from "./DesktopLaunchLinks.ts";
@@ -39,6 +40,8 @@ const layerLaunchLinks = (
   platform: NodeJS.Platform = "darwin",
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = FileSystem.layerNoop({
     exists: () => Effect.succeed(false),
+    makeDirectory: () => Effect.void,
+    writeFileString: () => Effect.void,
   }),
   shell: ElectronShell.ElectronShell["Service"] = {
     openExternal: () => Effect.succeed(true),
@@ -46,10 +49,12 @@ const layerLaunchLinks = (
     copyText: () => Effect.void,
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
+  app = "T3 Code",
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir,
     isDevelopment,
+    branding: { baseName: app },
     appDataDirectory: "/tmp/app-data",
     platform,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
@@ -65,6 +70,9 @@ const layerLaunchLinks = (
     }),
     quit: Effect.sync(() => {
       events.push("quit");
+    }),
+    whenReady: Effect.sync(() => {
+      events.push("whenReady");
     }),
     on: (name: string, listener: (...args: unknown[]) => void) =>
       Effect.acquireRelease(
@@ -86,6 +94,13 @@ const layerLaunchLinks = (
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
+        Layer.succeed(ElectronDialog.ElectronDialog, {
+          showMessageBox: (options: { readonly message: string }) =>
+            Effect.sync(() => {
+              events.push(`dialog:${options.message}`);
+              return { response: 0, checkboxChecked: false };
+            }),
+        } as unknown as ElectronDialog.ElectronDialog["Service"]),
         fileSystemLayer,
       ),
     ),
@@ -230,13 +245,31 @@ describe("DesktopLaunchLinks", () => {
     );
   });
 
-  it.effect.each(["darwin", "win32", "linux"] as const)(
-    "quits a second launch before initializing the application runtime on %s",
-    (platform) =>
+  it.effect.each([
+    { platform: "darwin", app: "T3 Code", explained: [] },
+    { platform: "win32", app: "T3 Code", explained: [] },
+    { platform: "linux", app: "T3 Code", explained: [] },
+    // T3 Code shares the profile and only raises its own window, so say why this one did not open.
+    {
+      platform: "darwin",
+      app: "T3 Agents",
+      explained: ["whenReady", "dialog:Quit T3 Code to open T3 Agents"],
+    },
+  ] as const)(
+    "quits a second launch of $app before initializing the application runtime on $platform",
+    ({ platform, app, explained }) =>
       Effect.gen(function* () {
         requestSingleInstanceLockMock.mockReturnValueOnce(false);
         const events: string[] = [];
-        const runtime = layerLaunchLinks(false, events, platform).pipe(
+        const runtime = layerLaunchLinks(
+          false,
+          events,
+          platform,
+          undefined,
+          undefined,
+          undefined,
+          app,
+        ).pipe(
           Layer.flatMap(() =>
             Layer.effectDiscard(
               Effect.sync(() => {
@@ -251,6 +284,7 @@ describe("DesktopLaunchLinks", () => {
         assert.deepEqual(events, [
           "setPath:userData:/tmp/app-data/t3code-v2",
           "requestSingleInstanceLock",
+          ...explained,
           "quit",
         ]);
       }),

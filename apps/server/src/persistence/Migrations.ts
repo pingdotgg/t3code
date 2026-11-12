@@ -107,6 +107,7 @@ import ForkMigration017 from "./Migrations/fork/017_NetworkMembers.ts";
 import ForkMigration018 from "./Migrations/fork/018_NetworkLifecycle.ts";
 import ForkMigration019 from "./Migrations/fork/019_NetworkAppReplacement.ts";
 import ForkMigration020 from "./Migrations/fork/020_RepairStringifiedModelSelectionOptions.ts";
+import ForkMigration021 from "./Migrations/fork/021_UpstreamScheduledTaskProfile.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -193,6 +194,7 @@ const migrationEntries = [
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
+export const upstreamMigrations = migrationEntries;
 
 /** Separate ledgers preserve upstream IDs. The last column replays fork migrations after the upstream slot they shipped with. */
 const forkMigrationEntries = [
@@ -216,6 +218,7 @@ const forkMigrationEntries = [
   [18, "NetworkLifecycle", ForkMigration018, 80],
   [19, "NetworkAppReplacement", ForkMigration019, 80],
   [20, "RepairStringifiedModelSelectionOptions", ForkMigration020, 81],
+  [21, "UpstreamScheduledTaskProfile", ForkMigration021, 81],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(

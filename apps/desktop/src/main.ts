@@ -234,6 +234,7 @@ const layerDesktopApplication = Layer.mergeAll(
 const layerDesktopLaunchLinks = DesktopLaunchLinks.layer.pipe(
   Layer.provide(DesktopPreReadyFileSystem.layer),
   Layer.provideMerge(ElectronShell.layer),
+  Layer.provideMerge(ElectronDialog.layer),
   Layer.provideMerge(layerDesktopEnvironment),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(ElectronApp.layer),

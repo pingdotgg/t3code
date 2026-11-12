@@ -19,8 +19,10 @@ export function createInitialDesktopUpdateState(
   currentVersion: string,
   runtimeInfo: DesktopRuntimeInfo,
   channel: DesktopUpdateChannel,
+  nightlyOnly = false,
 ): DesktopUpdateState {
   return {
+    ...(nightlyOnly ? { nightlyOnly: true as const } : {}),
     enabled: false,
     status: "disabled",
     channel,

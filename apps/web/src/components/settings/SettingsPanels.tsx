@@ -341,7 +341,9 @@ function AboutVersionSection() {
         <SettingsRow
           {...searchableSetting("update-track")}
           description={
-            nightlyDeniedBy !== undefined ? (
+            updateState?.nightlyOnly ? (
+              "This app publishes Nightly builds only."
+            ) : nightlyDeniedBy !== undefined ? (
               `${managedUpdatesMessage(nightlyDeniedBy)} Nightly builds are not available${
                 selectedUpdateChannel === "nightly"
                   ? "; switch to Stable to keep getting updates."
@@ -386,7 +388,11 @@ function AboutVersionSection() {
                 <SelectValue>{channelSwitchLabel(selectedUpdateChannel)}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="latest">
+                <SelectItem
+                  hideIndicator
+                  value="latest"
+                  disabled={updateState?.nightlyOnly === true && selectedUpdateChannel !== "latest"}
+                >
                   Stable
                 </SelectItem>
                 <SelectItem

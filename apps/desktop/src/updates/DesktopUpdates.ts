@@ -303,7 +303,12 @@ function createBaseUpdateState(
 ): DesktopUpdateState {
   const enabled = Option.isNone(disabledReason);
   return {
-    ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
+    ...createInitialDesktopUpdateState(
+      environment.appVersion,
+      environment.runtimeInfo,
+      channel,
+      environment.nightlyOnlyUpdates,
+    ),
     enabled,
     status: enabled ? "idle" : "disabled",
     message: Option.getOrNull(disabledReason),
@@ -406,6 +411,7 @@ export const make = Effect.gen(function* () {
       environment.appVersion,
       environment.runtimeInfo,
       environment.defaultDesktopSettings.updateChannel,
+      environment.nightlyOnlyUpdates,
     ),
   );
 

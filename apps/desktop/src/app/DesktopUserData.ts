@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -135,3 +136,55 @@ export const clearStaleGpuCaches = Effect.fn("desktop.userData.clearStaleGpuCach
       ),
     ),
 );
+
+const PROFILE_OWNER_FILE = "profile-owner.json";
+const ProfileOwnerJson = Schema.fromJsonString(
+  Schema.Struct({ app: Schema.String, pid: Schema.Int }),
+);
+const decodeProfileOwner = Schema.decodeUnknownOption(ProfileOwnerJson);
+const encodeProfileOwner = Schema.encodeSync(ProfileOwnerJson);
+
+/** T3 Code and T3 Agents share this profile, so its single-instance lock admits only one of them. */
+export const recordProfileOwner = Effect.fn("desktop.userData.recordProfileOwner")(
+  function* (input: { readonly userDataPath: string; readonly app: string; readonly pid: number }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(input.userDataPath, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(input.userDataPath, PROFILE_OWNER_FILE),
+      encodeProfileOwner({ app: input.app, pid: input.pid }),
+    );
+  },
+  (effect) =>
+    effect.pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("could not record the profile owner", { error: error.message }),
+      ),
+    ),
+);
+
+/**
+ * The other app holding the profile lock, or null when it is another window of this app.
+ * T3 Code records no owner, so an unrecorded holder is T3 Code when this app is T3 Agents.
+ */
+export function otherProfileOwner(input: {
+  readonly recorded: string | undefined;
+  readonly app: string;
+  readonly isAlive: (pid: number) => boolean;
+}): string | null {
+  const owner = Option.getOrUndefined(decodeProfileOwner(input.recorded));
+  if (owner !== undefined && input.isAlive(owner.pid)) {
+    return owner.app === input.app ? null : owner.app;
+  }
+  return input.app === "T3 Agents" ? "T3 Code" : null;
+}
+
+export const readProfileOwner = Effect.fn("desktop.userData.readProfileOwner")(function* (
+  userDataPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* fs
+    .readFileString(path.join(userDataPath, PROFILE_OWNER_FILE))
+    .pipe(Effect.orElseSucceed(() => undefined));
+});

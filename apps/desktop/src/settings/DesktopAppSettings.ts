@@ -205,6 +205,7 @@ export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds |
 function normalizeDesktopSettingsDocument(
   parsed: DesktopSettingsDocument,
   appVersion: string,
+  nightlyOnly: boolean,
 ): DesktopSettings {
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
   const mainWindowBounds = normalizeMainWindowBounds(parsed.mainWindowBounds);
@@ -227,9 +228,12 @@ function normalizeDesktopSettingsDocument(
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled !== false,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
-    updateChannel: updateChannelConfiguredByUser
-      ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
-      : defaultSettings.updateChannel,
+    // desktop-settings.json is shared with T3 Code, whose Stable choice this build cannot follow.
+    updateChannel: nightlyOnly
+      ? "nightly"
+      : updateChannelConfiguredByUser
+        ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
+        : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
     wslBackendEnabled,
     wslDistro: normalizeWslDistro(parsed.wslDistro),
@@ -332,8 +336,10 @@ function setTailscaleServe(
 function setUpdateChannel(
   settings: DesktopSettings,
   requestedChannel: DesktopUpdateChannel,
+  nightlyOnly: boolean,
 ): DesktopSettings {
-  return settings.updateChannel === requestedChannel
+  return settings.updateChannel === requestedChannel ||
+    (nightlyOnly && requestedChannel !== "nightly")
     ? settings
     : {
         ...settings,
@@ -384,6 +390,7 @@ function readSettings(
   fileSystem: FileSystem.FileSystem,
   settingsPath: string,
   appVersion: string,
+  nightlyOnly: boolean,
 ): Effect.Effect<DesktopSettings> {
   const defaultSettings = resolveDefaultDesktopSettings(appVersion);
 
@@ -394,7 +401,9 @@ function readSettings(
         onNone: () => Effect.succeed(defaultSettings),
         onSome: (raw) =>
           decodeDesktopSettingsJson(raw).pipe(
-            Effect.map((parsed) => normalizeDesktopSettingsDocument(parsed, appVersion)),
+            Effect.map((parsed) =>
+              normalizeDesktopSettingsDocument(parsed, appVersion, nightlyOnly),
+            ),
             Effect.orElseSucceed(() => defaultSettings),
           ),
       }),
@@ -516,6 +525,7 @@ export const make = Effect.gen(function* () {
         fileSystem,
         environment.desktopSettingsPath,
         environment.appVersion,
+        environment.nightlyOnlyUpdates,
       );
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
@@ -545,7 +555,9 @@ export const make = Effect.gen(function* () {
     setUpdateChannel: Effect.fn("desktop.settings.setUpdateChannel")(function* (channel) {
       yield* Effect.annotateCurrentSpan({ channel });
 
-      return yield* persist((settings) => setUpdateChannel(settings, channel));
+      return yield* persist((settings) =>
+        setUpdateChannel(settings, channel, environment.nightlyOnlyUpdates),
+      );
     }),
     setWslBackendEnabled: Effect.fn("desktop.settings.setWslBackendEnabled")(function* (enabled) {
       yield* Effect.annotateCurrentSpan({ enabled });
@@ -614,7 +626,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
           return update((settings) => setTailscaleServe(settings, input));
         }),
         setUpdateChannel: Effect.fn("DesktopAppSettings.setUpdateChannel")(function (channel) {
-          return update((settings) => setUpdateChannel(settings, channel));
+          return update((settings) => setUpdateChannel(settings, channel, false));
         }),
         setWslBackendEnabled: Effect.fn("DesktopAppSettings.setWslBackendEnabled")(
           function (enabled) {

@@ -4,10 +4,9 @@ Run the fork's server on a Linux host without the Electron window, under a syste
 and update it from the fork's nightly feed. Clients (web over Tailscale, the desktop app on
 another machine, mobile) connect to it like any other remote environment.
 
-Upstream's `t3 service install` and `t3 update` do the same job for upstream builds, but they
-download upstream's single-file runtimes from `pingdotgg/t3code`. The fork publishes only
-desktop packages, so this setup runs the server bundled in the fork's AppImage instead:
-[`packaging/linux-headless/`](../../packaging/linux-headless/).
+`t3 service install` and `t3 update` download the fork's single-file runtimes, which fork releases
+publish from 0.1.9 nightlies on. This setup runs the server bundled in the fork's AppImage
+instead, which also covers older releases: [`packaging/linux-headless/`](../../packaging/linux-headless/).
 
 ## Why a plain unit instead of the desktop app
 

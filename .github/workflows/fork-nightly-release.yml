@@ -300,6 +300,23 @@ jobs:
           pattern: desktop-*
           merge-multiple: true
           path: release-assets
+      # `t3 update`, `t3 service install`, server self-update and SSH hosts install these.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-assets
+      - name: Write CLI archive checksums
+        run: |
+          set -euo pipefail
+          cd release-assets
+          shopt -s nullglob
+          archives=(t3-*.tar.gz t3-*.zip)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were produced." >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
       - name: Merge architecture update manifests
         run: |
           set -euo pipefail
