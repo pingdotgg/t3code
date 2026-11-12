@@ -141,7 +141,8 @@ export function parseGitRemoteRepository(
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
-      const url = new URL(normalized);
+      // Parse the raw remote: `.git` may sit before a query or fragment, so strip it from the path once.
+      const url = new URL(value.trim().toLowerCase());
       const repositorySegments = url.pathname
         .replace(/\/+$/, "")
         .replace(/\.git$/, "")

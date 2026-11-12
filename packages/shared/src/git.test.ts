@@ -33,6 +33,9 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git#section")).toBe(
       "github.com/t3tools/t3code",
     );
+    expect(normalizeGitRemoteUrl("ssh://git@code.example.test/owner/repo.git.git")).toBe(
+      normalizeGitRemoteUrl("git@code.example.test:owner/repo.git.git"),
+    );
   });
 
   it("preserves nested group paths for providers like GitLab", () => {
