@@ -547,6 +547,49 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("names the Electron window class in the Linux desktop entry", () =>
+    Effect.gen(function* () {
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.nestedPropertyVal(linux, "linux.desktop.entry.StartupWMClass", "com.t3tools.T3Code");
+    }),
+  );
+
+  it.effect("declares Calendar access for hosted commands in macOS builds", () =>
+    Effect.gen(function* () {
+      for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {
+        for (const signed of [false, true]) {
+          const config = yield* createBuildConfig(
+            "mac",
+            "dmg",
+            version,
+            signed,
+            false,
+            undefined,
+            undefined,
+          );
+          const mac = config.mac as { extendInfo: Record<string, unknown> };
+          for (const key of [
+            "NSCalendarsUsageDescription",
+            "NSCalendarsFullAccessUsageDescription",
+            "NSCalendarsWriteOnlyAccessUsageDescription",
+          ]) {
+            assert.isString(mac.extendInfo[key], `${version}, signed=${signed}: ${key}`);
+            assert.isNotEmpty(mac.extendInfo[key]);
+          }
+        }
+      }
+    }),
+  );
+
   // pnpm writes "set this to true or false" placeholders into allowBuilds when a
   // tarball changes. pnpm ignores them, but the release build decode rejects them.
   it.effect("decodes the repo allowBuilds and every file: tarball it names exists", () =>

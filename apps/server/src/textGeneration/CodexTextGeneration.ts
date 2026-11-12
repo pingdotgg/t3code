@@ -19,7 +19,11 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { codexExecLaunchArgs, resolveCodexLaunchArgs } from "../provider/codexLaunchArgs.ts";
+import {
+  codexExecLaunchArgs,
+  codexMcpListLaunchArgs,
+  resolveCodexLaunchArgs,
+} from "../provider/codexLaunchArgs.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
@@ -341,20 +345,18 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath, homeDirectory) }
           : {}),
       };
-      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
       const mcpServersOff = yield* listEnabledMcpServers({
         binary,
         cwd,
         env,
         codexHome: env.CODEX_HOME ?? path.join(homeDirectory, ".codex"),
-        // `codex mcp` rejects --strict-config; the overrides still apply.
-        launchArgs: execLaunchArgs.filter((arg) => arg !== "--strict-config"),
+        launchArgs: codexMcpListLaunchArgs(launchArgs),
       }).pipe(Effect.map(codexMcpServersOff));
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
           "exec",
-          ...execLaunchArgs,
+          ...codexExecLaunchArgs(launchArgs),
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
           ...(mcpServersOff ? ["--config", mcpServersOff] : []),
