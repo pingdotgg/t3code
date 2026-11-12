@@ -12,6 +12,11 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     {
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
+      readonly cookies: {
+        readonly get: ReturnType<typeof vi.fn>;
+        readonly set: ReturnType<typeof vi.fn>;
+        readonly flushStore: ReturnType<typeof vi.fn>;
+      };
       readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
@@ -20,6 +25,12 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     }
   >(),
 }));
+
+const makeCookies = (stored: ReadonlyArray<Partial<Electron.Cookie>> = []) => ({
+  get: vi.fn(() => Promise.resolve(stored)),
+  set: vi.fn(() => Promise.resolve()),
+  flushStore: vi.fn(() => Promise.resolve()),
+});
 
 const { fromWebContents } = vi.hoisted(() => ({
   fromWebContents: vi.fn<(webContents: unknown) => unknown>(() => null),
@@ -59,6 +70,7 @@ describe("BrowserSession", () => {
       const browserSession = {
         clearCache: vi.fn(() => Promise.resolve()),
         clearStorageData: vi.fn(() => Promise.resolve()),
+        cookies: makeCookies(),
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
@@ -129,6 +141,7 @@ describe("BrowserSession", () => {
         const browserSession = {
           clearCache: vi.fn(() => Promise.resolve()),
           clearStorageData: vi.fn(() => Promise.resolve()),
+          cookies: makeCookies(),
           getUserAgent: vi.fn(() => userAgent),
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),
@@ -331,6 +344,84 @@ describe("BrowserSession", () => {
         storages: ["cookies", "localstorage", "indexdb", "serviceworkers", "cachestorage"],
       });
       assert.strictEqual(vi.mocked(other.clearStorageData).mock.calls.length, 0);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("gives session cookies an expiry on quit so they survive a restart", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const persistentPartition = yield* browserSessions.getPartition("scope-a");
+      const ephemeralPartition = yield* browserSessions.getPartition("scope-a", false);
+      yield* browserSessions.getSession("scope-a");
+      yield* browserSessions.getSession("scope-a", false);
+      const persistent = sessions.get(persistentPartition)!;
+      const ephemeral = sessions.get(ephemeralPartition)!;
+      persistent.cookies.get.mockResolvedValue([
+        {
+          name: "sess",
+          value: "s1",
+          domain: "app.example.com",
+          hostOnly: true,
+          path: "/",
+          secure: true,
+          httpOnly: true,
+          session: true,
+          sameSite: "lax",
+        },
+        {
+          name: "shared",
+          value: "s2",
+          domain: ".example.com",
+          hostOnly: false,
+          path: "/account",
+          secure: false,
+          httpOnly: false,
+          session: true,
+          sameSite: "unspecified",
+        },
+        {
+          name: "keep",
+          value: "p",
+          domain: "app.example.com",
+          path: "/",
+          session: false,
+          expirationDate: 123,
+          sameSite: "lax",
+        },
+      ]);
+
+      yield* browserSessions.persistSessionCookies;
+
+      const expirationDate = 400 * 24 * 60 * 60;
+      assert.deepStrictEqual(persistent.cookies.set.mock.calls, [
+        [
+          {
+            url: "https://app.example.com/",
+            name: "sess",
+            value: "s1",
+            path: "/",
+            secure: true,
+            httpOnly: true,
+            sameSite: "lax",
+            expirationDate,
+          },
+        ],
+        [
+          {
+            url: "http://example.com/account",
+            name: "shared",
+            value: "s2",
+            domain: ".example.com",
+            path: "/account",
+            secure: false,
+            httpOnly: false,
+            sameSite: "unspecified",
+            expirationDate,
+          },
+        ],
+      ]);
+      assert.strictEqual(persistent.cookies.flushStore.mock.calls.length, 1);
+      assert.strictEqual(ephemeral.cookies.get.mock.calls.length, 0);
     }).pipe(Effect.provide(layer)),
   );
 });

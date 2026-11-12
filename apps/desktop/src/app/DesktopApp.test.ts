@@ -70,6 +70,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
+import * as BrowserSession from "../preview/BrowserSession.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 
 it.effect.each([false, true])(
@@ -211,6 +212,9 @@ it.effect.each([false, true])(
               Effect.asVoid,
             ),
           } as DesktopRendererHistory.DesktopRendererHistory["Service"]),
+          Effect.provideService(BrowserSession.BrowserSession, {
+            persistSessionCookies: Effect.void,
+          } as BrowserSession.BrowserSession["Service"]),
         );
       const app = yield* runApp.pipe(
         Effect.provide(
