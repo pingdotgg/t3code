@@ -1363,29 +1363,25 @@ function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
-type WorkTimelineEntry = Extract<TimelineEntry, { kind: "work" }>;
-const supersededReasoningEntries = new WeakMap<WorkTimelineEntry, WorkTimelineEntry>();
-
-function settleReasoning(entry: WorkTimelineEntry, superseded: boolean): WorkTimelineEntry {
-  if (
-    !superseded ||
-    entry.entry.itemType !== "reasoning" ||
-    entry.entry.toolLifecycleStatus !== "inProgress"
-  ) {
-    return entry;
-  }
-  let settled = supersededReasoningEntries.get(entry);
-  if (!settled) {
-    settled = { ...entry, entry: { ...entry.entry, toolLifecycleStatus: "completed" } };
-    supersededReasoningEntries.set(entry, settled);
-  }
-  return settled;
-}
+const supersededReasoningEntries = new WeakMap<TimelineEntry, TimelineEntry>();
 
 function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
-  return entries.map((entry, index) =>
-    entry.kind === "work" ? settleReasoning(entry, index < entries.length - 1) : entry,
-  );
+  return entries.map((entry, index) => {
+    if (
+      index === entries.length - 1 ||
+      entry.kind !== "work" ||
+      entry.entry.itemType !== "reasoning" ||
+      entry.entry.toolLifecycleStatus !== "inProgress"
+    ) {
+      return entry;
+    }
+    let settled = supersededReasoningEntries.get(entry);
+    if (!settled) {
+      settled = { ...entry, entry: { ...entry.entry, toolLifecycleStatus: "completed" } };
+      supersededReasoningEntries.set(entry, settled);
+    }
+    return settled;
+  });
 }
 
 function workShownAsFinalAnswerOnly(
@@ -2501,7 +2497,7 @@ function replaceStreamingMessageRows(
     }
     if (entry.kind === "work" && previousEntry.kind === "work") {
       if (!isStreamingThoughtUpdate(previousEntry.entry, entry.entry)) return null;
-      thoughts.set(entry.id, settleReasoning(entry, index < timelineEntries.length - 1).entry);
+      thoughts.set(entry.id, entry.entry);
       continue;
     }
     if (entry.kind === "proposed-plan" && previousEntry.kind === "proposed-plan") {
@@ -2529,11 +2525,27 @@ function replaceStreamingMessageRows(
     replacements.set(previousEntry.message, entry);
   }
   if (replacements.size === 0 && thoughts.size === 0 && plans.size === 0) return previous.rows;
+  // Rows settle superseded thinking after tool visibility filtering, which these entries
+  // have not seen; the fast path keeps item status, so the row's settled status still holds.
+  const patchedThoughts = new Map<WorkLogEntry, WorkLogEntry>();
+  const patchThought = (entry: WorkLogEntry) => {
+    const thought = thoughts.get(entry.id);
+    if (!thought) return entry;
+    let patched = patchedThoughts.get(entry);
+    if (!patched) {
+      patched =
+        entry.toolLifecycleStatus === thought.toolLifecycleStatus ||
+        entry.toolLifecycleStatus === undefined
+          ? thought
+          : { ...thought, toolLifecycleStatus: entry.toolLifecycleStatus };
+      patchedThoughts.set(entry, patched);
+    }
+    return patched;
+  };
   const patchedGroups = new Map<WorkLogEntry[], WorkLogEntry[]>();
   const patchGroup = (group: WorkLogEntry[]) => {
     if (!group.some((entry) => thoughts.has(entry.id))) return group;
-    const patched =
-      patchedGroups.get(group) ?? group.map((entry) => thoughts.get(entry.id) ?? entry);
+    const patched = patchedGroups.get(group) ?? group.map(patchThought);
     patchedGroups.set(group, patched);
     return patched;
   };
@@ -2551,9 +2563,9 @@ function replaceStreamingMessageRows(
       }
       return {
         ...row,
-        entry: thoughts.get(row.entry.id) ?? row.entry,
+        entry: patchThought(row.entry),
         groupedEntries,
-        ...(row.thought ? { thought: thoughts.get(row.thought.id) ?? row.thought } : {}),
+        ...(row.thought ? { thought: patchThought(row.thought) } : {}),
       };
     }
     if (row.kind === "work") {

@@ -4018,11 +4018,13 @@ describe("streaming v2 row projection", () => {
 
   it.each([
     "expanded live group",
+    "expanded live group followed by a hidden tool",
     "thinking superseded by a running tool",
     "settled turn",
   ] as const)("matches a full derivation when streaming thinking sits in a %s", (scenario) => {
     const source = makeStreamingWorkTimelineFixture("reasoning");
     const running = scenario !== "settled turn";
+    const hiddenTool = scenario === "expanded live group followed by a hidden tool";
     const rowsInput = (
       timelineEntries: ReadonlyArray<TimelineEntry>,
       expandedWorkGroupIds?: ReadonlySet<string>,
@@ -4041,25 +4043,24 @@ describe("streaming v2 row projection", () => {
       supportsConversationRollback: true,
       ...(expandedWorkGroupIds ? { expandedWorkGroupIds } : {}),
       ...(running ? {} : { expandedRunIds: new Set([source.runId]) }),
+      ...(hiddenTool ? { toolCallVisibility: "hideAll" as const } : {}),
     });
     const tool = source.visibleTurnItems.find((row) => row.item.id === "live-work")!;
+    const laterTool = (status: "running" | "completed") => ({
+      ...tool,
+      position: source.visibleTurnItems.length,
+      sourceItemId: TurnItemId.make("live-later-tool"),
+      item: {
+        ...tool.item,
+        id: TurnItemId.make("live-later-tool"),
+        ordinal: 8,
+        status,
+        ...(status === "running" ? { completedAt: null } : {}),
+      },
+    });
     let visibleTurnItems =
-      scenario === "thinking superseded by a running tool"
-        ? [
-            ...source.visibleTurnItems,
-            {
-              ...tool,
-              position: source.visibleTurnItems.length,
-              sourceItemId: TurnItemId.make("live-running-tool"),
-              item: {
-                ...tool.item,
-                id: TurnItemId.make("live-running-tool"),
-                ordinal: 8,
-                status: "running" as const,
-                completedAt: null,
-              },
-            },
-          ]
+      scenario === "thinking superseded by a running tool" || hiddenTool
+        ? [...source.visibleTurnItems, laterTool(hiddenTool ? "completed" : "running")]
         : // Alone in a settled group, the thought's text becomes the group summary.
           source.visibleTurnItems.filter((row) => running || row !== tool);
     visibleTurnItems = withStreamedText(
@@ -4076,7 +4077,7 @@ describe("streaming v2 row projection", () => {
       (row) => row.kind === "work-live",
     );
     const expanded =
-      scenario === "expanded live group" && liveRow?.kind === "work-live"
+      scenario.startsWith("expanded live group") && liveRow?.kind === "work-live"
         ? new Set([liveRow.groupId])
         : undefined;
     let projection = deriveMessagesTimelineRowsWithState(rowsInput(timeline.entries, expanded));
