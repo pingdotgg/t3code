@@ -30,6 +30,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as RelayClientLedger from "./RelayClientLedger.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -74,6 +75,7 @@ const runtimeDependencies = (
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
     secretStoreLayer,
+    RelayClientLedger.layerTest,
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
   ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
