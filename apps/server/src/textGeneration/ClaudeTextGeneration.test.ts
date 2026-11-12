@@ -350,7 +350,33 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
   const apiError = "API Error: 400 Model blocked by guardrail: 4 endpoints excluded";
   const wrapperNotice = "Using the OpenRouter credential from the global credential file.";
+  const structuredOutputError = "Failed to provide valid structured output after 5 attempts";
+  const structuredOutputFailure = {
+    type: "result",
+    subtype: "error_max_structured_output_retries",
+    is_error: true,
+    errors: [structuredOutputError],
+  };
   it.effect.each([
+    [
+      "the errors list of a result with no result text",
+      JSON.stringify(structuredOutputFailure),
+      structuredOutputError,
+    ],
+    [
+      "the errors list from verbose output",
+      JSON.stringify([{ type: "system", subtype: "init" }, structuredOutputFailure]),
+      structuredOutputError,
+    ],
+    [
+      "the errors list without CLI telemetry",
+      JSON.stringify({
+        ...structuredOutputFailure,
+        subtype: "error_during_execution",
+        errors: ["[ede_diagnostic] result_type=user last_content_type=n/a", apiError],
+      }),
+      apiError,
+    ],
     [
       "the stdout error over a stderr notice",
       JSON.stringify({ is_error: true, api_error_status: 400, result: apiError }),
@@ -390,6 +416,27 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
 
         expect(error.detail).toBe(`Claude CLI command failed: ${expected}`);
       }),
+    ),
+  );
+
+  it.effect("does not report the raw result JSON when a failed run writes nothing to stderr", () =>
+    withFakeClaudeEnv(
+      { output: JSON.stringify(structuredOutputFailure), exitCode: 1 },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.detail).toBe(`Claude CLI command failed: ${structuredOutputError}`);
+        }),
     ),
   );
 });

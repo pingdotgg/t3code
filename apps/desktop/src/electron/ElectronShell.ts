@@ -1,5 +1,6 @@
 import { MAC_PERMISSION_SETTINGS_URLS } from "../permissions/MacPermission.ts";
 import {
+  isLocalEditorFileUrl,
   REMOTE_CAPABLE_EDITOR_IDS,
   remoteSchemeForEditor,
   type SystemSettingsPane,
@@ -11,7 +12,7 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
-// Remote editor deep links must reach the OS handler.
+// Remote editor deep links and local editor file links must reach the OS handler.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const REMOTE_EDITOR_PROTOCOLS = new Set(
   REMOTE_CAPABLE_EDITOR_IDS.flatMap((id) => {
@@ -19,6 +20,10 @@ const REMOTE_EDITOR_PROTOCOLS = new Set(
     return scheme === undefined ? [] : [`${scheme}:`];
   }),
 );
+
+// "Use T3 Code in another app" opens these apps (apps/web/src/components/mcp/mcpApps.ts). List
+// each exact link shape the wizard sends, never a whole scheme.
+const APP_LAUNCH_URLS = new Set(["grokbot://app"]);
 
 // Zed embeds [user@]host in the path; reject passwords and ports there.
 const ZED_SSH_PATHNAME = /^\/(?:[^/@:]+@)?[^/@:]+\/.*$/;
@@ -44,7 +49,10 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
 
   try {
     const url = new URL(rawUrl);
-    return SAFE_WEB_PROTOCOLS.has(url.protocol) || isRemoteEditorUrl(url)
+    return SAFE_WEB_PROTOCOLS.has(url.protocol) ||
+      APP_LAUNCH_URLS.has(url.href) ||
+      isRemoteEditorUrl(url) ||
+      isLocalEditorFileUrl(url)
       ? Option.some(url.href)
       : Option.none();
   } catch {

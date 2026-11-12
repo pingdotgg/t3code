@@ -91,7 +91,7 @@ describe("MobilePreferencesStore", () => {
       const store = yield* MobilePreferences.MobilePreferencesStore;
       yield* Effect.all(
         [
-          store.savePatch({ planModeEnabled: true }),
+          store.savePatch({ mathRenderingEnabled: true }),
           store.update((current) => ({
             collapsedProjectGroups: [...(current.collapsedProjectGroups ?? []), "a"],
           })),
@@ -103,7 +103,7 @@ describe("MobilePreferencesStore", () => {
       );
 
       expect(storage.stored()).toEqual(
-        Option.some({ planModeEnabled: true, collapsedProjectGroups: ["a", "b"] }),
+        Option.some({ mathRenderingEnabled: true, collapsedProjectGroups: ["a", "b"] }),
       );
       expect(storage.databaseLoads()).toBe(1);
     }).pipe(Effect.provide(storage.layer));
@@ -115,9 +115,9 @@ describe("MobilePreferencesStore", () => {
       const storage = makeStorage();
       return Effect.gen(function* () {
         const store = yield* MobilePreferences.MobilePreferencesStore;
-        const preferences = { planModeEnabled: true, workingShelfEnabled: true };
+        const preferences = { mathRenderingEnabled: true, workingShelfEnabled: true };
         if (path === "update") {
-          yield* store.savePatch({ planModeEnabled: true });
+          yield* store.savePatch({ mathRenderingEnabled: true });
         } else if (path === "fallback") {
           storage.secure.set(
             FALLBACK_KEY,
@@ -163,19 +163,21 @@ describe("MobilePreferencesStore", () => {
 
   it.effect("does not reuse a load that could not read the database", () => {
     const storage = makeStorage();
-    storage.setStored({ planModeEnabled: true }, 100);
+    storage.setStored({ mathRenderingEnabled: true }, 100);
     storage.secure.set(
       FALLBACK_KEY,
-      JSON.stringify({ payload: JSON.stringify({ planModeEnabled: false }), updatedAt: 50 }),
+      JSON.stringify({ payload: JSON.stringify({ mathRenderingEnabled: false }), updatedAt: 50 }),
     );
     return Effect.gen(function* () {
       const store = yield* MobilePreferences.MobilePreferencesStore;
       storage.failDatabaseLoad(true);
-      expect(yield* store.load).toEqual({ planModeEnabled: false });
+      expect(yield* store.load).toEqual({ mathRenderingEnabled: false });
 
       storage.failDatabaseLoad(false);
       yield* store.savePatch({ codeWordBreak: true });
-      expect(storage.stored()).toEqual(Option.some({ planModeEnabled: true, codeWordBreak: true }));
+      expect(storage.stored()).toEqual(
+        Option.some({ mathRenderingEnabled: true, codeWordBreak: true }),
+      );
     }).pipe(Effect.provide(storage.layer));
   });
 });
