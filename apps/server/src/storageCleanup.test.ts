@@ -206,6 +206,13 @@ describe("V2 storage cleanup eligibility", () => {
       idle: false,
     },
     {
+      name: "never armed because its reset is days overdue",
+      armed: false,
+      autoResumeSetting: true,
+      resetIn: -5 * DAY_MS,
+      idle: true,
+    },
+    {
       name: "not armed with recovery settings off",
       armed: false,
       settingsOff: true,
