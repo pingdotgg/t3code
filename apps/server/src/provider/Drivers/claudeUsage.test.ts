@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { parseRateTable, priceUsage } from "../../usage/usagePricing.ts";
 import { claudeUsageFormat, parseClaudeLine } from "./claudeUsage.ts";
 
 function claudeLine(overrides: {
@@ -115,7 +116,8 @@ describe("Claude advisor iterations", () => {
             model: "claude-fable-5-1",
             input_tokens: 54204,
             cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0,
+            cache_creation_input_tokens: 500,
+            cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 300 },
             output_tokens: 4229,
           },
           {
@@ -160,10 +162,11 @@ describe("Claude advisor iterations", () => {
         totals: {
           uncachedInputTokens: 54204,
           cachedInputTokens: 0,
-          cacheCreationTokens: 0,
+          cacheCreationTokens: 500,
           outputTokens: 4229,
           reasoningTokens: 0,
         },
+        cacheCreation1hTokens: 300,
         dedupeKey: expect.any(String),
       },
     ];
@@ -214,5 +217,46 @@ describe("Claude advisor iterations", () => {
     ]);
 
     expect(parse(unusable).map((record) => record.model)).toEqual(["claude-opus-5-5"]);
+  });
+});
+
+describe("Claude cache write pricing", () => {
+  it("prices one-hour cache writes at the one-hour rate and the rest at the five-minute rate", () => {
+    const model = "claude-opus-4-5-20251101";
+    const rates = parseRateTable({
+      [model]: {
+        litellm_provider: "anthropic",
+        input_cost_per_token: 5e-6,
+        output_cost_per_token: 25e-6,
+        cache_read_input_token_cost: 5e-7,
+        cache_creation_input_token_cost: 6.25e-6,
+        cache_creation_input_token_cost_above_1hr: 1e-5,
+      },
+    });
+    const [record] = parseClaudeLine(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-08-07T04:05:13.944Z",
+        sessionId: "s",
+        message: {
+          id: "msg_ttl",
+          model,
+          usage: {
+            input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 1_000_000,
+            cache_creation: {
+              ephemeral_5m_input_tokens: 400_000,
+              ephemeral_1h_input_tokens: 600_000,
+            },
+            output_tokens: 0,
+          },
+        },
+      }),
+    );
+
+    if (record === undefined) throw new Error("expected a usage record");
+    // 0.4M x $6.25/M + 0.6M x $10/M
+    expect(priceUsage(rates, record).costUsd).toBeCloseTo(8.5, 9);
   });
 });
