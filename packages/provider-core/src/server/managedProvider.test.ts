@@ -787,12 +787,18 @@ describe("makeManagedServerProvider", () => {
           >({
             resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
             getSettings: Effect.succeed({ enabled: true, revision: 0 }),
-            streamSettings: Stream.fromPubSub(settingsChanges),
-            haveSettingsChanged: (previous, next) => {
-              seenRevisions.push(next.revision);
-              if (next.revision === 2) Deferred.doneUnsafe(markerApplied, Effect.void);
-              return previous.enabled !== next.enabled;
-            },
+            streamSettings: Stream.fromPubSub(settingsChanges).pipe(
+              // Observe settings delivery, not predicate calls made by quota invalidation.
+              // One element per chunk keeps the marker behind the preceding application.
+              Stream.rechunk(1),
+              Stream.tap((next) =>
+                Effect.gen(function* () {
+                  seenRevisions.push(next.revision);
+                  if (next.revision === 2) yield* Deferred.succeed(markerApplied, undefined);
+                }),
+              ),
+            ),
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
             initialSnapshot: () => Effect.succeed(initialSnapshot),
             // The credential is fixed (e.g. `codex login`) after the first, failed probe.
             checkProvider: Deferred.await(releaseInitialCheck).pipe(
