@@ -196,16 +196,18 @@ describe("AntigravityAdapterV2 compaction", () => {
                 )
               : Effect.void,
         });
-        const opening = yield* adapter.openSession({
-          threadId: ThreadId.make("thread-antigravity-compaction"),
-          providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
-          modelSelection: { instanceId, model: "gemini-test-low" },
-          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-          }),
-        }).pipe(Effect.forkScoped);
+        const opening = yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-antigravity-compaction"),
+            providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
+            modelSelection: { instanceId, model: "gemini-test-low" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.forkScoped);
         yield* Deferred.await(startupMilestone);
         yield* Deferred.succeed(consumeStartupCommands, undefined);
         const session = yield* Fiber.join(opening);
