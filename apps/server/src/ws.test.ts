@@ -149,6 +149,7 @@ import * as EventSink from "./orchestration-v2/EventSink.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { projectIdentitiesDigest } from "./orchestration-v2/ShellStream.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -1980,41 +1981,123 @@ it.effect.each(["thread", "shell"] as const)(
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
-// A thread idle since before the boundary missed nothing; resuming must not resend its body.
-it.effect("thread resume at its own high-water below the pruned boundary skips the snapshot", () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const now = "2026-10-13T00:00:00.000Z";
-    const threadId = ThreadId.make("thread:idle");
-    const [last] = yield* sql<{ sequence: number }>`
-      INSERT INTO orchestration_events (
-        event_id, aggregate_kind, stream_id, stream_version, event_type,
-        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
-      ) VALUES (
-        'idle:0', 'thread', ${threadId}, 0, 'provider-session.detached',
-        ${now}, 'server', ${JSON.stringify({ providerSessionId: "session:idle", detachedAt: now })},
-        '{}', 2
-      ) RETURNING sequence
-    `;
-    yield* sql`
-      INSERT INTO orchestration_v2_projection_metadata (
-        projection_name, schema_version, last_sequence, updated_at
-      ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${last!.sequence + 10}, ${now})
-    `;
-    const exit = yield* subscribeOrchestrationV2Thread({
-      threadId,
-      afterSequence: last!.sequence,
-    }).pipe(
-      Effect.provideService(ThreadManagement.ThreadManagementService, {
-        ensureLegacyTranscript: () => Effect.void,
-        getThreadSnapshot: () => Effect.die("snapshot"),
-        streamStoredEventsFrom: () => Stream.empty,
-      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
-      Effect.exit,
-    );
-    // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
-    assert.isTrue(Exit.isSuccess(exit));
-  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+// A cursor at the high-water missed nothing, even below the boundary; resuming must not resend
+// a snapshot. The shell cases are a client that just loaded the HTTP snapshot of a pruned
+// database: it gets the marker, and the project identities only when it does not name them.
+it.effect.each([
+  { scope: "thread", knowsIdentities: false, isRepository: true, kinds: [] },
+  {
+    scope: "shell",
+    knowsIdentities: false,
+    isRepository: true,
+    kinds: ["snapshot", "synchronized"],
+  },
+  { scope: "shell", knowsIdentities: true, isRepository: true, kinds: ["synchronized"] },
+  // The client keeps a cached identity over an absent one, so "resolved to none" still goes out.
+  {
+    scope: "shell",
+    knowsIdentities: true,
+    isRepository: false,
+    kinds: ["snapshot", "synchronized"],
+  },
+] as const)(
+  "$scope resume at its own high-water below the pruned boundary skips the snapshot (knows identities: $knowsIdentities, repository: $isRepository)",
+  ({ scope, knowsIdentities, isRepository, kinds }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-10-13T00:00:00.000Z";
+      const threadId = ThreadId.make("thread:idle");
+      const [last] = yield* sql<{ sequence: number }>`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          'idle:0', 'thread', ${threadId}, 0, 'provider-session.detached',
+          ${now}, 'server', ${JSON.stringify({ providerSessionId: "session:idle", detachedAt: now })},
+          '{}', 2
+        ) RETURNING sequence
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_metadata (
+          projection_name, schema_version, last_sequence, updated_at
+        ) VALUES (${OrchestrationEventStore.EVENT_LOG_PRUNED_THROUGH}, 2, ${last!.sequence + 10}, ${now})
+      `;
+      const identity = isRepository
+        ? ({
+            canonicalKey: "github.com/t3/idle",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "git@github.com:t3/idle",
+            },
+          } as const)
+        : null;
+      const project = {
+        id: ProjectId.make("project:idle"),
+        title: "Idle",
+        workspaceRoot: "/tmp/idle",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      } satisfies OrchestrationProjectShell;
+      const subscription = Effect.gen(function* () {
+        if (scope === "thread") {
+          return yield* subscribeOrchestrationV2Thread({
+            threadId,
+            afterSequence: last!.sequence,
+          }).pipe(Effect.as([]));
+        }
+        const stream = yield* subscribeOrchestrationV2Shell({
+          afterSequence: last!.sequence,
+          requestCompletionMarker: true,
+          ...(knowsIdentities
+            ? {
+                knownProjectIdentities: projectIdentitiesDigest([
+                  { ...project, repositoryIdentity: identity },
+                ]),
+              }
+            : {}),
+        });
+        return yield* stream.pipe(
+          Stream.takeUntil((item) => item.kind === "synchronized"),
+          Stream.map((item) => item.kind),
+          Stream.runCollect,
+        );
+      });
+      const exit = yield* subscription.pipe(
+        Effect.provideService(ThreadManagement.ThreadManagementService, {
+          ensureLegacyTranscript: () => Effect.void,
+          getThreadSnapshot: () => Effect.die("snapshot"),
+          listActiveShellIndex: () => Effect.die("snapshot"),
+          readShellSnapshot: () => Effect.die("snapshot"),
+          listActiveSubagentThreadIds: () => Effect.succeed([]),
+          streamStoredEventsFrom: () => Stream.empty,
+        } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+        Effect.provideService(ProjectStore.ProjectStoreV2, {
+          listShells: () => Effect.succeed([project]),
+        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+        Effect.provideService(
+          ProjectService.ProjectService,
+          {} as ProjectService.ProjectService["Service"],
+        ),
+        Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
+          subscribeChanges: PubSub.subscribe(yield* PubSub.unbounded()),
+          getAvailable: () =>
+            Effect.succeed({
+              repositoryIdentity: identity,
+              faviconPath: null,
+              repositoryIdentityResolved: true,
+            }),
+        } as unknown as ProjectEnrichment.ProjectEnrichmentService["Service"]),
+        Effect.exit,
+      );
+      // A snapshot load dies with "snapshot", so success means the resume replayed nothing.
+      assert.deepEqual(
+        Exit.isFailure(exit) ? Cause.squash(exit.cause) : Array.from(exit.value),
+        kinds,
+      );
+    }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
 const acpDriver = ProviderDriverKind.make("acpRegistry");

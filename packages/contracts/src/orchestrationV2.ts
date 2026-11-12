@@ -2292,6 +2292,22 @@ export const OrchestrationV2ShellSnapshot = Schema.Struct({
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
+/** The HTTP shell snapshot. `projectIdentities` names its repository identities; see `knownProjectIdentities`. */
+export const OrchestrationV2ShellHttpSnapshot = Schema.Struct({
+  ...OrchestrationV2ShellSnapshot.fields,
+  projectIdentities: Schema.optionalKey(Schema.String),
+});
+export type OrchestrationV2ShellHttpSnapshot = typeof OrchestrationV2ShellHttpSnapshot.Type;
+
+/**
+ * The HTTP shell route's answer to `resumeFrom` when the socket can replay from that cursor:
+ * the client keeps its rows and subscribes from the cursor.
+ */
+export const OrchestrationV2ShellResumable = Schema.Struct({
+  resumable: Schema.Literal(true),
+});
+export type OrchestrationV2ShellResumable = typeof OrchestrationV2ShellResumable.Type;
+
 export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("synchronized"),
@@ -3792,6 +3808,11 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
    * a socket snapshot, which clients without transport compression download over gzip HTTP.
    */
   httpSnapshotFallback: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * The `projectIdentities` of the HTTP snapshot whose cursor is `afterSequence`, when the client
+   * changed nothing since. A resume that still has the same identities does not resend them.
+   */
+  knownProjectIdentities: Schema.optionalKey(Schema.String),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
    * Snapshots leave out idle subagent children; read them with `getThreadFamily`. Send only to
