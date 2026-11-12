@@ -430,6 +430,16 @@ describe("v2 thread shell lists", () => {
         .get(threads.navigationThreadShellsAtom)
         .map((thread) => `${thread.environmentId}/${thread.id}`),
     ).toEqual([]);
+    // The parent might instead be archived or deleted, so a task still at work stays listed.
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...task, status: "running", activityRunStatus: "running" }],
+    });
+    expect(
+      registry
+        .get(threads.navigationThreadShellsAtom)
+        .map((thread) => `${thread.environmentId}/${thread.id}`),
+    ).toEqual([`${remoteEnvironmentId}/${task.id}`]);
     dispose();
     registry.dispose();
   });

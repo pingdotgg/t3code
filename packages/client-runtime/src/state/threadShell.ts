@@ -687,8 +687,10 @@ export function createEnvironmentThreadShellAtoms(input: {
           // An archived parent leaves navigation; its task there stays listed on its own.
           parentShell !== undefined
             ? parentShell.archivedAt === null
-            : // A parent missing from a snapshot that left out older settled threads is most
-              // likely one of them; an archived or deleted one looks the same from here.
+            : // A missing parent may be an older settled thread the snapshot left out, or an
+              // archived or deleted one. Only an idle task is nested then, so live work stays listed.
+              !isChildRunLive(thread) &&
+              thread.pendingRuntimeRequest == null &&
               get(environmentOmitsOlderSettledAtom(parent.environmentId))
         ) {
           next.add(threadKey({ environmentId, threadId: thread.id }));
