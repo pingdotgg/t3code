@@ -124,3 +124,51 @@ it.effect("lists commands that Claude Code mods register in a session.start hook
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("falls back to a scan without hooks when hooks keep Claude from initializing", () =>
+  Effect.gen(function* () {
+    const hooksDisabled: Array<boolean> = [];
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      const settings = options?.settings;
+      const disabled = typeof settings === "object" && settings.disableAllHooks === true;
+      hooksDisabled.push(disabled);
+      return {
+        initializationResult: async () => {
+          if (!disabled) throw new Error("SessionStart hook timed out");
+          return {
+            account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+            commands: [{ name: "review", description: "Review changes", argumentHint: "" }],
+            models: [],
+          };
+        },
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped();
+    const settings = yield* decodeClaudeSettings({ binaryPath: "claude" });
+    const machineSnapshot = { skills: [], slashCommands: [] } as unknown as ServerProvider;
+    const environment = {
+      PATH: (yield* HostProcess.Environment).PATH,
+      HOME: cwd,
+      CLAUDE_CONFIG_DIR: cwd,
+    };
+    const snapshot = yield* probeClaudeWorkspaceSnapshot(
+      settings,
+      machineSnapshot,
+      cwd,
+      environment,
+    );
+    assert.deepEqual(hooksDisabled, [false, true]);
+    assert.include(
+      snapshot.slashCommands.map((command) => command.name),
+      "review",
+    );
+    assert.strictEqual(snapshot.slashCommandsPending, false);
+
+    // Callers without orchestration:operate never run hooks.
+    hooksDisabled.length = 0;
+    yield* probeClaudeWorkspaceSnapshot(settings, machineSnapshot, cwd, environment, false);
+    assert.deepEqual(hooksDisabled, [true]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

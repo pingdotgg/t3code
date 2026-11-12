@@ -2415,6 +2415,7 @@ export const layerWsRpc = (
                   cwd: input.cwd,
                   scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
                   fresh: input.fresh === true,
+                  runHooks: currentSession.scopes.includes(AuthOrchestrationOperateScope),
                 })
               : input.reloadSecrets === true
                 ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)

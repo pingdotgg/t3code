@@ -239,8 +239,8 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
-    // Health checks skip hooks so SessionStart does not run on every refresh. Workspace scans
-    // keep them: Claude Code mods register their slash commands in a session.start hook.
+    // Health checks skip hooks so SessionStart does not run on every refresh. Operator workspace
+    // scans run them: Claude Code mods register their slash commands in a session.start hook.
     settings: input.disableHooks ? { disableAllHooks: true } : {},
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
@@ -446,6 +446,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeStatus = true,
+  runHooks = false,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -478,7 +479,7 @@ const probeClaudeCapabilities = (
             environment: claudeEnvironment,
             cwd,
             managedMcpConfig,
-            disableHooks: includeStatus,
+            disableHooks: !runHooks,
           }),
         });
         const init = await q.initializationResult();
@@ -588,15 +589,18 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   machineSnapshot: ServerProvider,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  runHooks = true,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
   const fileSystem = yield* FileSystem.FileSystem;
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
-  const probeResult = cwdExists
-    ? yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(Effect.result)
-    : undefined;
+  const probe = (withHooks: boolean) =>
+    probeClaudeCapabilities(claudeSettings, environment, cwd, false, withHooks).pipe(Effect.result);
+  let probeResult = cwdExists ? yield* probe(runHooks) : undefined;
+  // A slow or failing SessionStart hook must not cost the commands a hookless scan finds.
+  if (runHooks && probeResult && Result.isFailure(probeResult)) probeResult = yield* probe(false);
   const capabilities =
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   return {

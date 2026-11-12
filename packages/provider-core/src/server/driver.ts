@@ -47,6 +47,8 @@ export interface ProviderInstance {
   readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
     cwd: string,
+    /** `runHooks` lets the scan run the provider's own startup hooks; only operators may ask. */
+    options?: { readonly runHooks?: boolean },
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;

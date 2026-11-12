@@ -82,6 +82,8 @@ export class ProviderRegistry extends Context.Service<
       /** Directory the driver scans; the snapshot stays keyed by `cwd`. Defaults to `cwd`. */
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      /** The caller may run provider startup hooks during the scan (orchestration:operate). */
+      readonly runHooks?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /**
@@ -471,6 +473,9 @@ export const layer = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
+    // A scan without hooks can miss hook-registered commands, so it never satisfies a hook scan.
+    const hooklessScanTokens = new WeakSet<Deferred.Deferred<void>>();
+    const hooklessSnapshots = new Set<string>();
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -1013,6 +1018,7 @@ export const layer = Layer.effect(
       readonly cwd: string;
       readonly scanCwd?: string;
       readonly fresh?: boolean;
+      readonly runHooks?: boolean;
     }) {
       if (input.fresh) {
         yield* updateProviders((providers) =>
@@ -1028,12 +1034,14 @@ export const layer = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
+      const snapshotKey = `${input.instanceId}\u0000${input.cwd}`;
       const now = yield* DateTime.now;
       if (
         !provider ||
         !provider.enabled ||
         (!input.fresh &&
           scannedFrom &&
+          !(input.runHooks && hooklessSnapshots.has(snapshotKey)) &&
           !isProviderWorkspaceSnapshotPending(scannedFrom) &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
       ) {
@@ -1045,6 +1053,7 @@ export const layer = Layer.effect(
       const snapshotForCwd = instance?.snapshotForCwd;
       if (!instance || !snapshotForCwd) return providers;
       const token = yield* Deferred.make<void>();
+      if (!input.runHooks) hooklessScanTokens.add(token);
       // A machine refresh can change this cwd's snapshot, so the scan publishes against the result.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
@@ -1059,10 +1068,13 @@ export const layer = Layer.effect(
         : Effect.succeed(scannedFrom);
       const runScan = refreshMachineSnapshot.pipe(
         Effect.flatMap((scanBase) =>
-          Effect.map(snapshotForCwd(input.scanCwd ?? input.cwd), (scopedSnapshot) => ({
-            scanBase,
-            scopedSnapshot,
-          })),
+          Effect.map(
+            snapshotForCwd(input.scanCwd ?? input.cwd, { runHooks: input.runHooks === true }),
+            (scopedSnapshot) => ({
+              scanBase,
+              scopedSnapshot,
+            }),
+          ),
         ),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
         Effect.flatMap(({ scanBase, scopedSnapshot }) =>
@@ -1074,6 +1086,8 @@ export const layer = Layer.effect(
                 if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
                   return currentProviders;
                 }
+                if (input.runHooks) hooklessSnapshots.delete(snapshotKey);
+                else hooklessSnapshots.add(snapshotKey);
                 return currentProviders.map((candidate) =>
                   candidate.instanceId === input.instanceId &&
                   Equal.equals(workspaceSnapshotOf(candidate), scanBase)
@@ -1110,7 +1124,9 @@ export const layer = Layer.effect(
           const inFlight = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
             const current = refreshes.get(instance);
             const running = current?.get(input.cwd);
-            if (!input.fresh && running) return [running, refreshes] as const;
+            if (!input.fresh && running && !(input.runHooks && hooklessScanTokens.has(running))) {
+              return [running, refreshes] as const;
+            }
             const next = new Map(refreshes);
             next.set(instance, new Map(current).set(input.cwd, token));
             return [undefined, next] as const;
