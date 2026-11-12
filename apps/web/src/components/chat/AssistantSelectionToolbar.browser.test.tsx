@@ -236,7 +236,6 @@ function InputHarness({ viewport, onCancel }: { viewport: HTMLElement; onCancel:
       {editor ? (
         <AssistantCitationChip
           citation={editor.citation}
-          composer
           commentEditor={{
             open: true,
             sourceAnchor: editor.anchor,
