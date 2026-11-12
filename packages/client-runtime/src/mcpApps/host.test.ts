@@ -203,10 +203,12 @@ describe("makeMcpAppHost", () => {
   });
 
   it("proxies tools/call and reports a refusal as a JSON-RPC error", async () => {
+    const received: unknown[] = [];
     const { host, sent } = setup({
       callTool: async (input) => {
         if (input.name === "delete_everything")
           throw new McpAppHostRefusal({ message: "Declined by the user." });
+        received.push(input.arguments);
         return { content: [], structuredContent: { ok: true } };
       },
     });
@@ -217,7 +219,18 @@ describe("makeMcpAppHost", () => {
       method: "tools/call",
       params: { name: "delete_everything", arguments: {} },
     });
+    // postMessage's structured clone keeps undefined properties, which JSON cannot carry.
+    host.receive({
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: {
+        name: "poll",
+        arguments: { since: undefined, nested: { a: undefined, b: 1 }, list: [1, undefined] },
+      },
+    });
     await flush();
+    expect(received).toStrictEqual([{}, { nested: { b: 1 }, list: [1, null] }]);
     expect(sent).toContainEqual({
       jsonrpc: "2.0",
       id: 7,
@@ -240,8 +253,14 @@ describe("makeMcpAppHost", () => {
     });
     host.receive({ jsonrpc: "2.0", id: 3, method: "sampling/createMessage", params: {} });
     host.receive({ jsonrpc: "2.0", id: 4, method: "ui/message", params: { role: "assistant" } });
+    host.receive({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "poll", arguments: { since: 1n } },
+    });
     expect(sent.map((message) => (message.error as { code: number }).code)).toEqual([
-      -32602, -32601, -32602,
+      -32602, -32601, -32602, -32602,
     ]);
   });
 
@@ -325,7 +344,10 @@ describe("makeMcpAppHost", () => {
       jsonrpc: "2.0",
       id: 1,
       method: "ui/update-model-context",
-      params: { content: [{ type: "text", text: "2 overdue" }], structuredContent: { overdue: 2 } },
+      params: {
+        content: [{ type: "text", text: "2 overdue" }],
+        structuredContent: { overdue: 2, since: undefined },
+      },
     });
     const embedded = {
       type: "resource",
@@ -347,7 +369,7 @@ describe("makeMcpAppHost", () => {
     });
     host.receive({ jsonrpc: "2.0", id: 4, method: "ui/download-file", params: { contents: [{}] } });
     await flush();
-    expect(contexts).toEqual([
+    expect(contexts).toStrictEqual([
       { content: [{ type: "text", text: "2 overdue" }], structuredContent: { overdue: 2 } },
     ]);
     expect(downloads[0]).toEqual([
