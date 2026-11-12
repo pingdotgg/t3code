@@ -109,7 +109,7 @@ function UserFilePreview(props: useRender.ComponentProps<"button">) {
       {
         type: "button",
         className:
-          "group/file focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-control text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none",
+          "group/file hover:surface-ghost-hover focus-visible:ring-ring flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-control text-left focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none",
       },
       props,
     ),
@@ -305,7 +305,7 @@ function AutomationMessageToggle(props: useRender.ComponentProps<"button">) {
       {
         type: "button",
         className:
-          "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-pane px-3.5 py-2.5 text-left text-body focus-visible:outline-2 focus-visible:outline-ring",
+          "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-pane px-3.5 py-2.5 text-left text-body hover:surface-ghost-hover focus-visible:outline-2 focus-visible:outline-ring",
       },
       props,
     ),
