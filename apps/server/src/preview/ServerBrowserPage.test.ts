@@ -128,7 +128,7 @@ describe("server browser element refs", () => {
     const hidden = await failure("button");
     expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
     expect(hidden.message).toBe(
-      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout. Playwright last saw: element is not visible.',
     );
     await page.setContent(`<button id="save" disabled>Save</button>`);
     const disabled = await failure("#save");
@@ -145,7 +145,7 @@ describe("server browser element refs", () => {
     await expect(
       ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 2_000 }),
     ).rejects.toThrow();
-    expect(await page.evaluate(() => document.body.dataset.clicked)).toBeUndefined();
+    expect(await page.locator("body").getAttribute("data-clicked")).toBeNull();
   });
 
   it("does not retarget a removed ref to a replacement node", async () => {
