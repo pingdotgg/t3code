@@ -2495,31 +2495,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { env },
         );
       } else {
-        const mergeHeadPath = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
+        const inProgressHeads = [
+          { head: "MERGE_HEAD", operation: "merge" },
+          { head: "CHERRY_PICK_HEAD", operation: "cherry-pick" },
+          { head: "REVERT_HEAD", operation: "revert" },
+        ] as const;
+        const headPaths = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
           "rev-parse",
-          "--git-path",
-          "MERGE_HEAD",
+          ...inProgressHeads.flatMap(({ head }) => ["--git-path", head]),
         ]);
-        const isMerging = yield* fileSystem.exists(path.resolve(cwd, mergeHeadPath.trim())).pipe(
+        const resolvedHeadPaths = headPaths.trim().split("\n");
+        const inProgress = yield* Effect.findFirst(inProgressHeads, (_, index) =>
+          fileSystem.exists(path.resolve(cwd, resolvedHeadPaths[index] ?? "")),
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new GitCommandError({
                 operation: "GitVcsDriver.commit.mergeHead",
                 command: "git commit",
                 cwd,
-                detail: "Could not check whether a merge is in progress.",
+                detail: "Could not check whether a merge, cherry-pick or revert is in progress.",
                 cause,
               }),
           ),
         );
-        // Like git commit --only, reject partial merges before reset can discard their ancestry.
-        if (isMerging) {
+        // Like git commit --only, reject partial commits before reset can discard their state.
+        if (Option.isSome(inProgress)) {
+          const { operation } = inProgress.value;
           return yield* new GitCommandError({
             operation: "GitVcsDriver.commit",
             command: "git commit",
             cwd,
-            detail:
-              "Cannot commit selected files during a merge. Commit all files to finish the merge.",
+            detail: `Cannot commit selected files during a ${operation}. Commit all files to finish the ${operation}.`,
           });
         }
         yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
