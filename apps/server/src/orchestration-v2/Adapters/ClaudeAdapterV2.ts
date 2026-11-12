@@ -97,6 +97,7 @@ import {
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
   isCompactionCommandMessage,
+  parseGoalCommand,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -2551,18 +2552,22 @@ export function makeClaudeUserMessage(input: {
   // Keep the whole request before that block; see ClaudeSkillDispatch.
   const dispatch =
     input.skills === undefined ? undefined : planClaudeSkillDispatch(input.text, input.skills);
+  // Claude runs `/goal` only when it opens the prompt, so a goal stays one block.
+  const isGoalCommand = parseGoalCommand({ text: input.text }) !== null;
   return {
     type: "user",
     message: {
       role: "user",
-      content: dispatch
-        ? [
-            ...(dispatch.leadingText === undefined
-              ? []
-              : [{ type: "text" as const, text: dispatch.leadingText }]),
-            { type: "text" as const, text: dispatch.commandText },
-          ]
-        : input.text,
+      content: isGoalCommand
+        ? (dispatch?.leadingText ?? input.text)
+        : dispatch
+          ? [
+              ...(dispatch.leadingText === undefined
+                ? []
+                : [{ type: "text" as const, text: dispatch.leadingText }]),
+              { type: "text" as const, text: dispatch.commandText },
+            ]
+          : input.text,
     },
     parent_tool_use_id: null,
     ...(input.priority === undefined ? {} : { priority: input.priority }),
