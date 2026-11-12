@@ -6571,8 +6571,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           nodeId: null,
         })),
       });
-      // Only these runs can hide rows, and only rows of these types, so the hidden rows are
-      // found without reading the thread. A null type means every row of the run.
+      // Only these runs can hide rows: every row of a rolled-back run, the queued turn of a
+      // cancelled run, and the stop result of a replaced attempt. So the hidden rows are found
+      // without reading the thread.
       const stoppedRuns = new Set(stopRequests.map((row) => row.run_id));
       const runsWithStatus = (status: "rolled_back" | "cancelled") =>
         records.runs.flatMap((run) => (run.status === status ? [String(run.id)] : []));
@@ -6581,39 +6582,50 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const steered = [...new Set(superseded.map((attempt) => String(attempt.runId)))].filter(
         (runId) => !stoppedRuns.has(runId) && !rolledBack.includes(runId),
       );
-      const hidden =
-        rolledBack.length + cancelled.length + steered.length === 0
-          ? []
-          : (yield* sql<{
-              turn_item_id: string;
-              run_id: string;
-              node_id: string | null;
-              type: OrchestrationV2TurnItem["type"];
-              ordinal: number;
-              input_intent: NonNullable<TimelineIndexItem["inputIntent"]> | null;
-            }>`
-              SELECT item.turn_item_id, item.run_id, item.node_id, item.type, item.ordinal,
-                CASE WHEN item.type = 'user_message'
-                  THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent
-              FROM (
-                SELECT value AS run_id, NULL AS type FROM json_each(${encodeIdList(rolledBack)})
-                UNION ALL
-                SELECT value, 'user_message' FROM json_each(${encodeIdList(cancelled)})
-                UNION ALL
-                SELECT value, 'run_interrupt_result' FROM json_each(${encodeIdList(steered)})
-              ) AS wanted
+      type HiddenCandidate = {
+        turn_item_id: string;
+        run_id: string;
+        node_id: string | null;
+        type: OrchestrationV2TurnItem["type"];
+        ordinal: number;
+        input_intent: NonNullable<TimelineIndexItem["inputIntent"]> | null;
+      };
+      const candidateColumns = sql`item.turn_item_id, item.run_id, item.node_id, item.type,
+        item.ordinal, CASE WHEN item.type = 'user_message'
+          THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent`;
+      const [rolledBackRows, conversationRows] = yield* Effect.all([
+        rolledBack.length === 0
+          ? Effect.succeed([])
+          : sql<HiddenCandidate>`
+              SELECT ${candidateColumns}
+              FROM json_each(${encodeIdList(rolledBack)}) AS wanted
               CROSS JOIN orchestration_v2_projection_turn_items AS item
                 INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
-                ON item.thread_id = ${threadId} AND item.run_id = wanted.run_id
-              WHERE wanted.type IS NULL OR item.type = wanted.type`).filter(
-              (row) =>
-                !isVisible({
-                  type: row.type,
-                  runId: RunId.make(row.run_id),
-                  nodeId: row.node_id === null ? null : NodeId.make(row.node_id),
-                  ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
-                }),
-            );
+                ON item.thread_id = ${threadId} AND item.run_id = wanted.value`,
+        // The conversation index holds the type and run of these rows, so only the matches are
+        // fetched. Through the run index, every row of each cancelled run would be.
+        cancelled.length + steered.length === 0
+          ? Effect.succeed([])
+          : sql<HiddenCandidate>`
+              SELECT ${candidateColumns}
+              FROM orchestration_v2_projection_turn_items AS item
+                INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
+              WHERE item.thread_id = ${threadId}
+                AND item.type NOT IN ${CONVERSATION_INDEX_EXCLUDED_TYPES}
+                AND ((item.type = 'user_message'
+                    AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(cancelled)})))
+                  OR (item.type = 'run_interrupt_result'
+                    AND item.run_id IN (SELECT value FROM json_each(${encodeIdList(steered)}))))`,
+      ]);
+      const hidden = [...rolledBackRows, ...conversationRows].filter(
+        (row) =>
+          !isVisible({
+            type: row.type,
+            runId: RunId.make(row.run_id),
+            nodeId: row.node_id === null ? null : NodeId.make(row.node_id),
+            ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
+          }),
+      );
       /** Counts the visible rows that sort before the given ordinal and item id. */
       const visibleBefore = Effect.fn("ProjectionStore.countVisibleTimelineRows")(function* (
         ordinal: number,
