@@ -416,7 +416,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   );
   await using screen = await render(withThread(true), { container });
   const marker = screen.getByRole("button", { name: "Resolved conversation", exact: true });
-  const card = (state: string) => screen.getByRole("button", { name: `${state} · 1 comment` });
+  const card = (state: string) => screen.getByRole("button", { name: `${state}, 1 comment` });
   const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
 
   await expect.element(marker).toHaveAttribute("aria-expanded", "false");
