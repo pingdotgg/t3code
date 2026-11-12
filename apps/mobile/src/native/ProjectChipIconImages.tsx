@@ -1,5 +1,6 @@
 import type { ProjectIconColor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { useRef, useSyncExternalStore } from "react";
 import { Platform, View } from "react-native";
@@ -68,11 +69,22 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
+class ProjectGlyphRasterizeError extends Schema.TaggedError<ProjectGlyphRasterizeError>()(
+  "ProjectGlyphRasterizeError",
+  { key: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not rasterize the project glyph ${this.key}.`;
+  }
+}
+
 export const projectGlyphImageAtom = Atom.family((key: string) =>
-  Atom.make(Effect.tryPromise(() => rasterize(key))).pipe(
-    Atom.keepAlive,
-    Atom.withLabel(`mobile-project-glyph-image:${key}`),
-  ),
+  Atom.make(
+    Effect.tryPromise({
+      try: () => rasterize(key),
+      catch: (cause) => new ProjectGlyphRasterizeError({ key, cause }),
+    }),
+  ).pipe(Atom.keepAlive, Atom.withLabel(`mobile-project-glyph-image:${key}`)),
 );
 
 export function ProjectChipIconRasterizer() {

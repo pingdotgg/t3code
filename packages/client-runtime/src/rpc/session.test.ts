@@ -5,9 +5,11 @@ import {
   type ServerConfig as ServerConfigType,
   ServerConfigStreamEvent,
   type ServerConfigStreamEvent as ServerConfigStreamEventType,
+  ServerProvider,
   WS_METHODS,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -21,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -182,6 +185,18 @@ const SOURCE_SERVER_CONFIG: ServerConfigType = {
     capabilities: { ...THEME_SERVER_CONFIG.environment.capabilities, usageLimitSources: true },
   },
 };
+const PROVIDER = Schema.decodeSync(ServerProvider)({
+  instanceId: "codex",
+  driver: "codex",
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-04-10T00:00:00.000Z",
+  models: [{ slug: "gpt", name: "GPT", isCustom: false, capabilities: null }],
+  slashCommands: [{ name: "compact" }],
+});
 const SOURCE_EVENT: ServerConfigStreamEventType = {
   version: 1,
   type: "usageLimitSourcesUpdated",
@@ -275,6 +290,36 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      const request = yield* awaitRequest(socket);
+      // Multi-byte text, so parts must be sized in UTF-8 bytes and never split a surrogate pair.
+      const config = { ...SERVER_CONFIG, cwd: "/" + "é€😀x".repeat(32 * 1024) };
+      const frame = encodeJson({
+        _tag: "Chunk",
+        requestId: request.id,
+        values: [{ version: 1, type: "snapshot", config: encodeServerConfig(config) }],
+      });
+      const parts = new URL(socket.url).searchParams.has("frameParts")
+        ? splitSocketFrame(frame)
+        : [frame];
+
+      for (const part of parts) {
+        const bytes = new TextEncoder().encode(part);
+        yield* TestClock.adjust((bytes.length / 4000) * 1000);
+        socket.serverMessage(new TextDecoder().decode(bytes));
+      }
+      yield* Fiber.join(readyFiber);
+
+      expect(yield* session.initialConfig).toEqual(config);
+    }),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -282,7 +327,7 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(PREPARED.socketUrl);
+      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1`);
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
@@ -372,6 +417,38 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
+  it.effect("ends a stream at once when its socket closes", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+      // Like the supervisor: the closed session interrupts its streams, and a
+      // stream interrupt must not wait for a socket that is gone.
+      const ended = yield* Effect.forkChild(
+        Effect.raceFirst(
+          Effect.flip(session.closed),
+          session.client[WS_METHODS.subscribeServerLifecycle]({}).pipe(
+            Stream.runDrain,
+            Effect.andThen(Effect.never),
+          ),
+        ),
+      );
+      yield* awaitRequest(socket, 1);
+      socket.close(1006);
+      yield* TestClock.adjust("999 millis");
+
+      expect(ended.pollUnsafe()).toBeDefined();
+      // A request made after the close still fails instead of waiting forever.
+      const lateProbe = yield* Effect.forkChild(session.probe);
+      yield* TestClock.adjust("999 millis");
+      expect(lateProbe.pollUnsafe()?._tag).toBe("Failure");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("replays current config and broadcasts updates to every subscriber", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -447,7 +524,7 @@ describe("RpcSessionFactory", () => {
         yield* completeInitialConfig(socket, encodeServerConfig(SOURCE_SERVER_CONFIG), options);
         yield* Fiber.join(ready);
         const observed = yield* Queue.unbounded<ServerConfigStreamEventType>();
-        yield* session.subscribeServerConfig(options).pipe(
+        yield* session.subscribeServerConfig().pipe(
           Stream.runForEach((event) => Queue.offer(observed, event)),
           Effect.forkChild,
         );
@@ -609,10 +686,11 @@ describe("RpcSessionFactory", () => {
         const readyFiber = yield* Effect.forkChild(session.ready);
         const socket = yield* awaitSocket(sockets);
         socket.open();
-        yield* completeInitialConfig(socket, encodeServerConfig(SOURCE_SERVER_CONFIG), {
-          environmentThemes: true,
-          usageLimitSources: true,
-        });
+        yield* completeInitialConfig(
+          socket,
+          encodeServerConfig({ ...SOURCE_SERVER_CONFIG, providers: [PROVIDER] }),
+          { environmentThemes: true, usageLimitSources: true },
+        );
         yield* Fiber.join(readyFiber);
 
         const slowSubscriberStarted = yield* Deferred.make<void>();
@@ -672,7 +750,16 @@ describe("RpcSessionFactory", () => {
           SOURCE_EVENT,
           { version: 1, type: "usageLimitSourcesUpdated", payload: { sources: [] } },
         ];
-        const allEvents = [...themeEvents, ...sourceEvents, ...settingsEvents];
+        // A delta carries no lists; a subscriber that misses it must still get its result.
+        const { models: _models, slashCommands: _commands, skills: _skills, ...status } = PROVIDER;
+        const providerEvent: ServerConfigStreamEventType = {
+          version: 1,
+          type: "providerStatusDeltas",
+          payload: {
+            providers: [{ ...status, checkedAt: "2026-04-10T00:05:00.000Z", message: "Checked" }],
+          },
+        };
+        const allEvents = [providerEvent, ...themeEvents, ...sourceEvents, ...settingsEvents];
         const observedByFastSubscriber = yield* Queue.unbounded<ServerConfigStreamEventType>();
         yield* session
           .subscribeServerConfig({ environmentThemes: true, usageLimitSources: true })
@@ -694,6 +781,11 @@ describe("RpcSessionFactory", () => {
           "environmentThemesUpdated",
           "usageLimitSourcesUpdated",
         ]);
+        expect(recovered[1]).toMatchObject({
+          config: {
+            providers: [{ ...PROVIDER, checkedAt: "2026-04-10T00:05:00.000Z", message: "Checked" }],
+          },
+        });
         expect(recovered[2]).toMatchObject({ payload: { themes: [] } });
         expect(recovered[3]).toMatchObject({ payload: { sources: [] } });
 

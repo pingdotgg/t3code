@@ -1,20 +1,20 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Stripe from "alchemy/Stripe";
-import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Stripe from "@alchemy.run/stripe";
+import * as Test from "@alchemy.run/test/Bun";
 import {
   DeleteAccount,
   GetAccountByAccount,
   GetWebhookEndpoints,
   UpdateAccount,
 } from "@distilled.cloud/stripe/stripe";
-import { expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -49,9 +49,7 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
 
 const readMerchant = (base: string, id: string) =>
   Effect.gen(function* () {
-    const res = yield* HttpClient.execute(
-      HttpClientRequest.get(`${base}/merchants/${id}`),
-    );
+    const res = yield* HttpClient.execute(HttpClientRequest.get(`${base}/merchants/${id}`));
     expect(res.status).toBe(200);
     return (yield* res.json) as unknown as MerchantView;
   });
@@ -62,12 +60,8 @@ test(
     const { url } = yield* stack;
     expect(url).toBeString();
     const delivery = `${url.replace(/\/+$/, "")}/webhooks/stripe`;
-    const endpoints = yield* GetWebhookEndpoints({ limit: 100 }).pipe(
-      Effect.provide(StripeHttp),
-    );
-    const endpoint = endpoints.data.find(
-      (e) => e.url.replace(/\/+$/, "") === delivery,
-    );
+    const endpoints = yield* GetWebhookEndpoints({ limit: 100 }).pipe(Effect.provide(StripeHttp));
+    const endpoint = endpoints.data.find((e) => e.url.replace(/\/+$/, "") === delivery);
     expect(endpoint).toBeDefined();
     expect(endpoint?.enabled_events).toContain("account.updated");
   }),

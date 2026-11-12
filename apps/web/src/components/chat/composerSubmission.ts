@@ -30,6 +30,20 @@ export function getComposerSubmissionValidationMessage(
     : null;
 }
 
+// Answering a question responds to the open request instead of starting a provider turn, so
+// provider and turn-send state must not block it. Its own attachments and connection still do.
+export function isComposerSubmissionBlocked(input: {
+  submissionTarget: ComposerSubmissionInput["submissionTarget"];
+  noProviderAvailable: boolean;
+  sendDisabledReason: string | null;
+  attachmentBlockReason: string | null;
+  environmentUnavailable: boolean;
+}): boolean {
+  return input.submissionTarget === "pending-user-input"
+    ? input.attachmentBlockReason !== null || input.environmentUnavailable
+    : input.noProviderAvailable || input.sendDisabledReason !== null;
+}
+
 export function submitComposerDraft(
   options: ComposerSubmissionInput & {
     event: ComposerSubmitEvent | undefined;
