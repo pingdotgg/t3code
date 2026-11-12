@@ -493,19 +493,20 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "worktree" && requestedBranch === undefined;
       let branch: string | null;
       if (generatedTemporaryBranch) {
-        const uuid = yield* randomUuidV4;
-        branch = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
+        const token = (yield* randomUuidV4).replaceAll("-", "").slice(0, 8);
+        // Unreadable settings must not block the launch; fall back to the default prefix.
         const settings = yield* serverSettings.getSettings.pipe(
           Effect.map((settings) => resolveProjectSettings(settings, input.projectId).settings),
           Effect.orElseSucceed(() => null),
         );
-        if (settings?.branchNamingMode === "static") {
-          branch = formatGeneratedBranchName(branch.slice(-8), {
-            mode: "static",
-            prefix: settings.branchNamePrefix,
-            instructions: "",
-          });
-        }
+        branch =
+          settings?.branchNamingMode === "static"
+            ? formatGeneratedBranchName(token, {
+                mode: "static",
+                prefix: settings.branchNamePrefix,
+                instructions: "",
+              })
+            : buildTemporaryWorktreeBranchName(() => token);
       } else {
         branch = yield* launchBranch(input.workspaceStrategy, project.workspaceRoot);
       }
