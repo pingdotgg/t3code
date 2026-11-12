@@ -25,6 +25,8 @@ import {
 import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
+  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -712,6 +714,77 @@ describe("instance-scoped model selection", () => {
     ).toEqual(saved);
   });
 
+  describe("composer model option precedence", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const base = provider({ provider: driver, instanceId, models: ["claude-opus-5-5"] });
+    const providers = [
+      {
+        ...base,
+        models: base.models.map((model) => ({
+          ...model,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Effort",
+                type: "select" as const,
+                options: [
+                  { id: "medium", label: "Medium", isDefault: true },
+                  { id: "high", label: "High" },
+                ],
+                currentValue: "medium",
+              },
+            ],
+          },
+        })),
+      },
+    ];
+    const settingsDefault = createModelSelection(instanceId, "claude-opus-5-5", [
+      { id: "effort", value: "high" },
+    ]);
+    const dispatchedSelection = (
+      threadModelSelection: ReturnType<typeof createModelSelection> | null,
+    ) => {
+      const state = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection,
+        projectModelSelection: settingsDefault,
+        settings: settingsWithProviderInstances(),
+      });
+      const dispatch = getComposerProviderState({
+        provider: driver,
+        model: state.selectedModel,
+        models: providers[0]!.models,
+        modelOptions: state.modelOptions?.[instanceId],
+      });
+      return createModelSelection(
+        instanceId,
+        state.selectedModel,
+        dispatch.modelOptionsForDispatch,
+      );
+    };
+
+    it("does not inherit settings options for an optionless existing thread", () => {
+      const threadSelection = createModelSelection(instanceId, "claude-opus-5-5");
+      expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
+    });
+
+    it("keeps the options it was saved with", () => {
+      const threadSelection = createModelSelection(instanceId, "claude-opus-5-5", [
+        { id: "effort", value: "medium" },
+      ]);
+      expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
+    });
+
+    it("leaves the settings default's options in place before a thread exists", () => {
+      expect(dispatchedSelection(null)).toEqual(settingsDefault);
+    });
+  });
+
   it("keeps a custom-instance draft model while dropping unsupported options", () => {
     const instanceId = ProviderInstanceId.make("claude_openrouter");
     const driver = ProviderDriverKind.make("claudeAgent");
@@ -845,6 +918,60 @@ describe("instance-scoped model selection", () => {
     expect(resolveAppModelSelectionState(settings, [unsupported])).toEqual(
       NO_PROVIDER_MODEL_SELECTION,
     );
+  });
+
+  it("excludes customized extension models while preserving unknown custom and thread models", () => {
+    const pi = provider({
+      provider: ProviderDriverKind.make("pi"),
+      instanceId: "pi",
+      models: ["default", "demo/demo-model"],
+    });
+    const providers = [
+      {
+        ...pi,
+        models: pi.models.map((model) =>
+          model.slug === "demo/demo-model" ? { ...model, supportsTextGeneration: false } : model,
+        ),
+      },
+    ];
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [pi.instanceId]: {
+          driver: ProviderDriverKind.make("pi"),
+          config: {
+            customModels: [
+              { slug: "demo/demo-model", name: "My extension model" },
+              { slug: "unknown/model", name: "My custom model" },
+            ],
+          },
+        },
+      },
+      textGenerationModelSelection: createModelSelection(pi.instanceId, "demo/demo-model"),
+    };
+    const supported = providers.filter((provider) => provider.supportsTextGeneration !== false);
+    expect(
+      getTextGenerationModelOptionsByInstance(settings, supported, pi.instanceId, "demo/demo-model")
+        .get(pi.instanceId)
+        ?.map((option) => option.slug),
+    ).toEqual(["default", "unknown/model"]);
+    expect(resolveAppModelSelectionState(settings, supported)).toEqual(
+      createModelSelection(pi.instanceId, "default"),
+    );
+    expect(
+      resolveAppModelSelectionState(
+        {
+          ...settings,
+          textGenerationModelSelection: createModelSelection(pi.instanceId, "unknown/model"),
+        },
+        supported,
+      ).model,
+    ).toBe("unknown/model");
+    expect(
+      getCustomModelOptionsByInstance(settings, providers)
+        .get(pi.instanceId)
+        ?.map((option) => option.slug),
+    ).toEqual(["default", "demo/demo-model", "unknown/model"]);
   });
 });
 
