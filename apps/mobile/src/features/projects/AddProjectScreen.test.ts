@@ -42,7 +42,8 @@ const state = vi.hoisted(() => ({
   environments: [{ environmentId: "environment", environmentLabel: "Environment" }],
 }));
 
-// Stands in for the host's `~` expansion, which filesystem.browse reports as parentPath.
+// Stands in for the host's `~` expansion, which filesystem.browse reports as parentPath:
+// the resolved directory with no trailing separator, like Node's path.resolve.
 function browseResult(partialPath: string) {
   const expanded = /^~(?:[\\/]|$)/.test(partialPath)
     ? `${state.home}${partialPath.slice(1)}`
@@ -51,7 +52,7 @@ function browseResult(partialPath: string) {
   return {
     parentPath: normalized.slice(
       0,
-      Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\")) + 1,
+      Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\")),
     ),
     entries: [],
   };
@@ -852,6 +853,18 @@ describe("adding an already registered project", () => {
     expect(flow.navigation.getState().routes.at(-1)?.params).toEqual({
       draft: { environmentId: "environment", projectId: existing.id, title: existing.title },
     });
+  });
+
+  it("keeps whitespace in the host directory when matching", async () => {
+    using _flow = setup({ baseDirectory: "~/work /repo", root: "/home/tester/work/repo" });
+    const submit = findAction(
+      renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
+      "Add project",
+    );
+    if (!submit) throw new Error("Add project action missing");
+    await submit();
+
+    expect(state.projects).toEqual(["~/work /repo"]);
   });
 
   it("opens the existing project with the prompt instead of cloning into it", async () => {

@@ -45,7 +45,6 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
-  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -399,9 +398,15 @@ function useBrowsePathInput(
       environmentId: environment.environmentId,
       input: { partialPath: browsePath.directoryPath },
     });
-    return AsyncResult.isSuccess(result) && result.value
-      ? `${ensureBrowseDirectoryPath(result.value.parentPath)}${browsePath.filterQuery}`
-      : path;
+    if (!AsyncResult.isSuccess(result) || !result.value) return path;
+    // parentPath is the host's resolved directory, verbatim: whitespace in it is significant.
+    const parentPath = result.value.parentPath;
+    const separator = /[\\/]$/.test(parentPath)
+      ? ""
+      : isWindowsPlatform(environment.platform)
+        ? "\\"
+        : "/";
+    return `${parentPath}${separator}${browsePath.filterQuery}`;
   };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates the browse navigation coordinator on unmount so in-flight browses do not commit
