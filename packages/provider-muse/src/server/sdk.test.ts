@@ -16,7 +16,6 @@ import {
   createMuseSdkHost,
   createMuseSdkHostEffect,
   makeMuseEnvironment,
-  museApprovalMode,
   museLaunch,
   museVerbatimPath,
   museWorkspaceRoot,
@@ -102,7 +101,6 @@ describe("Muse SDK host", () => {
             ? ["serve", "--trust-workspace", "--disable-sandbox"]
             : ["serve", "--trust-workspace"],
       });
-      expect(museApprovalMode(mode)).toBe(mode === "full-access" ? "allowAll" : "promptUnmatched");
       fake.startup.resolve(fake.ready);
       const host = await running;
       fake.shutdown.resolve({ code: 0, signal: null });

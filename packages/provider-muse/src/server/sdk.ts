@@ -132,13 +132,16 @@ export const museLaunch = Effect.fn("museLaunch")(function* (
   };
 });
 
+// Auto's onRequest asks only for actions the sandboxed profile restricts.
 export function museApprovalMode(runtimeMode: RuntimeMode) {
-  return runtimeMode === "full-access" ? "allowAll" : "promptUnmatched";
+  if (runtimeMode === "full-access") return "allowAll";
+  return runtimeMode === "auto" ? "onRequest" : "promptUnmatched";
 }
 
-// Select explicitly; Muse defaults may let an AI reviewer decide approvals.
+// Select explicitly; Muse defaults may let an AI reviewer decide approvals, so only Auto opts in.
 export function musePermissionProfile(runtimeMode: RuntimeMode) {
-  return runtimeMode === "full-access" ? ":unrestricted" : ":ask-me";
+  if (runtimeMode === "full-access") return ":unrestricted";
+  return runtimeMode === "auto" ? ":auto-review" : ":ask-me";
 }
 
 export function museServeArgs(
