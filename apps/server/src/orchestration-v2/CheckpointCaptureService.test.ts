@@ -914,7 +914,24 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         DateTime.formatIso(cancelledAt),
       );
       assert.equal(projected.rootNode?.status, "cancelled");
-      assert.deepEqual([...projected.readyCheckpointOrdinals].toSorted(), [0, 1]);
+      assert.deepEqual([...projected.preservedCheckpointOrdinals].toSorted(), [0, 1]);
+
+      // A rewind leaves the run's checkpoint stale; the next capture must rebaseline it.
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-cancelled:captured-stale"),
+        type: "checkpoint.captured",
+        threadId: cancelledThreadId,
+        runId: cancelledRunId,
+        nodeId: cancelledRootNodeId,
+        providerInstanceId,
+        occurredAt: cancelledAt,
+        payload: { ...captured, status: "stale" },
+      });
+      const afterRewind = yield* projectionStore.getCheckpointCaptureContext(cancelledThreadId, {
+        runId: cancelledRunId,
+        scopeId: cancelledScopeId,
+      });
+      assert.deepEqual(afterRewind.preservedCheckpointOrdinals, [0]);
     }),
   );
 
