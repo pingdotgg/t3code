@@ -130,6 +130,7 @@ function schedulePlacement(strip: HTMLElement, motionMs: number): void {
 
 const PANE_JOIN_RADIUS_PX = 10;
 const PANE_JOIN_EAR_PX = 10;
+const PANE_JOIN_TAIL_PX = 36;
 
 function joinPiece(name: string, value = ""): HTMLElement {
   const piece = document.createElement("i");
@@ -367,9 +368,10 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
   if (!tab) return;
   const bounds = strip.getBoundingClientRect();
   const rect = tab.getBoundingClientRect();
-  // Room for the joined tab's ears inside the strip's clip.
+  // Room for the joined tab's ears inside the strip's clip, and at the end for
+  // its rim's tail, which the next control on the bar overlaps.
   const start = bounds.left + PANE_JOIN_EAR_PX;
-  const end = bounds.right - PANE_JOIN_EAR_PX;
+  const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
   if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
     strip.scrollLeft += rect.right - end;
