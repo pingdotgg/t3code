@@ -118,13 +118,15 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": msg("Archive"),
 };
 
-/** Sidebar order. A group without a heading is set apart by space alone. */
+/** Sidebar order. A group with a hidden heading is set apart on screen by space alone. */
 export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
-  readonly heading: string | null;
+  readonly heading: string;
+  readonly headingHidden?: true;
   readonly paths: ReadonlyArray<SettingsPath>;
 }> = [
   {
-    heading: null,
+    heading: msg("Preferences"),
+    headingHidden: true,
     paths: [
       "/settings/general",
       "/settings/appearance",
@@ -158,7 +160,8 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: null,
+    heading: msg("More"),
+    headingHidden: true,
     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
   },
 ];
@@ -490,6 +493,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/chat",
     searchTerms: [
       "accessibility a11y screen reader nvda jaws voiceover orca narrator speech announce read aloud messages activity steps",
+    ],
+  },
+  {
+    id: "screen-reader-window-title",
+    title: "Screen reader window title",
+    to: "/settings/chat",
+    searchTerms: [
+      "accessibility a11y screen reader nvda jaws voiceover orca narrator window title tab title alt tab taskbar thread status order working approval",
     ],
   },
   {
