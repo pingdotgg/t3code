@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
-import { isAppActive } from "../lib/appState";
+import { isAppActive, subscribeAppState } from "../lib/appState";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentPresentations } from "../state/presentation";
 import { serverEnvironment } from "../state/server";
@@ -34,8 +34,8 @@ const refreshableEnvironmentsAtom = Atom.make((get) =>
 
 /**
  * Keeps provider quotas fresh for the usage widget whenever an environment becomes refreshable
- * and on an interval. No AppState trigger: on resume the shell reads a stale "live" until its
- * wakeup resync, so refreshing then would compete with the reload.
+ * and on an interval while active. Resume itself never refreshes: the shell reads a stale "live"
+ * until its wakeup resync, so refreshing then would compete with the reload.
  * Each environment is refreshed at most once per interval.
  */
 export function installSubscriptionUsageRefresh(): () => void {
@@ -56,10 +56,18 @@ export function installSubscriptionUsageRefresh(): () => void {
   const unsubscribeEnvironments = appAtomRegistry.subscribe(refreshableEnvironmentsAtom, update, {
     immediate: true,
   });
-  const timer = setInterval(update, WIDGET_REFRESH_INTERVAL);
+  let timer: ReturnType<typeof setInterval> | undefined;
+  // Restarted on resume: a tick that came due while suspended would otherwise fire before the resync.
+  const restartInterval = () => {
+    clearInterval(timer);
+    timer = isAppActive() ? setInterval(update, WIDGET_REFRESH_INTERVAL) : undefined;
+  };
+  restartInterval();
+  const unsubscribeAppState = subscribeAppState(restartInterval);
   return () => {
     unsubscribeCatalog();
     unsubscribeEnvironments();
+    unsubscribeAppState();
     clearInterval(timer);
   };
 }

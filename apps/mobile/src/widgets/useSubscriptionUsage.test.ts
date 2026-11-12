@@ -135,12 +135,16 @@ describe("installSubscriptionUsageRefresh", () => {
     const dispose = installSubscriptionUsageRefresh();
     expect(fixture.refreshed).toEqual([resumed]);
 
-    // Backgrounded past the throttle. On resume the shell still reads its pre-suspend "live"
-    // until the wakeup resubscribes it, so the app turning active alone must not refresh.
-    fixture.appState = "background";
-    await vi.advanceTimersByTimeAsync(WIDGET_REFRESH_INTERVAL + 1);
-    fixture.appState = "active";
-    for (const listener of fixture.appStateListeners) listener();
+    // On resume the shell still reads its pre-suspend "live" until the wakeup resubscribes it,
+    // so neither the app turning active nor an interval tick that came due meanwhile may refresh.
+    const setAppState = (state: string) => {
+      fixture.appState = state;
+      for (const listener of fixture.appStateListeners) listener();
+    };
+    setAppState("background");
+    await vi.advanceTimersByTimeAsync(WIDGET_REFRESH_INTERVAL - 60_000);
+    setAppState("active");
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
     expect(fixture.refreshed).toEqual([resumed]);
 
     registry.set(shellAtom(resumed), { status: "synchronizing", error: Option.none() });
