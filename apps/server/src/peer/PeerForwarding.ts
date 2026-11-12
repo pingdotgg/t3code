@@ -191,10 +191,14 @@ const make = Effect.gen(function* () {
       input,
     );
 
-  const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
-    "PeerForwarding.waitForThread",
-  )(function* (scope, environmentId, input) {
-    const callerThreadId = scope.thread?.threadId;
+  const waitForThread = Effect.fn("PeerForwarding.waitForThread")(function* (
+    scope: Scope,
+    environmentId: EnvironmentId,
+    input: OrchestratorMcpThreadWaitInput,
+    yieldToInput = false,
+  ) {
+    // Only an agent's own wait yields to its input; a task's follower waits until the work settles.
+    const callerThreadId = yieldToInput ? scope.thread?.threadId : undefined;
     const watchFailure = () =>
       new OrchestratorMcpFailure({
         code: "orchestration_error",
@@ -280,6 +284,7 @@ const make = Effect.gen(function* () {
           scope,
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
+          true,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
       : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
     return Effect.andThen(requireEnabled, forwarded);
