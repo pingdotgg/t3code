@@ -2658,9 +2658,15 @@ const make = Effect.gen(function* () {
         }
         tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
-      case "stop":
+      case "stop": {
+        const generation = tab.navigationGeneration;
         await session.send("Page.stopLoading");
+        // Stopping a committed document fires neither `load` nor `requestfailed`.
+        if (tab.navigationGeneration !== generation || !tab.loading) return;
+        tab.loading = false;
+        await reportLoaded(tab);
         return;
+      }
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);

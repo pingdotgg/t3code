@@ -1428,6 +1428,33 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live("a viewer's stop settles a document that never finishes loading", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const page = contexts[0]!.page;
+      yield* Effect.promise(() => page.goto("https://example.com/slow"));
+      page.emit("request", {
+        url: () => "https://example.com/slow",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+      });
+      yield* viewer.input({ type: "stop" });
+      expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Page.stopLoading");
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a navigation that fails while a load reads its title keeps its failure", () =>
   Effect.scoped(
     Effect.gen(function* () {
