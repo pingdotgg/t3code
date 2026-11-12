@@ -9,6 +9,7 @@ import {
   LOCAL_DEVICE_HOST_LABEL,
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   resolveNodeExecutable,
@@ -266,6 +267,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const net = yield* NetService.NetService;
   const runner = yield* ProcessRunner.ProcessRunner;
+  const agentScope = yield* AgentScope;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
@@ -413,34 +415,44 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const scope = yield* Scope.make("sequential");
     // The hub is not recorded yet; stop it on failure or interruption from spawn onward.
     return yield* Effect.gen(function* () {
+      const env = yield* hubEnvironment(hostEnvironment).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ProcessRunner.ProcessRunner, runner),
+        Effect.provideService(HostProcess.Platform, hostPlatform),
+      );
+      // The hub launches emulators that grow large; an agent scope keeps them out of the
+      // server's cgroup, where systemd-oomd would otherwise pick the whole server to kill.
+      const launch = yield* agentScope.wrap({
+        command: nodePath,
+        args: [
+          hubTool.entryPath,
+          "--port",
+          String(port),
+          "--host",
+          "127.0.0.1",
+          "--hide-sidebar",
+          "--hide-boot-device",
+          ...hubPlatformArguments(hostPlatform),
+        ],
+        name: "device-hub",
+        env,
+      });
+      // Runs after the hub's own teardown, reaping emulators it left behind.
+      if (launch.unit !== undefined) {
+        const unit = launch.unit;
+        yield* Scope.addFinalizer(scope, agentScope.stop(unit));
+      }
       const child = yield* spawner
         .spawn(
-          ChildProcess.make(
-            nodePath,
-            [
-              hubTool.entryPath,
-              "--port",
-              String(port),
-              "--host",
-              "127.0.0.1",
-              "--hide-sidebar",
-              "--hide-boot-device",
-              ...hubPlatformArguments(hostPlatform),
-            ],
-            {
-              cwd: workingDirectory,
-              detached: false,
-              shell: false,
-              stdout: "pipe",
-              stderr: "pipe",
-              env: yield* hubEnvironment(hostEnvironment).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.provideService(Path.Path, path),
-                Effect.provideService(ProcessRunner.ProcessRunner, runner),
-                Effect.provideService(HostProcess.Platform, hostPlatform),
-              ),
-            },
-          ),
+          ChildProcess.make(launch.command, launch.args, {
+            cwd: workingDirectory,
+            detached: false,
+            shell: false,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          }),
         )
         .pipe(
           Effect.provideService(Scope.Scope, scope),
@@ -490,6 +502,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.fnUntraced(
       function* (hub: HubProcess, hubTool: DeviceToolPaths) {
         yield* Effect.result(hub.child.exitCode);
+        // An exited launcher can leave its scope active while an emulator survives.
+        yield* stopHub(hub);
         const running = yield* Ref.get(runningRef);
         if (running?.hub.child.pid !== hub.child.pid) return;
         const uptime = (yield* Clock.currentTimeMillis) - hub.startedAtMillis;
@@ -567,10 +581,18 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
+    // The daemon it forks outlives the hub and the server, so its scope survives restarts.
+    const launch = yield* agentScope.wrap({
+      command: nodePath,
+      args: [agentTool.entryPath, "devices", "--json"],
+      name: "agent-device",
+      env: daemonEnvironment,
+      survivesRestart: true,
+    });
     const runResult = yield* runner
       .run({
-        command: nodePath,
-        args: [agentTool.entryPath, "devices", "--json"],
+        command: launch.command,
+        args: launch.args,
         env: daemonEnvironment,
         timeout: Duration.millis(DAEMON_READY_TIMEOUT_MS),
         timeoutBehavior: "timedOutResult",
@@ -674,6 +696,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     if (running) {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
       if (alive) return running;
+      yield* stopHub(running.hub);
     }
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),

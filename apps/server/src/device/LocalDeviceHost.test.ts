@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -41,6 +42,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
   previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
+  agentScope?: typeof AgentScope.Service,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -68,6 +70,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
+    agentScope === undefined ? (effect) => effect : Effect.provideService(AgentScope, agentScope),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make(() =>
@@ -260,6 +263,47 @@ describe("AgentDevice startup", () => {
       );
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
       expect(attempts).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("starts the hub and the daemon in agent scopes and reaps every hub scope", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const wrapped: Array<{ name: string; survivesRestart: boolean | undefined }> = [];
+      const stopped: Array<string> = [];
+      const { host, hub } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345, token: "test-token" }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        undefined,
+        {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args, name, survivesRestart }) =>
+            Effect.sync(() => {
+              wrapped.push({ name, survivesRestart });
+              return { command, args, unit: `t3code-${name}-${wrapped.length}.scope` };
+            }),
+          stop: (unit) => Effect.sync(() => void stopped.push(unit)),
+        },
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      expect(wrapped).toEqual([
+        { name: "device-hub", survivesRestart: undefined },
+        { name: "agent-device", survivesRestart: true },
+      ]);
+      expect(stopped).toEqual([]);
+      // Replacing a dead hub stops its scope, which can still hold an emulator.
+      hub.running = false;
+      yield* host.ensureReady(() => Effect.void);
+      expect(stopped).toEqual(["t3code-device-hub-1.scope"]);
+      hub.running = true;
+      yield* host.stop;
+      expect(stopped).toEqual(["t3code-device-hub-1.scope", "t3code-device-hub-3.scope"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
