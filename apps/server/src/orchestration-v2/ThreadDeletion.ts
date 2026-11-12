@@ -27,7 +27,7 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     | "providerSessions"
     | "checkpointScopes"
   >;
-  /** The project's root, where a thread without a worktree kept its pre-v2 checkpoint refs. */
+  /** The project's root; its ref store also holds the refs of the project's linked worktrees. */
   readonly workspaceRoot: string | null;
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
@@ -244,6 +244,7 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       type: "checkpoint-refs.cleanup",
       scopes: projection.checkpointScopes.map((scope) => ({ id: scope.id, cwd: scope.cwd })),
       legacyCwd: projection.thread.worktreePath ?? input.workspaceRoot,
+      workspaceRoot: input.workspaceRoot,
     },
   });
   const attachmentIds = Array.from(new Set(input.attachmentIds));

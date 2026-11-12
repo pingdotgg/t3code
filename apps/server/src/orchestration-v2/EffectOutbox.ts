@@ -118,6 +118,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("checkpoint-refs.cleanup"),
     scopes: Schema.Array(Schema.Struct({ id: CheckpointScopeId, cwd: Schema.String })),
     legacyCwd: Schema.NullOr(Schema.String),
+    workspaceRoot: Schema.NullOr(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),

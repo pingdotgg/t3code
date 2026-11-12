@@ -162,6 +162,7 @@ export interface CheckpointServiceV2Shape {
     readonly threadId: ThreadId;
     readonly scopes: ReadonlyArray<{ readonly id: CheckpointScopeId; readonly cwd: string }>;
     readonly legacyCwd: string | null;
+    readonly workspaceRoot: string | null;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
 }
 
@@ -624,14 +625,20 @@ export const layer: Layer.Layer<
       yield* Effect.forEach(
         prefixesByCwd,
         ([cwd, prefixes]) =>
-          withWorkspaceLock(
-            cwd,
-            Effect.gen(function* () {
-              // A removed worktree took its refs with it.
-              if (!(yield* checkpointStore.isGitRepository(cwd))) return;
-              yield* checkpointStore.deleteCheckpointRefsUnder({ cwd, prefixes });
-            }),
-          ).pipe(
+          Effect.gen(function* () {
+            // A removed linked worktree's refs live on in the main repository's ref store.
+            const target = (yield* checkpointStore.isGitRepository(cwd))
+              ? cwd
+              : input.workspaceRoot !== null &&
+                  (yield* checkpointStore.isGitRepository(input.workspaceRoot))
+                ? input.workspaceRoot
+                : null;
+            if (target === null) return;
+            yield* withWorkspaceLock(
+              target,
+              checkpointStore.deleteCheckpointRefsUnder({ cwd: target, prefixes }),
+            );
+          }).pipe(
             Effect.mapError(
               (cause) =>
                 new CheckpointDeleteThreadRefsError({ threadId: input.threadId, cwd, cause }),

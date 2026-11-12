@@ -590,6 +590,7 @@ export const layerExecutor: Layer.Layer<
                 threadId: effect.threadId,
                 scopes: effect.request.scopes,
                 legacyCwd: effect.request.legacyCwd,
+                workspaceRoot: effect.request.workspaceRoot,
               })
               .pipe(
                 Effect.mapError(

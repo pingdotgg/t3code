@@ -301,7 +301,12 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "scheduled-tasks.cleanup" },
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
-        { type: "checkpoint-refs.cleanup", scopes: [], legacyCwd: "/workspace/feature" },
+        {
+          type: "checkpoint-refs.cleanup",
+          scopes: [],
+          legacyCwd: "/workspace/feature",
+          workspaceRoot: "/workspace",
+        },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
       ],
     );
