@@ -92,15 +92,8 @@ it("keeps a completed quiz card as its own feed entry", () => {
     type: "dynamic_tool",
     toolName: "course_add",
     input: {},
-    output: {
-      structuredContent: {
-        title: "Circuits",
-        units: [
-          { title: "Basics", section: "Foundations" },
-          { title: "Ohm's law", section: "Foundations" },
-        ],
-      },
-    },
+    // Wire shape: the server sends only the formatted outline (WireProjection).
+    output: { courseOutline: "**Circuits**: 2 units\n\n- Foundations: units 0–1" },
   };
 
   const feed = buildThreadFeed([

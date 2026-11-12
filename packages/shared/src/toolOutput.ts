@@ -265,11 +265,11 @@ export function courseOutlineFromToolItem(item: {
   const course = readCourse(item.output);
   if (course === undefined) return undefined;
 
-  const entries: Array<{ readonly text: string; readonly unitCount: number }> = [];
+  const entries: Array<{ readonly text: string; readonly start: number }> = [];
   for (let index = 0; index < course.units.length;) {
     const unit = course.units[index]!;
     if (unit.section === undefined) {
-      entries.push({ text: `- ${index}. ${unit.title}`, unitCount: 1 });
+      entries.push({ text: `- ${index}. ${unit.title}`, start: index });
       index += 1;
       continue;
     }
@@ -279,7 +279,7 @@ export function courseOutlineFromToolItem(item: {
       index += 1;
     entries.push({
       text: `- ${section}: ${start === index ? `unit ${start}` : `units ${start}\u2013${index}`}`,
-      unitCount: index - start + 1,
+      start,
     });
     index += 1;
   }
@@ -287,7 +287,7 @@ export function courseOutlineFromToolItem(item: {
     entries.length > 40
       ? [
           ...entries.slice(0, 39).map(({ text }) => text),
-          `- …and ${entries.slice(39).reduce((total, entry) => total + entry.unitCount, 0)} more`,
+          `- …and ${course.units.length - entries[39]!.start} more`,
         ]
       : entries.map(({ text }) => text);
   return [
