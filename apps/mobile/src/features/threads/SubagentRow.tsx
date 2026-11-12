@@ -4,7 +4,10 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  formatSubagentUsage,
+  resolveSubagentMetadata,
+} from "@t3tools/client-runtime/state/subagent-display";
 import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -33,6 +36,7 @@ type SubagentRowSubagent = Pick<
   | "progress"
   | "result"
   | "remoteChild"
+  | "usage"
 >;
 
 export function SubagentRow(props: {
@@ -85,6 +89,11 @@ export function SubagentRow(props: {
           ) : null}
         </View>
         <SubagentMetadata environmentId={props.environmentId} subagent={props.subagent} />
+        {props.subagent.usage ? (
+          <Text numberOfLines={1} className="text-xs text-foreground-muted">
+            {formatSubagentUsage(props.subagent.usage.totalTokens, props.subagent.usage.toolCalls)}
+          </Text>
+        ) : null}
         {detail ? (
           <Text
             numberOfLines={3}

@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { fileBasename } from "@t3tools/shared/path";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 import { resolveModelShortName } from "../providerClients.ts";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
@@ -111,6 +112,12 @@ export function resolveSubagentMetadata(input: {
       : []),
   ];
   return { modelLabel, modelSlug: slug ?? model ?? null, workspace };
+}
+
+export function formatSubagentUsage(totalTokens: number, toolUses: number | undefined): string {
+  const tokens = `${formatTokens(totalTokens)} tokens`;
+  if (toolUses === undefined) return tokens;
+  return `${tokens} · ${toolUses} ${toolUses === 1 ? "tool use" : "tool uses"}`;
 }
 
 export function subagentDetailPreview(input: {

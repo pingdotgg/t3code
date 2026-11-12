@@ -8,9 +8,11 @@ import type {
   OrchestrationV2Subagent,
 } from "@t3tools/contracts";
 import {
+  formatSubagentUsage,
   resolveSubagentMetadata,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
+import type { SubagentUsage } from "@t3tools/client-runtime/state/subagentRuntime";
 import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
 import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
@@ -20,6 +22,7 @@ import {
   CheckIcon,
   CircleDashedIcon,
   CircleXIcon,
+  CoinsIcon,
   FolderIcon,
   GitBranchIcon,
   TerminalIcon,
@@ -49,6 +52,7 @@ export function SubagentTooltipContent(props: {
   status: OrchestrationV2TurnItemStatus;
   result?: string | null | undefined;
   progress?: string | null | undefined;
+  usage?: SubagentUsage | null | undefined;
 }) {
   const childSelection =
     props.modelSelection ??
@@ -177,6 +181,14 @@ export function SubagentTooltipContent(props: {
           </div>
         );
       })}
+      {props.usage ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <CoinsIcon aria-hidden className="size-3 shrink-0" />
+          <span className="min-w-0 truncate">
+            {formatSubagentUsage(props.usage.totalTokens, props.usage.toolUses)}
+          </span>
+        </div>
+      ) : null}
       {preview ? (
         <div className="flex min-w-0 items-center gap-2">
           <TerminalIcon aria-hidden className="size-3 shrink-0" />

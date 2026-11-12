@@ -770,6 +770,7 @@ export function ThreadRelationshipsPanel(props: {
         status={agent.status}
         result={agent.result}
         progress={agent.progress}
+        usage={agent.usage}
         parentThread={currentThread ?? undefined}
         childThread={node?.thread ?? undefined}
         parentProject={currentProject}
