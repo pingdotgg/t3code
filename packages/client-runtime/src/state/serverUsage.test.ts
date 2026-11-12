@@ -232,7 +232,13 @@ const makeRefreshingHarness = Effect.fn("ServerUsageTest.makeRefreshingHarness")
       input.awaitRefresh === true
         ? Deferred.succeed(followUpStarted, undefined).pipe(Effect.andThen(followUp))
         : Effect.void,
-    (input) => [cursorSource(input.awaitRefresh !== true)],
+    // The saved answer differs from the plain one, so a test can tell which was kept.
+    (input) => [
+      {
+        ...cursorSource(input.awaitRefresh !== true),
+        ...(input.provisional === true ? { scannedFiles: 0 } : {}),
+      },
+    ],
   );
   return { ...harness, followUpStarted };
 });
@@ -295,7 +301,42 @@ it.effect("keeps the cached usage summary when the awaited refresh fails", () =>
         cursorSource(true),
       ]);
       expect(AsyncResult.isSuccess(harness.registry.get(summary))).toBe(true);
-      expect(harness.requests()).toBe(2);
+      // The saved answer is followed by a plain read before the one that waits for Cursor.
+      expect(
+        harness.inputs().map(({ provisional, awaitRefresh }) => ({ provisional, awaitRefresh })),
+      ).toEqual([
+        { provisional: true, awaitRefresh: undefined },
+        { provisional: undefined, awaitRefresh: undefined },
+        { provisional: undefined, awaitRefresh: true },
+      ]);
+      // With figures on screen, a refresh reads them exactly instead of asking for saved ones.
+      yield* harness.updateSettings({
+        ...DEFAULT_SERVER_SETTINGS,
+        usagePriceOverrides: {
+          "custom-model": { inputCostPerMillionTokens: 5, outputCostPerMillionTokens: 10 },
+        },
+      });
+      yield* waitForCost(harness.registry, summary, 5);
+      expect(harness.inputs()[3]?.provisional).toBeUndefined();
+      unmount();
+    }),
+  ),
+);
+
+it.effect("reads usage in full when the saved answer cannot be read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const harness = yield* makeHarness((_request, input) =>
+        input.provisional === true
+          ? Effect.fail(
+              new UsageReadError({ reason: "scanFailed", detail: "saved scan unreadable" }),
+            )
+          : Effect.void,
+      );
+      const summary = harness.summary();
+      const unmount = harness.registry.mount(summary);
+      yield* settledSummary(harness.registry, summary);
+      expect(harness.inputs().map(({ provisional }) => provisional)).toEqual([true, undefined]);
       unmount();
     }),
   ),
