@@ -271,7 +271,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread, selectedThreadListed, selectedThreadDetailRef } = useThreadSelection();
-  const familyPending = useOpenThreadFamily(selectedThreadDetailRef);
+  const familyRead = useOpenThreadFamily(selectedThreadDetailRef);
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);
@@ -376,7 +376,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     shellHasError: routeEnvironmentShellState.hasError,
     detailStatus: selectedThreadDetailState.status,
     detailHasError,
-    familyPending,
+    familyRead,
   });
 
   if (stillHydrating) {

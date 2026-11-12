@@ -1,6 +1,9 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import type {
+  EnvironmentThreadStatus,
+  ThreadFamilyRead,
+} from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
 
 export function threadRouteIsHydrating(input: {
@@ -12,14 +15,16 @@ export function threadRouteIsHydrating(input: {
   readonly shellHasError: boolean;
   readonly detailStatus: EnvironmentThreadStatus;
   readonly detailHasError: boolean;
-  /** The open thread's family read can still bring the row of a thread the shell left out. */
-  readonly familyPending: boolean;
+  /** The open thread's family read, which brings the row of a thread the shell left out. */
+  readonly familyRead: ThreadFamilyRead;
 }): boolean {
   if (input.detailStatus === "deleted" || input.shellHasError) {
     return false;
   }
   if (input.detailHasError) {
-    return input.connectionState === "connected" && input.familyPending;
+    // A failed read is no answer. Only a settled family read without the row says the thread is
+    // gone; until then both reads run again and the route waits.
+    return input.connectionState === "connected" && input.familyRead !== "settled";
   }
   if (input.isLoadingConnections) {
     return true;

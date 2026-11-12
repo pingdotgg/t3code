@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -13,7 +14,7 @@ import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type * as EnvironmentRegistry from "../connection/registry.ts";
-import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
+import { EnvironmentRpcUnavailableError, request, subscriptionRetryDelay } from "../rpc/client.ts";
 import { arrayElementsEqual } from "./entities.ts";
 import { createEnvironmentQueryAtomFamily, selectEnvironmentQueryData } from "./runtime.ts";
 import type { EnvironmentShellState } from "./shell.ts";
@@ -226,6 +227,44 @@ export function createThreadFamilyAtoms<R, ER, E>(
     return release;
   };
 
+  /**
+   * Reads a failed family again after a growing pause, until the returned release runs. A failed
+   * read says nothing about the thread, and nothing else reads again on an idle connection.
+   */
+  const retryWhileFailed = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    later: (run: () => void, ms: number) => () => void = (run, ms) => {
+      // @effect-diagnostics-next-line globalTimers:off - The pause runs in an atom subscription, outside an Effect runtime.
+      const timer = setTimeout(run, ms);
+      return () => clearTimeout(timer);
+    },
+  ): (() => void) => {
+    let failures = 0;
+    let cancel: (() => void) | undefined;
+    const stop = registry.subscribe(
+      familyAtom(familyKey(environmentId, threadId)),
+      (result) => {
+        const read = threadFamilyRead(result);
+        if (read === "settled") failures = 0;
+        if (read !== "failed" || cancel !== undefined) return;
+        cancel = later(
+          () => {
+            cancel = undefined;
+            refresh(registry, environmentId, threadId);
+          },
+          Duration.toMillis(subscriptionRetryDelay("1 second", failures++)),
+        );
+      },
+      { immediate: true },
+    );
+    return () => {
+      stop();
+      cancel?.();
+    };
+  };
+
   const snapshotAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: {
       readonly snapshot: OrchestrationV2ShellSnapshot;
@@ -309,5 +348,6 @@ export function createThreadFamilyAtoms<R, ER, E>(
     mount,
     mountRows,
     refresh,
+    retryWhileFailed,
   };
 }

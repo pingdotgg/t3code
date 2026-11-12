@@ -17,20 +17,30 @@ const settled = {
   shellHasError: false,
   detailStatus: "live" as const,
   detailHasError: false,
-  familyPending: false,
+  familyRead: "settled" as const,
 };
 
 describe("threadRouteIsHydrating", () => {
   it("waits for the family read of a thread the shell left out when its detail fails", () => {
     const failed = { ...settled, detailStatus: "empty" as const, detailHasError: true };
-    expect(threadRouteIsHydrating({ ...failed, familyPending: true })).toBe(true);
+    expect(threadRouteIsHydrating({ ...failed, familyRead: "pending" })).toBe(true);
     expect(threadRouteIsHydrating(failed)).toBe(false);
     expect(
-      threadRouteIsHydrating({ ...failed, familyPending: true, connectionState: "reconnecting" }),
+      threadRouteIsHydrating({ ...failed, familyRead: "pending", connectionState: "reconnecting" }),
     ).toBe(false);
     expect(
-      threadRouteIsHydrating({ ...failed, familyPending: true, detailStatus: "deleted" }),
+      threadRouteIsHydrating({ ...failed, familyRead: "pending", detailStatus: "deleted" }),
     ).toBe(false);
+  });
+
+  it("keeps waiting when both reads failed: a failed read does not say the thread is gone", () => {
+    const failed = { ...settled, detailStatus: "empty" as const, detailHasError: true };
+    expect(threadRouteIsHydrating({ ...failed, familyRead: "failed" })).toBe(true);
+    // Not found is an answer: a detail read that missed, or a family read without the row.
+    expect(
+      threadRouteIsHydrating({ ...failed, familyRead: "failed", detailStatus: "deleted" }),
+    ).toBe(false);
+    expect(threadRouteIsHydrating({ ...failed, familyRead: "settled" })).toBe(false);
   });
 
   it("waits for shell and thread detail hydration", () => {

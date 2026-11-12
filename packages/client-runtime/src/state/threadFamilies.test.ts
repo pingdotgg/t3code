@@ -228,12 +228,35 @@ describe("createThreadFamilyAtoms", () => {
         expect(threadFamilyRead(registry.get(family))).toBe("failed");
         expect(mergedIds()).toEqual(["parent"]);
 
-        families.refresh(registry, TARGET.environmentId, parent.id);
+        // An open thread reads a failed family again by itself, with a growing pause.
+        const pauses: Array<{ readonly run: () => void; readonly ms: number }> = [];
+        const stopRetry = families.retryWhileFailed(
+          registry,
+          TARGET.environmentId,
+          parent.id,
+          (run, ms) => {
+            pauses.push({ run, ms });
+            return () => undefined;
+          },
+        );
+        expect(pauses.map(({ ms }) => ms)).toEqual([1_000]);
+        pauses[0]?.run();
+        expect(threadFamilyRead(registry.get(family))).toBe("pending");
+        yield* Queue.offer(
+          replies,
+          Effect.fail(new OrchestrationV2GetShellSnapshotError({ message: "read failed" })),
+        );
+        yield* settle;
+        expect(threadFamilyRead(registry.get(family))).toBe("failed");
+        expect(pauses.map(({ ms }) => ms)).toEqual([1_000, 2_000]);
+        pauses[1]?.run();
         expect(threadFamilyRead(registry.get(family))).toBe("pending");
         yield* Queue.offer(replies, Effect.succeed({ snapshotSequence: 5, threads: [child] }));
         yield* settle;
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);
+        expect(pauses).toHaveLength(2);
+        stopRetry();
 
         // Children that woke after the shell left out their idle parent arrive as deltas, and
         // read their family unmounted, once for the root.

@@ -120,20 +120,24 @@ const NO_OPEN_FAMILY = Atom.make<ThreadFamilyRead>("settled");
  * Keeps the open thread's family in the shell rows until its screen leaves. Shells leave idle
  * subagents out, so the rows of the thread, of its parents and of its subagents may exist only
  * there. Pass the ref the detail is read by: a thread still being created has no family to read.
- * Returns whether those rows can still arrive.
+ * Returns that family's read, and reads it again while it fails.
  */
-export function useOpenThreadFamily(ref: ScopedThreadRef | null): boolean {
+export function useOpenThreadFamily(ref: ScopedThreadRef | null): ThreadFamilyRead {
   const environmentId = ref?.environmentId ?? null;
   const threadId = ref?.threadId ?? null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the open thread's family in the thread family registry until the screen leaves it
   useEffect(() => {
     if (environmentId === null || threadId === null) return;
-    return threadFamilies.mount(appAtomRegistry, environmentId, threadId);
+    const release = threadFamilies.mount(appAtomRegistry, environmentId, threadId);
+    const stopRetry = threadFamilies.retryWhileFailed(appAtomRegistry, environmentId, threadId);
+    return () => {
+      stopRetry();
+      release();
+    };
   }, [environmentId, threadId]);
-  const read = useAtomValue(
+  return useAtomValue(
     environmentId === null || threadId === null
       ? NO_OPEN_FAMILY
       : threadFamilies.mountedReadAtom(environmentId, threadId),
   );
-  return read === "pending";
 }
