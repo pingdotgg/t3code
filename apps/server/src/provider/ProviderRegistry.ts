@@ -771,6 +771,23 @@ export const layer = Layer.effect(
           ),
         );
       });
+      // Instances can share the replaced service, so none may invalidate before it restarts.
+      const selectedInstance = instances.find(
+        (instance) => instance.instanceId === selectedInstanceId,
+      );
+      if (selectedInstance?.afterUpdate !== undefined) {
+        // The probe below reports what is running, so a failed hook needs no status of its own.
+        yield* selectedInstance.afterUpdate.pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logError("provider post-update hook failed", {
+                  instanceId: selectedInstance.instanceId,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        );
+      }
       // Accounts can share an installation, but discovery must use each
       // instance's own executable, environment, and credentials.
       yield* Effect.forEach(
