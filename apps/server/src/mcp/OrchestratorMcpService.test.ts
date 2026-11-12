@@ -35,6 +35,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -1801,6 +1802,96 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+
+  it.effect.each(["already advertised", "newly advertised", "still unavailable"] as const)(
+    "rechecks a delegated model that is %s",
+    (availability) =>
+      Effect.gen(function* () {
+        const museInstanceId = ProviderInstanceId.make("muse");
+        const model = "muse-wonder-1.0";
+        const provider = (advertisedModel: string) =>
+          providerSnapshot({
+            instanceId: museInstanceId,
+            driver: ProviderDriverKind.make("muse"),
+            model: advertisedModel,
+          });
+        const commands: Array<unknown> = [];
+        const refreshedInstances: Array<ProviderInstanceId> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: museInstanceId,
+          model,
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(commands.length > 0 ? [task] : [])
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([
+              provider(availability === "already advertised" ? model : "muse-spark-1.3"),
+            ]),
+            refreshInstance: (instanceId) =>
+              Effect.sync(() => {
+                refreshedInstances.push(instanceId);
+                return [provider(availability === "still unavailable" ? "muse-spark-1.3" : model)];
+              }),
+          }),
+          adapterRegistryLayer([museInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const delegation = service.delegateTask(scope, {
+            task: "Review the change.",
+            target: { providerInstanceId: museInstanceId, model },
+            mode: "async",
+            clientRequestId: availability,
+          });
+          if (availability === "still unavailable") {
+            const error = yield* delegation.pipe(Effect.flip);
+            assert.equal(error.code, "model_unavailable");
+            assert.deepEqual(commands, []);
+          } else {
+            const result = yield* delegation;
+            assert.equal(result.model, model);
+            assert.equal(commands.length, 1);
+            assert.deepEqual((commands[0] as { modelSelection: unknown }).modelSelection, {
+              instanceId: museInstanceId,
+              model,
+            });
+          }
+          assert.deepEqual(
+            refreshedInstances,
+            availability === "already advertised" ? [] : [museInstanceId],
+          );
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }),
+  );
 
   it.effect("rejects delegation to a provider without a registered adapter", () =>
     Effect.gen(function* () {
@@ -3722,6 +3813,55 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
+  it.effect("records the linked environment's thread that sent a message", () =>
+    Effect.gen(function* () {
+      const target = liveThreadShell(ThreadId.make("thread:target"));
+      const sender = {
+        environmentId: EnvironmentId.make("environment:a"),
+        threadId: ThreadId.make("thread:orc"),
+        title: "orc lead",
+      };
+      const linked = (senderThread?: typeof sender): McpInvocationScope => ({
+        ...client,
+        client: {
+          sessionId: "link-a",
+          label: "A",
+          access: "full-access",
+          linked: true,
+          ...(senderThread === undefined ? {} : { senderThread }),
+        },
+      });
+      const sendAs = (scope: McpInvocationScope) =>
+        Effect.gen(function* () {
+          const inputs: Array<ThreadManagementService.ThreadManagementSendInput> = [];
+          const sent = yield* Ref.make(0);
+          yield* Effect.gen(function* () {
+            const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* mcp.sendToThread(scope, { threadId: target.id, message: "hello" });
+          }).pipe(
+            Effect.provide(
+              service([target], sent, {
+                getProjectThreadRecords: () => Effect.succeed(idleThreadProjection(target)),
+                sendToThread: (input) => {
+                  inputs.push(input);
+                  return Effect.succeed({
+                    run: { id: RunId.make("run:sent"), status: "running" },
+                    delivery: "started",
+                  } as never);
+                },
+              }),
+            ),
+          );
+          return inputs[0];
+        });
+
+      const fromLink = yield* sendAs(linked(sender));
+      assert.deepStrictEqual(fromLink?.linkedSender, sender);
+      assert.isUndefined(fromLink?.senderThreadId);
+      assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
+    }),
+  );
+
   it.effect("refuses waiting without orchestration capability before reading the target", () =>
     Effect.gen(function* () {
       const sent = yield* Ref.make(0);
@@ -3796,6 +3936,13 @@ describe("OrchestratorMcpService thread list", () => {
     shell("thread:a-snoozed", "project:a", true),
     shell("thread:a-awake", "project:a", false),
     shell("thread:b-snoozed", "project:b", true),
+    {
+      ...shell("thread:a-awaiting-command", "project:a", false),
+      activityRunStatus: null,
+      pendingBackgroundTasks: [
+        { taskId: "sleep-600", kind: "command" as const, awaited: true as const },
+      ],
+    },
   ];
   const service = layerOrchestratorService.pipe(
     Layer.provide(
@@ -3815,7 +3962,21 @@ describe("OrchestratorMcpService thread list", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) =>
+            shells.some((thread) => thread.projectId === id)
+              ? Effect.succeedSome({
+                  id,
+                  title: id,
+                  workspaceRoot: `/projects/${id}`,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                })
+              : Effect.succeedNone,
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -3838,6 +3999,34 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:a-snoozed", "project:a"],
           ["thread:b-snoozed", "project:b"],
         ],
+      );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("refuses a projectId that names no project", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp
+        .listThreads(client, { projectId: ProjectId.make("project:missing") })
+        .pipe(Effect.result);
+      if (Result.isSuccess(listed)) {
+        assert.fail(`listed threads for a missing project: ${JSON.stringify(listed.success)}`);
+      }
+      assert.equal(listed.failure.code, "invalid_request");
+      assert.include(listed.failure.message, "not found");
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("counts a thread holding awaited background work as live in the status filter", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:a"),
+        statuses: ["preparing", "queued", "starting", "running", "waiting"],
+      });
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => thread.threadId),
+        ["thread:a-awaiting-command"],
       );
     }).pipe(Effect.provide(service)),
   );
@@ -3939,9 +4128,17 @@ describe("OrchestratorMcpService thread stop", () => {
   });
 
   it.effect.each([
-    { name: "a running turn", queued: false },
-    { name: "a running turn with a queued message", queued: true },
-  ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued }) =>
+    {
+      name: "a running turn",
+      queued: false,
+      stop: { reason: undefined, message: "Stopped by an agent" },
+    },
+    {
+      name: "a running turn with a queued message",
+      queued: true,
+      stop: { reason: "Make room", message: "Stopped by an agent: Make room" },
+    },
+  ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued, stop }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("mcp-thread-stop");
@@ -4019,17 +4216,61 @@ describe("OrchestratorMcpService thread stop", () => {
           const before = yield* orchestrator.getThreadProjection(threadId);
           const runningRun = before.runs.find((run) => run.status === "running")!;
           assert.equal(before.runs.filter((run) => run.status === "queued").length, queued ? 1 : 0);
+          // A task the thread delegated, running when the thread is stopped.
+          const childRunning = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" &&
+                event.threadId !== threadId &&
+                event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make("delegate"),
+            parentThreadId: threadId,
+            parentRunId: runningRun.id,
+            parentNodeId: runningRun.rootNodeId!,
+            task: "child work",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(childRunning);
+          const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
+            .childThreadId!;
 
           const stopped = yield* service.interruptThread(client, {
             threadId,
             stop: true,
             clientRequestId: "stop",
+            ...(stop.reason === undefined ? {} : { reason: stop.reason }),
           });
           assert.deepEqual(stopped, {
             threadId,
             runId: runningRun.id,
             status: "interrupt_requested",
           });
+          // An agent's Stop must not read as the user's, on its thread or a task it delegated.
+          const interruptMessages = (id: ThreadId) =>
+            orchestrator
+              .getThreadProjection(id)
+              .pipe(
+                Effect.map(({ turnItems }) =>
+                  turnItems.flatMap((item) =>
+                    item.type === "run_interrupt_request" ? [item.message] : [],
+                  ),
+                ),
+              );
+          assert.deepEqual(yield* interruptMessages(threadId), [stop.message]);
+          assert.deepEqual(yield* interruptMessages(childThreadId), [stop.message]);
         }).pipe(Effect.provide(layerTest));
       }),
     ),

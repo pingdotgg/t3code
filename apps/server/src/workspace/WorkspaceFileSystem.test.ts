@@ -290,6 +290,14 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
           expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         }
+        const metadata = yield* workspaceFileSystem.getMetadata({
+          paths: [
+            path.join(config.secretsDir, "example.bin"),
+            path.join(config.stateDir, "statev2.sqlite"),
+            config.stateDir,
+          ],
+        });
+        expect(metadata.entries).toEqual([null, null, { kind: "directory" }]);
       }),
     );
 

@@ -6,7 +6,6 @@ import {
   isRuntimeModeAbove,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
-  AgentSessionImportSource,
   AgentSessionScanError,
   AgentSessionSource,
   EventId,
@@ -46,12 +45,6 @@ import * as ProjectService from "./ProjectService.ts";
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const decodeImportedTranscriptPayload = Schema.decodeUnknownOption(
-  Schema.Struct({
-    cwd: Schema.optional(Schema.String),
-    importedTranscripts: Schema.optional(Schema.Array(AgentSessionImportSource)),
-  }),
-);
 
 class AgentSessionUnresumableSessionError extends Schema.TaggedError<AgentSessionUnresumableSessionError>()(
   "AgentSessionUnresumableSessionError",
@@ -250,7 +243,7 @@ const make = Effect.gen(function* () {
         ),
       );
     const completedSources = runtimeRows.flatMap((runtime) => {
-      const payload = decodeImportedTranscriptPayload(runtime.runtimePayload);
+      const payload = AgentSessionScanner.decodeImportedTranscriptPayload(runtime.runtimePayload);
       if (
         Option.isNone(payload) ||
         payload.value.cwd === undefined ||
@@ -331,6 +324,20 @@ const make = Effect.gen(function* () {
             }
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
+            }
+            // Other recorded transcripts mean this one changed after the import, and the
+            // thread does not hold its new messages, so it must stay unrecorded.
+            const recorded = Option.flatMap(yield* runtimes.getByThreadId({ threadId }), (row) =>
+              AgentSessionScanner.decodeImportedTranscriptPayload(row.runtimePayload),
+            ).pipe(Option.flatMapNullishOr((payload) => payload.importedTranscripts));
+            if (
+              Option.isSome(recorded) &&
+              recorded.value.length > 0 &&
+              !recorded.value.some((imported) =>
+                AgentSessionScanner.sameTranscriptIdentity(imported, source),
+              )
+            ) {
+              return false;
             }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });

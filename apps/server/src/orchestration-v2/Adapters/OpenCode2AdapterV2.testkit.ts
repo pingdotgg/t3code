@@ -257,6 +257,7 @@ export const replayServer = (
                   borrowers.current -= 1;
                 }),
             ),
+      forget: Effect.void,
     });
   });
 

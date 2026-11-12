@@ -1242,7 +1242,7 @@ it.effect.each([
         (projection) => projection.runtimeRequests[0],
       );
 
-      yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+      yield* orchestrator.recoverDelegatedTask(childThreadId, { sourceRunId: childRun.id });
       assert.equal((yield* request)?.status, "pending");
       if (ending === "interrupted") {
         yield* orchestrator.dispatch({
@@ -1260,7 +1260,7 @@ it.effect.each([
           payload: { ...childRun, status: ending, startedAt: now, completedAt: now },
         });
       }
-      yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+      yield* orchestrator.recoverDelegatedTask(childThreadId, { sourceRunId: childRun.id });
       assert.equal((yield* request)?.status, question);
       assert.equal((yield* request)?.decision, question === "resolved" ? "cancel" : undefined);
     }).pipe(Effect.provide(layerTest)),

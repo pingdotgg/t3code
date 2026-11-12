@@ -12,6 +12,7 @@ import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
@@ -1120,7 +1121,7 @@ describe("UsageService", () => {
           };
           const muse = (summary: UsageSummary) =>
             summary.buckets.filter((bucket) => bucket.provider === "muse");
-          const first = yield* service.readSummary(window);
+          const first = yield* service.readSummary({ ...window, awaitRefresh: true });
           const buckets = muse(first);
           assert.strictEqual(
             buckets.reduce((sum, b) => sum + b.records, 0),
@@ -1202,6 +1203,7 @@ describe("UsageService", () => {
           assert.closeTo(repriced?.costUsd ?? NaN, 0.000486, 1e-12);
         }).pipe(
           Effect.scoped,
+          Effect.provideService(SpawnExecutableResolution, (command: string) => command),
           Effect.provide(
             layerService({
               prefix: "usage-muse",
@@ -1233,6 +1235,66 @@ describe("UsageService", () => {
           ),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("returns other providers' usage while Muse home discovery is still pending", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const museStarted = yield* Deferred.make<void>();
+      const museReady = yield* Deferred.make<MuseSdk.MuseSdkHost>();
+      const museHome = NodePath.join(home, "muse");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(museHome, "sessions"), { recursive: true }),
+      );
+      using _create = vi
+        .spyOn(MuseSdk, "createMuseSdkHostEffect")
+        .mockImplementation(() =>
+          Deferred.succeed(museStarted, undefined).pipe(Effect.andThen(Deferred.await(museReady))),
+        );
+      const museSources = (summary: UsageSummary) =>
+        summary.sources
+          .filter((source) => source.fingerprint.provider === "muse")
+          .map((source) => [source.fingerprint.resolvedHomePath, source.status, source.refreshing]);
+      const [pending, refreshed] = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const read = yield* Effect.forkChild(service.readSummary(WINDOW));
+        yield* Deferred.await(museStarted);
+        const pending = yield* Fiber.join(read);
+        const refresh = yield* Effect.forkChild(
+          service.readSummary({ ...WINDOW, awaitRefresh: true }),
+        );
+        yield* Deferred.succeed(museReady, {
+          initializeResult: { grantedCapabilities: [], museHome },
+          close: async () => {},
+        } as unknown as MuseSdk.MuseSdkHost);
+        return [pending, yield* Fiber.join(refresh)] as const;
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(SpawnExecutableResolution, (command: string) => command),
+        Effect.provide(
+          layerService({
+            prefix: "usage-muse-pending",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("muse")]: {
+                  driver: ProviderDriverKind.make("muse"),
+                  enabled: false,
+                },
+              },
+            },
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(pending), 5);
+      assert.deepStrictEqual(museSources(pending), [["muse", "ok", true]]);
+      assert.deepStrictEqual(museSources(refreshed), [
+        [NodePath.join(museHome, "sessions"), "ok", undefined],
+      ]);
+    }).pipe(Effect.scoped),
   );
 
   it.live("reports missing Pi history and skips malformed records without losing valid usage", () =>
@@ -1322,6 +1384,15 @@ describe("UsageService", () => {
           "windows-profile",
           "win32",
         ],
+        [undefined, undefined, "pi-home/.pi/agent/sessions", undefined, "pi-home"],
+        ["~/custom-pi", undefined, "pi-agent-home/custom-pi/sessions", undefined, "pi-agent-home"],
+        [
+          "~/ignored-pi",
+          "~/custom-sessions",
+          "pi-session-home/custom-sessions",
+          undefined,
+          "pi-session-home",
+        ],
       ] as const) {
         const dir = NodePath.join(home, relativeDir);
         yield* Effect.promise(async () => {
@@ -1361,7 +1432,7 @@ describe("UsageService", () => {
               prefix: "usage-pi-" + relativeDir.replaceAll("/", "-"),
               home,
               settings:
-                launchArgs === undefined
+                launchArgs === undefined && instanceHome === undefined
                   ? settings
                   : {
                       ...settings,
@@ -1369,7 +1440,7 @@ describe("UsageService", () => {
                         ...settings.providerInstances,
                         [ProviderInstanceId.make("pi")]: {
                           driver: ProviderDriverKind.make("pi"),
-                          config: { launchArgs },
+                          config: launchArgs === undefined ? {} : { launchArgs },
                           environment:
                             instanceHome === undefined
                               ? []

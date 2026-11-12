@@ -114,6 +114,11 @@ export const isAuthorizationFailure = (cause: Cause.Cause<unknown>) =>
 
 const MAX_EXPECTED_FAILURE_RETRY_DELAY_MS = 30_000;
 
+export const subscriptionRetryDelay = (base: Duration.Input, retries: number) =>
+  Duration.millis(
+    Math.min(Duration.toMillis(base) * 2 ** retries, MAX_EXPECTED_FAILURE_RETRY_DELAY_MS),
+  );
+
 export type EnvironmentRpcInput<TTag extends EnvironmentRpcTag> = Parameters<RpcMethod<TTag>>[0];
 
 export type EnvironmentRpcSuccess<TTag extends EnvironmentUnaryRpcTag> =
@@ -378,12 +383,9 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         ) {
                           return handled;
                         }
-                        const retryDelay = Duration.millis(
-                          Math.min(
-                            Duration.toMillis(options.retryExpectedFailureAfter) *
-                              2 ** expectedFailureRetries,
-                            MAX_EXPECTED_FAILURE_RETRY_DELAY_MS,
-                          ),
+                        const retryDelay = subscriptionRetryDelay(
+                          options.retryExpectedFailureAfter,
+                          expectedFailureRetries,
                         );
                         expectedFailureRetries += 1;
                         return handled.pipe(
@@ -483,7 +485,7 @@ export const subscribeVcsBranch = (
                   includeRemote: false,
                 }).pipe(
                   Stream.filter((event) => event._tag !== "remoteUpdated"),
-                  Stream.map((event) => ({ refName: event.local.refName })),
+                  Stream.map(({ local }) => ({ refName: local.refName, isRepo: local.isRepo })),
                 ),
           ),
         ),

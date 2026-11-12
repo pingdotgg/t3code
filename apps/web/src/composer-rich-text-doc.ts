@@ -22,7 +22,6 @@ import {
   getChangedRanges,
   type Command,
   type Editor,
-  Extension,
   InputRule,
   markInputRule,
   markPasteRule,
@@ -373,20 +372,6 @@ export const ComposerStrikeExtension = Strike.extend({
 });
 
 /**
- * Mod+B bolds selected text only. Without a selection Tiptap would toggle bold
- * for the next typed text, which users hit by accident when they mean the
- * sidebar toggle. Runs ahead of the Bold extension and swallows the chord.
- */
-export const ComposerBoldSelectionOnlyExtension = Extension.create({
-  name: "composerBoldSelectionOnly",
-  priority: 1000,
-  addKeyboardShortcuts() {
-    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
-    return { "Mod-b": ignoreWithoutSelection, "Mod-B": ignoreWithoutSelection };
-  },
-});
-
-/**
  * Tiptap's block chords can nest blocks inside quotes that the serializer cannot write,
  * silently dropping their text from stored drafts.
  */
@@ -501,7 +486,8 @@ const ComposerListItemExtension = ListItem.extend({
   addKeyboardShortcuts() {
     return {
       ...withoutBlockChords(this.parent?.(), LIST_NESTING_KEYS),
-      Backspace: () => backspaceAcrossList(this.editor),
+      // Replacing Tiptap's Backspace drops its undoInputRule, which keeps a just-typed "+ " literal.
+      Backspace: () => this.editor.commands.undoInputRule() || backspaceAcrossList(this.editor),
       Delete: () => deleteAcrossList(this.editor),
     };
   },
