@@ -38,7 +38,6 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
-const GLOB_INTENT = /[*?,]/;
 
 export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
@@ -448,35 +447,43 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     },
   );
 
-  const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
-    "WorkspaceSearchIndex.search",
-  )(function* (rawQuery, limit, kind, imageOnly) {
-    // fff parses any word containing "[" or "{" as a glob and has no escape for them; fuzzy
-    // matching is subsequence-based, so dropping them still matches "[id]" and "a{b}" paths.
-    // Words with a wildcard or alternation comma keep their braces so "*.{ts,tsx}" stays a glob.
-    const query = rawQuery
-      .replaceAll("[", "")
-      .replaceAll(/\S+/g, (word) => (GLOB_INTENT.test(word) ? word : word.replaceAll("{", "")));
+  const searchNames = Effect.fn("WorkspaceSearchIndex.searchNames")(function* (
+    query: string,
+    limit: number,
+    kind: ProjectEntryKind | undefined,
+    imageOnly: boolean | undefined,
+  ) {
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
-    const incompleteBeforeQuery = hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      const mapped = mapFileSearchResult(result, limit, imageOnly);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
+      return mapFileSearchResult(result, limit, imageOnly);
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      const mapped = mapDirectorySearchResult(result, limit);
-      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
+      return mapDirectorySearchResult(result, limit);
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    const mapped = mapMixedSearchResult(result, limit);
+    return mapMixedSearchResult(result, limit);
+  });
+
+  const search: WorkspaceSearchIndex["Service"]["search"] = Effect.fn(
+    "WorkspaceSearchIndex.search",
+  )(function* (rawQuery, limit, kind, imageOnly) {
+    // fff parses any word containing "[" or "{" as a glob and has no escape for them; fuzzy
+    // matching is subsequence-based, so dropping them still matches "[id]" and "a{b}" paths.
+    // "{" is dropped only when the query finds nothing as a glob, so "*.{ts,tsx}" keeps working.
+    const query = rawQuery.replaceAll("[", "");
+    const incompleteBeforeQuery = hasIncompleteInitialScan();
+    let mapped = yield* searchNames(query, limit, kind, imageOnly);
+    if (mapped.entries.length === 0 && query.includes("{")) {
+      mapped = yield* searchNames(query.replaceAll("{", ""), limit, kind, imageOnly);
+    }
     return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
   });
 

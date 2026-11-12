@@ -462,6 +462,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-brackets-" });
         yield* writeTextFile(cwd, "src/app/game/[id]/index.tsx");
         yield* writeTextFile(cwd, "src/foo{bar}.ts");
+        yield* writeTextFile(cwd, "src/main.ts");
         yield* writeTextFile(cwd, "src/notes.md");
 
         const search = (query: string) =>
@@ -476,8 +477,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect((yield* search("*.{ts,tsx}")).toSorted()).toEqual([
           "src/app/game/[id]/index.tsx",
           "src/foo{bar}.ts",
+          "src/main.ts",
         ]);
-        expect(yield* search("*.{ts}")).toEqual(["src/foo{bar}.ts"]);
+        expect((yield* search("*.{ts}")).toSorted()).toEqual(["src/foo{bar}.ts", "src/main.ts"]);
+        expect(yield* search("src/{main}.ts")).toEqual(["src/main.ts"]);
         expect(yield* search("src/{foo{bar},notes}.md")).toEqual(["src/notes.md"]);
       }),
     );
