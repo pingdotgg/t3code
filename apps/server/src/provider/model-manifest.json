@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-10T17:25:47Z",
+  "updatedAt": "2026-11-10T20:48:49Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -211,6 +211,11 @@
                   }
                 ],
                 "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
               }
             ]
           },
