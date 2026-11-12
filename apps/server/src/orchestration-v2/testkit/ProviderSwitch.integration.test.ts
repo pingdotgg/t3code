@@ -1684,6 +1684,55 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  it.live("keeps failing honestly on the next turn after rejecting a reused session", () =>
+    Effect.gen(function* () {
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      yield* unverifiedReplacementHarness(
+        "unverified-replacement-reused-next-turn",
+        [
+          // Resume always fails and every ensureThread returns the same native id.
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResume: true,
+          }),
+        ],
+        ({ orchestrator, worker, dispatchRequest, awaitSettled }) =>
+          Effect.gen(function* () {
+            yield* dispatchRequest(1, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(1);
+            const original = (yield* orchestrator.getThreadProjection(threadId))
+              .providerThreads[0]!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("unverified-replacement:detach"),
+              threadId,
+              providerSessionId: original.providerSessionId!,
+            });
+            yield* worker.drain();
+            yield* dispatchRequest(2, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(2);
+            // The rejected session must not count as loaded, or this turn would skip resume and
+            // run on it without the recovery history.
+            yield* dispatchRequest(3, CLAUDE_MODEL_SELECTION);
+            yield* awaitSettled(3);
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              projection.runs.map((run) => run.status),
+              ["completed", "failed", "failed"],
+            );
+            assert.deepEqual(replacementRecordsFor(projection, projection.runs[2]!.id), []);
+            assert.equal((yield* Ref.get(capturedTurns)).length, 1);
+          }),
+      );
+    }),
+  );
+
   it.live("drops replacement bookkeeping when the run stops during replacement", () =>
     Effect.gen(function* () {
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);

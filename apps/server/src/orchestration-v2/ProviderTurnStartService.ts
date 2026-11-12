@@ -1461,8 +1461,15 @@ export const layer: Layer.Layer<
           replacement.nativeThreadRef.driver === providerThread.nativeThreadRef?.driver &&
           replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef.nativeId
         ) {
-          // Never retried: the reused session is now marked loaded, so a retry would skip resume
-          // and start the turn without this error or the recovery handoff.
+          // Never retried. Forget the load first, or the next turn would skip resume and start on
+          // the reused session without this error or the recovery handoff.
+          yield* providerSessions.forgetLoadedProviderThread({
+            providerSessionId: session.providerSessionId,
+            threadId: projection.thread.id,
+            providerThread: replacement,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+          });
           yield* settleStartFailure({
             signal: "provider-thread-load-failure",
             title: "Provider turn failed to start",
