@@ -539,47 +539,65 @@ const make = Effect.gen(function* () {
           }
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
-        if (
-          branch !== null &&
-          isTemporaryWorktreeBranch(branch) &&
-          (yield* git
-            .hasCommit({
-              cwd: project.workspaceRoot,
-              refName: `refs/heads/${WORKTREE_BRANCH_PREFIX}`,
-            })
-            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
-        ) {
-          branch = flattenTemporaryWorktreeBranchName(branch);
-        }
-        yield* setupTracker.stageStatus(threadId, "checkout", "running");
-        const worktree = yield* git
-          .createWorktree(
-            {
-              cwd: project.workspaceRoot,
-              refName: startRef,
-              newRefName: branch!,
-              baseRefName,
-              path: null,
-            },
-            {
-              progress: {
-                onWorktreeClaimed: (path) =>
-                  Effect.sync(() => {
-                    createdWorktreePath = path;
-                    createdBranch = branch;
-                  }),
-                onCheckoutProgress: (progress) =>
-                  setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
+        const unborn = yield* Effect.gen(function* () {
+          const cwd = project.workspaceRoot;
+          if (yield* git.hasCommit({ cwd, refName: "HEAD" })) return false;
+          return !(yield* git.hasCommit({ cwd, refName: startRef === "-" ? "@{-1}" : startRef }));
+        }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (unborn) {
+          // A repository with no commits has nothing to check out; run in the project folder.
+          branch = yield* git
+            .currentBranch(project.workspaceRoot)
+            .pipe(Effect.orElseSucceed(() => null));
+          yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, branch }));
+          yield* setupTracker.stageStatus(threadId, "checkout", "skipped");
+        } else {
+          if (
+            branch !== null &&
+            isTemporaryWorktreeBranch(branch) &&
+            (yield* git
+              .hasCommit({
+                cwd: project.workspaceRoot,
+                refName: `refs/heads/${WORKTREE_BRANCH_PREFIX}`,
+              })
+              .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
+          ) {
+            branch = flattenTemporaryWorktreeBranchName(branch);
+          }
+          yield* setupTracker.stageStatus(threadId, "checkout", "running");
+          const worktree = yield* git
+            .createWorktree(
+              {
+                cwd: project.workspaceRoot,
+                refName: startRef,
+                newRefName: branch!,
+                baseRefName,
+                path: null,
               },
-            },
-          )
-          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-        worktreePath = worktree.worktree.path;
-        branch = worktree.worktree.refName;
-        createdWorktreePath = worktreePath;
-        createdBranch = branch;
-        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
-        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+              {
+                progress: {
+                  onWorktreeClaimed: (path) =>
+                    Effect.sync(() => {
+                      createdWorktreePath = path;
+                      createdBranch = branch;
+                    }),
+                  onCheckoutProgress: (progress) =>
+                    setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
+                },
+              },
+            )
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+          worktreePath = worktree.worktree.path;
+          branch = worktree.worktree.refName;
+          createdWorktreePath = worktreePath;
+          createdBranch = branch;
+          yield* setupTracker.update(threadId, (snapshot) => ({
+            ...snapshot,
+            worktreePath,
+            branch,
+          }));
+          yield* setupTracker.stageStatus(threadId, "checkout", "done");
+        }
       }
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
