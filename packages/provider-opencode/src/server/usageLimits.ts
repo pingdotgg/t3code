@@ -64,6 +64,7 @@ class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialR
 type StoredCredential = {
   readonly token: string;
   readonly workspaceID?: string;
+  readonly oauth?: true;
 };
 
 const readStoredCredential = (databasePath: string, integrationId: "opencode" | "opencode-go") =>
@@ -95,6 +96,7 @@ const readStoredCredential = (databasePath: string, integrationId: "opencode" | 
         return {
           token,
           ...(typeof orgID === "string" ? { workspaceID: orgID } : {}),
+          ...(stored?.type === "oauth" ? { oauth: true as const } : {}),
         };
       } finally {
         database.close();
@@ -210,10 +212,11 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     ];
     const digest = yield* Digest.Digest;
     // Unkeyed hashes match across environments; random Go keys resist offline guessing.
-    // Console tokens rotate on refresh, so their usage is keyed by workspace instead.
-    const fingerprintSource = credential.workspaceID
-      ? `opencode-console\0${credential.workspaceID}`
-      : `opencode-go\0${credential.token}`;
+    // Console OAuth tokens rotate on refresh, so their usage is keyed by workspace instead.
+    const fingerprintSource =
+      credential.oauth && credential.workspaceID
+        ? `opencode-console\0${credential.workspaceID}`
+        : `opencode-go\0${credential.token}`;
     const credentialFingerprint = yield* digest
       .digest(Digest.sha256, new TextEncoder().encode(fingerprintSource))
       .pipe(Effect.map(Hex.encode), Effect.orDie);

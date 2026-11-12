@@ -125,10 +125,13 @@ it.effect(
         key: "console-key",
         metadata: { orgID: "workspace-id" },
       };
-      // Console credentials share one workspace fingerprint across token refreshes.
+      // Console OAuth logins share one workspace fingerprint across token refreshes.
       const workspaceFingerprint =
         "b57cd91082439e0caec0a8016b42c874b7c0cb734814d5fedfca398f62a3614f";
       const fingerprints = new Map([
+        // A Console API key keeps the fingerprint it has when supplied inline.
+        ["console-key", "3e45cfde9158185930d4cc7020a4e390895574fd54bd8f9631d23a336bbf94f0"],
+        ["oauth-access", workspaceFingerprint],
         ["go-key", "d0e590e93fc9bd9353f2b993c0c287391cae505da2a78cb698b75418d2f5367e"],
         ["inline-key", "85649de18e63305548b6407e185f708483727ee6189cc4bc9512ddb17e23e776"],
       ]);
@@ -142,6 +145,7 @@ it.effect(
         workspaces = requested.map((key) =>
           key === "console-key" || key === "oauth-access" ? "workspace-id" : undefined,
         ),
+        fingerprint = fingerprints.get(requested.at(-1)!),
       } of [
         {
           consoleRow: {
@@ -173,6 +177,7 @@ it.effect(
           },
           requested: ["go-key"],
           workspaces: ["workspace-id"],
+          fingerprint: workspaceFingerprint,
         },
         {
           consoleRow: {
@@ -253,11 +258,7 @@ it.effect(
         NodeAssert.equal(limits.windows.length, consoleStatus === 500 ? 0 : 3);
         NodeAssert.equal(
           limits.credentialFingerprint,
-          consoleStatus === 500
-            ? undefined
-            : workspaces.at(-1)
-              ? workspaceFingerprint
-              : fingerprints.get(requested.at(-1)!),
+          consoleStatus === 500 ? undefined : fingerprint,
         );
       }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
