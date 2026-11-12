@@ -443,6 +443,8 @@ type FindResultListener = (event: DesktopPreviewFindResultEvent) => Effect.Effec
 
 const PAGE_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["command"]> = new Set([
   "preview.find",
+  "rightPanel.nextTab",
+  "rightPanel.previousTab",
 ]);
 
 const decodePageShortcutKeys = Schema.decodeUnknownOption(

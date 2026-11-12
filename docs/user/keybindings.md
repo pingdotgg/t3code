@@ -55,7 +55,9 @@ in Settings.
 
 `mod+alt+right` and `mod+alt+left` move to the next and previous tab in the open
 right panel, wrapping at either end. They work while you type in a side chat too.
-Rebind them under **Right Panel: Next Tab** and **Right Panel: Previous Tab**.
+They are desktop-only by default, because Chrome on macOS keeps those keys for
+switching browser tabs. In a browser, bind your own keys under
+**Right Panel: Next Tab** and **Right Panel: Previous Tab**.
 
 ## Copy pull request references
 
