@@ -12,6 +12,7 @@ import {
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { page } from "vite-plus/test/browser";
 import {
+  ASSISTANT_CITATION_MAX_ID_LENGTH,
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
   EnvironmentId,
   ThreadId,
@@ -169,7 +170,7 @@ it("routes selected assistant text through Cite only when enabled", async () => 
   expect(onCite).toHaveBeenCalledTimes(2);
   expect(shouldTypeToFocusComposer(new KeyboardEvent("keydown", { key: "z" }))).toBe(true);
   expect(onCite).toHaveBeenCalledTimes(2);
-  source.dataset.assistantCitationSource = "m".repeat(513);
+  source.dataset.assistantCitationSource = "m".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH + 1);
   await select();
   for (const key of ["a", "b"]) {
     const event = new KeyboardEvent("keydown", { key, cancelable: true });

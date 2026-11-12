@@ -1,4 +1,9 @@
-import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import {
+  ASSISTANT_CITATION_MAX_ID_LENGTH,
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -192,14 +197,14 @@ it.each(["Escape", "Cancel"])("discards a seeded new citation with %s", async (a
   expect(sourceAnchor.commentInput.pending).toBe(false);
 });
 
-it("releases input when a 513-character message ID has no citation node", async () => {
+it("releases input when an over-limit message ID has no citation node", async () => {
   const editorRef = createRef<ComposerPromptEditorHandle>();
   await using _screen = await render(<Composer question={false} editorRef={editorRef} />);
   const sourceAnchor = findAssistantCitationSourceAnchor(document, citation)!;
   sourceAnchor.commentInput = createCitationCommentInput("a");
   const value = serializeAssistantCitation({
     ...citation,
-    messageId: MessageId.make("m".repeat(513)),
+    messageId: MessageId.make("m".repeat(ASSISTANT_CITATION_MAX_ID_LENGTH + 1)),
   });
   await _screen.rerender(
     <Composer question={false} editorRef={editorRef} initialPrompt={value} key="invalid" />,
