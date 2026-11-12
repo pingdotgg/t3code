@@ -24,6 +24,8 @@ import {
   type MessageId,
   type OrchestrationV2ProviderTurnTokenUsage,
 } from "@t3tools/contracts";
+import { t3OrchestrationInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { T3_PI_ORCHESTRATION_INSTRUCTIONS_ENV } from "./mcpExtensionSource.ts";
 import { PiSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -484,7 +486,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       }
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
-        environment: options.environment,
+        environment: {
+          ...options.environment,
+          [T3_PI_ORCHESTRATION_INSTRUCTIONS_ENV]: t3OrchestrationInstructions(
+            (yield* host.settings.get.pipe(Effect.orDie)).visualInstructions,
+          ).trim(),
+        },
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,

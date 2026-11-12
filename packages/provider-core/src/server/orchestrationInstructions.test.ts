@@ -4,6 +4,8 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  t3OrchestrationInstructions,
+  t3OrchestrationSections,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
@@ -81,5 +83,43 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+  });
+});
+
+describe("visual delivery overrides", () => {
+  it("restores defaults and replaces or omits only the visual guidance", () => {
+    assert.equal(t3OrchestrationInstructions(), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
+    assert.equal(t3OrchestrationInstructions(null), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
+    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: true } as const;
+    for (const visualInstructions of [
+      "Publish standalone reports with the user's publishing skill.",
+      "",
+    ]) {
+      const instructions = t3OrchestrationInstructions(visualInstructions);
+      assert.include(instructions, visualInstructions);
+      assert.notInclude(instructions, "Answer data with a trend");
+      assert.include(instructions, "Never use `preview_*` unasked");
+      assert.include(instructions, "orchestrator_capabilities");
+      assert.equal(
+        t3OrchestrationSections(visualInstructions).slice(0, -1).join("\n"),
+        t3OrchestrationSections().slice(0, -1).join("\n"),
+      );
+      assert.include(t3OrchestrationSystemPrompt(true, true, visualInstructions), instructions);
+      assert.include(
+        t3AcpPromptWithInstructions({ prompt: "Report.", state, visualInstructions }),
+        instructions.trim(),
+      );
+      assert.include(
+        t3OrchestrationPrompt({
+          prompt: "Report.",
+          hasT3Mcp: true,
+          hasDeviceTools: true,
+          orchestrationDelivered: false,
+          deviceInstructionsDelivered: false,
+          visualInstructions,
+        }),
+        instructions.trim(),
+      );
+    }
   });
 });

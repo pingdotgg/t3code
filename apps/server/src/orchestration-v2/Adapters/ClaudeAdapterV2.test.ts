@@ -699,6 +699,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-sonnet-4-6",
       },
+      visualInstructions: "Publish reports using my publishing skill.",
       nativeThreadId: "native-thread-claude-mcp",
       resume: false,
       cwd: "/workspace",
@@ -716,6 +717,8 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(systemPrompt.preset, "claude_code");
     assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
     assert.include(systemPrompt.append ?? "", "call `t3_background_wait`");
+    assert.include(systemPrompt.append ?? "", "Publish reports using my publishing skill.");
+    assert.notInclude(systemPrompt.append ?? "", "Answer data with a trend");
     assert.notInclude(systemPrompt.append ?? "", "## T3 Code devices");
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);

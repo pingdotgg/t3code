@@ -52,6 +52,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { hasOnlyPairedSurrogates } from "./threadMetadataMcp.ts";
 import {
   CloudSpeechModelId,
   SpeechAcceleration,
@@ -1350,6 +1351,17 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+const VisualInstructions = Schema.NullOr(
+  Schema.String.check(
+    Schema.isMaxLength(1_000),
+    Schema.makeFilter((value) =>
+      hasOnlyPairedSurrogates(value)
+        ? true
+        : "Visual instructions must contain well-formed Unicode.",
+    ),
+  ),
+);
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1518,6 +1530,8 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  // Leaves room for browser guidance inside Codex's 4,000-byte context entry.
+  visualInstructions: VisualInstructions.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   branchNamingMode: BranchNamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("static" as const)),
@@ -1905,6 +1919,7 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   ghqCloneLayout: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  visualInstructions: Schema.optionalKey(VisualInstructions),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),

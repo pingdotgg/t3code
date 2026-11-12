@@ -48,6 +48,7 @@ export async function loadMcpBridge(
     readonly toolSearchDisabled?: boolean;
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
+    readonly orchestrationInstructions?: string;
     readonly inputSchema?: Record<string, unknown>;
   } = {},
 ) {
@@ -89,6 +90,7 @@ export async function loadMcpBridge(
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {
       env: {
+        T3_PI_ORCHESTRATION_INSTRUCTIONS: options.orchestrationInstructions,
         T3_MCP_URL: "http://fixture.invalid/mcp",
         T3_MCP_BEARER_TOKEN: "fixture-token",
         T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",

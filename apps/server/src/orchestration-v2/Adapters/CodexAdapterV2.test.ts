@@ -265,6 +265,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
       const appContext = [{ key: "mcp_app_todos_list_todos_item-1", text: "Filtered to overdue" }];
       const alone = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        visualInstructions: "Publish reports using my publishing skill.",
         nativeThreadId: "native-app-context",
         codexInput: [{ type: "text", text: "what's on my list?" }],
         runtimePolicy: policy,
@@ -275,6 +276,7 @@ describe("CodexAdapterV2 runtime policy", () => {
         "mcp_app_todos_list_todos_item-1": { kind: "untrusted", value: "Filtered to overdue" },
       });
       const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        visualInstructions: "Publish reports using my publishing skill.",
         nativeThreadId: "native-app-context",
         codexInput: [{ type: "text", text: "what's on my list?" }],
         runtimePolicy: policy,
@@ -287,6 +289,10 @@ describe("CodexAdapterV2 runtime policy", () => {
         value: "Filtered to overdue",
       });
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
+      assert.include(
+        withT3.additionalContext?.["t3_code_orchestration_03"]?.value ?? "",
+        "Publish reports using my publishing skill.",
+      );
     }),
   );
 });
