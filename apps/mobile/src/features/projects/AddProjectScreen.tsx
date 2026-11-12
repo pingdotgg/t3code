@@ -45,6 +45,7 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -399,9 +400,9 @@ function useBrowsePathInput(
       input: { partialPath: browsePath.directoryPath },
     });
     if (!AsyncResult.isSuccess(result) || !result.value) return path;
-    // parentPath is the host's resolved directory, verbatim: whitespace in it is significant.
+    // parentPath is the host's resolved directory, verbatim: whitespace and POSIX backslashes are significant.
     const parentPath = result.value.parentPath;
-    const separator = /[\\/]$/.test(parentPath)
+    const separator = hasTrailingPathSeparator(parentPath)
       ? ""
       : isWindowsPlatform(environment.platform)
         ? "\\"

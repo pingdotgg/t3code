@@ -855,8 +855,11 @@ describe("adding an already registered project", () => {
     });
   });
 
-  it("keeps whitespace in the host directory when matching", async () => {
-    using _flow = setup({ baseDirectory: "~/work /repo", root: "/home/tester/work/repo" });
+  it.each([
+    { path: "~/work /repo", root: "/home/tester/work/repo" },
+    { path: "~/work\\/repo", root: "/home/tester/work\\repo" },
+  ])("matches the host directory verbatim for $path", async ({ path, root }) => {
+    using _flow = setup({ baseDirectory: path, root });
     const submit = findAction(
       renderScreen(() => AddProjectLocalFolderScreen({ environmentId: "environment" })),
       "Add project",
@@ -864,7 +867,7 @@ describe("adding an already registered project", () => {
     if (!submit) throw new Error("Add project action missing");
     await submit();
 
-    expect(state.projects).toEqual(["~/work /repo"]);
+    expect(state.projects).toEqual([path]);
   });
 
   it("opens the existing project with the prompt instead of cloning into it", async () => {
