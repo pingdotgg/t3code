@@ -1,7 +1,6 @@
 import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as PlatformError from "effect/PlatformError";
@@ -30,8 +29,17 @@ const KNOWN_SHARED_DIRECTORIES = [
   "thread-writer-locks",
 ] as const;
 
-// auth.lock guards the shadow home's private auth.json.
-const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
+// auth.lock guards the shadow home's private auth.json. The cloud caches are signed per ChatGPT
+// identity, and Codex replaces them and its global state by rename, which would break a link.
+const PRIVATE_ENTRY_NAMES = new Set([
+  "auth.json",
+  "auth.lock",
+  "models_cache.json",
+  "cloud-config-bundle-cache.json",
+  "cloud-requirements-cache.json",
+  ".codex-global-state.json",
+  ".codex-global-state.json.bak",
+]);
 // Finder maintains metadata separately for each directory, including shadow homes.
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
@@ -40,10 +48,6 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "thread-writer-locks",
   ".sqlite-maintenance.lock",
 ]);
-// Codex saves files like config caches by write-temp-then-rename, which turns a shared link into a
-// regular file. Databases and locks are never replaced that way, and copying them is unsafe.
-const NON_RECONCILABLE_FILE_PATTERN = /\.(?:sqlite(?:-wal|-shm|-journal)?|lock)$/;
-const SHADOW_CONFLICT_BACKUP_DIRECTORY = ".t3-shadow-conflicts";
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
   const expanded =
@@ -85,17 +89,7 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals([
-      "readLink",
-      "makeDirectory",
-      "readDirectory",
-      "remove",
-      "symlink",
-      "stat",
-      "copyFile",
-      "readFile",
-      "writeFile",
-    ]),
+    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -234,70 +228,6 @@ const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(f
   }
 });
 
-// Gives the result a working link would have: the newer copy becomes the shared one. The
-// displaced copy is kept in the shadow home in case it was a file someone placed there.
-const reconcileReplacedSharedFile = Effect.fn("CodexHomeLayout.reconcileReplacedSharedFile")(
-  function* (input: {
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly sharedHomePath: string;
-    readonly effectiveHomePath: string;
-    readonly entryName: string;
-  }): Effect.fn.Return<boolean, CodexShadowHomeError, Path.Path> {
-    if (NON_RECONCILABLE_FILE_PATTERN.test(input.entryName)) return false;
-    const path = yield* Path.Path;
-    const { fileSystem, entryName } = input;
-    const sharedPath = path.join(input.sharedHomePath, entryName);
-    const shadowPath = path.join(input.effectiveHomePath, entryName);
-    const backupDirectory = path.join(input.effectiveHomePath, SHADOW_CONFLICT_BACKUP_DIRECTORY);
-    const backupPath = path.join(backupDirectory, entryName);
-    const fail =
-      (operation: CodexShadowHomeFileSystemError["operation"], failedPath: string) =>
-      (cause: PlatformError.PlatformError) =>
-        new CodexShadowHomeFileSystemError({
-          sharedHomePath: input.sharedHomePath,
-          effectiveHomePath: input.effectiveHomePath,
-          operation,
-          path: failedPath,
-          entryName,
-          cause,
-        });
-
-    const [sharedInfo, shadowInfo] = yield* Effect.all([
-      fileSystem.stat(sharedPath).pipe(Effect.mapError(fail("stat", sharedPath))),
-      fileSystem.stat(shadowPath).pipe(Effect.mapError(fail("stat", shadowPath))),
-    ]);
-    if (sharedInfo.type !== "File" || shadowInfo.type !== "File") return false;
-
-    const shadowIsNewer =
-      Option.isSome(shadowInfo.mtime) &&
-      Option.isSome(sharedInfo.mtime) &&
-      shadowInfo.mtime.value.getTime() > sharedInfo.mtime.value.getTime();
-    const displacedPath = shadowIsNewer ? sharedPath : shadowPath;
-
-    yield* fileSystem
-      .makeDirectory(backupDirectory, { recursive: true })
-      .pipe(Effect.mapError(fail("makeDirectory", backupDirectory)));
-    yield* fileSystem
-      .copyFile(displacedPath, backupPath)
-      .pipe(Effect.mapError(fail("copyFile", displacedPath)));
-    if (shadowIsNewer) {
-      // Write through, not rename, so a shared entry that is itself a symlink stays one.
-      const contents = yield* fileSystem
-        .readFile(shadowPath)
-        .pipe(Effect.mapError(fail("readFile", shadowPath)));
-      yield* fileSystem
-        .writeFile(sharedPath, contents)
-        .pipe(Effect.mapError(fail("writeFile", sharedPath)));
-    }
-    yield* fileSystem.remove(shadowPath).pipe(Effect.mapError(fail("remove", shadowPath)));
-    yield* Effect.logWarning(
-      "Codex replaced a linked shadow home file; kept the newer copy shared and backed up the other.",
-      { entryName, sharedPath, backupPath },
-    );
-    return true;
-  },
-);
-
 const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
@@ -329,9 +259,6 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
 
   if (state._tag === "NotSymlink") {
     if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
-      if (yield* reconcileReplacedSharedFile(input)) {
-        return yield* createLink;
-      }
       return yield* new CodexShadowHomeEntryConflictError({
         sharedHomePath: input.sharedHomePath,
         effectiveHomePath: input.effectiveHomePath,
