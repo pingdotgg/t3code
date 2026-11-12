@@ -84,6 +84,7 @@ import { museSubagentInterruptInput } from "./muse_subagent_interrupt/input.ts";
 import { assertMuseSubagentInterruptOutput } from "./muse_subagent_interrupt/output.ts";
 import { museWorkflowInput } from "./muse_workflow/input.ts";
 import { assertMuseWorkflowOutput } from "./muse_workflow/output.ts";
+import { assertMuseWorkflowReportRaceOutput } from "./muse_workflow_report_race/output.ts";
 import { assertMuseSubagentV2Output } from "./subagent_v2/muse_output.ts";
 import { assertMuseMultiTurnOutput } from "./multi_turn/muse_output.ts";
 import { assertMuseTurnInterruptOutput } from "./turn_interrupt/muse_output.ts";
@@ -1560,6 +1561,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: MUSE_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertMuseWorkflowOutput,
+      },
+    ],
+  },
+  {
+    name: "muse_workflow_report_race",
+    buildInput: museWorkflowInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("muse"),
+        transcriptFile: new URL(
+          "./muse_workflow_report_race/muse_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: MUSE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertMuseWorkflowReportRaceOutput,
       },
     ],
   },
