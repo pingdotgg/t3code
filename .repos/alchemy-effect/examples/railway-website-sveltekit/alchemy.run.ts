@@ -1,5 +1,5 @@
+import * as Railway from "@alchemy.run/railway";
 import * as Alchemy from "alchemy";
-import * as Railway from "alchemy/Railway";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -13,13 +13,7 @@ export default Alchemy.Stack(
       // Only hash the files that affect the build, so unchanged sources
       // skip the SvelteKit build (and the deploy) entirely.
       memo: {
-        include: [
-          "src/**",
-          "static/**",
-          "package.json",
-          "vite.config.ts",
-          "tsconfig.json",
-        ],
+        include: ["src/**", "static/**", "package.json", "vite.config.ts", "tsconfig.json"],
       },
       env: {
         GREETING: "Hello from SvelteKit on Railway!",

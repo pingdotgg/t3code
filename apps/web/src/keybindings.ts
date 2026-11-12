@@ -115,7 +115,8 @@ function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMa
   // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
     context.composerRequiresModifier &&
-    binding.command === "composer.sendAlternate" &&
+    (binding.command === "composer.sendAlternate" ||
+      binding.command === "composer.sendBackground") &&
     shortcut.key === "enter" &&
     shortcut.modKey &&
     !shortcut.metaKey &&
@@ -379,7 +380,7 @@ export function isOpenFavoriteEditorShortcut(
  * Whether the keypress should bold text in the rich-text composer: Mod+B
  * without extra modifiers, with text selected. Tiptap binds the same chord, so
  * app shortcuts captured ahead of the editor yield only in that case. With no
- * selection the chord stays with the app (the sidebar toggle by default).
+ * selection an app binding on the chord wins (the sidebar toggle by default).
  */
 export function isRichTextBoldShortcut(
   event: ShortcutEventLike,
@@ -396,6 +397,13 @@ export function isRichTextBoldShortcut(
     !event.altKey &&
     !event.shiftKey
   );
+}
+
+/** Mod+B, Mod+I and Mod+E, the mark chords the rich-text composer binds. */
+export function isRichTextFormattingShortcut(event: ShortcutEventLike): boolean {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return false;
+  const keys = resolveEventKeys(event);
+  return keys.has("b") || keys.has("i") || keys.has("e");
 }
 
 export function isTerminalClearShortcut(

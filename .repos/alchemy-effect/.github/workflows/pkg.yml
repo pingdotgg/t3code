@@ -18,7 +18,6 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
-      - "turbo.json"
       - "tsconfig.json"
       - ".github/workflows/pkg.yml"
   pull_request:
@@ -30,7 +29,6 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
-      - "turbo.json"
       - "tsconfig.json"
       - ".github/workflows/pkg.yml"
 
@@ -41,12 +39,16 @@ env:
   PKG_REGISTRY: https://pkg.alchemy.run
 
 concurrency:
-  group: pkg-${{ github.event.pull_request.number || github.ref }}
+  # Label events get a group per label so adding an unrelated label (such as
+  # `deploy-website`) never cancels the run for the latest push.
+  group: pkg-${{ github.event.pull_request.number || github.ref }}${{ github.event.action == 'labeled' && format('-{0}', github.event.label.name) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   publish:
     name: Publish preview packages
+    # `labeled` is only for `force-ci`, which repacks every package.
+    if: github.event.action != 'labeled' || github.event.label.name == 'force-ci'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
@@ -60,10 +62,6 @@ jobs:
       - name: Checkout distilled
         run: git submodule update --init --depth=1 --checkout -- submodules/distilled
 
-      # No turbo cache here on purpose: the restore keys fall back to any
-      # earlier run, and replayed outputs for the distilled packages, whose
-      # sources live in a submodule, have compiled alchemy against stale
-      # declarations. A clean build is a few minutes and always correct.
       - name: Setup pnpm, Node.js, Bun and install dependencies
         uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
@@ -71,26 +69,28 @@ jobs:
           install: true
           require-lockfile: true
 
-      # Cold-building the alchemy package peaks near 17 GB of heap, which
-      # starves the runner agent on a 32 GB machine and drops the job. A soft
-      # limit holds the peak near 11 GB for roughly twice the compile time.
       - name: Build packages
-        env:
-          GOMEMLIMIT: 6GiB
-          GOGC: "40"
         run: pnpm build:pkg
 
-      # The @distilled.cloud list is alchemy's dependency set, which `build:pkg`
-      # derives with `--filter=alchemy...`; keep the @alchemy.run list in sync.
+      # The build emits plain tsc output for distilled SDKs that had no `lib/`
+      # when install's `ensure:built` ran (such as iceberg, referenced only by
+      # @alchemy.run/cloudflare). Bundle them now so their tarballs ship the
+      # `distilled-lazy` files their exports point at.
+      - name: Bundle distilled packages
+        run: pnpm ensure:built
+
+      # Workspace dependencies of the listed packages, such as the
+      # @distilled.cloud SDKs, are packed automatically under a collapsed
+      # "Transitive Dependencies" group. Keep the @alchemy.run
+      # list in sync with `build:pkg`.
       - name: Pack packages
         id: pack
         run: >-
           pnpm exec pkg pack
           ${{ contains(github.event.pull_request.labels.*.name, 'force-ci') && '--all' || '' }}
-          --rebuild-all-path 'scripts/copy-package-files.ts'
+          --rebuild-all-path 'scripts/package-build.ts'
           --group 'alchemy=./packages/alchemy'
-          --group '@alchemy.run[Collapsed]=./packages/{better-auth,cloudflare-runtime,frontend-frameworks,node-utils,floci,pkg}'
-          --group '@distilled.cloud[Collapsed]=./submodules/distilled/packages/{core,acme,aws,axiom,cloudflare,doppler,fly-io,github,hetzner,infisical,neon,prisma,planetscale,railway,stripe,zerossl}'
+          --group '@alchemy.run[Collapsed]=./packages/{better-auth,git,drizzle,sqlite,acme,axiom,doppler,infisical,turso,planetscale,neon,prisma,hetzner,railway,fly,github,stripe,cloudflare,gcp,aws,domain,kubernetes,docker,redis,sql,cloudflare-runtime,frontend-frameworks,node-utils,pkg}'
 
       - name: Vouch for the manifest
         if: steps.pack.outputs.package-count != '0'

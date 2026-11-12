@@ -504,7 +504,6 @@ describe("instance-scoped model selection", () => {
       model: state.selectedModel,
       models: providers[0]!.models,
       modelOptions: state.modelOptions?.[instanceId],
-      planModeEnabled: false,
     });
 
     expect(state.selectedModel).toBe("gpt-5.6-sol");
@@ -708,12 +707,82 @@ describe("instance-scoped model selection", () => {
       model: state.selectedModel,
       models: providers[0]!.models,
       modelOptions: state.modelOptions?.[instanceId],
-      planModeEnabled: false,
     });
 
     expect(
       createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
     ).toEqual(saved);
+  });
+
+  describe("composer model option precedence", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const base = provider({ provider: driver, instanceId, models: ["claude-opus-5-5"] });
+    const providers = [
+      {
+        ...base,
+        models: base.models.map((model) => ({
+          ...model,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Effort",
+                type: "select" as const,
+                options: [
+                  { id: "medium", label: "Medium", isDefault: true },
+                  { id: "high", label: "High" },
+                ],
+                currentValue: "medium",
+              },
+            ],
+          },
+        })),
+      },
+    ];
+    const settingsDefault = createModelSelection(instanceId, "claude-opus-5-5", [
+      { id: "effort", value: "high" },
+    ]);
+    const dispatchedSelection = (
+      threadModelSelection: ReturnType<typeof createModelSelection> | null,
+    ) => {
+      const state = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection,
+        projectModelSelection: settingsDefault,
+        settings: settingsWithProviderInstances(),
+      });
+      const dispatch = getComposerProviderState({
+        provider: driver,
+        model: state.selectedModel,
+        models: providers[0]!.models,
+        modelOptions: state.modelOptions?.[instanceId],
+      });
+      return createModelSelection(
+        instanceId,
+        state.selectedModel,
+        dispatch.modelOptionsForDispatch,
+      );
+    };
+
+    it("does not inherit settings options for an optionless existing thread", () => {
+      const threadSelection = createModelSelection(instanceId, "claude-opus-5-5");
+      expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
+    });
+
+    it("keeps the options it was saved with", () => {
+      const threadSelection = createModelSelection(instanceId, "claude-opus-5-5", [
+        { id: "effort", value: "medium" },
+      ]);
+      expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
+    });
+
+    it("leaves the settings default's options in place before a thread exists", () => {
+      expect(dispatchedSelection(null)).toEqual(settingsDefault);
+    });
   });
 
   it("keeps a custom-instance draft model while dropping unsupported options", () => {
@@ -746,7 +815,6 @@ describe("instance-scoped model selection", () => {
       model: state.selectedModel,
       models: providers[1]!.models,
       modelOptions: state.modelOptions?.[instanceId],
-      planModeEnabled: false,
     });
 
     expect(
@@ -956,7 +1024,6 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
   };
   const settings: UnifiedSettings = {
     ...DEFAULT_UNIFIED_SETTINGS,
-    planModeEnabled: false,
     textGenerationModelSelection: createModelSelection(instanceId, model, [
       { id: "agent", value: "plan" },
     ]),
@@ -1024,7 +1091,6 @@ describe("default model settings and new-thread composer parity", () => {
           model,
           models,
           modelOptions,
-          planModeEnabled: settings.planModeEnabled,
         });
       const composerTraits = traits(composer.selectedModel, composer.modelOptions?.[instanceId]);
 
@@ -1123,7 +1189,6 @@ describe("composer fallback to another instance of the same driver", () => {
       model: state.selectedModel,
       models: selection.selectedProviderEntry!.models,
       modelOptions: state.modelOptions?.[selectedInstanceId],
-      planModeEnabled: false,
     });
     return { selectedInstanceId, state, traits };
   }

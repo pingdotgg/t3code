@@ -352,6 +352,49 @@ describe("PiProvider", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("advertises a model's service tiers beside its thinking levels", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner({
+        models: [
+          {
+            provider: "columbia-codex",
+            id: "gpt-6.1-sol",
+            reasoning: true,
+            serviceTiers: [
+              { id: "priority", name: "Fast", description: "2x speed, increased usage" },
+              { id: "ultrafast", name: "Ultrafast" },
+            ],
+          },
+          { provider: "anthropic", id: "claude-sonnet-4", reasoning: true },
+        ],
+      });
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const descriptors = (slug: string) =>
+        snapshot.models.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? [];
+      assert.deepEqual(
+        descriptors("columbia-codex/gpt-6.1-sol").map((descriptor) => descriptor.id),
+        ["thinking", "serviceTier"],
+      );
+      assert.deepEqual(descriptors("columbia-codex/gpt-6.1-sol")[1], {
+        id: "serviceTier",
+        label: "Service Tier",
+        type: "select",
+        options: [
+          { id: "default", label: "Standard", isDefault: true },
+          { id: "priority", label: "Fast", description: "2x speed, increased usage" },
+          { id: "ultrafast", label: "Ultrafast" },
+        ],
+        currentValue: "default",
+      });
+      assert.deepEqual(
+        descriptors("anthropic/claude-sonnet-4").map((descriptor) => descriptor.id),
+        ["thinking"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   // regression: #18498 a malformed model inventory must not restore stale Pi models
   it.effect.each([
     ["missing models", {}],

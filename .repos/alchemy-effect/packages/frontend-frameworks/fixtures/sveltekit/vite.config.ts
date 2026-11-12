@@ -9,8 +9,9 @@
  * The suite proves the file is honored end-to-end (`/api/user-config`, live
  * and dev):
  *
- * - `alias: { $fixture: ... }` — a user kit option that only works if the
- *   user's `sveltekit()` call is the one that runs.
+ * - `version: { name: ... }` — a user kit option observable at runtime via
+ *   `$app/env`'s `version`; it only appears if the user's `sveltekit()`
+ *   call is the one that runs.
  * - `fixtureMarkerPlugin` — a user Vite plugin whose virtual module is
  *   observable in the build output.
  * - `adapter: userDeclaredAdapter` — a user-declared adapter that THROWS if
@@ -53,7 +54,7 @@ export default defineConfig({
     fixtureMarkerPlugin(),
     sveltekit({
       adapter: userDeclaredAdapter,
-      alias: { $fixture: "src/fixture" },
+      version: { name: "fixture-user-version" },
     }),
   ],
 });
