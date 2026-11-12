@@ -2969,6 +2969,9 @@ const make = Effect.gen(function* () {
             input.projectId,
             "Pass projectId, or allProjects: true for every project. This MCP client is not running inside a T3 thread.",
           );
+      if (!input.allProjects && input.projectId !== undefined) {
+        yield* requireProject(input.projectId);
+      }
       const projectThreads = yield* threadManagement
         .listProjectThreads({
           projectId: projectId ?? undefined,
@@ -3144,6 +3147,10 @@ const make = Effect.gen(function* () {
           }),
           threadId: input.threadId,
           ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+          // A linked environment's agent has no thread here; the link names it.
+          ...(parent === undefined && scope.client?.senderThread !== undefined
+            ? { linkedSender: scope.client.senderThread }
+            : {}),
           messageId,
           text: input.message,
           attachments: [],

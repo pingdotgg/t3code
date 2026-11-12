@@ -16,9 +16,11 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -2016,6 +2018,190 @@ describe("CursorAdapterV2", () => {
     assert.isFalse(CursorAgentSdk.isCursorCancellationError(new Error("request failed")));
     assert.isFalse(CursorAgentSdk.isCursorCancellationError(null));
   });
+
+  it.effect(
+    "rewrites skills on live steers and returns a decline without waiting for completion",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cursor-v2-steer-",
+        });
+        const path = yield* Path.Path;
+        const skill = path.join(workspace, ".cursor", "skills", "review");
+        yield* fileSystem.makeDirectory(skill, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(skill, "SKILL.md"),
+          "# Review\nReview the code.",
+        );
+        const steered: string[] = [];
+        let cancelled = 0;
+        let outcome: "complete_delivered" | "revert_to_followup" = "complete_delivered";
+        const finished = yield* Deferred.make<{
+          readonly id: string;
+          readonly requestId: string;
+          readonly status: "finished" | "cancelled";
+          readonly model: { readonly id: string };
+          readonly durationMs: number;
+        }>();
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-steer-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const adapter = yield* makeCursorAdapterV2({
+          instanceId,
+          environment: { HOME: workspace },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-steer",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: () =>
+                  Effect.succeed({
+                    agentId: "native-cursor-steer",
+                    runId: "native-cursor-steer-run",
+                    wait: Deferred.await(finished),
+                    cancel: Effect.sync(() => {
+                      cancelled += 1;
+                    }).pipe(
+                      Effect.andThen(
+                        Deferred.succeed(finished, {
+                          id: "native-cursor-steer-run",
+                          requestId: "native-request",
+                          status: "cancelled" as const,
+                          model: { id: "composer-2.5" },
+                          durationMs: 1,
+                        }),
+                      ),
+                    ),
+                    steer: (text) =>
+                      Effect.sync(() => {
+                        steered.push(text);
+                        return outcome;
+                      }),
+                  }),
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-steer-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(
+          runtime.providerSession.capabilities.turns.activeSteeringAcceptsAttachments,
+          false,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const turn = {
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make("cursor-steer-run"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("cursor-steer-attempt"),
+          rootNodeId: NodeId.make("cursor-steer-root"),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-steer-project"),
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            title: "Cursor steer",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make("cursor-steer-message"),
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            text: "Review the code.",
+            attachments: [],
+          },
+        };
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: CursorAgentSdk.CURSOR_PROVIDER,
+          nativeTurnId: "native-cursor-steer-run",
+        });
+        yield* runtime.startTurn(turn);
+        yield* runtime.steerTurn({
+          threadId,
+          runId: turn.runId,
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("cursor-steer-follow-up"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "$review Look at the tests instead.",
+            attachments: [],
+          },
+        });
+        assert.deepEqual(steered, ["/review Look at the tests instead."]);
+        assert.equal(cancelled, 0);
+
+        outcome = "revert_to_followup";
+        const declined = yield* runtime
+          .steerTurn({
+            threadId,
+            runId: turn.runId,
+            providerThread,
+            providerTurnId,
+            message: {
+              messageId: MessageId.make("cursor-steer-declined"),
+              createdBy: "user",
+              creationSource: "web",
+              text: "Stop and do this.",
+              attachments: [],
+            },
+          })
+          .pipe(Effect.exit);
+        if (!Exit.isFailure(declined)) return yield* Effect.die("Expected a declined steer");
+        assert.deepEqual(steered, ["/review Look at the tests instead.", "Stop and do this."]);
+        assert.equal(cancelled, 0);
+        const declinedError = Cause.squash(declined.cause);
+        assert.instanceOf(declinedError, ProviderAdapter.ProviderAdapterSteerDeclinedError);
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId,
+        });
+        assert.equal(cancelled, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
+  );
 
   it("preserves failed nested read calls when Cursor omits their path", () => {
     assert.deepEqual(
