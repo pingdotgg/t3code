@@ -121,3 +121,9 @@ export function withSettingsSecrets<Settings extends Readonly<Record<string, unk
   }
   return next as Settings;
 }
+
+export const SecretSourceCheckResult = Schema.Union([
+  Schema.TaggedStruct("Resolved", {}),
+  Schema.TaggedStruct("Failed", { detail: Schema.String }),
+]);
+export type SecretSourceCheckResult = typeof SecretSourceCheckResult.Type;
