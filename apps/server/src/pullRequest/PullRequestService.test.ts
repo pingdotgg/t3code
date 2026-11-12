@@ -253,11 +253,13 @@ it.effect("a finished turn in one project keeps another project's listing cached
         }),
       ],
     });
+    yield* service.list({ state: "open", projectId: "p1" as ProjectId });
     yield* service.list({ state: "open", projectId: "p2" as ProjectId });
-    assert.deepStrictEqual(reads, ["acme/api"]);
+    assert.deepStrictEqual(reads, ["acme/web", "acme/api"]);
     yield* service.refreshAfterTurn("p1" as ProjectId);
     yield* service.list({ state: "open", projectId: "p2" as ProjectId });
-    assert.deepStrictEqual(reads, ["acme/api"]);
+    yield* service.list({ state: "open", projectId: "p1" as ProjectId });
+    assert.deepStrictEqual(reads, ["acme/web", "acme/api", "acme/web"]);
   }),
 );
 

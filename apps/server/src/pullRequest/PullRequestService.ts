@@ -2958,6 +2958,17 @@ export const make = Effect.gen(function* () {
       number,
     } as PullRequestRef;
   };
+  // A turn moves only its project's epoch, so listings scoped to other projects stay cached.
+  let latestProjectEpoch = 0;
+  const listingEpoch = (input: Pick<PullRequestListInput, "projectId" | "projectIds">) => {
+    const projectIds =
+      input.projectId !== undefined ? [input.projectId] : (input.projectIds ?? null);
+    if (projectIds === null) return Math.max(listingsEpoch, latestProjectEpoch);
+    return Math.max(
+      listingsEpoch,
+      ...projectIds.map((projectId) => projectEpochs.get(projectId) ?? projectEpochFloor),
+    );
+  };
   const statsCacheKey = (key: string) => JSON.stringify([listingsEpoch, key]);
   const recentStats = new Map<
     string,
@@ -3123,7 +3134,7 @@ export const make = Effect.gen(function* () {
   );
   const list: PullRequestService["Service"]["list"] = (input) => {
     const key = JSON.stringify([
-      listingsEpoch,
+      listingEpoch(input),
       input.state,
       input.involvement ?? null,
       input.filters === undefined
@@ -3644,7 +3655,7 @@ export const make = Effect.gen(function* () {
     // change request reached through another repository, and no epoch may move until those
     // reads are gone, or a reader in between keeps the old one under the new epoch.
     yield* forgetProviderReads();
-    listingsEpoch = ++epochCounter;
+    latestProjectEpoch = ++epochCounter;
     projectEpochs.delete(projectId);
     if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
       const oldest = projectEpochs.keys().next().value;
@@ -3653,8 +3664,8 @@ export const make = Effect.gen(function* () {
         projectEpochs.delete(oldest);
       }
     }
-    projectEpochs.set(projectId, listingsEpoch);
-    const epoch = listingsEpoch;
+    projectEpochs.set(projectId, latestProjectEpoch);
+    const epoch = latestProjectEpoch;
     yield* readCache.invalidate(`project:${projectId}`);
     yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
   });
