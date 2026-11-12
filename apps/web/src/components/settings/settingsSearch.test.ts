@@ -66,6 +66,7 @@ describe("searchSettings", () => {
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     const spanish = (message: string) => (message === "Word wrap" ? "Ajuste de línea" : message);
     expect(searchSettings("ajuste", ITEMS, spanish).map((item) => item.id)).toEqual(["word-wrap"]);
+    expect(searchSettings("ajuste", ITEMS)).toEqual([]);
     for (const query of ["fallback", "fallback agent", "fallback model"]) {
       expect(searchSettings(query)[0]).toMatchObject({
         id: "fallback-model",
@@ -93,6 +94,14 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+  });
+
+  it("translates each row once per language instead of on every keystroke", () => {
+    const translate = vi.fn((message: string) => message);
+    searchSettings("w", ITEMS, translate);
+    translate.mockClear();
+    expect(searchSettings("wr", ITEMS, translate).map((item) => item.id)).toEqual(["word-wrap"]);
+    expect(translate).not.toHaveBeenCalled();
   });
 
   it("matches query words across fields and ranks the strongest result first", () => {
