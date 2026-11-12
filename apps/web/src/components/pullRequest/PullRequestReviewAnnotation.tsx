@@ -116,121 +116,62 @@ export function PendingReviewCommentCard({
   );
 }
 
-const MARKER_AVATAR_LIMIT = 3;
-
-function ResolvedThreadsMarker({
-  threads,
-  autoFocus,
-  onOpen,
-}: {
-  threads: ReadonlyArray<PullRequestReviewThread>;
-  autoFocus: boolean;
-  onOpen: () => void;
-}) {
-  const authors = new Map<string, PullRequestActor | null>();
-  for (const thread of threads) {
-    for (const comment of thread.comments) {
-      authors.set(comment.author?.login ?? "ghost", comment.author);
-    }
-  }
-  if (authors.size === 0) authors.set("ghost", null);
-  const label =
-    threads.length === 1
-      ? "Show resolved conversation"
-      : `Show ${threads.length} resolved conversations`;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            data-resolved-threads
-            aria-label={label}
-            aria-expanded={false}
-            autoFocus={autoFocus}
-            // Sits on the commented line, which is the row above this zero-height annotation.
-            className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-            contentEditable={false}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={onOpen}
-          />
-        }
-      >
-        {[...authors].slice(0, MARKER_AVATAR_LIMIT).map(([login, author]) => (
-          <PullRequestActorAvatar key={login} actor={author} className="ring-1 ring-background" />
-        ))}
-      </TooltipTrigger>
-      <TooltipPopup side="left">{label}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-/** A conversation on a diff line: its line owns whether it is expanded or folded to the marker. */
-export interface ReviewThreadFold {
-  readonly expanded: boolean;
-  /** Folded cards stay mounted, so an unsent reply survives the fold. */
-  readonly folded: boolean;
-  readonly focusHeader: boolean;
-  readonly onToggle: () => void;
-}
-
-/** The conversations on one diff line. Resolved ones show as avatars until opened. */
+/** The conversations on one diff line. Resolved ones hide behind their authors' avatars. */
 export function InlineReviewThreads({
   threads,
   renderThread,
 }: {
   threads: ReadonlyArray<PullRequestReviewThread>;
-  renderThread: (thread: PullRequestReviewThread, fold: ReviewThreadFold) => ReactNode;
+  renderThread: (thread: PullRequestReviewThread, hidden: boolean) => ReactNode;
 }) {
-  const [choices, setChoices] = useState<ReadonlyMap<string, boolean>>(() => new Map());
-  // Folding swaps the focused control for another, so focus is handed to its replacement.
-  // Each collapse remounts the marker, so one already on the line takes focus too.
-  const [focus, setFocus] = useState<
-    { readonly marker: number } | { readonly threadId: string } | null
-  >(null);
-  const markerFocus = focus !== null && "marker" in focus ? focus.marker : 0;
-  // A conversation seen open starts expanded, so resolving it does not fold it under the reader.
-  const seenOpen = threads.filter((thread) => !thread.isResolved && !choices.has(thread.id));
-  if (seenOpen.length > 0) {
-    setChoices(new Map([...choices, ...seenOpen.map((thread) => [thread.id, true] as const)]));
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
+  // A conversation seen open stays shown once resolved, so it does not vanish under the reader.
+  const open = threads.filter((thread) => !thread.isResolved);
+  if (open.some((thread) => !shown.has(thread.id))) {
+    setShown(new Set([...shown, ...open.map((thread) => thread.id)]));
   }
-  const isExpanded = (thread: PullRequestReviewThread) =>
-    choices.get(thread.id) ?? !thread.isResolved;
-  const folded = threads.filter((thread) => thread.isResolved && !isExpanded(thread));
-  // A focus request lives only while its target is on the line, so a later remount cannot steal focus.
-  const focusTargetGone =
-    focus !== null &&
-    ("marker" in focus
-      ? folded.length === 0
-      : !threads.some((thread) => thread.id === focus.threadId && !folded.includes(thread)));
-  if (focusTargetGone) setFocus(null);
+  const resolved = threads.filter((thread) => thread.isResolved);
+  const expanded = resolved.every((thread) => shown.has(thread.id));
+  const authors = new Map<string, PullRequestActor | null>();
+  for (const comment of resolved.flatMap((thread) => thread.comments)) {
+    authors.set(comment.author?.login ?? "ghost", comment.author);
+  }
+  if (authors.size === 0) authors.set("ghost", null);
+  const label =
+    resolved.length === 1 ? "Resolved conversation" : `${resolved.length} resolved conversations`;
   return (
     <>
-      {folded.length > 0 ? (
-        <ResolvedThreadsMarker
-          key={markerFocus}
-          threads={folded}
-          autoFocus={markerFocus > 0}
-          onOpen={() => {
-            setChoices(
-              new Map([...choices, ...folded.map((thread) => [thread.id, true] as const)]),
-            );
-            setFocus(folded[0] ? { threadId: folded[0].id } : null);
-          }}
-        />
+      {resolved.length > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                data-resolved-threads
+                aria-label={label}
+                aria-expanded={expanded}
+                // Sits on the commented line, which is the row above this annotation.
+                className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                contentEditable={false}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() =>
+                  setShown(new Set((expanded ? open : threads).map((thread) => thread.id)))
+                }
+              />
+            }
+          >
+            {[...authors].slice(0, 3).map(([login, author]) => (
+              <PullRequestActorAvatar
+                key={login}
+                actor={author}
+                className="ring-1 ring-background"
+              />
+            ))}
+          </TooltipTrigger>
+          <TooltipPopup side="left">{label}</TooltipPopup>
+        </Tooltip>
       ) : null}
-      {threads.map((thread) =>
-        renderThread(thread, {
-          expanded: isExpanded(thread),
-          folded: folded.includes(thread),
-          focusHeader: focus !== null && "threadId" in focus && focus.threadId === thread.id,
-          onToggle: () => {
-            const expanded = !isExpanded(thread);
-            setChoices(new Map(choices).set(thread.id, expanded));
-            if (!expanded && thread.isResolved) setFocus({ marker: markerFocus + 1 });
-          },
-        }),
-      )}
+      {threads.map((thread) => renderThread(thread, thread.isResolved && !shown.has(thread.id)))}
     </>
   );
 }
@@ -255,7 +196,7 @@ export function ReviewThreadCard({
   onEditComment,
   onToggleResolved,
   onReacted,
-  fold,
+  hidden,
 }: {
   thread: PullRequestReviewThread;
   workspaceRoot: string;
@@ -280,10 +221,10 @@ export function ReviewThreadCard({
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
-  fold?: ReviewThreadFold;
+  /** Set on a diff line. Hidden draws nothing but stays mounted, so an unsent reply survives. */
+  hidden?: boolean;
 }) {
-  const [ownExpanded, setOwnExpanded] = useState(!thread.isResolved);
-  const expanded = fold?.expanded ?? ownExpanded;
+  const [expanded, setExpanded] = useState(hidden !== undefined || !thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -356,7 +297,7 @@ export function ReviewThreadCard({
     }));
   };
 
-  if (fold?.folded) return null;
+  if (hidden) return null;
 
   return (
     <div
@@ -374,8 +315,7 @@ export function ReviewThreadCard({
           type="button"
           className="hover:text-foreground"
           aria-expanded={expanded}
-          autoFocus={fold?.focusHeader === true}
-          onClick={() => (fold ? fold.onToggle() : setOwnExpanded((current) => !current))}
+          onClick={() => setExpanded((current) => !current)}
         >
           {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
           {commentCount === 1 ? "comment" : "comments"}

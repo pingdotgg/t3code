@@ -118,7 +118,6 @@ import {
   InlineReviewThreads,
   PendingReviewCommentCard,
   ReviewThreadCard,
-  type ReviewThreadFold,
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
@@ -643,21 +642,15 @@ function PullRequestCodeTab({
     const groups = new Map<string, MutableAnnotationGroup>();
     // Stacked view draws a context row once, so its old side shares the new side's annotation.
     const contextNewLines = new Map<number, number>();
-    const stackedContextLine = (line: number) => {
-      if (contextNewLines.size === 0) {
+    const groupAt = (anchorSide: PullRequestDiffSide, anchorLine: number) => {
+      if (anchorSide === "left" && diffLayout !== "split" && contextNewLines.size === 0) {
         for (const row of fileDiffRows(fileDiff)) {
           if (row.oldLine !== null && row.newLine !== null) {
             contextNewLines.set(row.oldLine, row.newLine);
           }
         }
       }
-      return contextNewLines.get(line);
-    };
-    const groupAt = (anchorSide: PullRequestDiffSide, anchorLine: number) => {
-      const contextLine =
-        anchorSide === "left" && diffLayout !== "split"
-          ? stackedContextLine(anchorLine)
-          : undefined;
+      const contextLine = anchorSide === "left" ? contextNewLines.get(anchorLine) : undefined;
       const side = contextLine === undefined ? anchorSide : "right";
       const line = contextLine ?? anchorLine;
       const key = `${side}:${line}`;
@@ -1016,7 +1009,7 @@ function PullRequestCodeTab({
     return true;
   };
 
-  const renderThreadCard = (thread: PullRequestReviewThread, fold?: ReviewThreadFold) => (
+  const renderThreadCard = (thread: PullRequestReviewThread, hidden?: boolean) => (
     <ReviewThreadCard
       // Host thread ids can collide across pull requests.
       key={`${reference.projectId}#${reference.number}:${thread.id}`}
@@ -1081,7 +1074,7 @@ function PullRequestCodeTab({
         )
       }
       onReacted={onRefresh}
-      {...(fold ? { fold } : {})}
+      {...(hidden === undefined ? {} : { hidden })}
     />
   );
 

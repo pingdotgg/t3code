@@ -356,7 +356,7 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
   await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
 });
 
-it("folds a resolved conversation into avatars on its line until it is opened", async () => {
+it("hides a resolved conversation behind avatars on its line until they are clicked", async () => {
   setup({ paged: false });
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
   using _preferences = {
@@ -415,65 +415,35 @@ it("folds a resolved conversation into avatars on its line until it is opened", 
     />
   );
   await using screen = await render(withThread(true), { container });
-  const marker = () => screen.getByRole("button", { name: "Show resolved conversation" });
+  const marker = screen.getByRole("button", { name: "Resolved conversation", exact: true });
   const card = (state: string) => screen.getByRole("button", { name: `${state} · 1 comment` });
+  const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
 
-  await expect.element(marker()).toBeVisible();
+  await expect.element(marker).toHaveAttribute("aria-expanded", "false");
   await expect.element(card("Resolved")).not.toBeInTheDocument();
 
-  await marker().click();
+  await marker.click();
+  await expect.element(marker).toHaveAttribute("aria-expanded", "true");
   await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
-  await expect.element(card("Resolved")).toHaveFocus();
-  await expect.element(marker()).not.toBeInTheDocument();
-  const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
   await screen.getByRole("button", { name: "Reply", exact: true }).click();
   await reply().fill("Unsent");
 
-  // Reopened and resolved again under the reader, it stays open until they collapse it.
-  await screen.rerender(withThread(false));
-  await expect.element(card("Open")).toHaveAttribute("aria-expanded", "true");
-  await screen.rerender(withThread(true));
-  await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
-
-  await card("Resolved").click();
-  await expect.element(marker()).toHaveFocus();
+  // Hidden conversations stay mounted, so the unsent reply is still there.
+  await marker.click();
   await expect.element(card("Resolved")).not.toBeInTheDocument();
-
-  // Reopened and resolved again by someone else, the returning marker leaves focus alone.
-  await screen.rerender(withThread(false));
-  await expect.element(card("Open")).toBeVisible();
-  await screen.rerender(withThread(true));
-  await expect.element(marker()).toBeVisible();
-  await expect.element(marker()).not.toHaveFocus();
-
-  await marker().click();
+  await marker.click();
   await expect.element(reply()).toHaveValue("Unsent");
+  await marker.click();
 
-  // Collapsed by the reader while open, it folds once it is resolved.
-  await screen.rerender(withThread(false));
-  await card("Open").click();
-  await expect.element(card("Open")).toHaveAttribute("aria-expanded", "false");
-  await screen.rerender(withThread(true));
-  await expect.element(marker()).toBeVisible();
-  await expect.element(card("Resolved")).not.toBeInTheDocument();
-
-  // Reopened by someone else, the returning card leaves focus alone too.
+  // Seen open and then resolved, it stays until the avatars are clicked.
   await screen.rerender(withThread(false));
   await expect.element(card("Open")).toBeVisible();
-  await expect.element(card("Open")).not.toHaveFocus();
   await screen.rerender(withThread(true));
-  await expect.element(marker()).toBeVisible();
+  await expect.element(card("Resolved")).toBeVisible();
 
-  // Stacked view draws a context row once, so both sides' conversations share its marker.
+  // Stacked view draws a context row once, so both sides' conversations share the avatars.
   await screen.rerender(withThread(true, true));
-  const both = screen.getByRole("button", { name: "Show 2 resolved conversations" });
-  await expect.element(both).toBeVisible();
-  await expect.element(marker()).not.toBeInTheDocument();
-
-  // The second collapse finds the marker already there and still hands it focus.
-  await both.click();
-  await card("Resolved").first().click();
-  await expect.element(marker()).toHaveFocus();
-  await card("Resolved").click();
-  await expect.element(both).toHaveFocus();
+  await expect
+    .element(screen.getByRole("button", { name: "2 resolved conversations" }))
+    .toBeVisible();
 });
