@@ -1261,7 +1261,7 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("leaves a settled thread's links unread until the thread is unsettled", () =>
+  it.effect("reads a settled thread's links once when it settles, then until unsettled", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -1281,6 +1281,46 @@ describe("PullRequestSyncReactor", () => {
 
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+
+          const threadId = ThreadId.make("settled");
+          const at = DateTime.makeUnsafe(NOW);
+          yield* Queue.offer(fixture.domainEvents, {
+            type: "thread.settled",
+            id: EventId.make("event:settled"),
+            threadId,
+            occurredAt: at,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: PROJECT_ID,
+              title: "settled",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: at,
+              updatedAt: at,
+              archivedAt: null,
+              settledOverride: "settled",
+              settledAt: at,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.getAndSet(fixture.summaryCalls, [])).map((call) => call.number).toSorted(),
+            [5, 6],
+          );
           for (let index = 0; index < 15; index += 1) yield* sweepAgain(fixture, reactor);
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
 
