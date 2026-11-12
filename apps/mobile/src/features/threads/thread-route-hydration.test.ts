@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  reopenedThreadOutcome,
   threadDetailErrorIsCurrent,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
@@ -16,9 +17,32 @@ const settled = {
   shellHasError: false,
   detailStatus: "live" as const,
   detailHasError: false,
+  familyRead: "settled" as const,
 };
 
 describe("threadRouteIsHydrating", () => {
+  it("waits for the family read of a thread the shell left out when its detail fails", () => {
+    const failed = { ...settled, detailStatus: "empty" as const, detailHasError: true };
+    expect(threadRouteIsHydrating({ ...failed, familyRead: "pending" })).toBe(true);
+    expect(threadRouteIsHydrating(failed)).toBe(false);
+    expect(
+      threadRouteIsHydrating({ ...failed, familyRead: "pending", connectionState: "reconnecting" }),
+    ).toBe(false);
+    expect(
+      threadRouteIsHydrating({ ...failed, familyRead: "pending", detailStatus: "deleted" }),
+    ).toBe(false);
+  });
+
+  it("keeps waiting when both reads failed: a failed read does not say the thread is gone", () => {
+    const failed = { ...settled, detailStatus: "empty" as const, detailHasError: true };
+    expect(threadRouteIsHydrating({ ...failed, familyRead: "failed" })).toBe(true);
+    // Not found is an answer: a detail read that missed, or a family read without the row.
+    expect(
+      threadRouteIsHydrating({ ...failed, familyRead: "failed", detailStatus: "deleted" }),
+    ).toBe(false);
+    expect(threadRouteIsHydrating({ ...failed, familyRead: "settled" })).toBe(false);
+  });
+
   it("waits for shell and thread detail hydration", () => {
     expect(threadRouteIsHydrating({ ...settled, shellStatus: "synchronizing" })).toBe(true);
     expect(threadRouteIsHydrating({ ...settled, shellStatus: "empty" })).toBe(true);
@@ -151,5 +175,76 @@ describe("threadDetailErrorIsCurrent", () => {
         errorBeforeConnected: oldError,
       }),
     ).toBe(true);
+  });
+});
+
+describe("reopenedThreadOutcome", () => {
+  const open = { archivedAt: null, deletedAt: null };
+  const archived = { ...open, archivedAt: "2026-01-01" };
+  const synced = {
+    alone: true,
+    isLoadingConnections: false,
+    environmentRegistered: true,
+    connectionState: "connected" as const,
+    detailStatus: "live" as const,
+    detailHasError: false,
+    thread: open,
+  };
+
+  it("closes a reopened chat only when its detail says it was archived or deleted", () => {
+    expect(reopenedThreadOutcome({ ...synced, thread: archived })).toBe("close");
+    expect(reopenedThreadOutcome({ ...synced, thread: { ...open, deletedAt: "2026-01-01" } })).toBe(
+      "close",
+    );
+    expect(reopenedThreadOutcome({ ...synced, detailStatus: "deleted", thread: null })).toBe(
+      "close",
+    );
+    expect(reopenedThreadOutcome(synced)).toBe("keep");
+    for (const detailStatus of ["empty", "cached", "synchronizing", "live"] as const) {
+      expect(reopenedThreadOutcome({ ...synced, detailStatus, thread: null })).toBe("keep");
+    }
+  });
+
+  it("keeps a chat still being created, whose first read can miss", () => {
+    expect(reopenedThreadOutcome({ ...synced, detailStatus: "deleted" })).toBe("keep");
+  });
+
+  it("leaves the chat alone while another page is on it or in it", () => {
+    // A route above it, a sheet, or a subagent opened in its inspector: closing would remove those.
+    expect(reopenedThreadOutcome({ ...synced, alone: false, thread: archived })).toBe("keep");
+    expect(
+      reopenedThreadOutcome({ ...synced, alone: false, detailStatus: "deleted", thread: null }),
+    ).toBe("keep");
+    expect(
+      reopenedThreadOutcome({
+        ...synced,
+        alone: false,
+        detailStatus: "cached",
+        connectionState: "offline",
+        thread: archived,
+      }),
+    ).toBe("keep");
+  });
+
+  it("trusts cached archived detail only when no synced read is coming", () => {
+    // Another client can unarchive the chat while this app is closed.
+    const cached = { ...synced, detailStatus: "cached" as const, thread: archived };
+    expect(reopenedThreadOutcome(cached)).toBe("wait");
+    expect(reopenedThreadOutcome({ ...cached, detailStatus: "synchronizing" })).toBe("wait");
+    expect(reopenedThreadOutcome({ ...cached, connectionState: "connecting" })).toBe("wait");
+    expect(
+      reopenedThreadOutcome({
+        ...cached,
+        isLoadingConnections: true,
+        environmentRegistered: false,
+        connectionState: "available",
+      }),
+    ).toBe("wait");
+    // No endless loading screen: offline, a failed attempt or a failed read closes it.
+    for (const connectionState of ["offline", "reconnecting", "error", "available"] as const) {
+      expect(reopenedThreadOutcome({ ...cached, connectionState })).toBe("close");
+    }
+    expect(reopenedThreadOutcome({ ...cached, detailHasError: true })).toBe("close");
+    expect(reopenedThreadOutcome({ ...cached, environmentRegistered: false })).toBe("close");
   });
 });

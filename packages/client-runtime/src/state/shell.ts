@@ -682,7 +682,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
         const current = yield* SubscriptionRef.get(state);
         const omission = {
-          ...(omitIdleSubagents ? { omitIdleSubagents: true as const } : {}),
+          ...(omitIdleSubagents
+            ? { omitIdleSubagents: true as const, omitIdleSubagentParents: true as const }
+            : {}),
           ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
         };
         if (Option.isNone(current.snapshot) || !(resumingHeldRows || loaded?.kind === "snapshot")) {

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { restoreSettingsLinkState } from "../../settings/settings-navigation";
 import {
+  rememberedThreadReopens,
+  threadHasPageOpened,
+  threadReopenedByTab,
   workspaceSelectionsIn,
   workspaceTabColumns,
   workspaceTabNavigationState,
@@ -45,6 +48,42 @@ describe("workspace tab selections", () => {
         undefined,
       );
     }
+  });
+});
+
+describe("reopening the remembered chat", () => {
+  it("reopens a chat the shell left out, and not one the shell removed", () => {
+    // An idle subagent or an older settled chat: no row, and nothing removed it.
+    expect(rememberedThreadReopens({ listed: false, removed: false })).toBe(true);
+    expect(rememberedThreadReopens({ listed: true, removed: false })).toBe(true);
+    // Archived or deleted in this session.
+    expect(rememberedThreadReopens({ listed: false, removed: true })).toBe(false);
+    // Archived, then restored: the row is back.
+    expect(rememberedThreadReopens({ listed: true, removed: true })).toBe(true);
+  });
+
+  it("marks the chat a tab switch put on screen, and not one that was already there", () => {
+    const selections = { threads: thread.params };
+    expect(threadReopenedByTab([home, pullRequest], [home, thread], selections)).toBe(
+      selections.threads,
+    );
+    expect(threadReopenedByTab([home, thread], [home, thread], selections)).toBe(undefined);
+    expect(threadReopenedByTab([home, pullRequest], [home], selections)).toBe(undefined);
+  });
+});
+
+describe("a reopened chat the user opened something from", () => {
+  it("counts a page on its route or a subagent beside it, and nothing else", () => {
+    const sheet = { key: "agents", name: "ThreadAgents" };
+    const other = { key: "b", name: "Thread", params: { environmentId: "env", threadId: "b" } };
+    const withSubagent = { ...thread, params: { ...thread.params, inspector: { type: "thread" } } };
+    expect(threadHasPageOpened([home, thread], thread.params)).toBe(false);
+    expect(threadHasPageOpened([home, thread, sheet], thread.params)).toBe(true);
+    expect(threadHasPageOpened([home, thread, other], thread.params)).toBe(true);
+    expect(threadHasPageOpened([home, withSubagent], thread.params)).toBe(true);
+    // Not on screen: a tab switch away, or the launch state before the chat's route exists.
+    expect(threadHasPageOpened([home], thread.params)).toBe(false);
+    expect(threadHasPageOpened([home, pullRequest], thread.params)).toBe(false);
   });
 });
 

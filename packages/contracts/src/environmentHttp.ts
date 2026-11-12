@@ -685,6 +685,7 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
 
 export const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
   omitIdleSubagents: Schema.optionalKey(Schema.String),
+  omitIdleSubagentParents: Schema.optionalKey(Schema.String),
   omitOlderSettled: Schema.optionalKey(Schema.String),
   /**
    * The cursor of rows the client holds, loaded with the same omissions. The server answers

@@ -9,10 +9,12 @@ import {
   createOlderSettledThreadAtoms,
   createThreadEnvironmentAtoms,
   createThreadFamilyAtoms,
+  type ThreadFamilyRead,
 } from "@t3tools/client-runtime/state/threads";
 import { createSteadyShellAtoms } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useEffect } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -110,4 +112,32 @@ export function useEnvironmentThread(
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   ) as EnvironmentThreadState;
   return state;
+}
+
+const NO_OPEN_FAMILY = Atom.make<ThreadFamilyRead>("settled");
+
+/**
+ * Keeps the open thread's family in the shell rows until its screen leaves. Shells leave idle
+ * subagents out, so the rows of the thread, of its parents and of its subagents may exist only
+ * there. Pass the ref the detail is read by: a thread still being created has no family to read.
+ * Returns that family's read, and reads it again while it fails.
+ */
+export function useOpenThreadFamily(ref: ScopedThreadRef | null): ThreadFamilyRead {
+  const environmentId = ref?.environmentId ?? null;
+  const threadId = ref?.threadId ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the open thread's family in the thread family registry until the screen leaves it
+  useEffect(() => {
+    if (environmentId === null || threadId === null) return;
+    const release = threadFamilies.mount(appAtomRegistry, environmentId, threadId);
+    const stopRetry = threadFamilies.retryWhileFailed(appAtomRegistry, environmentId, threadId);
+    return () => {
+      stopRetry();
+      release();
+    };
+  }, [environmentId, threadId]);
+  return useAtomValue(
+    environmentId === null || threadId === null
+      ? NO_OPEN_FAMILY
+      : threadFamilies.mountedReadAtom(environmentId, threadId),
+  );
 }

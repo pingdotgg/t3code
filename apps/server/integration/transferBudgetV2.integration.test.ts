@@ -108,6 +108,7 @@ const CLIENT_HISTORY_OPT_INS = { compactIds: "1", deferWork: "1" } satisfies Req
 >;
 const CLIENT_SHELL_OPT_INS = {
   omitIdleSubagents: "1",
+  omitIdleSubagentParents: "1",
   omitOlderSettled: "1",
 } satisfies Required<Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "resumeFrom">>;
 const CLIENT_THREAD_SUBSCRIPTION = {
@@ -122,6 +123,7 @@ type ShellResumeField = "afterSequence" | "httpSnapshotFallback" | "knownProject
 const CLIENT_SHELL_SUBSCRIPTION = {
   requestCompletionMarker: true,
   omitIdleSubagents: true,
+  omitIdleSubagentParents: true,
   omitOlderSettled: true,
 } satisfies Required<Omit<OrchestrationV2SubscribeShellInput, ShellResumeField>>;
 const query = (optIns: Readonly<Record<string, string>>) => new URLSearchParams(optIns).toString();

@@ -1,6 +1,9 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import type {
+  EnvironmentThreadStatus,
+  ThreadFamilyRead,
+} from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
 
 export function threadRouteIsHydrating(input: {
@@ -12,9 +15,16 @@ export function threadRouteIsHydrating(input: {
   readonly shellHasError: boolean;
   readonly detailStatus: EnvironmentThreadStatus;
   readonly detailHasError: boolean;
+  /** The open thread's family read, which brings the row of a thread the shell left out. */
+  readonly familyRead: ThreadFamilyRead;
 }): boolean {
-  if (input.detailStatus === "deleted" || input.shellHasError || input.detailHasError) {
+  if (input.detailStatus === "deleted" || input.shellHasError) {
     return false;
+  }
+  if (input.detailHasError) {
+    // A failed read is no answer. Only a settled family read without the row says the thread is
+    // gone; until then both reads run again and the route waits.
+    return input.connectionState === "connected" && input.familyRead !== "settled";
   }
   if (input.isLoadingConnections) {
     return true;
@@ -72,4 +82,36 @@ export function threadDetailErrorIsCurrent<E>(input: {
     Option.isSome(input.error) &&
     !(input.connectionState === "connected" && input.error === input.errorBeforeConnected)
   );
+}
+
+/**
+ * What the screen of a chat the workspace reopened by itself does while no shell row proves the
+ * chat. Only its detail can say it was archived or deleted, and cached detail can predate an
+ * unarchive on another client, so that closes the chat only when no synced read is coming. A chat
+ * with a page the user opened on it or in it is left alone: closing would take that page along.
+ */
+export function reopenedThreadOutcome(input: {
+  readonly alone: boolean;
+  readonly isLoadingConnections: boolean;
+  readonly environmentRegistered: boolean;
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly detailStatus: EnvironmentThreadStatus;
+  readonly detailHasError: boolean;
+  readonly thread: {
+    readonly archivedAt: string | null;
+    readonly deletedAt: string | null;
+  } | null;
+}): "keep" | "wait" | "close" {
+  const gone =
+    input.thread === null
+      ? input.detailStatus === "deleted"
+      : input.thread.archivedAt !== null || input.thread.deletedAt !== null;
+  if (!gone || !input.alone) return "keep";
+  const synced = input.thread === null || input.detailStatus === "live";
+  const syncComing =
+    !input.detailHasError &&
+    (input.isLoadingConnections ||
+      (input.environmentRegistered &&
+        (input.connectionState === "connecting" || input.connectionState === "connected")));
+  return !synced && syncComing ? "wait" : "close";
 }

@@ -33,8 +33,12 @@ import {
   threadFamilyRowsMissingFromShell,
 } from "./threadFamilies.ts";
 
-const row = (id: string, title = id) =>
-  ({ id: ThreadId.make(id), title }) as unknown as OrchestrationV2ThreadShell;
+const row = (id: string, title = id, parentThreadId: string | null = null, rootThreadId = id) =>
+  ({
+    id: ThreadId.make(id),
+    title,
+    lineage: { parentThreadId, rootThreadId, relationshipToParent: "subagent" },
+  }) as unknown as OrchestrationV2ThreadShell;
 
 describe("threadFamilyRowsMissingFromShell", () => {
   it("adds only the rows the shell left out, once, with shell rows winning", () => {
@@ -177,10 +181,10 @@ describe("createThreadFamilyAtoms", () => {
           threads: [parent],
           archivedThreads: [],
         } as OrchestrationV2ShellSnapshot;
-        const shellAt = (generation: number): EnvironmentShellState => ({
+        const shellAt = (generation: number, threads = shellSnapshot.threads) => ({
           ...EMPTY_SHELL_STATE,
-          status: "live",
-          snapshot: Option.some(shellSnapshot),
+          status: "live" as const,
+          snapshot: Option.some({ ...shellSnapshot, threads }),
           generation,
         });
         const shellState = Atom.make<AsyncResult.AsyncResult<EnvironmentShellState>>(
@@ -199,7 +203,7 @@ describe("createThreadFamilyAtoms", () => {
           Effect.tap(() => Effect.yieldNow),
         );
         registry.mount(families.snapshotAtom(TARGET.environmentId));
-        families.mount(registry, TARGET.environmentId, parent.id);
+        const release = families.mount(registry, TARGET.environmentId, parent.id);
 
         // A cached shell from before this session's first snapshot reads nothing.
         expect(threadFamilyRead(registry.get(family))).toBe("pending");
@@ -224,12 +228,71 @@ describe("createThreadFamilyAtoms", () => {
         expect(threadFamilyRead(registry.get(family))).toBe("failed");
         expect(mergedIds()).toEqual(["parent"]);
 
-        families.refresh(registry, TARGET.environmentId, parent.id);
+        // An open thread reads a failed family again by itself, with a growing pause.
+        const pauses: Array<{ readonly run: () => void; readonly ms: number }> = [];
+        const stopRetry = families.retryWhileFailed(
+          registry,
+          TARGET.environmentId,
+          parent.id,
+          (run, ms) => {
+            pauses.push({ run, ms });
+            return () => undefined;
+          },
+        );
+        expect(pauses.map(({ ms }) => ms)).toEqual([1_000]);
+        pauses[0]?.run();
+        expect(threadFamilyRead(registry.get(family))).toBe("pending");
+        yield* Queue.offer(
+          replies,
+          Effect.fail(new OrchestrationV2GetShellSnapshotError({ message: "read failed" })),
+        );
+        yield* settle;
+        expect(threadFamilyRead(registry.get(family))).toBe("failed");
+        expect(pauses.map(({ ms }) => ms)).toEqual([1_000, 2_000]);
+        pauses[1]?.run();
         expect(threadFamilyRead(registry.get(family))).toBe("pending");
         yield* Queue.offer(replies, Effect.succeed({ snapshotSequence: 5, threads: [child] }));
         yield* settle;
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);
+        expect(pauses).toHaveLength(2);
+        stopRetry();
+
+        // Children that woke after the shell left out their idle parent arrive as deltas, and
+        // read their family unmounted, once for the root.
+        release();
+        const woken = row("woken", "woken", child.id, parent.id);
+        const sibling = row("woken-sibling", "woken-sibling", child.id, parent.id);
+        registry.set(shellState, AsyncResult.success(shellAt(2, [parent, woken, sibling])));
+        const wokenFamily = families.familyAtom(TARGET.environmentId, woken.id);
+        const settleWoken = AtomRegistry.getResult(registry, wokenFamily, {
+          suspendOnWaiting: true,
+        }).pipe(
+          Effect.ignore,
+          Effect.tap(() => Effect.yieldNow),
+        );
+        yield* Queue.offer(
+          replies,
+          Effect.fail(new OrchestrationV2GetShellSnapshotError({ message: "read failed" })),
+        );
+        yield* settleWoken;
+        expect(threadFamilyRead(registry.get(wokenFamily))).toBe("failed");
+        expect(mergedIds()).toEqual(["parent", "woken", "woken-sibling"]);
+
+        // The next delta retries the failed read instead of keeping the gap until reconnect.
+        registry.set(shellState, AsyncResult.success(shellAt(2, [parent, { ...woken }, sibling])));
+        yield* Queue.offer(
+          replies,
+          Effect.succeed({ snapshotSequence: 6, threads: [parent, child, woken, sibling] }),
+        );
+        yield* settleWoken;
+        expect(mergedIds()).toEqual(["parent", "woken", "woken-sibling", "idle-child"]);
+
+        // Opening the woken child mounts that same read. It answers only once it is mounted.
+        const mountedRead = families.mountedReadAtom(TARGET.environmentId, woken.id);
+        expect(registry.get(mountedRead)).toBe("pending");
+        families.mount(registry, TARGET.environmentId, woken.id);
+        expect(registry.get(mountedRead)).toBe("settled");
       }),
     ),
   );

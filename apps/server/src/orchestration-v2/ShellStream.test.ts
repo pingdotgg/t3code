@@ -181,15 +181,35 @@ describe("omitIdleSubagentShells", () => {
       // Idle, but a woken grandchild walks through it to reach the root's badge.
       row("middle", "root"),
       row("grandchild", "middle"),
+      row("upper", "root"),
+      row("lower", "upper"),
+      row("deep", "lower", { activityRunStatus: "running" }),
+      // Idle, but a side chat under it needs it as its parent.
+      row("chat-parent", "root"),
+      row("chat-sibling", "chat-parent"),
+      row("chat", "chat-parent", {
+        lineage: {
+          parentThreadId: ThreadId.make("chat-parent"),
+          relationshipToParent: null,
+          rootThreadId: ThreadId.make("root"),
+          sideChat: true,
+        },
+      }),
     ];
+    const live = ["root", "running", "queued", "asking", "background"];
     expect(omitIdleSubagentShells(threads).map((thread) => thread.id)).toEqual([
-      "root",
-      "running",
-      "queued",
-      "asking",
-      "background",
+      ...live,
       "middle",
+      "upper",
+      "lower",
+      "deep",
+      "chat-parent",
+      "chat",
     ]);
+    // Clients that walk past a missing parent keep only the chains above live or other children.
+    expect(
+      omitIdleSubagentShells(threads, { omitIdleSubagentParents: true }).map((thread) => thread.id),
+    ).toEqual([...live, "upper", "lower", "deep", "chat-parent", "chat"]);
   });
 
   it("still filters the transcript events of omitted children for a subscriber that opts in", () => {

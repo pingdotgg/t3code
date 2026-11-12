@@ -3846,6 +3846,13 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
    */
   omitIdleSubagents: Schema.optionalKey(Schema.Boolean),
   /**
+   * With `omitIdleSubagents`, an idle subagent no longer stays as the parent of an idle subagent:
+   * only above a live subagent, a side chat, a fork, or a subagent with a task in a linked
+   * environment. Send only from clients that read the family of a child whose parent row is
+   * missing; older servers ignore it.
+   */
+  omitIdleSubagentParents: Schema.optionalKey(Schema.Boolean),
+  /**
    * Snapshots leave out older settled threads and count them in `olderSettled`; read them with
    * `getOlderSettledThreads`. Send only to servers that advertise `shellOlderSettled`.
    */

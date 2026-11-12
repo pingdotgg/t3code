@@ -19,13 +19,12 @@ import { workspaceRoutesOf } from "../workspace-overlay-routes";
 import type { WorkspaceSelections } from "../../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../../state/atom-registry";
 import { environmentPresentations } from "../../../state/presentation";
-import {
-  environmentThreadShells,
-  startOpeningEnvironmentThread,
-  threadEnvironment,
-} from "../../../state/threads";
+import { environmentShell } from "../../../state/shell";
+import { environmentThreadShells, startOpeningEnvironmentThread } from "../../../state/threads";
 import {
   rememberedSettingsPage,
+  rememberedThreadReopens,
+  threadHasPageOpened,
   workspaceSelectionsIn,
   type WorkspaceSelectionCheck,
 } from "./workspace-tab-navigation";
@@ -38,6 +37,9 @@ const REMEMBERS = Platform.OS === "ios";
 let selections: WorkspaceSelections = {};
 let saved = selections;
 let hydration: Promise<void> | null = null;
+// The chat a tab switch or a cold start reopened by itself, until the user opens something.
+let reopened: WorkspaceSelections["threads"];
+let reopenings = 0;
 
 function save() {
   const writing = selections;
@@ -88,7 +90,40 @@ export function currentWorkspaceSelections() {
  */
 export function recordWorkspaceSelections(state: NavigationState | undefined) {
   if (!REMEMBERS || !state) return;
-  selections = workspaceSelectionsIn(state.routes.slice(0, state.index + 1), selections);
+  const routes = state.routes.slice(0, state.index + 1);
+  selections = workspaceSelectionsIn(routes, selections);
+  // Opening another chat, or anything from the reopened one, makes what is on screen the user's.
+  if (
+    reopened &&
+    (!sameThread(reopened, selections.threads) || threadHasPageOpened(routes, reopened))
+  ) {
+    reopened = undefined;
+  }
+}
+
+function sameThread(
+  left: { readonly environmentId: string; readonly threadId: string },
+  right: { readonly environmentId: string; readonly threadId: string } | undefined,
+) {
+  return left.environmentId === right?.environmentId && left.threadId === right.threadId;
+}
+
+/** Marks the chat a tab switch reopened by itself; see `threadReopenedByTab`. */
+export function markWorkspaceThreadReopened(thread: WorkspaceSelections["threads"]) {
+  reopened = thread;
+  if (thread) reopenings += 1;
+}
+
+/**
+ * The number of the reopening that put this chat on screen, or null when somebody opened it.
+ * Nobody asked for a reopened chat, so its screen closes it when it turns out archived or
+ * deleted, where a chat somebody opened shows what it has. iOS keeps a screen mounted across tab
+ * switches, so what the screen learned counts for one reopening only.
+ */
+export function workspaceThreadReopening(environmentId: EnvironmentId, threadId: ThreadId) {
+  return reopened !== undefined && sameThread(reopened, { environmentId, threadId })
+    ? reopenings
+    : null;
 }
 
 function environmentRemoved(environmentId: string) {
@@ -101,21 +136,30 @@ function environmentRemoved(environmentId: string) {
   );
 }
 
-/**
- * A remembered chat is gone once its environment was removed, or once that environment's
- * snapshot has loaded without it. Before it loads there is nothing to contradict it.
- */
+/** Reads what `rememberedThreadReopens` decides from: the shell rows and the removals it applied. */
 export const workspaceSelectionCheck: WorkspaceSelectionCheck = {
   thread: (selection) => {
     if (environmentRemoved(selection.environmentId)) return false;
     const environmentId = selection.environmentId as EnvironmentId;
-    if (!appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId))) return true;
-    return appAtomRegistry
-      .get(environmentThreadShells.environmentThreadIndexAtom(environmentId))
-      .has(selection.threadId as ThreadId);
+    const threadId = selection.threadId as ThreadId;
+    return rememberedThreadReopens({
+      listed: appAtomRegistry
+        .get(environmentThreadShells.environmentThreadIndexAtom(environmentId))
+        .has(threadId),
+      removed: appAtomRegistry
+        .get(environmentShell.stateValueAtom(environmentId))
+        .removedAt.has(threadId),
+    });
   },
   pullRequest: (selection) => !environmentRemoved(selection.environmentId),
 };
+
+/** Stops reopening a chat its own screen found archived or deleted. */
+export function forgetWorkspaceThread(environmentId: EnvironmentId, threadId: ThreadId) {
+  const { threads, ...rest } = selections;
+  if (threads && sameThread(threads, { environmentId, threadId })) selections = rest;
+  if (reopened && sameThread(reopened, { environmentId, threadId })) reopened = undefined;
+}
 
 /** Whether the window lays the workspace out in columns, by the rule the layout itself uses. */
 export function workspaceHasColumns() {
@@ -153,9 +197,9 @@ export async function launchWorkspaceURL(): Promise<string | null> {
   }
   await metrics;
   if (!thread || !workspaceHasColumns() || !workspaceSelectionCheck.thread(thread)) return null;
-  return Linking.createURL(
-    `threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`,
-  );
+  markWorkspaceThreadReopened(thread);
+  // Not `createURL(path)`: it encodes the path again, and a subagent's id holds `%` and `:`.
+  return `${Linking.createURL("/")}threads/${encodeURIComponent(thread.environmentId)}/${encodeURIComponent(thread.threadId)}`;
 }
 
 /** Whether the workspace shows its first detail page, directly above its list. */

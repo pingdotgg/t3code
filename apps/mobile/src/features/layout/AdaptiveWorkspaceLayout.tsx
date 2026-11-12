@@ -106,9 +106,11 @@ import { useAndroidWorkspaceRoot } from "./workspace/AndroidWorkspaceTabsProvide
 import { dispatchRootStackReset, rootStackState } from "../../lib/root-stack-reset";
 import {
   currentWorkspaceSelections,
+  markWorkspaceThreadReopened,
   workspaceSelectionCheck,
 } from "./workspace/workspace-selection-store";
 import {
+  threadReopenedByTab,
   workspaceTabColumns,
   workspaceTabNavigationState,
 } from "./workspace/workspace-tab-navigation";
@@ -555,6 +557,11 @@ function AdaptiveWorkspaceLayoutContent(
         seedPullRequest: withKnownPullRequestSummary,
       },
     );
+    if (tab === "threads") {
+      markWorkspaceThreadReopened(
+        threadReopenedByTab(workspace, next.routes, currentWorkspaceSelections()),
+      );
+    }
     if (layout.variant === "medium") {
       const opened = next.routes.at(-1 - overlays.length)?.key ?? null;
       setOverlaySidebar((current) => ({ ...current, visible: true, keepOpenFor: opened }));
