@@ -448,6 +448,8 @@ it.live("reports V2 thread HTTP and WebSocket transfer budgets", () =>
             staleTodo.subagents.filter((subagent) => subagent.runId === STALE_TODO_LIVE_RUN_ID),
             STALE_TODO_SUBAGENTS_PER_RUN,
           );
+          // The byte cap below also passes when the window loses the handoff.
+          assert.lengthOf(staleTodo.contextHandoffs, 1);
           const staleTodoColdOpen = {
             http: staleTodoHttp,
             rows: staleTodo.visibleTurnItems.length,
