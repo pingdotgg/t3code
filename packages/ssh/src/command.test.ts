@@ -3,7 +3,9 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -157,6 +159,22 @@ describe("ssh command", () => {
       assert.match(stdout, /^serveraliveinterval 15\r?$/mu);
       assert.match(stdout, /^serveralivecountmax 3\r?$/mu);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // A ProxyCommand can authenticate (NetBird SSO) before the banner, which ssh counts against ConnectTimeout.
+  it.live("leaves ConnectTimeout to the user's ssh config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const configPath = path.join(directory, "ssh_config");
+      yield* fs.writeFileString(configPath, "Host synthetic-fixture\n  ConnectTimeout 120\n");
+      const { stdout } = yield* runSshCommand(
+        { alias: "synthetic-fixture", hostname: "synthetic-fixture", username: null, port: null },
+        { preHostArgs: ["-F", configPath, "-G"] },
+      );
+      assert.match(stdout, /^connecttimeout 120\r?$/mu);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
