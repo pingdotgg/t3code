@@ -1,6 +1,8 @@
 import * as NodeUtil from "node:util";
 import {
+  VcsProcessExitError,
   VcsProcessSpawnError,
+  VcsProcessTimeoutError,
   type SourceControlProviderAuth,
   type SourceControlProviderDiscoveryItem,
   type SourceControlProviderInfo,
@@ -190,6 +192,20 @@ function isCliRemoteRefinementSpec(
   return spec.type === "cli" && spec.refineUnknownRemote !== undefined;
 }
 
+const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+
+/** An installed CLI whose version probe failed needs a repair, not install advice. */
+function probeFailureHint(spec: SourceControlCliDiscoverySpec, cause: unknown): string {
+  const command = `\`${[spec.executable, ...spec.versionArgs].join(" ")}\``;
+  const outcome = isVcsProcessTimeoutError(cause)
+    ? `timed out after ${cause.timeoutMs}ms`
+    : isVcsProcessExitError(cause)
+      ? `exited with status ${cause.exitCode}`
+      : "failed";
+  return `${command} ${outcome}. Check the \`${spec.executable}\` that the server's PATH resolves.`;
+}
+
 function probeCli(input: {
   readonly spec: SourceControlCliDiscoverySpec;
   readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
@@ -222,7 +238,7 @@ function probeCli(input: {
       ),
       Effect.catch((cause) =>
         Effect.gen(function* () {
-          const installHint = yield* unavailableInstallHint(
+          const hint = yield* unavailableInstallHint(
             input.spec.executable,
             input.spec.installHint,
             cause,
@@ -233,7 +249,11 @@ function probeCli(input: {
             executable: input.spec.executable,
             status: "missing" as const,
             version: Option.none<string>(),
-            installHint,
+            // A wrong-CPU hint or an absent executable keeps its advice; other failures need repair.
+            installHint:
+              hint !== input.spec.installHint || isMissingExecutable(cause)
+                ? hint
+                : probeFailureHint(input.spec, cause),
             detail: detailFromCause(cause),
           } satisfies DiscoveryProbeResult;
         }),
@@ -319,10 +339,7 @@ export function probeSourceControlProvider(input: {
       ([item, auth]) =>
         ({
           ...item,
-          auth:
-            item.status === "available"
-              ? auth
-              : unknownAuth("Hosting integration command was not found on the server PATH."),
+          auth: item.status === "available" ? auth : unknownAuth(item.installHint),
         }) satisfies SourceControlProviderDiscoveryItem,
     ),
   );
