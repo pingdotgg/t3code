@@ -375,7 +375,12 @@ export function useComposerCommandMenu({
       previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
       previousSearch.draftMessage,
       previousSearch.queryEnd,
-      pathSearch.isPending ? null : pathSearch.entries.map((entry) => entry.path),
+      pathSearch.isPending || pathSearch.truncated
+        ? null
+        : [
+            ...pathSearch.entries.map((entry) => entry.path),
+            ...threadShells.map((shell) => shell.title),
+          ],
     );
     trigger =
       enabled && selection.start === selection.end

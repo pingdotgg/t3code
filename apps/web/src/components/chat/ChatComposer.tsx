@@ -51,7 +51,10 @@ import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  isSpacedComposerQueryUnmatched,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -1106,6 +1109,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const {
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
+    pathResultsTruncated: composerPathResultsTruncated,
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
     composerTrigger,
@@ -1129,10 +1133,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
 
-  const composerPathResults = isComposerMenuLoading
-    ? null
-    : composerMenuItems.flatMap((item) => (item.type === "path" ? [item.path] : []));
-  const composerMenuOpen = Boolean(composerTrigger);
+  const composerPathResults =
+    isComposerMenuLoading || composerPathResultsTruncated
+      ? null
+      : composerMenuItems.map((item) => (item.type === "path" ? item.path : item.label));
+  // Settled results can rule out a spaced query after its last edit; Enter then sends.
+  const composerMenuOpen =
+    composerTrigger !== null &&
+    !(
+      composerTrigger.kind === "path" &&
+      isSpacedComposerQueryUnmatched(composerTrigger.query, composerPathResults)
+    );
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;

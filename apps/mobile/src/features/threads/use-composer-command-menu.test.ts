@@ -1,6 +1,8 @@
 import { act, createElement, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
+import { useComposerPathSearch } from "../../state/queries";
 import { useComposerDraftSelection } from "../../state/use-composer-drafts";
+import { makeThreadShellFixture } from "../../test-fixtures";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
@@ -9,7 +11,7 @@ vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
   useThreadSearch: vi.fn(),
-  useComposerPathSearch: () => ({ entries: [], isPending: false }),
+  useComposerPathSearch: vi.fn(() => ({ entries: [], isPending: false, truncated: false })),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
@@ -181,7 +183,11 @@ describe("mobile model mentions", () => {
   });
 });
 
-async function mountMenu(draftMessage: string, selection: { start: number; end: number }) {
+async function mountMenu(
+  draftMessage: string,
+  selection: { start: number; end: number },
+  threadShells?: Parameters<typeof useComposerCommandMenu>[0]["threadShells"],
+) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const root = createRoot(document.createElement("div"));
   let menu: ReturnType<typeof useComposerCommandMenu> | undefined;
@@ -195,6 +201,7 @@ async function mountMenu(draftMessage: string, selection: { start: number; end: 
       hasThread: false,
       hasCompactableConversation: false,
       onChangeDraftMessage: () => {},
+      ...(threadShells ? { threadShells } : {}),
     });
     useLayoutEffect(() => {
       menu = value;
@@ -205,6 +212,7 @@ async function mountMenu(draftMessage: string, selection: { start: number; end: 
     await act(() => root.unmount());
     vi.unstubAllGlobals();
     vi.mocked(useComposerDraftSelection).mockReset();
+    vi.mocked(useComposerPathSearch).mockReset();
   };
   const renderDraft = async (
     text: string,
@@ -241,4 +249,25 @@ it("uses the restored caret when switching draft owners", async () => {
   await using state = await mountMenu("@first", { start: 6, end: 6 });
   const menu = await state.renderDraft("@foo suffix @last", { start: 4, end: 4 }, "draft-b");
   expect(menu.trigger).toMatchObject({ query: "foo", rangeStart: 0, rangeEnd: 4 });
+});
+
+it("keeps a spaced search open while a thread title or capped results may match it", async () => {
+  const typeQuery = async (state: Awaited<ReturnType<typeof mountMenu>>, query: string) => {
+    for (let end = 2; end <= query.length; end += 1) {
+      await state.renderDraft(query.slice(0, end), { start: end, end });
+    }
+    return state.menu.trigger?.query;
+  };
+  await using threads = await mountMenu("@", { start: 1, end: 1 }, [
+    makeThreadShellFixture({ title: "Quarterly Planning" }),
+  ]);
+  expect(await typeQuery(threads, "@Quarterly Pl")).toBe("Quarterly Pl");
+
+  vi.mocked(useComposerPathSearch).mockReturnValue({
+    entries: [{ path: "Foreign Alpha 000.md" }],
+    isPending: false,
+    truncated: true,
+  } as unknown as ReturnType<typeof useComposerPathSearch>);
+  await using capped = await mountMenu("@", { start: 1, end: 1 });
+  expect(await typeQuery(capped, "@Foreign Ze")).toBe("Foreign Ze");
 });

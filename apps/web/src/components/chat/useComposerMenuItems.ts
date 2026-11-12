@@ -417,5 +417,10 @@ export function useComposerMenuItems({
       : "No matching command.";
   })();
 
-  return { items, isLoading, emptyState };
+  return {
+    items,
+    isLoading,
+    pathResultsTruncated: isPathTrigger && workspaceEntries.truncated,
+    emptyState,
+  };
 }
