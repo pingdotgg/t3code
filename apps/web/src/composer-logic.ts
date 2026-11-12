@@ -20,7 +20,6 @@ import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "side" | "btw" | "clear";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
-export type ComposerSendIntent = Exclude<ComposerSubmissionIntent, "alternate">;
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -57,11 +56,11 @@ export function composerRequiresModifier(
   );
 }
 
-/** Intent for a plain send from this route: Enter and the send button. */
+/** Intent for a plain send from this route: the send shortcut, the send button, and dictation. */
 export function composerDefaultSendIntent(input: {
   isDraftThread: boolean;
   startNewThreadsInBackground: boolean;
-}): ComposerSendIntent {
+}) {
   return input.isDraftThread && input.startNewThreadsInBackground ? "background" : "foreground";
 }
 
@@ -95,16 +94,10 @@ export function composerSubmissionIntentForKey(input: {
     startNewThreadsInBackground: input.startNewThreadsInBackground === true,
   });
   if (command === "composer.sendAlternate" && input.isRunning) return "alternate";
-  if (command === "composer.sendBackground" && input.isDraftThread) {
-    // A modifier send shortcut makes the send chord (Mod+Enter) hit this binding, and the send
-    // chord must still start in the background when the setting is on.
-    const isSendChord =
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.altKey &&
-      requiresModifier === (event.metaKey || event.ctrlKey);
-    return isSendChord || defaultIntent === "foreground" ? "background" : "foreground";
-  }
+  // Start in Background does the opposite of a plain send, so it opens the thread when plain
+  // sends already start in the background.
+  if (command === "composer.sendBackground" && input.isDraftThread)
+    return defaultIntent === "background" ? "foreground" : "background";
   if (command === "composer.sendAndNewThread" && !input.isDraftThread) return "background";
   if (command !== null || event.key !== "Enter" || event.shiftKey || event.altKey) return null;
   if (requiresModifier && !event.metaKey && !event.ctrlKey) return null;
