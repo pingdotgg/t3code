@@ -750,7 +750,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
     toolCallVisibility,
     revealedMessageId,
-    awaitingUser: awaitingUser !== null,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();
@@ -1169,9 +1168,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     providerStartingLabel,
     latestRunId: latestRun?.runId ?? null,
     liveAnswerPreview:
-      isWorking && toolCallVisibility === "zen" && awaitingUser === null
-        ? liveAnswerPreview(timelineEntries)
-        : null,
+      isWorking && toolCallVisibility === "zen" ? liveAnswerPreview(timelineEntries) : null,
   };
   // Mounted in both the empty and filled timeline so a thread's first turn
   // starts from a baseline instead of a fresh, silent region.

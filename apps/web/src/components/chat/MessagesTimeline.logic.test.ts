@@ -3037,7 +3037,6 @@ describe("v2 run and attempt history", () => {
       timelineEntries: ReadonlyArray<TimelineEntry>,
       toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
       latestRun?: typeof ended | typeof running,
-      awaitingUser = false,
     ) =>
       deriveMessagesTimelineRows({
         timelineEntries,
@@ -3047,7 +3046,6 @@ describe("v2 run and attempt history", () => {
         turnDiffSummaries: [],
         supportsConversationRollback: false,
         toolCallVisibility,
-        awaitingUser,
       }).map((row) => row.id);
 
     const turn = [user, step, passed, failed, final];
@@ -3080,9 +3078,84 @@ describe("v2 run and attempt history", () => {
     ]);
     expect(liveAnswerPreview([user, step, passed])).toBe("step");
     // A question keeps the run working; the reply written before it is what the user answers.
+    const asking: TimelineEntry = {
+      id: "asking",
+      kind: "work",
+      createdAt: at(21),
+      entry: {
+        id: "asking",
+        createdAt: at(21),
+        runId,
+        label: "AskUserQuestion",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+      },
+    };
+    const questionRequestId = RuntimeRequestId.make("question");
+    const question = (answered: boolean): TimelineEntry => ({
+      id: "question",
+      kind: "work",
+      createdAt: at(22),
+      entry: {
+        id: "question",
+        createdAt: at(22),
+        runId,
+        label: answered ? "Answered questions" : "Input requested",
+        tone: "info",
+        itemType: "user_input_request",
+        ...(answered
+          ? {
+              questionAnswer: {
+                requestId: questionRequestId,
+                answers: { color: "Blue" },
+                attachmentsByQuestionId: {},
+              },
+            }
+          : {}),
+      },
+    });
+    const secret: TimelineEntry = {
+      id: "secret",
+      kind: "event",
+      createdAt: at(22),
+      projectedItem: { item: { type: "secret_request", runId } } as never,
+    };
     expect(rows([user, step, passed, final], "zen", running)).not.toContain("final");
-    expect(rows([user, step, passed, final], "zen", running, true)).toContain("final");
-    expect(rows([user, step, passed, final], "zen", running, true)).not.toContain("step");
+    expect(rows([user, step, passed, final, asking, question(false)], "zen", running)).toContain(
+      "final",
+    );
+    // Answering keeps the run working, and the reply stays above the answered question.
+    expect(rows([user, step, passed, final, asking, question(true)], "zen", running)).toEqual([
+      "user",
+      "working-indicator-row",
+      "final",
+      "question",
+      "live-activity-row",
+    ]);
+    expect(rows([user, step, passed, final, asking, secret], "zen", running)).toContain("final");
+    // Narration followed by other work is not what the question asks about.
+    expect(rows([user, step, passed, asking, question(true)], "zen", running)).not.toContain(
+      "step",
+    );
+    expect(liveAnswerPreview([user, step, passed, final, asking, question(true)])).toBeNull();
+    const later: TimelineEntry = {
+      id: "later",
+      kind: "work",
+      createdAt: at(23),
+      entry: {
+        id: "later",
+        createdAt: at(23),
+        runId,
+        label: "Thinking",
+        tone: "thinking",
+        itemType: "reasoning",
+        detail: "later",
+      },
+    };
+    expect(liveAnswerPreview([user, step, passed, final, asking, question(true), later])).toBe(
+      "later",
+    );
     expect(rows(turn, "zen", ended)).toEqual(["user", "final"]);
     const followUp = message("follow-up", "user", 30);
     expect(rows([...turn, followUp], "zen", ended)).toEqual([

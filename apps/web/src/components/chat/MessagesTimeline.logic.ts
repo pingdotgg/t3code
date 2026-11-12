@@ -1425,10 +1425,44 @@ function deriveInFlightSteerAnswerIds(entries: ReadonlyArray<TimelineEntry>): Re
   return ids;
 }
 
+/** A question, secret, or link request: the agent asks the user, pending or answered. */
+function timelineEntryAsksUser(entry: TimelineEntry): boolean {
+  if (entry.kind === "work") return entry.entry.itemType === "user_input_request";
+  if (entry.kind !== "event") return false;
+  const type = entry.projectedItem.item.type;
+  return type === "secret_request" || type === "link_request";
+}
+
+/**
+ * The reply an agent wrote right before it asked the user something: zen keeps it, since the
+ * run still works while it waits and after the answer. Reasoning and the one tool call that
+ * asks may sit between them.
+ */
+function deriveRepliesBeforeAsks(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
+  const ids = new Set<string>();
+  let reply: string | null = null;
+  let workSince = 0;
+  for (const entry of entries) {
+    if (entry.kind === "work" && entry.entry.itemType === "reasoning") continue;
+    if (timelineEntryAsksUser(entry)) {
+      if (reply !== null && workSince <= 1) ids.add(reply);
+      reply = null;
+    } else if (entry.kind === "message") {
+      reply = entry.message.role === "assistant" ? entry.message.id : null;
+      workSince = 0;
+    } else {
+      workSince += 1;
+    }
+  }
+  return ids;
+}
+
 export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string | null {
   const boundary = lastResponseBoundaryIndex(entries);
   for (let index = entries.length - 1; index > boundary; index -= 1) {
     const entry = entries[index]!;
+    // The reply before a question shows in full; the preview only shows newer text.
+    if (timelineEntryAsksUser(entry)) return null;
     const text =
       entry.kind === "message" && entry.message.role === "assistant"
         ? entry.message.text
@@ -1451,22 +1485,20 @@ function timelineRowEntries(
     | "latestRun"
     | "runningRunId"
     | "pendingApprovalRequestIds"
-    | "awaitingUser"
   >,
 ) {
   const visibility = input.toolCallVisibility ?? "showAll";
   const entries = input.timelineEntries;
   let shown = entries;
   if (visibility === "zen") {
-    // A run that waits on a question still works, but the text before the question is its answer.
-    const answering =
-      input.isWorking && input.latestRun?.turnEnded !== true && input.awaitingUser !== true;
+    const answering = input.isWorking && input.latestRun?.turnEnded !== true;
     const answeringRunId = answering
       ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
       : null;
     const answeringFrom = answering ? lastResponseBoundaryIndex(entries) + 1 : entries.length;
     const terminalIds = deriveTerminalAssistantMessageIds(entries);
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
+    const askReplyIds = deriveRepliesBeforeAsks(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
@@ -1477,6 +1509,7 @@ function timelineRowEntries(
         message.role !== "assistant" ||
         message.id === input.revealedMessageId ||
         steerAnswerIds.has(message.id) ||
+        askReplyIds.has(message.id) ||
         retainedReplyIds.has(entry.id) ||
         (terminalIds.has(message.id) &&
           index < answeringFrom &&
@@ -1543,8 +1576,6 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   toolCallVisibility?: ToolCallVisibility;
   revealedMessageId?: MessageId | null;
-  /** A pending question or approval: the run waits on the user, so zen shows what it wrote. */
-  awaitingUser?: boolean;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input);
   const embeddedResultRunIds = new Set<RunId>();

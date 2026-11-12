@@ -1362,7 +1362,6 @@ describe("buildThreadFeed", () => {
       items: ReadonlyArray<OrchestrationV2TurnItem>,
       toolCallVisibility: "hideSuccessful" | "hideAll" | "zen",
       latestRun: ThreadFeedLatestRun | null = null,
-      awaitingUser = false,
     ) =>
       deriveThreadFeedPresentation(
         buildThreadFeed(items.map((item, index) => projected(item, index))),
@@ -1372,7 +1371,7 @@ describe("buildThreadFeed", () => {
         latestRun ? at(1) : null,
         false,
         undefined,
-        { toolCallVisibility, revealedMessageId: null, awaitingUser },
+        { toolCallVisibility, revealedMessageId: null },
       ).map((row) =>
         row.type === "activity-group"
           ? row.activities.map((activity) => activity.projectedItem.item.id).join("+")
@@ -1414,12 +1413,58 @@ describe("buildThreadFeed", () => {
     ]);
     expect(rows([user, step, passed], "zen", running)).toEqual(["user", "thinking:step"]);
     // A question keeps the run working; the reply written before it is what the user answers.
+    const asking: OrchestrationV2TurnItem = {
+      ...base("asking", at(6), 5),
+      type: "dynamic_tool",
+      toolName: "AskUserQuestion",
+      status: "completed",
+      input: {},
+      output: {},
+    };
+    const questionRequestId = RuntimeRequestId.make("question");
+    const question = (answered: boolean): OrchestrationV2TurnItem => ({
+      ...base("question", at(7), 6),
+      type: "user_input_request",
+      requestId: questionRequestId,
+      questions: [],
+      ...(answered
+        ? {
+            questionAnswer: {
+              requestId: questionRequestId,
+              answers: { color: "Blue" },
+              attachmentsByQuestionId: {},
+            },
+          }
+        : {}),
+    });
     expect(rows([user, step, passed, final], "zen", running)).not.toContain("final");
-    expect(rows([user, step, passed, final], "zen", running, true)).toEqual([
+    expect(rows([user, step, passed, final, asking, question(false)], "zen", running)).toEqual([
       "user",
       "final",
       "thinking:",
     ]);
+    // Answering keeps the run working, and the reply stays above the answered question.
+    expect(rows([user, step, passed, final, asking, question(true)], "zen", running)).toEqual([
+      "user",
+      "final",
+      "question",
+      "thinking:",
+    ]);
+    // Narration followed by other work is not what the question asks about.
+    expect(rows([user, step, passed, asking, question(true)], "zen", running)).toEqual([
+      "user",
+      "question",
+      "thinking:",
+    ]);
+    const later: OrchestrationV2TurnItem = {
+      ...base("later", at(8), 7),
+      type: "reasoning",
+      streaming: false,
+      text: "later",
+    };
+    expect(
+      rows([user, step, passed, final, asking, question(true), later], "zen", running),
+    ).toEqual(["user", "final", "question", "thinking:later"]);
     expect(rows(turn, "zen", { ...running, turnEnded: true })).toEqual(["user", "final"]);
     const nextRun = { ...running, runId: RunId.make("run-2") };
     const followUp = { ...say("follow-up", 6, true), runId: nextRun.runId };

@@ -1379,7 +1379,6 @@ function presentationRestart(
     previous.runlessWorkActive !== runlessWorkActive ||
     previous.display.toolCallVisibility !== display.toolCallVisibility ||
     previous.display.revealedMessageId !== display.revealedMessageId ||
-    previous.display.awaitingUser !== display.awaitingUser ||
     !setsEqual(previous.expandedRunIds, expandedRunIds) ||
     !setsEqual(previous.expandedWorkGroupIds, expandedWorkGroupIds)
   ) {
@@ -1451,6 +1450,48 @@ function startsResponse(entry: ThreadFeedEntry): boolean {
   );
 }
 
+/** A question, secret, or link request: the agent asks the user, pending or answered. */
+function activityAsksUser(activity: ThreadFeedActivity): boolean {
+  const type = activity.projectedItem.item.type;
+  return type === "user_input_request" || type === "secret_request" || type === "link_request";
+}
+
+/**
+ * The reply an agent wrote right before it asked the user something: zen keeps it, since the
+ * run still works while it waits and after the answer. Reasoning and the one tool call that
+ * asks may sit between them.
+ */
+function repliesBeforeAsks(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  start: number,
+): ReadonlySet<MessageId> {
+  const ids = new Set<MessageId>();
+  let reply: MessageId | null = null;
+  let workSince = 0;
+  for (let index = start; index < feed.length; index += 1) {
+    const entry = feed[index]!;
+    if (entry.type === "message") {
+      reply = entry.message.role === "assistant" ? entry.message.id : null;
+      workSince = 0;
+      continue;
+    }
+    if (entry.type !== "activity-group") {
+      workSince += 1;
+      continue;
+    }
+    for (const activity of entry.activities) {
+      if (activity.workEntry.itemType === "reasoning") continue;
+      if (activityAsksUser(activity)) {
+        if (reply !== null && workSince <= 1) ids.add(reply);
+        reply = null;
+      } else {
+        workSince += 1;
+      }
+    }
+  }
+  return ids;
+}
+
 function zenAnswerMessageIds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   start: number,
@@ -1460,6 +1501,7 @@ function zenAnswerMessageIds(
   const replies: Array<{ readonly message: ThreadFeedMessage; readonly index: number }> = [];
   const lastReplyByResponse = new Map<string, MessageId>();
   const steerAnswers = new Set(answersBeforeSteers(feed));
+  const askReplies = repliesBeforeAsks(feed, start);
   let userMessages = 0;
   let awaitingReply = false;
   let candidate: MessageId | null = null;
@@ -1495,6 +1537,7 @@ function zenAnswerMessageIds(
       .filter(
         ({ message, index }) =>
           steerAnswers.has(message.id) ||
+          askReplies.has(message.id) ||
           (terminal.has(message.id) &&
             index < answeringFrom &&
             (answeringRunId === null || message.runId !== answeringRunId)),
@@ -1507,18 +1550,25 @@ function liveAnswerPreview(feed: ReadonlyArray<ThreadFeedEntry>): string | null 
   for (let index = feed.length - 1; index >= 0; index -= 1) {
     const entry = feed[index]!;
     if (startsResponse(entry)) return null;
-    const texts =
+    // The reply before a question shows in full; the preview only shows newer text.
+    const texts: Array<string | null> =
       entry.type === "message"
         ? entry.message.role === "assistant"
           ? [entry.message.text]
           : []
         : entry.type === "activity-group"
-          ? entry.activities
-              .filter((activity) => activity.workEntry.itemType === "reasoning")
-              .map((activity) => activity.workEntry.detail ?? "")
+          ? entry.activities.flatMap((activity) =>
+              activityAsksUser(activity)
+                ? [null]
+                : activity.workEntry.itemType === "reasoning"
+                  ? [activity.workEntry.detail ?? ""]
+                  : [],
+            )
           : [];
     for (let textIndex = texts.length - 1; textIndex >= 0; textIndex -= 1) {
-      const line = compactWorkEntryText(liveThoughtLine(texts[textIndex]!));
+      const text = texts[textIndex] as string | null;
+      if (text === null) return null;
+      const line = compactWorkEntryText(liveThoughtLine(text));
       if (line !== "") return line;
     }
   }
@@ -1528,8 +1578,6 @@ function liveAnswerPreview(feed: ReadonlyArray<ThreadFeedEntry>): string | null 
 export interface ThreadFeedDisplay {
   readonly toolCallVisibility: ToolCallVisibility;
   readonly revealedMessageId: MessageId | null;
-  /** A pending question or approval: the run waits on the user, so zen shows what it wrote. */
-  readonly awaitingUser?: boolean;
 }
 
 const DEFAULT_THREAD_FEED_DISPLAY: ThreadFeedDisplay = {
@@ -1582,8 +1630,7 @@ export function deriveThreadFeedPresentation(
   const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
   const activeRunId = unsettledRunId(latestRun);
   const zen = toolCallVisibility === "zen";
-  // A run that waits on a question still works, but the text before the question is its answer.
-  const answering = isWorking && latestRun?.turnEnded !== true && display.awaitingUser !== true;
+  const answering = isWorking && latestRun?.turnEnded !== true;
   const zenAnswerIds = zen
     ? zenAnswerMessageIds(feed, start, answering, answering ? activeRunId : null)
     : null;
@@ -1752,7 +1799,7 @@ export function deriveThreadFeedPresentation(
       thinkingRow(
         activeWorkStartedAt,
         activeRunId,
-        zen && display.awaitingUser !== true ? liveAnswerPreview(feed) : null,
+        zen ? liveAnswerPreview(feed) : null,
         latestRun?.providerStartingLabel,
       ),
     );
