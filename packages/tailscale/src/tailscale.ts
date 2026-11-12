@@ -46,6 +46,7 @@ export const TailscaleStderrDiagnostic = Schema.Literals([
   "not-logged-in",
   "not-running",
   "permission-denied",
+  "unsupported-target",
   "unknown",
 ]);
 export type TailscaleStderrDiagnostic = typeof TailscaleStderrDiagnostic.Type;
@@ -62,6 +63,8 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
     "not-running",
   ],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
+  // The macOS apps, and tailscaled without SO_MARK, proxy only to localhost, 127.0.0.1 and ::1.
+  [/doesn't support connecting to remote destinations/i, "unsupported-target"],
 ];
 
 const stderrDiagnosticOf = (stderr: string): TailscaleStderrDiagnostic | undefined => {
