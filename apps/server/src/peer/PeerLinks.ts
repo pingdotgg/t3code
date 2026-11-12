@@ -78,6 +78,8 @@ export interface ResolvedPeerLink {
   /** The first address that answered as this peer. */
   readonly url: string;
   readonly token: string;
+  /** Names the stored token, so an outcome for it never lands on a later link. */
+  readonly secretName: string;
 }
 
 export const LINKED_ENVIRONMENTS_OFF =
@@ -106,10 +108,14 @@ export class PeerLinks extends Context.Service<
     readonly resolve: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<ResolvedPeerLink, PeerLinkError>;
-    /** Records the outcome of a call, so listing shows whether the peer answered last time. */
+    /**
+     * Records the outcome of a call, so listing shows whether the peer answered last time.
+     * `refusedSecret` names a token the peer no longer accepts; while it is still the link's,
+     * only linking again helps.
+     */
     readonly recordOutcome: (
       environmentId: EnvironmentId,
-      outcome: { readonly error: string | null },
+      outcome: { readonly error: string | null; readonly refusedSecret?: string },
     ) => Effect.Effect<void>;
   }
 >()("t3/peer/PeerLinks") {}
@@ -673,6 +679,7 @@ const make = Effect.gen(function* () {
         link: yield* withLabel(link, label),
         url: url.value,
         token: new TextDecoder().decode(stored.value),
+        secretName: row.value.secret_name,
       };
     },
   );
@@ -686,10 +693,16 @@ const make = Effect.gen(function* () {
               SET last_reached_at = ${DateTime.formatIso(now)}, last_error = NULL
               WHERE environment_id = ${environmentId}
             `
-          : sql`
-              UPDATE peer_environment_links SET last_error = ${outcome.error}
-              WHERE environment_id = ${environmentId}
-            `,
+          : outcome.refusedSecret !== undefined
+            ? sql`
+                UPDATE peer_environment_links
+                SET last_error = ${outcome.error}, expires_at = ${DateTime.formatIso(now)}
+                WHERE environment_id = ${environmentId} AND secret_name = ${outcome.refusedSecret}
+              `
+            : sql`
+                UPDATE peer_environment_links SET last_error = ${outcome.error}
+                WHERE environment_id = ${environmentId}
+              `,
       ),
       Effect.asVoid,
       Effect.ignoreCause({ log: true }),

@@ -575,18 +575,27 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
       const pairing = yield* b.auth.issuePairingCredential();
       yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
       yield* probe(a);
+      const before = yield* a.links.resolve(box.environmentId);
 
       const [session] = yield* linkedSessions(b);
       yield* b.auth.revokeSession(session!.sessionId);
       const revoked = yield* probe(a).pipe(Effect.flip);
       expect(revoked.code).toBe("capability_denied");
       expect(revoked.message).toContain("revoked there");
+      // The peer refuses this link's token, so listing must not call it usable.
+      expect((yield* a.links.list).map((link) => link.status)).not.toContain("reachable");
 
       yield* a.links.link({
         url: b.url,
         pairingCode: (yield* b.auth.issuePairingCredential()).credential,
         access: "auto",
       });
+      // A refusal of the old token that arrives late leaves the new link alone.
+      yield* a.links.recordOutcome(box.environmentId, {
+        error: revoked.message,
+        refusedSecret: before.secretName,
+      });
+      expect((yield* a.links.list).map((link) => link.status)).toEqual(["reachable"]);
       // A link made with a peer that later answers without the fence, as
       // one made before the fence or a peer moved back to such a version.
       yield* Ref.set(b.descriptor, descriptorOf("environment-box", "Box", { linkFence: false }));
