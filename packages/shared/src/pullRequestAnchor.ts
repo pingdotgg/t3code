@@ -59,8 +59,15 @@ function pullRequestPathTab(pathname: string): PullRequestAnchor | null {
   }
 }
 
-function gitLabLine(start: number, side: "left" | "right"): PullRequestAnchorRange {
-  return { start, side, end: start, endSide: side };
+const isLine = (line: number) => Number.isSafeInteger(line) && line >= 1;
+
+function gitLabLine(
+  start: number,
+  side: "left" | "right",
+  oldLine = 0,
+): PullRequestAnchorRange | null {
+  if (!isLine(start)) return null;
+  return { start, side, end: start, endSide: side, ...(isLine(oldLine) ? { oldLine } : {}) };
 }
 
 // GitLab names a file by its path's SHA-1 and a line by `<sha1>_<old>_<new>`, which carries both
@@ -85,9 +92,9 @@ function gitLabDiffAnchor(anchor: string, file: string | null): PullRequestAncho
   const range =
     code?.[2] === undefined
       ? null
-      : newLine >= 1
-        ? { ...gitLabLine(newLine, "right"), oldLine }
-        : gitLabLine(oldLine, "left");
+      : newLine === 0
+        ? gitLabLine(oldLine, "left")
+        : gitLabLine(newLine, "right", oldLine);
   return { kind: "diff", digest: digest.toLowerCase(), range };
 }
 
@@ -97,7 +104,7 @@ export function resolvePullRequestAnchorRange(
   isRemovedLine: (oldLine: number) => boolean,
 ): PullRequestAnchorRange {
   return range.oldLine !== undefined && isRemovedLine(range.oldLine)
-    ? gitLabLine(range.oldLine, "left")
+    ? (gitLabLine(range.oldLine, "left") ?? range)
     : range;
 }
 

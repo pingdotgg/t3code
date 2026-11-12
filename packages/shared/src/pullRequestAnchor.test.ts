@@ -83,6 +83,19 @@ it("handles encoded hashes and rejects invalid line numbers and URLs", () => {
   });
   expect(parsePullRequestAnchor(`${url}#diff-abcR0`)).toBeNull();
   expect(parsePullRequestAnchor(`${url}#diff-abcR9999999999999999999`)).toBeNull();
+  const sha = "c".repeat(40);
+  for (const anchor of [
+    `${sha}_0_0`,
+    `${sha}_1_9999999999999999999`,
+    `line_${sha.slice(0, 9)}_0`,
+  ]) {
+    expect(parsePullRequestAnchor(`${gitlab}/diffs#${anchor}`)).toMatchObject({ range: null });
+  }
+  expect(parsePullRequestAnchor(`${gitlab}/diffs#${sha}_0_5`)).toEqual({
+    kind: "diff",
+    digest: sha,
+    range: { start: 5, side: "right", end: 5, endSide: "right" },
+  });
   expect(parsePullRequestAnchor("invalid")).toBeNull();
   expect(parsePullRequestAnchor(url)).toBeNull();
   expect(parsePullRequestAnchor(`${url}#unknown`)).toEqual({ kind: "summary", anchor: "unknown" });
