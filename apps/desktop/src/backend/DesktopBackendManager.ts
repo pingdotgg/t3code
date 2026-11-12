@@ -22,6 +22,7 @@ import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  DesktopBackendDatabaseMigrating,
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
 } from "@t3tools/contracts";
@@ -406,7 +407,9 @@ function drainBackendOutput(
 
 const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
 const decodeDesktopTelemetryControlLine = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(DesktopTelemetryControlMessage),
+  Schema.fromJsonString(
+    Schema.Union([DesktopTelemetryControlMessage, DesktopBackendDatabaseMigrating]),
+  ),
 );
 
 export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
@@ -483,6 +486,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
+  const databaseMigrating = yield* Ref.make(false);
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
   if (
@@ -497,7 +501,11 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       Stream.filter((line) => line.trim().length > 0),
       Stream.runForEach((line) =>
         decodeDesktopTelemetryControlLine(line).pipe(
-          Effect.flatMap(handleControl),
+          Effect.flatMap((message) =>
+            message.type === "setDatabaseMigrating"
+              ? Ref.set(databaseMigrating, message.migrating)
+              : handleControl(message),
+          ),
           Effect.catchCause((cause) =>
             logBackendProcessWarning("ignored invalid desktop telemetry control message", {
               fd: controlFd,
@@ -581,7 +589,12 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
-          (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
+          Ref.get(databaseMigrating).pipe(
+            Effect.flatMap((migrating) =>
+              migrating ? Effect.void : (options.onReadinessFailure?.(error) ?? Effect.void),
+            ),
+            Effect.as(false),
+          ),
       }),
     ),
   );

@@ -392,6 +392,14 @@ export const DesktopTelemetryControlMessage = Schema.Union([
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 
+// Sent on the control fd before the HTTP listener exists; the desktop waits for readiness while migrating.
+export const DesktopBackendDatabaseMigrating = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("setDatabaseMigrating"),
+  migrating: Schema.Boolean,
+});
+export type DesktopBackendDatabaseMigrating = typeof DesktopBackendDatabaseMigrating.Type;
+
 export const ResourceTelemetryProcess = Schema.Struct({
   identity: ResourceTelemetryProcessIdentity,
   ppid: NonNegativeInt,

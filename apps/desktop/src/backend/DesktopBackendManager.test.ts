@@ -688,12 +688,22 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
-        const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>) =>
+        const startInstance = (
+          status: Ref.Ref<number>,
+          onReady?: Effect.Effect<void>,
+          controlOutput = "",
+        ) =>
           makeTestInstance({
             spawnerLayer: Layer.succeed(
               ChildProcessSpawner.ChildProcessSpawner,
               ChildProcessSpawner.make(() =>
-                Effect.succeed(makeProcess({ exitCode: Effect.never })),
+                Effect.succeed(
+                  makeProcess({
+                    exitCode: Effect.never,
+                    getOutputFd: (fd) =>
+                      fd === 5 ? Stream.encodeText(Stream.make(controlOutput)) : Stream.empty,
+                  }),
+                ),
               ),
             ),
             httpClientLayer: layerHttpClient((request) =>
@@ -711,6 +721,19 @@ describe("DesktopBackendManager", () => {
         yield* TestClock.adjust(Duration.millis(100));
         yield* Deferred.await(ready);
         assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+
+        const migratingStatus = yield* Ref.make(503);
+        const migrated = yield* Deferred.make<void>();
+        yield* startInstance(
+          migratingStatus,
+          Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
+          '{"version":1,"type":"setDatabaseMigrating","migrating":true}\n',
+        );
+        yield* TestClock.adjust(Duration.minutes(10));
+        assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+        yield* Ref.set(migratingStatus, 200);
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Deferred.await(migrated);
 
         yield* startInstance(yield* Ref.make(503));
         yield* TestClock.adjust(Duration.seconds(179));

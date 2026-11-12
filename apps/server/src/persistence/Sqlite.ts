@@ -4,12 +4,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { DesktopBackendDatabaseMigrating } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { hasPendingMigrations, runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
+import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 
 const WAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024;
 
@@ -72,6 +74,29 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
 
 const layerSetup = makeLayerSetup(runMigrations());
 
+const encodeDatabaseMigrating = Schema.encodeEffect(
+  Schema.fromJsonString(DesktopBackendDatabaseMigrating),
+);
+
+// Migrations run before the HTTP listener, so tell the desktop to keep waiting instead of reporting a failed start.
+const runMigrationsAnnouncingToDesktop = Effect.fn(
+  "SqlitePersistence.runMigrationsAnnouncingToDesktop",
+)(function* () {
+  const { desktopTelemetryControlFd: fd } = yield* ServerConfig.ServerConfig;
+  if (fd === undefined || !(yield* hasPendingMigrations())) return yield* runMigrations();
+  const announce = (migrating: boolean) =>
+    encodeDatabaseMigrating({ version: 1, type: "setDatabaseMigrating", migrating }).pipe(
+      Effect.flatMap((line) => writeAllToFileDescriptor(fd, Buffer.from(`${line}\n`))),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to tell the desktop about database migrations", {
+          cause: String(cause),
+        }),
+      ),
+    );
+  yield* announce(true);
+  return yield* runMigrations().pipe(Effect.ensuring(announce(false)));
+});
+
 const makeLayerFromPath = <E, R>(setup: Layer.Layer<never, E, R>) =>
   Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
     const fs = yield* FileSystem.FileSystem;
@@ -111,7 +136,9 @@ const makeLayerConfig = <E, R>(
     }),
   );
 
-export const layerConfig = makeLayerConfig(layerFromPath);
+export const layerConfig = makeLayerConfig(
+  makeLayerFromPath(makeLayerSetup(runMigrationsAnnouncingToDesktop())),
+);
 
 /** For CLI commands: pending migrations run only while no server owns the T3 home. */
 export const layerCliConfig = makeLayerConfig(
