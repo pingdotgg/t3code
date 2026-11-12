@@ -93,7 +93,7 @@ const threadRef: ScopedThreadRef = {
   threadId: ThreadId.make("thread"),
 };
 const container = { width: 1200, height: 800 };
-const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
+const placement = { x: 916, y: 0, right: 12, width: 272, height: 400 } as const;
 const linkedPullRequest: ThreadPullRequestLink = {
   host: "github.com",
   repository: "pingdotgg/t3code",
@@ -172,7 +172,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         onAddProjectScript={scriptResult}
         onUpdateProjectScript={scriptResult}
         onDeleteProjectScript={scriptResult}
-        usage={{} as never}
+        usage={{ providerInstanceId: null, providers: [], sources: [], contextWindow: null }}
       />
     </ChatCanvasContext>
   );
