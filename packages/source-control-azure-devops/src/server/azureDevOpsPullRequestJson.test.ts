@@ -6,6 +6,7 @@ import {
   decodeIterationChangesJson,
   decodeIterationsJson,
   decodePolicyChecksJson,
+  namePolicyChecksApart,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -542,7 +543,7 @@ describe("decodePolicyChecksJson", () => {
   });
 
   const decodeOne = (value: unknown, isDraft = false) =>
-    expectSuccess(decodePolicyChecksJson(asJson([value]), { isDraft })).checks[0];
+    expectSuccess(decodePolicyChecksJson(asJson([value]), { isDraft })).checks[0]?.check;
 
   it.each([
     ["approved", "success"],
@@ -602,6 +603,22 @@ describe("decodePolicyChecksJson", () => {
     expect(check?.description).not.toBeNull();
   });
 
+  // A watch waits on every check that asks for action, and nobody has to queue an optional one.
+  it.each([
+    { name: "expired", value: evaluation("queued", { buildId: 21919, isExpired: true }) },
+    {
+      name: "manual-only",
+      value: evaluation("queued", null, { displayName: "Nightly", manualQueueOnly: true }),
+    },
+  ])("skips an optional $name build that nobody queued", ({ value }) => {
+    const check = decodeOne({
+      ...value,
+      configuration: { ...value.configuration, isBlocking: false },
+    });
+    expect(check?.status).toBe("skipped");
+    expect(check?.description).not.toBeNull();
+  });
+
   it("reports nothing for a build Azure holds back on a draft", () => {
     expect(decodeOne(evaluation("queued", null), true)).toBeUndefined();
     expect(decodeOne(evaluation("running", { buildId: 21960 }), true)?.status).toBe("pending");
@@ -627,6 +644,23 @@ describe("decodePolicyChecksJson", () => {
       checks: [],
       rawCount: 1,
     });
+  });
+
+  // Watches and client rows tell checks apart by name, and path-filtered copies of one pipeline share it.
+  it("names policies that share a name apart by their policy id", () => {
+    const named = (id: number, displayName: string) =>
+      evaluation("approved", null, { displayName }, { id });
+    const { checks } = expectSuccess(
+      decodePolicyChecksJson(
+        asJson([named(54, "PR validation"), named(61, "PR validation"), named(70, "Lint")]),
+        { isDraft: false },
+      ),
+    );
+    expect(namePolicyChecksApart(checks).map((check) => check.name)).toEqual([
+      "PR validation (#54)",
+      "PR validation (#61)",
+      "Lint",
+    ]);
   });
 
   it("fails the page on a row it cannot read, which could be a required check", () => {

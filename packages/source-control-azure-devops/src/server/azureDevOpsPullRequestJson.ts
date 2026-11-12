@@ -116,6 +116,7 @@ const RawPolicyEvaluationSchema = Schema.Struct({
     ),
   ),
   configuration: Schema.Struct({
+    id: Schema.optional(Schema.NullOr(Schema.Int)),
     url: Schema.optional(Schema.NullOr(Schema.String)),
     isBlocking: Schema.optional(Schema.NullOr(Schema.Boolean)),
     isEnabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
@@ -389,13 +390,13 @@ function toPolicyCheckProgress(
       // A watch counts anything settled as passed, so an unknown status cannot be.
       return settled("pending");
   }
-  if (raw.context?.isExpired === true) {
-    return { status: "action-required", description: "Expired. Queue it again on Azure DevOps." };
-  }
-  if (raw.configuration.settings?.manualQueueOnly === true) {
-    return { status: "action-required", description: "Queue it on Azure DevOps." };
-  }
-  return settled("pending");
+  const expired = raw.context?.isExpired === true;
+  if (!expired && raw.configuration.settings?.manualQueueOnly !== true) return settled("pending");
+  // Only a blocking build holds the pull request; an optional one nobody queues never runs.
+  return {
+    status: raw.configuration.isBlocking === true ? "action-required" : "skipped",
+    description: expired ? "Expired. Queue it again on Azure DevOps." : "Queue it on Azure DevOps.",
+  };
 }
 
 /** The evaluation's configuration URL opens at the project the policy belongs to. */
@@ -434,8 +435,13 @@ function toPolicyCheck(raw: RawPolicyEvaluation, isDraft: boolean): PullRequestC
   };
 }
 
+export interface AzureDevOpsPolicyCheck {
+  readonly check: PullRequestCheck;
+  readonly policyId: number | null;
+}
+
 export interface AzureDevOpsPolicyCheckPage {
-  readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly checks: ReadonlyArray<AzureDevOpsPolicyCheck>;
   /** Evaluations of every policy type, so filtered rows cannot hide a next page. */
   readonly rawCount: number;
 }
@@ -450,10 +456,23 @@ export function decodePolicyChecksJson(
   return Result.succeed({
     checks: decoded.success.flatMap((evaluation) => {
       const check = toPolicyCheck(evaluation, input.isDraft);
-      return check === null ? [] : [check];
+      return check === null ? [] : [{ check, policyId: evaluation.configuration.id ?? null }];
     }),
     rawCount: decoded.success.length,
   });
+}
+
+/** Watches and client rows tell checks apart by name, which path-filtered copies of one pipeline share. */
+export function namePolicyChecksApart(
+  entries: ReadonlyArray<AzureDevOpsPolicyCheck>,
+): ReadonlyArray<PullRequestCheck> {
+  const counts = new Map<string, number>();
+  for (const { check } of entries) counts.set(check.name, (counts.get(check.name) ?? 0) + 1);
+  return entries.map(({ check, policyId }) =>
+    policyId === null || counts.get(check.name) === 1
+      ? check
+      : { ...check, name: `${check.name} (#${policyId})` },
+  );
 }
 
 const RawIterationSchema = Schema.Struct({
