@@ -1,12 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,9 +15,7 @@ afterEach(() => {
 
 describe("watchImport", () => {
   it("transforms TypeScript, tracks dependencies, and reloads the whole graph", () => {
-    const temporaryDirectory = realpathSync(
-      mkdtempSync(path.join(os.tmpdir(), "alchemy-import-")),
-    );
+    const temporaryDirectory = realpathSync(mkdtempSync(path.join(os.tmpdir(), "alchemy-import-")));
     temporaryDirectories.push(temporaryDirectory);
     const directory = path.join(temporaryDirectory, "project");
     mkdirSync(directory);
@@ -54,10 +46,10 @@ describe("watchImport", () => {
     );
 
     const moduleUrl = pathToFileURL(
-      path.resolve(import.meta.dir, "../src/watch-import.ts"),
+      path.resolve(import.meta.dir, "../src/watch/import-watcher.ts"),
     ).href;
     const registerUrl = pathToFileURL(
-      path.resolve(import.meta.dir, "../src/register-oxc.ts"),
+      path.resolve(import.meta.dir, "../src/loader/register.ts"),
     ).href;
     const script = `
       import { writeFile } from "node:fs/promises";
@@ -120,14 +112,80 @@ describe("watchImport", () => {
 
     const result = spawnSync(
       "node",
+      ["--no-warnings", "--input-type=module", "-e", script, directory, temporaryDirectory],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+  });
+
+  it("standalone: follows a member's require() calls, refreshes them and enables source maps", () => {
+    const temporaryDirectory = realpathSync(mkdtempSync(path.join(os.tmpdir(), "alchemy-import-")));
+    temporaryDirectories.push(temporaryDirectory);
+    const directory = path.join(temporaryDirectory, "project");
+    mkdirSync(directory);
+    writeFileSync(
+      path.join(directory, "entry.ts"),
+      ['import lib from "./lib.cjs";', "export const result: { n: number; h: number } = lib;"].join(
+        "\n",
+      ),
+    );
+    writeFileSync(
+      path.join(directory, "lib.cts"),
       [
-        "--no-warnings",
-        "--input-type=module",
-        "-e",
-        script,
-        directory,
-        temporaryDirectory,
-      ],
+        'const helper: { h: number } = require("./helper.cjs");',
+        "const state = globalThis as typeof globalThis & { libCalls?: number };",
+        "const n: number = (state.libCalls = (state.libCalls ?? 0) + 1);",
+        "module.exports = { n, h: helper.h };",
+      ].join("\n"),
+    );
+    writeFileSync(
+      path.join(directory, "helper.cts"),
+      [
+        "const state = globalThis as typeof globalThis & { helperCalls?: number };",
+        "const h: number = (state.helperCalls = (state.helperCalls ?? 0) + 1);",
+        "module.exports = { h };",
+      ].join("\n"),
+    );
+
+    const moduleUrl = pathToFileURL(
+      path.resolve(import.meta.dir, "../src/watch/import-watcher.ts"),
+    ).href;
+    // No `registerOxc()`: the watcher is the only loader in this process.
+    const script = `
+      import { getSourceMapsSupport } from "node:module";
+      import { pathToFileURL } from "node:url";
+      import { watchImport } from ${JSON.stringify(moduleUrl)};
+
+      const directory = process.argv[1];
+      const members = ["entry.ts", "lib.cts", "helper.cts"].map(file => directory + "/" + file);
+      if (getSourceMapsSupport().enabled) throw new Error("source maps were already on");
+      const watcher = watchImport("./entry.ts", {
+        parentURL: pathToFileURL(directory + "/runner.mjs").href,
+        debounceMs: 10,
+      });
+
+      const first = await watcher.import();
+      if (!getSourceMapsSupport().enabled) throw new Error("source maps were not enabled");
+      for (const file of members) {
+        if (!first.dependencies.has(file)) throw new Error(file + " was not tracked");
+      }
+      if (first.value.result.n !== 1 || first.value.result.h !== 1) throw new Error("first graph was not evaluated");
+
+      const second = await watcher.import();
+      for (const file of members) {
+        if (!second.dependencies.has(file)) throw new Error(file + " was not tracked again");
+      }
+      if (second.value.result.n !== 2) throw new Error("CommonJS member was not re-evaluated");
+      if (second.value.result.h !== 2) throw new Error("required CommonJS member was not re-evaluated");
+
+      await watcher.close();
+      if (getSourceMapsSupport().enabled) throw new Error("source maps were not restored");
+    `;
+
+    const result = spawnSync(
+      "node",
+      ["--no-warnings", "--input-type=module", "-e", script, directory],
       { encoding: "utf8", timeout: 10_000 },
     );
 
