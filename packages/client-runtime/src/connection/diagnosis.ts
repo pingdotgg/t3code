@@ -16,7 +16,7 @@ export interface ConnectionDiagnosisHop {
 }
 
 export interface ConnectionDiagnosis {
-  /** Names the part that failed, e.g. "T3 Code on Mac mini did not answer". */
+  /** Names the part that failed, e.g. "Mac mini did not answer". */
   readonly headline: string;
   readonly hops: ReadonlyArray<ConnectionDiagnosisHop>;
   readonly steps: ReadonlyArray<string>;
@@ -59,7 +59,7 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
     case "offline":
       return "This device is offline";
     case "outdated":
-      return `${host} runs an older T3 Code`;
+      return `${host} runs an older version`;
     case "pairing_revoked":
       return `${host} revoked this device's pairing`;
     case null:
@@ -70,17 +70,17 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return "This device could not prepare the connection";
     case "server":
       return failure?.reason === "authentication" || failure?.reason === "permission"
-        ? `T3 Code on ${host} did not accept this device`
-        : `T3 Code on ${host} did not answer`;
+        ? `${host} did not accept this device`
+        : `${host} did not answer`;
   }
 }
 
 function steps(host: string, located: Located): string[] {
   switch (located.cause) {
     case "offline":
-      return ["Connect this device to the internet. T3 Code reconnects on its own."];
+      return ["Connect this device to the internet. It reconnects on its own."];
     case "outdated":
-      return [`Update T3 Code on ${host}.`];
+      return [`Update the app on ${host}.`];
     case "pairing_revoked":
       return [
         `On ${host}, open Settings > Connections and create a pairing link.`,
@@ -92,12 +92,12 @@ function steps(host: string, located: Located): string[] {
   switch (located.hop) {
     case "device":
       return [
-        "Restart T3 Code on this device.",
+        "Restart the app on this device.",
         `If it keeps failing, remove ${host} from this device and add it again.`,
       ];
     case "server":
       return [
-        `Make sure T3 Code is running on ${host}.`,
+        `Make sure the app is running on ${host}.`,
         "Retry. If it keeps failing, copy the diagnostics.",
       ];
   }
@@ -110,7 +110,7 @@ function hopLabel(hop: ConnectionHop, host: string): string {
     case "device":
       return "This device";
     case "server":
-      return `T3 Code on ${host}`;
+      return host;
   }
 }
 
@@ -169,7 +169,7 @@ const HOP_MARK = { ok: "ok", failed: "FAILED", unchecked: "not checked" } as con
 /** One plain-text block for bug reports. */
 export function connectionDiagnosisText(hostLabel: string, diagnosis: ConnectionDiagnosis): string {
   return [
-    `T3 Code connection to ${hostLabel}: ${diagnosis.headline}`,
+    `Connection to ${hostLabel}: ${diagnosis.headline}`,
     "",
     ...diagnosis.hops.map((hop) => `${hop.label}: ${HOP_MARK[hop.result]}`),
     "",

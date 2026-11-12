@@ -53,16 +53,16 @@ describe("presentConnectionDiagnosis", () => {
       recovery: "pair-again",
     });
     expect(diagnose(refused())).toMatchObject({
-      headline: "T3 Code on Mac mini did not accept this device",
+      headline: "Mac mini did not accept this device",
       recovery: null,
     });
   });
 
-  it("names T3 Code on the host when a direct request never arrives", () => {
+  it("names the host when a direct request never arrives", () => {
     const failure = mapRemoteEnvironmentError(
       new RemoteEnvironmentAuthFetchError({ message: "Failed to fetch", cause: new TypeError() }),
     );
-    expect(diagnose(backoff(failure))?.headline).toBe("T3 Code on Mac mini did not answer");
+    expect(diagnose(backoff(failure))?.headline).toBe("Mac mini did not answer");
     expect(results(backoff(failure))).toEqual(["device:ok", "server:failed"]);
   });
 

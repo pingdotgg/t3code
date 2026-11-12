@@ -1,3 +1,4 @@
+import { MOBILE_APP_NAME } from "../lib/mobileBranding";
 import { Button } from "./ui/Button";
 import * as Dialog from "./ui/Dialog";
 import { useOpenPullRequest } from "../native/useOpenPullRequest";
@@ -45,7 +46,7 @@ function AgentContextFields(props: {
   );
   const status = {
     unknown: "T3 agent. Mentioning it runs nothing; ask in your message to delegate to it.",
-    unsupported: "Update T3 Code on this machine to mention agents.",
+    unsupported: `Update ${MOBILE_APP_NAME} on this machine to mention agents.`,
     available: "T3 agent. Mentioning it runs nothing; ask in your message to delegate to it.",
     missing: "This agent was deleted or isn't on this machine.",
     "read-only": "Read-only agent: it can't run work.",

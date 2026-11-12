@@ -1,3 +1,4 @@
+import { MOBILE_APP_NAME } from "../../lib/mobileBranding";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -91,7 +92,7 @@ function QueuedRunSender(props: {
             label: senderShell?.title.trim() || "Agent",
           }
         : attribution === "t3code"
-          ? { icon: null, label: "Sent by T3 Code" }
+          ? { icon: null, label: `Sent by ${MOBILE_APP_NAME}` }
           : null;
   if (sender === null) return null;
   return (
