@@ -5,6 +5,7 @@ export {
   kiroPermissionDisposition,
   makeKiroAcpRuntime,
 } from "./server/acpSupport.ts";
+export { type KiroSkills, makeKiroSkills } from "./server/skills.ts";
 export {
   checkKiroProviderStatus,
   kiroAgentDescriptor,

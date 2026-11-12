@@ -1,12 +1,30 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import {
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { KiroDriver } from "@t3tools/provider-kiro/server";
 import { KiroSettings } from "@t3tools/provider-kiro/settings";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -58,12 +76,15 @@ const decodeRequest = Schema.decodeUnknownSync(
     Schema.Struct({ id: Schema.Union([Schema.String, Schema.Number]), method: Schema.String }),
   ),
 );
+const KIRO_SESSION_ID = "sess_kiro-skills";
 
 /**
  * A `kiro-cli acp` that answers `initialize` and `_kiro/config/template` and
- * fails anything else, so a probe that opened a session would fail.
+ * fails anything else, so a probe that opened a session would fail. Given
+ * `afterSessionNew`, it also opens sessions, sends those updates right after
+ * `session/new`, and answers each prompt with one line of text.
  */
-const acpProcess = (template: unknown) =>
+const acpProcess = (template: unknown, afterSessionNew?: ReadonlyArray<unknown>) =>
   Effect.gen(function* () {
     const output = yield* Queue.unbounded<Uint8Array>();
     const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -71,34 +92,53 @@ const acpProcess = (template: unknown) =>
       Effect.andThen(Queue.shutdown(output)),
       Effect.asVoid,
     );
-    const reply = (line: string) => {
+    let pending = "";
+    const send = (message: object) =>
+      Queue.offer(output, encoder.encode(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`));
+    const sessionUpdate = (update: unknown) =>
+      send({
+        method: "session/update",
+        params: { sessionId: KIRO_SESSION_ID, update },
+      });
+    const reply = Effect.fnUntraced(function* (line: string) {
       const request = decodeRequest(line);
+      const sessions = afterSessionNew !== undefined;
+      if (sessions && request.method === "session/new") {
+        yield* send({ id: request.id, result: { sessionId: KIRO_SESSION_ID } });
+        yield* Effect.forEach(afterSessionNew, sessionUpdate);
+        return;
+      }
+      if (sessions && request.method === "session/prompt") {
+        yield* sessionUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "ok" },
+        });
+        yield* send({ id: request.id, result: { stopReason: "end_turn" } });
+        return;
+      }
       const response =
         request.method === "initialize"
           ? { result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } }
           : request.method === "_kiro/config/template"
             ? { result: template }
             : { error: { code: -32601, message: `${request.method} is not scripted` } };
-      return Queue.offer(
-        output,
-        encoder.encode(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, ...response })}\n`),
-      );
-    };
+      yield* send({ id: request.id, ...response });
+    });
     return ChildProcessSpawner.makeHandle({
       pid: ChildProcessSpawner.ProcessId(900_000_003),
       exitCode: Deferred.await(exited),
       isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
       kill: () => terminate,
       unref: Effect.succeed(Effect.void),
-      stdin: Sink.forEach((bytes: Uint8Array) =>
-        Effect.forEach(
-          new TextDecoder()
-            .decode(bytes)
-            .split("\n")
-            .filter((line) => line.trim().length > 0),
+      stdin: Sink.forEach((bytes: Uint8Array) => {
+        // A prompt can arrive split across writes.
+        const lines = (pending + new TextDecoder().decode(bytes)).split("\n");
+        pending = lines.pop() ?? "";
+        return Effect.forEach(
+          lines.filter((line) => line.trim().length > 0),
           reply,
-        ),
-      ),
+        );
+      }),
       stdout: Stream.fromQueue(output),
       stderr: Stream.empty,
       all: Stream.empty,
@@ -108,13 +148,17 @@ const acpProcess = (template: unknown) =>
   });
 
 /** Answers `kiro-cli` invocations by their arguments and records which ran. */
-function kiroCli(outputs: Record<string, CliOutput>, template?: unknown) {
+function kiroCli(
+  outputs: Record<string, CliOutput>,
+  template?: unknown,
+  afterSessionNew?: ReadonlyArray<unknown>,
+) {
   const invoked: Array<string> = [];
   const spawner = ChildProcessSpawner.make((command) => {
     const args = ChildProcess.isStandardCommand(command) ? command.args.join(" ") : "";
     invoked.push(args);
-    return args === KIRO_ACP_ARGS && template !== undefined
-      ? acpProcess(template)
+    return args === KIRO_ACP_ARGS && (template !== undefined || afterSessionNew !== undefined)
+      ? acpProcess(template, afterSessionNew)
       : Effect.succeed(processHandle(outputs[args] ?? { stdout: "", code: 127 }));
   });
   return { invoked, spawner };
@@ -483,5 +527,145 @@ describe("KiroProvider", () => {
         ["default"],
       );
     }),
+  );
+
+  // Shaped like kiro-cli 2.37.1's second `available_commands_update` after
+  // `session/new` with `~/.kiro/skills/probe-skill/SKILL.md` installed.
+  it.effect("lists the skills a Kiro session advertises", () =>
+    Effect.gen(function* () {
+      const cli = kiroCli(
+        {
+          "--version": { stdout: "kiro-cli 2.37.1\n", code: 0 },
+          "whoami --format json": { stdout: "", code: 2 },
+        },
+        undefined,
+        [
+          {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "probe-skill",
+                description: "A probe skill that checks skill discovery over ACP.",
+                input: { hint: "optional context" },
+                _meta: {
+                  kiro: {
+                    type: "skill",
+                    resource: { resourceType: "skill", source: { origin: "user" } },
+                    originalName: "probe-skill",
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      );
+      yield* Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("kiro");
+        const instance = yield* KiroDriver.create({
+          instanceId,
+          displayName: "Kiro",
+          accentColor: undefined,
+          enabled: true,
+          environment: [],
+          config: settings,
+        });
+        // Subscribed before the session opens, so the publish cannot slip past it.
+        const advertised = yield* instance.snapshot.streamChanges.pipe(
+          Stream.takeUntil((snapshot) =>
+            snapshot.skills.some(({ name }) => name === "probe-skill"),
+          ),
+          Stream.runLast,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const threadId = ThreadId.make("thread-kiro-skills");
+        const modelSelection = { instanceId, model: "default" };
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
+        const session = yield* instance.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-kiro-skills"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* session.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-kiro-skills"),
+            title: "Kiro skills",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: runtimePolicy.runtimeMode,
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-kiro-skills"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-kiro-skills"),
+          rootNodeId: NodeId.make("node-kiro-skills"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-kiro-skills"),
+            text: "Say hello",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const snapshot = yield* Fiber.join(advertised);
+        assert.deepEqual(
+          Option.map(snapshot, ({ skills }) =>
+            skills.map((skill) => ({ name: skill.name, enabled: skill.enabled })),
+          ),
+          Option.some([{ name: "probe-skill", enabled: true }]),
+        );
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, cli.spawner),
+        Effect.scoped,
+      );
+    }).pipe(
+      Effect.provide(
+        TestProviderHost.layer().pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          Layer.provideMerge(IdAllocator.layer),
+          Layer.provideMerge(McpProviderSessions.layer),
+          Layer.provideMerge(
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+          ),
+        ),
+      ),
+    ),
   );
 });
