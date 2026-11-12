@@ -4,7 +4,7 @@ import { expect, it } from "vite-plus/test";
 import { loadNativeSpeechModel } from "./native.ts";
 
 const fixture = (transcribe: string, maxAudioMs = 0, supportsVocabulary = false) =>
-  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
+  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs}, languages: ["en-US", "de-DE"] }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
 
 const fixtureWithUnrelatedIpcMessage = () =>
   `data:text/javascript,${encodeURIComponent(`
@@ -38,6 +38,7 @@ it("returns transcription from an isolated process and disposes it", async () =>
     fixture("async (pcm) => ({ text: String(pcm[0]) })"),
   );
   try {
+    expect(model.languages).toEqual(["en-US", "de-DE"]);
     expect(
       await model.transcribe(
         new Float32Array([0.25]),

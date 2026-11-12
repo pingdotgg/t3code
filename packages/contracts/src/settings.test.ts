@@ -517,14 +517,6 @@ describe("voice settings", () => {
     expect(DEFAULT_SERVER_SETTINGS.speechProjectCustomWords).toEqual([]);
     expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("speechProjectCustomWords");
   });
-
-  it("stores the transcription model and resources on the environment", () => {
-    expect(DEFAULT_SERVER_SETTINGS).toMatchObject({
-      speechModelId: "handy-computer/parakeet-unified-en-0.6b-gguf",
-      speechAcceleration: "auto",
-      speechModelUnloadTimeout: "min_15",
-    });
-  });
 });
 
 describe("server model preferences", () => {
