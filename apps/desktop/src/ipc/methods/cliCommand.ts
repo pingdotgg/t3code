@@ -32,3 +32,12 @@ export const uninstallCliCommand = makeIpcMethod({
     return yield* (yield* DesktopCliCommand.DesktopCliCommand).uninstall;
   }),
 });
+
+export const addCliCommandToPath = makeIpcMethod({
+  channel: IpcChannels.CLI_COMMAND_ADD_TO_PATH_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopCliCommandStateSchema,
+  handler: Effect.fn("desktop.ipc.cliCommand.addToPath")(function* () {
+    return yield* (yield* DesktopCliCommand.DesktopCliCommand).addToPath;
+  }),
+});

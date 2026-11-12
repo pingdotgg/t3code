@@ -40,6 +40,43 @@ describe("scoreThreadSearch", () => {
         thread("Share auth across worktrees"),
       ]),
     ).toEqual(["Share auth across worktrees", "Authentication cleanup", "Fix oauth redirect"]);
+    expect(
+      rankTitles("share auth", [
+        thread("Share authentication cleanup", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+        thread("Auth across worktrees to share", { activityAt: NOW - 90 * DAY }),
+      ]),
+    ).toEqual(["Auth across worktrees to share", "Share authentication cleanup"]);
+    expect(
+      rankTitles("ui", [
+        thread("Parse ui tokens", { activityAt: NOW - 200 * DAY }),
+        thread("Polish UIs", { activityAt: NOW, opens: { openedAt: NOW, score: 12, picks: [] } }),
+      ]),
+    ).toEqual(["Polish UIs", "Parse ui tokens"]);
+    expect(
+      rankTitles("fix in sidebar", [
+        thread("Fix sidebar", { activityAt: NOW - 200 * DAY }),
+        thread("Fix crash in sidebar", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+        thread("Fix sidebar input focus", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 6, picks: [] },
+        }),
+      ]),
+    ).toEqual(["Fix crash in sidebar", "Fix sidebar input focus", "Fix sidebar"]);
+    expect(
+      rankTitles("and", [
+        thread("Fix auth and sync", { activityAt: NOW - 200 * DAY }),
+        thread("Android build", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+      ]),
+    ).toEqual(["Android build", "Fix auth and sync"]);
   });
 
   it("treats camelCase, kebab, path, and digit boundaries as word starts", () => {

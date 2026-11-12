@@ -10,6 +10,7 @@ import {
   Text,
   useNativeState,
 } from "@expo/ui/jetpack-compose";
+import { verticalScroll } from "@expo/ui/jetpack-compose/modifiers";
 
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
@@ -252,7 +253,9 @@ function DialogPresentation(props: DialogPresentationProps) {
           </AlertDialog.Text>
         ) : props.request.message ? (
           <AlertDialog.Text>
-            <Text style={bodyTypography}>{props.request.message}</Text>
+            <Text modifiers={[verticalScroll()]} style={bodyTypography}>
+              {props.request.message}
+            </Text>
           </AlertDialog.Text>
         ) : null}
         {actions.length > 1 ? (
