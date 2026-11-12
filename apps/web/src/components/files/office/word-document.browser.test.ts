@@ -1,6 +1,8 @@
 import JSZip from "jszip";
 import { expect, it, vi } from "vite-plus/test";
+import type { DisplayPage, GlyphRunPrimitive } from "@betteroffice/docx/layout/render";
 import { openWordDocument } from "./word-document";
+import { withWholeMissingGlyphs } from "./word-glyphs";
 
 const ns = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 
@@ -51,4 +53,32 @@ it("draws list numbers with the document's faces, and text no bundled face cover
   expect(drawn.map((call) => call.text)).toEqual(expect.arrayContaining(["1.", "ภาษาไทย"]));
   expect(drawn.find((call) => call.text === "1.")?.font).toContain("Calibri");
   expect([...document.fonts].map((face) => face.family.replaceAll('"', ""))).toContain("Calibri");
+});
+
+it("joins missing glyphs only across runs styled alike, with clusters into the joined text", () => {
+  const run = (text: string, at: number, style: Partial<GlyphRunPrimitive> = {}) =>
+    ({
+      kind: "glyphRun",
+      fontId: 2,
+      size: 16,
+      color: "#000000",
+      text,
+      glyphs: [{ id: 0, x: at * 10, y: 20, cluster: 0, advance: 10 }],
+      docStart: at,
+      docEnd: at + 1,
+      ...style,
+    }) satisfies GlyphRunPrimitive;
+  const page = {
+    width: 100,
+    height: 100,
+    primitives: [run("ภ", 0), run("า", 1), run("ษ", 2, { textOutline: true })],
+  } as unknown as DisplayPage;
+  const measure = new OffscreenCanvas(1, 1).getContext("2d")!;
+
+  const [joined, outlined] = withWholeMissingGlyphs(page, measure)
+    .primitives as GlyphRunPrimitive[];
+
+  expect(joined?.text).toBe("ภา");
+  expect(joined?.glyphs.map((glyph) => glyph.cluster)).toEqual([0, 3]);
+  expect(outlined).toMatchObject({ text: "ษ", textOutline: true });
 });

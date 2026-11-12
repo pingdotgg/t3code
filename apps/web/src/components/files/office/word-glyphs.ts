@@ -32,7 +32,7 @@ export function withWholeMissingGlyphs(
           joined[joined.length - 1] = {
             ...previous,
             text: previous.text + primitive.text,
-            glyphs: [...previous.glyphs, ...primitive.glyphs],
+            glyphs: [...previous.glyphs, ...shifted(primitive.glyphs, previous.text)],
             ...(primitive.docEnd === undefined ? {} : { docEnd: primitive.docEnd }),
           };
         else joined.push(primitive);
@@ -72,16 +72,32 @@ function missing(primitive: DisplayPrimitive | undefined): primitive is GlyphRun
   );
 }
 
+/** Neighbours in the document on one baseline whose runs differ only in their text and where it sits. */
 function continues(previous: GlyphRunPrimitive, next: GlyphRunPrimitive) {
   return (
     previous.docEnd !== undefined &&
     previous.docEnd === next.docStart &&
-    previous.fontId === next.fontId &&
-    previous.size === next.size &&
-    previous.color === next.color &&
-    previous.fallbackFont === next.fallbackFont &&
-    previous.glyphs[0]?.y === next.glyphs[0]?.y
+    previous.glyphs[0]?.y === next.glyphs[0]?.y &&
+    style(previous) === style(next)
   );
+}
+
+function style(run: GlyphRunPrimitive) {
+  return JSON.stringify({
+    ...run,
+    text: undefined,
+    glyphs: undefined,
+    docStart: undefined,
+    docEnd: undefined,
+    logicalOrder: undefined,
+  });
+}
+
+/** Glyphs whose clusters, UTF-8 offsets into their run's text, now follow `before`. */
+function shifted(glyphs: GlyphRunPrimitive["glyphs"], before: string) {
+  const offset = new TextEncoder().encode(before).length;
+
+  return glyphs.map((glyph) => ({ ...glyph, cluster: glyph.cluster + offset }));
 }
 
 function fitted(run: GlyphRunPrimitive, measure: OffscreenCanvasRenderingContext2D) {
