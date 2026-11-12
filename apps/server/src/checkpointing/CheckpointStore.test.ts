@@ -573,6 +573,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         expect([...((yield* checkpointStore.listAuthoredPaths(refs)) ?? [])]).toEqual([]);
 
         yield* git(tmp, ["checkout", "a"]);
+        yield* git(tmp, ["branch", "backup"]);
         yield* git(tmp, ["reset", "--hard", "b"]);
         yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
 

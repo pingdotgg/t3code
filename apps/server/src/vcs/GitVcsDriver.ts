@@ -1606,21 +1606,27 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
+      // Commits left behind count as undone unless the current branch never pointed at
+      // startHead: then the turn switched branches instead of resetting or rebasing this one.
+      const branchReflog = yield* execute({
+        operation,
+        cwd: input.cwd,
+        args: ["log", "--walk-reflogs", "--format=%H", "@{0}"],
+        allowNonZeroExit: true,
+      });
+      const branchHeads = branchReflog.stdout.split("\n");
+      const switchedBranches =
+        branchReflog.exitCode === 0 &&
+        branchHeads.includes(endHead) &&
+        !branchHeads.includes(startHead);
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
-      // Commits left behind count only when the turn dropped them (a reset or rebase); after a
-      // branch switch they are still on a branch.
       const pathLists = yield* Effect.all(
         [
           listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
-          listPaths([
-            "log",
-            "--format=",
-            "--diff-merges=remerge",
-            `${endHead}..${startHead}`,
-            "--not",
-            "--branches",
-          ]),
+          switchedBranches
+            ? Effect.succeed([])
+            : listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
           listPaths([
             "log",
             "--format=",
