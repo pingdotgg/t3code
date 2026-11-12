@@ -34,7 +34,10 @@ const Credentials = Schema.Struct({
 });
 const Config = Schema.Struct({
   oauthAccount: Schema.optional(
-    Schema.Struct({ organizationUuid: Schema.optional(Schema.String) }),
+    Schema.Struct({
+      organizationUuid: Schema.optional(Schema.String),
+      accountUuid: Schema.optional(Schema.Unknown),
+    }),
   ),
 });
 const Grant = Schema.Struct({
@@ -403,10 +406,15 @@ export const readClaudeAccountUsage = Effect.fn("readClaudeAccountUsage")(
   Effect.orElseSucceed(() => undefined),
 );
 
-export const readClaudeOrganizationId = (accountConfigPath: string) =>
+export const readClaudeOauthAccount = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
-    Effect.map((config) => config.oauthAccount?.organizationUuid?.trim() || undefined),
+    Effect.map((config) => config.oauthAccount),
     Effect.orElseSucceed(() => undefined),
+  );
+
+export const readClaudeOrganizationId = (accountConfigPath: string) =>
+  readClaudeOauthAccount(accountConfigPath).pipe(
+    Effect.map((account) => account?.organizationUuid?.trim() || undefined),
   );
 
 export const claudeAccountConfigPath = Effect.fn("claudeAccountConfigPath")(function* (
