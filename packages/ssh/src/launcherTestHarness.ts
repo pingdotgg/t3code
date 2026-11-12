@@ -145,6 +145,15 @@ if [ -n "$TEST_CLOCK_JUMP" ] && [ ! -e "$HOME/jumped" ]; then
 fi`,
     );
     executable("nohup", 'printf "%s" "$$" > "$HOME/started-server"');
+    // The test process stands in for a recorded server; report the serve command it would run.
+    executable(
+      "ps",
+      `if [ "$*" = "-ww -o args= -p $TEST_SERVER_PID" ]; then
+  printf '/bin/sh %s/.t3/ssh-launch/test-target/run-t3.sh serve --host 127.0.0.1 --port 5999\\n' "$HOME"
+  exit 0
+fi
+PATH=/usr/bin:/bin exec ps "$@"`,
+    );
     if (options.recordedKind) {
       const state = NodePath.join(home, ".t3/ssh-launch/test-target");
       NodeFS.mkdirSync(state, { recursive: true });
