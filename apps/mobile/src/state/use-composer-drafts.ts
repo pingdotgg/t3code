@@ -1542,21 +1542,6 @@ export function updateComposerDraftSettings(
   });
 }
 
-export async function releaseDeliveredComposerModelPick(
-  draftKey: string,
-  delivered: ModelSelection,
-): Promise<void> {
-  await waitForComposerDraftsLoaded();
-  updateComposerDrafts((current) => {
-    const draft = current[draftKey];
-    if (!draft?.modelSelection || !draftModelPickMatchesThread(draft.modelSelection, delivered)) {
-      return current;
-    }
-    const { modelSelection: _modelSelection, ...rest } = draft;
-    return withComposerDraft(current, draftKey, rest);
-  });
-}
-
 /** Lets the thread's model show again once the server accepted this exact pick. */
 export function releaseComposerDraftModelSelection(
   draftKey: string,
