@@ -61,7 +61,6 @@ export default function VirtualTablePreview(props: {
   const offsets = [0];
   for (const size of sizes) offsets.push(offsets[offsets.length - 1]! + size);
   // Rendering every column keeps a row's height independent of the scroll position.
-  // Wide tables render only visible columns, so their cells stay on one line.
   const virtualColumns = !props.source && props.columns > 30;
   const firstColumn = virtualColumns
     ? Math.max(0, sizes.findIndex((_, column) => offsets[column + 1]! > left - rowHeader) - 1)
@@ -157,7 +156,6 @@ export default function VirtualTablePreview(props: {
           sizes={sizes}
           rowHeader={rowHeader}
           firstColumn={firstColumn}
-          singleLine={virtualColumns}
           viewportHeight={size.height - (props.source ? 0 : 29)}
         />
       ) : null}
@@ -171,7 +169,6 @@ function RowPage(
     sizes: number[];
     rowHeader: number;
     firstColumn: number;
-    singleLine: boolean;
     viewportHeight: number;
     limit?: number;
   },
@@ -235,7 +232,7 @@ function RowPage(
                 className={
                   props.source
                     ? `min-w-0 flex-1 px-3 py-1 ${props.wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`
-                    : `shrink-0 border-r border-border/40 px-3 py-1.5 tabular-nums ${props.singleLine ? "overflow-hidden text-ellipsis whitespace-pre" : "whitespace-pre-wrap break-words"}`
+                    : "shrink-0 border-r border-border/40 px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums"
                 }
                 style={props.source ? undefined : { width: props.sizes[column] }}
               >
@@ -353,7 +350,6 @@ function ScaledRows({
   const visibleEnd = (first % PREVIEW_PAGE_ROWS) + Math.ceil(position.height / 29) + 1;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted row offsets and observe content resizes to position the virtual rows against the scroll track.
   useLayoutEffect(() => {
-    if (atStart) return;
     const node = contentRef.current;
     if (!node) return;
     const update = () => {
@@ -369,7 +365,7 @@ function ScaledRows({
     };
     update();
     return observeResize(node, update);
-  }, [first, atStart]);
+  }, [first]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Correct the DOM scroll position once a requested worker row has loaded and its actual bounds are measurable.
   useLayoutEffect(() => {
     const pending = pendingReveal.current;
@@ -436,6 +432,13 @@ function ScaledRows({
     if (Math.abs(row.getBoundingClientRect().bottom - node.getBoundingClientRect().bottom) < 1)
       pendingEnd.current = false;
   });
+  const contentTop =
+    maxFirst === 0
+      ? 0
+      : nativeTail
+        ? maxFirst * scale * 29 - layout.offset
+        : position.top +
+          (atStart ? 0 : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight);
   return (
     <div
       ref={ref}
@@ -483,22 +486,11 @@ function ScaledRows({
             {head}
           </div>
         ) : null}
-        <div className="relative" style={{ height: scrollHeight }}>
-          <div
-            ref={contentRef}
-            className="absolute inset-x-0"
-            style={{
-              top:
-                maxFirst === 0
-                  ? 0
-                  : nativeTail
-                    ? maxFirst * scale * 29 - layout.offset
-                    : position.top +
-                      (atStart
-                        ? 0
-                        : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight),
-            }}
-          >
+        <div
+          className="relative"
+          style={{ height: Math.max(scrollHeight, contentTop + layout.height) }}
+        >
+          <div ref={contentRef} className="absolute inset-x-0" style={{ top: contentTop }}>
             {Array.from(
               {
                 length: Math.min(
