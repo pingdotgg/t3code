@@ -14,6 +14,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { useAppWindowId } from "../../lib/appWindows";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { deriveThreadArrangementSizing } from "../../lib/layout";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -24,7 +25,7 @@ import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/ol
 import {
   pendingThreadOrderAtom,
   threadDropBusyAtom,
-  threadArrangementOpenAtom,
+  threadArrangementWindowAtom,
 } from "../../state/thread-order";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -600,8 +601,10 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
 }
 
 export function ThreadArrangementHost() {
-  const open = useAtomValue(threadArrangementOpenAtom);
+  const open = useAtomValue(threadArrangementWindowAtom) === useAppWindowId();
   return open ? (
-    <ThreadArrangementSheet onClose={() => appAtomRegistry.set(threadArrangementOpenAtom, false)} />
+    <ThreadArrangementSheet
+      onClose={() => appAtomRegistry.set(threadArrangementWindowAtom, null)}
+    />
   ) : null;
 }

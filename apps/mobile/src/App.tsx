@@ -3,8 +3,8 @@ import { installComposerAttachmentUploads } from "./state/composer-attachment-up
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
-import { requireNativeModule } from "expo";
-import { useEffect, useState } from "react";
+import { requireNativeModule, requireOptionalNativeModule } from "expo";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, StatusBar } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -15,8 +15,9 @@ import {
   createStaticNavigation,
   getActionFromState,
   getStateFromPath,
+  NavigationIndependentTree,
   type NavigationAction,
-  type NavigationState,
+  type NavigationContainerRef,
 } from "@react-navigation/native";
 import { pipe } from "effect/Function";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
@@ -86,11 +87,24 @@ import {
 } from "./features/layout/workspace/workspace-selection-store";
 import { workspaceDetailLinkAction } from "./features/layout/workspace/workspace-detail-selection";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
+import { NativeWindowObserver } from "./native/NativeWindowObserver";
+import {
+  activateAppWindow,
+  allocateAppWindowId,
+  AppWindowContext,
+  appWindowCount,
+  closeAppWindow,
+  subscribeAppWindows,
+  useAppWindowId,
+  type AppWindowId,
+} from "./lib/appWindows";
 import {
   attachRootNavigation,
   flushRootNavigationQueue,
+  isRootNavigationWindow,
   linkToRootPath,
   rootNavigationRef,
+  rootNavigationRoutes,
 } from "./lib/rootNavigation";
 import { pruneNewTaskFlowStates } from "./features/threads/new-task-flow-state";
 import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRouteScreen";
@@ -123,6 +137,16 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
   );
 }
 
+// A link that launched the app opens in its first window. A window opened later starts where the
+// app remembers; Android's replacement activity still reads the link that started it.
+let launchLinkTaken = false;
+
+async function initialWindowURL() {
+  const readsLaunchLink = !launchLinkTaken || Platform.OS !== "ios";
+  launchLinkTaken = true;
+  return (readsLaunchLink ? await Linking.getInitialURL() : null) ?? (await launchWorkspaceURL());
+}
+
 const appLinking = {
   prefixes: [
     Linking.createURL("/"),
@@ -133,7 +157,7 @@ const appLinking = {
   ],
   config: { initialRouteName: "Home" },
   filter: (url: string) => shouldHandleAppLink(url, hasCloudPublicConfig()),
-  getInitialURL: async () => (await Linking.getInitialURL()) ?? (await launchWorkspaceURL()),
+  getInitialURL: initialWindowURL,
   getActionFromState: (
     state: Parameters<typeof getActionFromState>[0],
     options: Parameters<typeof getActionFromState>[1],
@@ -158,9 +182,29 @@ function linkToAppPath(href: string): void {
   linkToRootPath(href, appLinkAction);
 }
 
+/** Every window's container hears an opened link; it belongs to the window in use. */
+function windowLinking(windowId: AppWindowId) {
+  return {
+    ...appLinking,
+    subscribe: (listener: (url: string) => void) => {
+      const subscription = Linking.addEventListener("url", ({ url }) => {
+        if (isRootNavigationWindow(windowId)) listener(url);
+      });
+      return () => subscription.remove();
+    },
+  };
+}
+
 const Navigation = createStaticNavigation(RootStack);
 
-function handleNavigationStateChange(state: NavigationState | undefined): void {
+/**
+ * Runs when any window navigates and when another window comes into use. The app's services
+ * follow the window in use, so they read its state whichever window changed.
+ */
+function handleNavigationStateChange(): void {
+  // A window that is still mounting reports once its container is ready.
+  if (!rootNavigationRef.isReady()) return;
+  const state = rootNavigationRef.getRootState();
   recordWorkspaceSelections(state);
   presentPendingIncomingShare();
   resolvePendingNewTaskPromptLink(state);
@@ -168,14 +212,26 @@ function handleNavigationStateChange(state: NavigationState | undefined): void {
   if (!state) return;
   setAgentNotificationPathname(workspaceLocationFromState(state).pathname);
   recordAppShortcutNavigationState(state);
-  pruneNewTaskFlowStates(state);
-  pruneNewTaskBranchCheckouts(state);
-  pruneIncomingShareImports(state);
+  // A draft is live while any window still has its route.
+  const routes = rootNavigationRoutes();
+  pruneNewTaskFlowStates(routes);
+  pruneNewTaskBranchCheckouts(routes);
+  pruneIncomingShareImports(routes);
 }
 
 function handleNavigationReady(): void {
-  handleNavigationStateChange(rootNavigationRef.getRootState());
+  handleNavigationStateChange();
   flushRootNavigationQueue();
+}
+
+const nativeControls = requireOptionalNativeModule<{
+  readonly revealWindows?: () => Promise<void>;
+}>("T3NativeControls");
+
+function hideSplashScreen(): void {
+  void SplashScreen.hide();
+  // expo-splash-screen hides the launch screen of the newest window only.
+  if (appWindowCount() > 1) void nativeControls?.revealWindows?.().catch(() => undefined);
 }
 
 declare const module: { readonly hot?: FoundationHotModule } | undefined;
@@ -199,6 +255,7 @@ const appServiceDisposers = [
   installAppShortcuts(linkToAppPath),
   installAppUpdateChecks(),
   installShowcaseCapture(rootPathnameFromState),
+  subscribeAppWindows(handleNavigationStateChange),
 ];
 disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.hot, () => {
   for (const dispose of appServiceDisposers) dispose();
@@ -224,27 +281,44 @@ function SplashScreenCoordinator() {
   const canHide = isReady && (shellCachesRead || waitEnded);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hides the native splash screen once preferences and cached shells have loaded
   useEffect(() => {
-    if (canHide) void SplashScreen.hide();
+    if (canHide) hideSplashScreen();
   }, [canHide]);
 
   return null;
 }
 
+// iOS mounts this once per window, on one JS runtime: see lib/appWindows.
 export default function App() {
+  const [windowId] = useState(allocateAppWindowId);
   return (
-    <RegistryContext.Provider value={appAtomRegistry}>
-      <CloudAuthProvider>
-        <AppearancePreferencesProvider>
-          <AppContent />
-        </AppearancePreferencesProvider>
-      </CloudAuthProvider>
-    </RegistryContext.Provider>
+    <AppWindowContext value={windowId}>
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <CloudAuthProvider>
+          <AppearancePreferencesProvider>
+            <AppContent />
+          </AppearancePreferencesProvider>
+        </CloudAuthProvider>
+      </RegistryContext.Provider>
+    </AppWindowContext>
   );
 }
 
 function AppContent() {
+  const windowId = useAppWindowId();
   const { themeAppearance } = useAppearancePreferences();
   const navigationTheme = useMobileNavigationTheme();
+  const linking = useMemo(() => windowLinking(windowId), [windowId]);
+  const attachNavigation = useCallback(
+    (navigation: NavigationContainerRef<ReactNavigation.RootParamList> | null) =>
+      attachRootNavigation(windowId, navigation),
+    [windowId],
+  );
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this root's window with the store the app's services read outside React; a new window opens in use
+  useEffect(() => {
+    activateAppWindow(windowId);
+    return () => closeAppWindow(windowId);
+  }, [windowId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- matches the Android navigation bar to the app theme, as StatusBar does for the status bar
   useEffect(() => {
@@ -257,6 +331,11 @@ function AppContent() {
   return (
     <>
       <SplashScreenCoordinator />
+      <NativeWindowObserver
+        onChange={(state) =>
+          state === "active" ? activateAppWindow(windowId) : closeAppWindow(windowId)
+        }
+      />
       <SubscriptionUsageCoordinator />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
@@ -265,13 +344,16 @@ function AppContent() {
             {/* native-stack needs the theme's dark flag to select dark native headers. */}
             <GlobalVoiceInputControl>
               <NativeLayoutMetricsProvider>
-                <Navigation
-                  ref={attachRootNavigation}
-                  linking={appLinking}
-                  onReady={handleNavigationReady}
-                  theme={navigationTheme}
-                  onStateChange={handleNavigationStateChange}
-                />
+                {/* Each window's root has a container; they are not nested, and each handles links. */}
+                <NavigationIndependentTree>
+                  <Navigation
+                    ref={attachNavigation}
+                    linking={linking}
+                    onReady={handleNavigationReady}
+                    theme={navigationTheme}
+                    onStateChange={handleNavigationStateChange}
+                  />
+                </NavigationIndependentTree>
                 <Dialog.Host />
                 <ThreadArrangementHost />
                 <ProjectChipIconRasterizer />

@@ -49,6 +49,11 @@ public final class T3NativeControlsModule: Module {
       Events("onMetricsChange")
     }
 
+    View(T3WindowStateView.self) {
+      ViewName("WindowState")
+      Events("onWindowStateChange")
+    }
+
     View(T3ScrollEdgeBleedView.self) {
       ViewName("ScrollEdgeBleed")
     }
@@ -198,6 +203,22 @@ public final class T3NativeControlsModule: Module {
     }
     let bounds = windowScene.screen.coordinateSpace.bounds
     return bounds.width > bounds.height ? "landscape" : "portrait"
+  }
+
+  // expo-splash-screen covers each window's root view with the launch screen but keeps, and
+  // hides, only the newest. Windows that connect together would leave the others covered.
+  @JS
+  @MainActor
+  func revealWindows() async {
+    for case let windowScene as UIWindowScene in UIApplication.shared.connectedScenes {
+      for window in windowScene.windows {
+        guard let rootView = window.rootViewController?.view,
+          rootView.responds(to: NSSelectorFromString("loadingView")),
+          let launchScreen = rootView.value(forKey: "loadingView") as? UIView
+        else { continue }
+        launchScreen.removeFromSuperview()
+      }
+    }
   }
 
   @JS

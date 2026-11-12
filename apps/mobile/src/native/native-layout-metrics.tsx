@@ -1,5 +1,6 @@
-import { createContext, use, useState, type ReactNode } from "react";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
+import { activeAppWindowId, useAppWindowId, type AppWindowId } from "../lib/appWindows";
 import { deriveDeviceType, isDuoDevice, type DeviceType } from "../lib/device-type";
 import type { NativeLayoutMetrics } from "../lib/reserved-regions";
 import { NativeLayoutObserver } from "./NativeLayoutObserver";
@@ -18,13 +19,14 @@ const NativeLayoutMetricsDeadlineContext = createContext<number>(0);
 // Column reservations come from UIKit's layout, outside the resizing navigator.
 export const NativeColumnLayoutMetricsContext = createContext<NativeLayoutMetrics | null>(null);
 
-// The latest metrics outside React, for decisions made before the first screen renders.
-let latestMetrics: NativeLayoutMetrics | null = null;
+// Each window's latest metrics outside React, for decisions made before the first screen renders.
+const latestMetrics = new Map<AppWindowId, NativeLayoutMetrics>();
 const metricsWaiters = new Set<(metrics: NativeLayoutMetrics) => void>();
 
 /** Resolves with the first native layout metrics, or null after `timeoutMs` without any. */
 export function firstNativeLayoutMetrics(timeoutMs: number) {
-  if (latestMetrics) return Promise.resolve(latestMetrics);
+  const latest = currentNativeLayoutMetrics();
+  if (latest) return Promise.resolve(latest);
   return new Promise<NativeLayoutMetrics | null>((resolve) => {
     const settle = (metrics: NativeLayoutMetrics | null) => {
       metricsWaiters.delete(settle);
@@ -36,15 +38,29 @@ export function firstNativeLayoutMetrics(timeoutMs: number) {
   });
 }
 
+/** The metrics of the window in use. */
 export function currentNativeLayoutMetrics() {
-  return latestMetrics;
+  const active = activeAppWindowId();
+  return (
+    (active === null ? undefined : latestMetrics.get(active)) ??
+    [...latestMetrics.values()].at(-1) ??
+    null
+  );
 }
 
 export function NativeLayoutMetricsProvider(props: { readonly children: ReactNode }) {
+  const windowId = useAppWindowId();
   const [metrics, setMetrics] = useState<NativeLayoutMetrics | null>(null);
   const [metricsDeadline] = useState(() => Date.now() + NATIVE_METRICS_TIMEOUT_MS);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops a closed window's metrics from the store read outside React
+  useEffect(
+    () => () => {
+      latestMetrics.delete(windowId);
+    },
+    [windowId],
+  );
   const publish = (next: NativeLayoutMetrics) => {
-    latestMetrics = next;
+    latestMetrics.set(windowId, next);
     for (const settle of metricsWaiters) settle(next);
     setMetrics(next);
   };

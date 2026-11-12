@@ -15,9 +15,11 @@ vi.mock("@react-navigation/native", () => ({
   }),
 }));
 
+const { activateAppWindow, closeAppWindow } = await import("./appWindows");
 const {
   attachRootNavigation,
   flushRootNavigationQueue,
+  isRootNavigationWindow,
   linkToRootPath,
   rootNavigationRef,
   whenRootNavigationReady,
@@ -29,15 +31,38 @@ function fakeContainer() {
 
 it("keeps the newer container when an older root unmounts after it attached", () => {
   // Android activity replacement mounts the new root before the old one unmounts.
-  const detachPrevious = attachRootNavigation(fakeContainer());
+  const detachPrevious = attachRootNavigation(1, fakeContainer());
   const current = fakeContainer();
-  const detachCurrent = attachRootNavigation(current);
+  const detachCurrent = attachRootNavigation(2, current);
 
   detachPrevious();
   expect(rootNavigationRef.current).toBe(current);
   expect(rootNavigationRef.isReady()).toBe(true);
 
   detachCurrent();
+  expect(rootNavigationRef.current).toBeNull();
+});
+
+it("follows the window in use, and falls back when it closes", () => {
+  const first = fakeContainer();
+  const second = fakeContainer();
+  const detachFirst = attachRootNavigation(1, first);
+  activateAppWindow(1);
+  const detachSecond = attachRootNavigation(2, second);
+  expect(rootNavigationRef.current).toBe(first);
+  expect(isRootNavigationWindow(2)).toBe(false);
+
+  activateAppWindow(2);
+  expect(rootNavigationRef.current).toBe(second);
+  activateAppWindow(1);
+  expect(rootNavigationRef.current).toBe(first);
+  expect(isRootNavigationWindow(1)).toBe(true);
+
+  closeAppWindow(1);
+  detachFirst();
+  expect(rootNavigationRef.current).toBe(second);
+  closeAppWindow(2);
+  detachSecond();
   expect(rootNavigationRef.current).toBeNull();
 });
 
@@ -51,7 +76,7 @@ it("holds navigation until the container is ready, then runs it once", () => {
   whenRootNavigationReady(navigate);
   expect(navigate).not.toHaveBeenCalled();
 
-  const detach = attachRootNavigation(fakeContainer());
+  const detach = attachRootNavigation(1, fakeContainer());
   flushRootNavigationQueue();
   flushRootNavigationQueue();
   expect(failing).toHaveBeenCalledOnce();
@@ -66,7 +91,7 @@ it("holds navigation until the container is ready, then runs it once", () => {
 
 it("rejects an href without a leading slash, as useLinkTo does", () => {
   const toAction = vi.fn(() => ({ type: "NAVIGATE" }));
-  const detach = attachRootNavigation(fakeContainer());
+  const detach = attachRootNavigation(1, fakeContainer());
   const { dispatched } = rootNavigationRef as unknown as { dispatched: Array<unknown> };
 
   expect(() => linkToRootPath("threads/env/t1", toAction)).toThrow(
