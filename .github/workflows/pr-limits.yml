@@ -53,7 +53,7 @@ jobs:
     name: Conflict and close windows
     if: github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 180
     concurrency:
       group: pr-limits-sweep
       cancel-in-progress: false
