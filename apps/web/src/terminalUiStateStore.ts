@@ -4,15 +4,16 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
 import {
-  DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
+  LEGACY_THREAD_TERMINAL_HEIGHT,
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "./types";
 
 interface ThreadTerminalUiState {
   terminalOpen: boolean;
-  terminalHeight: number;
+  // Height the user dragged to; null follows the default-height setting.
+  terminalHeight: number | null;
   terminalIds: string[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
@@ -28,7 +29,7 @@ interface PersistedTerminalUiStateStoreState {
 
 export function migratePersistedTerminalUiStateStoreState(
   persistedState: unknown,
-  _version: number,
+  version: number,
 ): PersistedTerminalUiStateStoreState {
   if (!persistedState || typeof persistedState !== "object") {
     return { terminalUiStateByThreadKey: {} };
@@ -38,9 +39,14 @@ export function migratePersistedTerminalUiStateStoreState(
   const persistedUiStateByThreadKey =
     candidate.terminalUiStateByThreadKey ?? candidate.terminalStateByThreadKey ?? {};
   const terminalUiStateByThreadKey = Object.fromEntries(
-    Object.entries(persistedUiStateByThreadKey).filter(([threadKey]) =>
-      parseScopedThreadKey(threadKey),
-    ),
+    Object.entries(persistedUiStateByThreadKey)
+      .filter(([threadKey]) => parseScopedThreadKey(threadKey))
+      .map(([threadKey, state]) => [
+        threadKey,
+        version < 5 && state.terminalHeight === LEGACY_THREAD_TERMINAL_HEIGHT
+          ? { ...state, terminalHeight: null }
+          : state,
+      ]),
   );
 
   return { terminalUiStateByThreadKey };
@@ -174,7 +180,7 @@ function threadTerminalUiStateEqual(
 
 const DEFAULT_THREAD_TERMINAL_UI_STATE: ThreadTerminalUiState = Object.freeze({
   terminalOpen: false,
-  terminalHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
+  terminalHeight: null,
   terminalIds: [],
   activeTerminalId: "",
   terminalGroups: [],
@@ -210,9 +216,11 @@ function normalizeThreadTerminalUiState(state: ThreadTerminalUiState): ThreadTer
   const normalized: ThreadTerminalUiState = {
     terminalOpen: state.terminalOpen,
     terminalHeight:
-      Number.isFinite(state.terminalHeight) && state.terminalHeight > 0
+      typeof state.terminalHeight === "number" &&
+      Number.isFinite(state.terminalHeight) &&
+      state.terminalHeight > 0
         ? state.terminalHeight
-        : DEFAULT_THREAD_TERMINAL_HEIGHT,
+        : null,
     terminalIds: nextTerminalIds,
     activeTerminalId,
     terminalGroups,
@@ -767,7 +775,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     },
     {
       name: TERMINAL_UI_STATE_STORAGE_KEY,
-      version: 4,
+      version: 5,
       storage: createJSONStorage(createTerminalUiStateStorage),
       migrate: migratePersistedTerminalUiStateStoreState,
       partialize: (state) => ({
