@@ -172,8 +172,10 @@ const make = Effect.gen(function* () {
               ...(input.sender.title === undefined
                 ? {}
                 : {
+                    // Bounded so a long title stays under the peer's header limit; well-formed
+                    // because encodeURIComponent throws on an unpaired surrogate.
                     [McpInvocationContext.SENDER_TITLE_HEADER]: encodeURIComponent(
-                      input.sender.title,
+                      input.sender.title.slice(0, 200).toWellFormed(),
                     ),
                   }),
             };

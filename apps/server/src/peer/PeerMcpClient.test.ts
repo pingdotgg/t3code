@@ -1,6 +1,6 @@
 import { NodeHttpServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -143,10 +143,12 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
     const sessionHeaders: Array<string | undefined> = [];
     const statuses = [200, 202, 404, 200, 202, 200, 200, 200];
     const outcomes: Array<string | null> = [];
+    const titleHeaders: Array<string | undefined> = [];
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         const index = sessionHeaders.length;
         sessionHeaders.push(request.headers["mcp-session-id"]);
+        titleHeaders.push(request.headers["t3-sender-title"]);
         const status = statuses[index];
         if (status === undefined) throw new Error("Unexpected retry");
         return HttpClientResponse.fromWeb(
@@ -203,17 +205,25 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
       ),
     );
     const client = Context.get(context, PeerMcpClient.PeerMcpClient);
-    for (let call = 0; call < 2; call++) {
+    // Any title a rename accepts must fit in a header without failing the call.
+    for (const title of ["界".repeat(2000), "x\ud800"]) {
       expect(
         yield* client.call({
           environmentId: box.environmentId,
           tool: "probe",
           arguments: {},
           limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+          sender: { environmentId: box.environmentId, threadId: ThreadId.make("thread:a"), title },
           success: Result,
         }),
       ).toEqual({ modes: "approval-required/plan" });
     }
+    const longTitle = encodeURIComponent("界".repeat(200));
+    expect(titleHeaders.filter((title) => title !== undefined)).toEqual([
+      longTitle,
+      longTitle,
+      "x%EF%BF%BD",
+    ]);
     // An answer with neither a result nor an error is the link's problem, not the call's.
     const empty = yield* client
       .call({
