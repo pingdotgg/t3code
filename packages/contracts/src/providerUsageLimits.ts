@@ -20,6 +20,16 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  /** Set when this window draws from part of another, such as Fable's share of Weekly. */
+  share: Schema.optional(
+    Schema.Struct({
+      ofWindowId: TrimmedNonEmptyString,
+      /** Percent of the other window this one has used. */
+      usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+      /** Most of the other window this one may use, in percent. */
+      allowancePercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+    }),
+  ),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

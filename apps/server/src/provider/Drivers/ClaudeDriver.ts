@@ -315,7 +315,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 usageAccess.pipe(
                   Effect.flatMap((allowed) =>
                     allowed
-                      ? ClaudeResetCredits.readClaudeResetCredits(
+                      ? ClaudeResetCredits.readClaudeAccountUsage(
                           configDir,
                           version,
                           overageIncluded,
@@ -394,9 +394,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         checkedAt: capabilities.usageCheckedAt ?? checkedAt,
       });
       // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
-      const resetCredits =
+      const accountUsage =
         usesSavedOAuth && !usageLimits.unavailable && version && (yield* usageAccess)
-          ? yield* ClaudeResetCredits.readClaudeResetCredits(
+          ? yield* ClaudeResetCredits.readClaudeAccountUsage(
               configDir,
               version,
               (yield* Ref.get(scopedLimitNames)).overageIncluded,
@@ -404,7 +404,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             )
           : undefined;
       return {
-        usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+        usageLimits: ClaudeResetCredits.withClaudeAccountUsage(usageLimits, accountUsage),
         ...(auth ? { auth } : {}),
       };
     }).pipe(

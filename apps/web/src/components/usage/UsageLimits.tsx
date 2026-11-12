@@ -16,6 +16,8 @@ import {
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  sharedUsage,
+  usageShareSummary,
   type ResetCreditChoice,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
@@ -24,6 +26,7 @@ import { Fragment, useLayoutEffect, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { observeResize } from "../../lib/observeResize";
+import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
@@ -123,10 +126,12 @@ export function usePaceMark(timeLeft: number | null) {
 function WindowBar({
   color,
   window,
+  shared,
   now,
 }: {
   readonly color: string;
   readonly window: ServerProviderUsageWindow;
+  readonly shared: ReturnType<typeof sharedUsage>;
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
@@ -182,6 +187,11 @@ function WindowBar({
                 <T>The line is where even spending would be.</T>
               </span>
             ) : null}
+            {shared ? (
+              <span className="text-muted-foreground">
+                {shared.labels.join(", ")} used {shared.percent}% of this, shown lighter.
+              </span>
+            ) : null}
             {resetsAt ? (
               <span className="text-muted-foreground">
                 {resetsIn
@@ -198,8 +208,22 @@ function WindowBar({
         <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
         {remaining > 0 ? (
           <div
-            className="absolute inset-y-1.5 left-0 rounded-full"
+            className={cn(
+              "absolute inset-y-1.5 left-0",
+              shared ? "rounded-l-full" : "rounded-full",
+              // A window drawing from a shared limit takes the tint of its part of that limit.
+              window.share && "opacity-40",
+            )}
             style={{ width: `${remaining}%`, backgroundColor: color }}
+          />
+        ) : null}
+        {shared ? (
+          <div
+            className={cn(
+              "absolute inset-y-1.5 opacity-40",
+              remaining > 0 ? "rounded-r-full" : "rounded-full",
+            )}
+            style={{ left: `${remaining}%`, width: `${shared.percent}%`, backgroundColor: color }}
           />
         ) : null}
       </div>
@@ -241,6 +265,7 @@ export function LimitWindows({
       {windows.map((window) => {
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now, m);
+        const shareSummary = usageShareSummary(window.share, windows);
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
@@ -249,11 +274,21 @@ export function LimitWindows({
                 {gt("{remaining}% left", { remaining: remainingPercent(window) })}
               </span>
             </span>
-            <WindowBar color={color} window={window} now={now} />
+            <WindowBar
+              color={color}
+              window={window}
+              shared={sharedUsage(window, windows)}
+              now={now}
+            />
             <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
               {pace ? <PaceIcon pace={pace} /> : null}
               <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
             </span>
+            {shareSummary ? (
+              <span className="col-span-full -mt-1 text-2xs text-muted-foreground">
+                {shareSummary}
+              </span>
+            ) : null}
           </Fragment>
         );
       })}

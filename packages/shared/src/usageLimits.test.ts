@@ -27,6 +27,8 @@ import {
   usesChatGptSharing,
   resolveNewThreadModelSelection,
   resetCreditsForWindow,
+  sharedUsage,
+  usageShareSummary,
 } from "./usageLimits.ts";
 import { collectLimitNotices } from "./usageLimitsCopy.ts";
 
@@ -217,6 +219,22 @@ describe("pace", () => {
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
+  });
+});
+
+describe("shares", () => {
+  it("labels a scoped window's allowance and lightens what it used of the shared window", () => {
+    const weekly = { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 38 } as const;
+    const share = { ofWindowId: "seven_day", usedPercent: 8.4, allowancePercent: 50 };
+    const fable = { ...weekly, id: "seven_day_fable", label: "Weekly · Fable", share };
+    expect(usageShareSummary(fable.share, [weekly, fable])).toBe("Up to 50% of your weekly limit");
+    expect(usageShareSummary(fable.share, [fable])).toBeNull();
+    expect(sharedUsage(weekly, [weekly, fable])).toEqual({
+      percent: 8,
+      labels: ["Weekly · Fable"],
+    });
+    expect(sharedUsage({ ...weekly, usedPercent: 5 }, [weekly, fable])?.percent).toBe(5);
+    expect(sharedUsage(fable, [weekly, fable])).toBeNull();
   });
 });
 
