@@ -264,6 +264,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
+  it.effect("shows Antigravity's reason when it rejects the Google account", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage:
+            "Onboarding failed: User is ineligible for free-tier. Reason: Your current account is not eligible for Antigravity. Try signing in with another personal Google account.",
+          method: "authenticate",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.include(failed.message ?? "", "not eligible for Antigravity");
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
   it.effect("tells the user when the agent cannot reach Google", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
@@ -390,7 +411,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
         assert.isTrue(Exit.isFailure(result));
       }
       assert.equal(harness.forwarded(), 0);
-      assert.equal((yield* phase(harness.auth, "waiting")).authorizationUrl, authorizationUrl);
+      const waiting = yield* phase(harness.auth, "waiting");
+      assert.equal(waiting.authorizationUrl, authorizationUrl);
+      assert.include(waiting.message ?? "", "does not belong to the current sign-in");
       yield* harness.auth.controller.cancel(owner, state.flowId!);
     }),
   );
